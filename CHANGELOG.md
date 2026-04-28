@@ -6,7 +6,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - 中文版: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
-## 0.1.0 – 2026-04-28
+## 0.1.0 – 2026-04-29
 
 ### Added
 
@@ -27,6 +27,9 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - README is now a concise release entry page; detailed behavior moved to `docs/`.
 - Final assistant messages are pushed in real time; `/summary` is no longer part of the documented command set.
 - Expanded unit-test coverage across router, multi-adapter, WeChat helper, adapter-factory, and config paths; shared Go quality checks now enforce coverage >= 60.0%, `go vet`, and `staticcheck` in pre-commit and CI.
+- Added GitHub Actions release workflow for tagged multi-platform binary archives with checksums.
+- Fixed Windows build compatibility by isolating Unix process-group syscalls behind platform-specific implementations.
+- Made contract blackbox tests build their temporary `chord` binary without VCS stamping for reliable hook and CI execution.
 
 ### Security
 

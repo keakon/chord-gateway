@@ -6,7 +6,7 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
-## 0.1.0 – 2026-04-28
+## 0.1.0 – 2026-04-29
 
 ### Added
 
@@ -27,6 +27,9 @@
 - README 调整为简洁发布入口页，详细行为迁移到 `docs/`。
 - 最终 assistant 消息会实时推送；`/summary` 不再属于文档化命令集。
 - 补充了 router、多适配器、WeChat 辅助逻辑、adapter factory 与配置路径的单元测试；共享 Go 质量检查现已在 pre-commit 与 CI 中统一执行，并要求覆盖率 >= 60.0%、通过 `go vet` 和 `staticcheck`。
+- 新增 GitHub Actions 发布 workflow，可在标签推送时构建多平台二进制归档并生成校验和。
+- 通过平台特定实现隔离 Unix 进程组 syscall，修复 Windows 构建兼容性。
+- contract blackbox 测试构建临时 `chord` 二进制时禁用 VCS stamping，提升 hook 与 CI 执行稳定性。
 
 ### Security
 
