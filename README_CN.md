@@ -44,12 +44,6 @@ go build -o chord-gateway .
 chord-gateway --version
 ```
 
-验证安装：
-
-```bash
-chord-gateway --version
-```
-
 ## 快速开始
 
 创建一个最小配置，并把 `workspaces[].path` 指向你希望 Chord 操作的项目目录。以下是微信示例：

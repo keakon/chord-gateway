@@ -44,12 +44,6 @@ Verify the installation:
 chord-gateway --version
 ```
 
-Verify the installation:
-
-```bash
-chord-gateway --version
-```
-
 ## Quickstart
 
 Create a minimal config and point `workspaces[].path` at the project you want Chord to operate on. Here is a WeChat example:
