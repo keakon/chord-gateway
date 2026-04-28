@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
@@ -131,9 +130,9 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 
 		// Best-effort: send SIGTERM to process group.
 		if pgid > 0 {
-			_ = syscall.Kill(-pgid, syscall.SIGTERM)
+			_ = terminateProcessGroup(pgid)
 		} else {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+			_ = terminateProcess(cmd.Process)
 		}
 
 		// Wait for graceful exit up to grace.
@@ -156,7 +155,7 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 
 		// Force kill.
 		if pgid > 0 {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			_ = killProcessGroup(pgid)
 		} else {
 			_ = cmd.Process.Kill()
 		}
@@ -376,8 +375,8 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 		return nil, err
 	}
 
-	// Put the child in its own process group so we can terminate the whole tree.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Put the child in its own process group when supported so we can terminate the whole tree.
+	configureProcessGroup(cmd)
 
 	stderr := newTailBuffer(64 * 1024)
 	cmd.Stderr = stderr
@@ -388,7 +387,7 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 		return nil, err
 	}
 
-	pgid, _ := syscall.Getpgid(cmd.Process.Pid)
+	pgid := processGroupID(cmd)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

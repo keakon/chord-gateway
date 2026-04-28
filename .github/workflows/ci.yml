@@ -2,13 +2,20 @@ name: ci
 
 on:
   push:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
 
 permissions:
   contents: read
 
 jobs:
   test:
+    name: Test with coverage
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,14 +33,78 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Test
+        env:
+          MIN_COVERAGE: "60.0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          coverage_file="coverage.out"
+          go test -coverprofile="${coverage_file}" ./...
+          cover_output="$(go tool cover -func="${coverage_file}")"
+          printf '%s\n' "${cover_output}"
+          total_coverage="$(printf '%s\n' "${cover_output}" | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          if [[ -z "${total_coverage}" ]]; then
+            echo "failed to parse total coverage" >&2
+            exit 1
+          fi
+          awk -v total="${total_coverage}" -v min="${MIN_COVERAGE}" 'BEGIN {
+            if (total + 0 < min + 0) {
+              printf("coverage check failed: total %.1f%% < required %.1f%%\n", total + 0, min + 0)
+              exit 1
+            }
+            printf("coverage check passed: total %.1f%% >= required %.1f%%\n", total + 0, min + 0)
+          }'
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: |
+          go vet ./...
+
+  staticcheck:
+    name: Staticcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
 
-      - name: Run Go quality checks
-        env:
-          MIN_COVERAGE: "60.0"
+      - name: Staticcheck
         run: |
-          scripts/check-go-quality.sh
+          staticcheck -checks 'all,-ST*' ./...
+
+  gofmt:
+    name: Check gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Check gofmt
         shell: bash
@@ -74,6 +145,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set build version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            v="${GITHUB_REF_NAME}"
+          else
+            sha="${GITHUB_SHA::7}"
+            v="dev-${sha}"
+          fi
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+
       - name: Build
         shell: bash
         run: |
@@ -86,7 +170,7 @@ jobs:
           out="dist/chord-gateway-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME:-dev}" \
+              -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
               -o "${out}" .
 
       - name: Upload artifact

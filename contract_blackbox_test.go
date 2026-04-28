@@ -306,7 +306,7 @@ func buildChordBinary(t *testing.T, chordRepo string) string {
 	if runtime.GOOS == "windows" {
 		binPath += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/chord")
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, "./cmd/chord")
 	cmd.Dir = chordRepo
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
 	output, err := cmd.CombinedOutput()
