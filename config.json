@@ -1,0 +1,28 @@
+{
+  "ims": [
+    {
+      "type": "wechat",
+      "wechat": {
+        "base_url": "https://ilinkai.weixin.qq.com",
+        "bot_type": "3",
+        "storage_dir": "~/.chord-gateway"
+      }
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "default",
+      "path": "~/Workspace/问数提示词"
+    }
+  ],
+  "chord_path": "~/Workspace/coding-agents/chord/chord",
+  "idle_timeout": "30m",
+  "event_visibility": {
+    "activity": false,
+    "agent_done": false,
+    "info": false,
+    "toast": false,
+    "tool_result": false,
+    "todos": true
+  }
+}
