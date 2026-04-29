@@ -116,6 +116,11 @@ func (w *captureWriteCloser) String() string {
 }
 
 func makeFakeChordBinary(t testingT, behavior string) string {
+	path, _ := makeFakeChordBinaryWithArgsFile(t, behavior)
+	return path
+}
+
+func makeFakeChordBinaryWithArgsFile(t testingT, behavior string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := dir + "/fake-chord.sh"
@@ -129,8 +134,7 @@ func makeFakeChordBinary(t testingT, behavior string) string {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake chord binary: %v", err)
 	}
-	t.Setenv("FAKE_CHORD_ARGS_FILE", argsFile)
-	return path
+	return path, argsFile
 }
 
 func shellQuote(s string) string {
@@ -140,13 +144,11 @@ func shellQuote(s string) string {
 type testingT interface {
 	Helper()
 	TempDir() string
-	Setenv(string, string)
 	Fatalf(string, ...any)
 }
 
-func readFakeChordArgs(t testingT) string {
+func readFakeChordArgs(t testingT, path string) string {
 	t.Helper()
-	path := os.Getenv("FAKE_CHORD_ARGS_FILE")
 	var data []byte
 	var err error
 	for i := 0; i < 50; i++ {

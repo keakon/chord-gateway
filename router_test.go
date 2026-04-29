@@ -194,7 +194,7 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 }
 
 func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
-	fakeChord := makeFakeChordBinary(t, "")
+	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "")
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
@@ -216,7 +216,7 @@ func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
 	if got := sender.lastMessage().text; got != "🆕 New session started." {
 		t.Fatalf("message = %q", got)
 	}
-	args := readFakeChordArgs(t)
+	args := readFakeChordArgs(t, argsFile)
 	requireContains(t, args, "headless")
 	requireContains(t, args, "-d")
 	requireContains(t, args, workspaceDir)
@@ -229,7 +229,7 @@ func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
 }
 
 func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
-	fakeChord := makeFakeChordBinary(t, "")
+	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "")
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
@@ -248,7 +248,7 @@ func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
 	if got := sender.lastMessage().text; got != "🔄 Resuming session session-123" {
 		t.Fatalf("message = %q", got)
 	}
-	args := readFakeChordArgs(t)
+	args := readFakeChordArgs(t, argsFile)
 	requireContains(t, args, "--resume")
 	requireContains(t, args, "session-123")
 	if got := mgr.GetProcess("ws1"); got == nil || !got.Alive() {

@@ -26,8 +26,7 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 		t.Skip("skipping cross-repo contract test in short mode")
 	}
 
-	chordRepo := mustChordRepoRoot(t)
-	chordBin := buildChordBinary(t, chordRepo)
+	chordBin := mustChordBinary(t)
 	workspaceDir := t.TempDir()
 	chordConfigHome := filepath.Join(t.TempDir(), "chord-config")
 	chordStateDir := filepath.Join(t.TempDir(), "chord-state")
@@ -152,8 +151,7 @@ func TestChordHeadlessContract_DefaultSubscribeIncludesIdleAndNotification(t *te
 		t.Skip("skipping cross-repo contract test in short mode")
 	}
 
-	chordRepo := mustChordRepoRoot(t)
-	chordBin := buildChordBinary(t, chordRepo)
+	chordBin := mustChordBinary(t)
 	workspaceDir := t.TempDir()
 	chordConfigHome := filepath.Join(t.TempDir(), "chord-config")
 	chordStateDir := filepath.Join(t.TempDir(), "chord-state")
@@ -286,8 +284,32 @@ func overrideLoginShellEnv(t *testing.T, chordConfigHome, chordStateDir string) 
 	})
 }
 
+func mustChordBinary(t *testing.T) string {
+	t.Helper()
+	// Prefer an explicitly configured binary, then the user's PATH, so contract tests
+	// can exercise the same chord executable a developer or CI job already selected.
+	// Fall back to building the adjacent chord repo when no installed binary exists.
+	if chordBin := os.Getenv("CHORD_GATEWAY_CONTRACT_CHORD_BIN"); chordBin != "" {
+		if _, err := os.Stat(chordBin); err != nil {
+			t.Fatalf("CHORD_GATEWAY_CONTRACT_CHORD_BIN %q is not usable: %v", chordBin, err)
+		}
+		return chordBin
+	}
+	if chordBin, err := exec.LookPath("chord"); err == nil {
+		return chordBin
+	}
+	chordRepo := mustChordRepoRoot(t)
+	return buildChordBinary(t, chordRepo)
+}
+
 func mustChordRepoRoot(t *testing.T) string {
 	t.Helper()
+	if chordRepo := os.Getenv("CHORD_GATEWAY_CONTRACT_CHORD_REPO"); chordRepo != "" {
+		if _, err := os.Stat(filepath.Join(chordRepo, "go.mod")); err != nil {
+			t.Fatalf("CHORD_GATEWAY_CONTRACT_CHORD_REPO %q is not a Go module root: %v", chordRepo, err)
+		}
+		return chordRepo
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
