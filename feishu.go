@@ -113,6 +113,7 @@ type FeishuMessageContent struct {
 // FeishuAdapter implements IMAdapter for Feishu (飞书).
 type FeishuAdapter struct {
 	cfg       *config.Config
+	imCfg     config.IMAdapterConfig
 	msgRouter MessageRouter // used for dispatching incoming messages (testable)
 	// Current notification router (for process /status etc.)
 	router        *NotificationRouter // retained for SendText via parent adapter
@@ -139,13 +140,14 @@ func (a *FeishuAdapter) sendCardOrFallback(chatID string, card map[string]any, f
 }
 
 // NewFeishuAdapter creates a new Feishu adapter.
-func NewFeishuAdapter(cfg *config.Config, paths *config.Paths, router *NotificationRouter) (*FeishuAdapter, error) {
-	if cfg.IM.Feishu == nil {
+func NewFeishuAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *config.Paths, router *NotificationRouter) (*FeishuAdapter, error) {
+	if imCfg.Feishu == nil {
 		return nil, fmt.Errorf("feishu: feishu config is required when im type is feishu")
 	}
 
 	a := &FeishuAdapter{
 		cfg:          cfg,
+		imCfg:        imCfg,
 		router:       router,
 		msgRouter:    router, // NotificationRouter satisfies MessageRouter
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
@@ -192,11 +194,11 @@ func (a *FeishuAdapter) Connect() error {
 	a.wg.Add(1)
 	go a.queueConsumer(ctx)
 
-	listen := a.cfg.IM.Feishu.Listen
+	listen := a.imCfg.Feishu.Listen
 	if listen == "" {
 		listen = ":8080"
 	}
-	path := a.cfg.IM.Feishu.WebhookPath
+	path := a.imCfg.Feishu.WebhookPath
 	if path == "" {
 		path = "/feishu/callback"
 	}
@@ -310,7 +312,7 @@ func (a *FeishuAdapter) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// Try URL verification challenge first.
 	var urlVerif FeishuURLVerification
 	if err := json.Unmarshal(body, &urlVerif); err == nil && urlVerif.Type == "url_verification" {
-		if a.cfg.IM.Feishu.VerificationToken != "" && urlVerif.Token != a.cfg.IM.Feishu.VerificationToken {
+		if a.imCfg.Feishu.VerificationToken != "" && urlVerif.Token != a.imCfg.Feishu.VerificationToken {
 			slog.Warn("feishu: URL verification token mismatch")
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -329,9 +331,9 @@ func (a *FeishuAdapter) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify token.
-	if a.cfg.IM.Feishu.VerificationToken != "" && callback.Header.Token != a.cfg.IM.Feishu.VerificationToken {
+	if a.imCfg.Feishu.VerificationToken != "" && callback.Header.Token != a.imCfg.Feishu.VerificationToken {
 		slog.Warn("feishu: event callback token mismatch",
-			"expected", a.cfg.IM.Feishu.VerificationToken,
+			"expected", a.imCfg.Feishu.VerificationToken,
 			"got", callback.Header.Token,
 		)
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -360,12 +362,12 @@ func (a *FeishuAdapter) handleCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		appID := a.cfg.IM.Feishu.AppID
+		appID := a.imCfg.Feishu.AppID
 		senderOpenID := event.Sender.SenderID.OpenID
 		chatID := event.Message.ChatID
 		messageID := event.Message.MessageID
 
-		if !a.cfg.IM.Feishu.IsOpenIDAllowed(senderOpenID) {
+		if !a.imCfg.Feishu.IsOpenIDAllowed(senderOpenID) {
 			slog.Debug("feishu: message from non-allowed open_id, ignoring", "open_id", senderOpenID, "chat_id", chatID)
 			w.WriteHeader(http.StatusOK)
 			return
@@ -399,7 +401,7 @@ func (a *FeishuAdapter) handleCallback(w http.ResponseWriter, r *http.Request) {
 			chatID = event.Context.OpenChatID
 		}
 		senderOpenID := event.Operator.OpenID
-		if !a.cfg.IM.Feishu.IsOpenIDAllowed(senderOpenID) {
+		if !a.imCfg.Feishu.IsOpenIDAllowed(senderOpenID) {
 			slog.Debug("feishu: card action from non-allowed open_id, ignoring", "open_id", senderOpenID, "chat_id", chatID)
 			w.WriteHeader(http.StatusOK)
 			return
@@ -413,13 +415,13 @@ func (a *FeishuAdapter) handleCallback(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		dedupeKey := fmt.Sprintf(feishuCardActionFmt, a.cfg.IM.Feishu.AppID, chatID, requestID+"|"+command)
+		dedupeKey := fmt.Sprintf(feishuCardActionFmt, a.imCfg.Feishu.AppID, chatID, requestID+"|"+command)
 		if !a.dedupe.TryBegin(dedupeKey) {
 			slog.Debug("feishu: duplicate card action, skipping", "request_id", requestID, "command", command, "chat_id", chatID)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: requestID + ":" + command, ConversationID: chatID, Text: command, AppID: a.cfg.IM.Feishu.AppID}
+		msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: requestID + ":" + command, ConversationID: chatID, Text: command, AppID: a.imCfg.Feishu.AppID}
 		select {
 		case a.messageQueue <- msg:
 			a.dedupe.Commit(dedupeKey)
@@ -443,7 +445,7 @@ func (a *FeishuAdapter) getAccessToken() (string, error) {
 		return a.accessToken, nil
 	}
 
-	reqBody := fmt.Sprintf(`{"app_id":"%s","app_secret":"%s"}`, a.cfg.IM.Feishu.AppID, a.cfg.IM.Feishu.AppSecret)
+	reqBody := fmt.Sprintf(`{"app_id":"%s","app_secret":"%s"}`, a.imCfg.Feishu.AppID, a.imCfg.Feishu.AppSecret)
 	resp, err := a.httpClient.Post(
 		"https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal",
 		"application/json",

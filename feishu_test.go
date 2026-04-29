@@ -20,10 +20,9 @@ func testFeishuAdapter(t *testing.T, fc *config.FeishuConfig) *FeishuAdapter {
 	t.Helper()
 	dedupeDir := t.TempDir()
 	cfg := &config.Config{
-		IM: config.IMConfig{
-			Type:   "feishu",
+		IMs: []config.IMAdapterConfig{{
 			Feishu: fc,
-		},
+		}},
 		Workspaces: []config.Workspace{
 			{ID: "test", Path: "/tmp/test"},
 		},
@@ -38,6 +37,7 @@ func testFeishuAdapter(t *testing.T, fc *config.FeishuConfig) *FeishuAdapter {
 	// no ChordManager, it may call sendText which will log but not panic.
 	a := &FeishuAdapter{
 		cfg:          cfg,
+		imCfg:        cfg.IMs[0],
 		httpClient:   &http.Client{Timeout: 5 * time.Second},
 		messageQueue: make(chan IncomingMessage, 16),
 		dedupe:       dedupe,

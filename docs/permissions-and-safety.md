@@ -21,15 +21,14 @@ Treat an allowed IM sender as someone who can interact with Chord in the configu
 For Feishu, configure `owner_open_id` and/or `allowed_open_ids` when deploying beyond local testing.
 
 ```yaml
-im:
-  type: feishu
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    verification_token: your-token
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_teammate_xxx
+ims:
+  - feishu:
+      app_id: cli_xxx
+      app_secret: your-app-secret
+      verification_token: your-token
+      owner_open_id: ou_owner_xxx
+      allowed_open_ids:
+        - ou_teammate_xxx
 ```
 
 Behavior:
@@ -55,7 +54,7 @@ Treat these as sensitive:
 - Feishu `app_secret`
 - Feishu `verification_token`
 - Feishu `encrypt_key`
-- WeChat token files
+- WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims[].wechat.token_path`)
 - Gateway state directory
 - Chord provider credentials and auth files
 
@@ -63,7 +62,7 @@ Do not commit secrets or state directories to version control.
 
 ## Multi-workspace safety
 
-For Feishu multi-workspace mode, set a unique `im_chat_id` for every workspace. This reduces the chance that messages from one group are routed to the wrong project.
+For Feishu multi-workspace mode, configure `ims[].feishu.chat_bindings` so each Feishu chat ID maps to the intended workspace.
 
 WeChat supports only one workspace. Use Feishu if you need separate chat-to-workspace bindings.
 
@@ -73,7 +72,7 @@ If you suspect unauthorized access:
 
 1. Stop the gateway.
 2. Revoke or rotate Feishu app secrets and webhook tokens.
-3. Remove or rotate WeChat token files.
+3. Remove or rotate WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims[].wechat.token_path`).
 4. Review gateway logs and Chord session history.
 5. Review changes in configured workspaces.
 6. Restart with a stricter allowlist and workspace scope.

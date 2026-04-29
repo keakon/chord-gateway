@@ -37,7 +37,7 @@ Runtime state is stored in this priority order:
 State data includes:
 
 - logs
-- WeChat token files
+- WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims[].wechat.token_path`)
 - Feishu dedupe store
 - session pin store
 
@@ -95,11 +95,11 @@ The current TTL is 24 hours.
 
 ## Workspace routing
 
-WeChat always routes to one workspace. If multiple workspaces are configured and WeChat is enabled, set `wechat_workspace_id` to choose the workspace used by WeChat.
+WeChat always routes to one workspace. If multiple workspaces are configured and WeChat is enabled, set `ims[].wechat.workspace_id` to choose the workspace used by WeChat.
 
-Feishu supports multiple workspaces by binding each workspace to a Feishu `chat_id` through `workspaces[].im_chat_id`.
+Feishu supports multiple workspaces through `ims[].feishu.chat_bindings`, which maps Feishu `chat_id` values to workspace IDs.
 
-For a single Feishu workspace, `im_chat_id` may be omitted and all chats use the first workspace. For multiple Feishu workspaces, each workspace must have a unique non-empty `im_chat_id`.
+For a single Feishu workspace, `chat_bindings` may be omitted and all chats use that workspace. For multiple Feishu workspaces, configure `chat_bindings` for the chats you want to route.
 
 ## Event contract
 

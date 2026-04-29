@@ -29,14 +29,13 @@ const (
 	ilinkMessageStateFinish = 2
 	ilinkItemTypeText       = 1
 
-	ilinkLongPollTimeout     = 35 * time.Second
-	ilinkPollInterval        = 1500 * time.Millisecond
-	ilinkLoginTimeout        = 5 * time.Minute
-	ilinkMaxRetries          = 3
-	ilinkBackoffDelay        = 30 * time.Second
-	ilinkRetryDelay          = 2 * time.Second
-	ilinkSessionExpired      = -14
-	ilinkSessionExpiredPause = 1 * time.Hour
+	ilinkLongPollTimeout = 35 * time.Second
+	ilinkPollInterval    = 1500 * time.Millisecond
+	ilinkLoginTimeout    = 5 * time.Minute
+	ilinkMaxRetries      = 3
+	ilinkBackoffDelay    = 30 * time.Second
+	ilinkRetryDelay      = 2 * time.Second
+	ilinkSessionExpired  = -14
 
 	ilinkMaxMessageLen  = 2048
 	ilinkDefaultBaseURL = "https://ilinkai.weixin.qq.com"
@@ -128,6 +127,7 @@ type TokenData struct {
 // WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
 	cfg        *config.Config
+	imCfg      config.IMAdapterConfig
 	router     *NotificationRouter
 	token      *TokenData
 	syncBuf    string
@@ -135,6 +135,7 @@ type WechatAdapter struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	storageDir string
+	tokenFile  string
 	httpClient *http.Client
 
 	// contextToken per user — needed to send replies.
@@ -146,13 +147,19 @@ type WechatAdapter struct {
 }
 
 // NewWechatAdapter creates a new WeChat iLink adapter.
-func NewWechatAdapter(cfg *config.Config, paths *config.Paths, router *NotificationRouter) (*WechatAdapter, error) {
-	storageDir := paths.StateDir
+func NewWechatAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *config.Paths, router *NotificationRouter) (*WechatAdapter, error) {
+	storageDir := filepath.Join(paths.StateDir, "wechat")
+	tokenFile := filepath.Join(storageDir, "token.json")
+	if imCfg.Wechat != nil && imCfg.Wechat.TokenPath != "" {
+		tokenFile = imCfg.Wechat.TokenPath
+	}
 
 	a := &WechatAdapter{
 		cfg:           cfg,
+		imCfg:         imCfg,
 		router:        router,
 		storageDir:    storageDir,
+		tokenFile:     tokenFile,
 		httpClient:    &http.Client{Timeout: 40 * time.Second},
 		contextTokens: make(map[string]string),
 	}
@@ -302,10 +309,11 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 	if err != nil {
 		slog.Warn("wechat ilink: startup probe failed", "error", err)
 	} else if resp.ErrCode == ilinkSessionExpired || resp.Ret == ilinkSessionExpired {
-		slog.Warn("wechat ilink: saved token is expired, clearing it")
-		a.sessionExpired = true
-		a.token = nil
-		return fmt.Errorf("wechat ilink: saved token expired — please restart gateway to re-scan QR code")
+		slog.Warn("wechat ilink: saved token is expired, clearing it and re-login")
+		a.clearToken()
+		if err := a.login(ctx); err != nil {
+			return fmt.Errorf("wechat ilink re-login: %w", err)
+		}
 	}
 
 	slog.Info("wechat ilink: connected, starting monitor loop",
@@ -337,8 +345,8 @@ func (a *WechatAdapter) Disconnect() {
 // --- Helpers ---
 
 func (a *WechatAdapter) baseURL() string {
-	if a.cfg.IM.Wechat != nil && a.cfg.IM.Wechat.BaseURL != "" {
-		return strings.TrimRight(a.cfg.IM.Wechat.BaseURL, "/")
+	if a.imCfg.Wechat != nil && a.imCfg.Wechat.BaseURL != "" {
+		return strings.TrimRight(a.imCfg.Wechat.BaseURL, "/")
 	}
 	if a.token != nil && a.token.BaseURL != "" {
 		return strings.TrimRight(a.token.BaseURL, "/")
@@ -347,9 +355,8 @@ func (a *WechatAdapter) baseURL() string {
 }
 
 func (a *WechatAdapter) botType() string {
-	if a.cfg.IM.Wechat != nil && a.cfg.IM.Wechat.BotType != "" {
-		return a.cfg.IM.Wechat.BotType
-	}
+	// iLink API: get_bot_qrcode requires bot_type=3.
+	// Public protocol references describe it as a fixed constant, so we do not expose it in config.
 	return ilinkDefaultBotType
 }
 
@@ -421,8 +428,8 @@ func (a *WechatAdapter) apiPost(path string, body any) (*http.Response, error) {
 
 func (a *WechatAdapter) login(ctx context.Context) error {
 	baseURL := ""
-	if a.cfg.IM.Wechat != nil {
-		baseURL = a.cfg.IM.Wechat.BaseURL
+	if a.imCfg.Wechat != nil {
+		baseURL = a.imCfg.Wechat.BaseURL
 	}
 	if baseURL == "" {
 		baseURL = ilinkDefaultBaseURL
@@ -590,10 +597,13 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 		if isAPIError {
 			isSessionExpired := resp.ErrCode == ilinkSessionExpired || resp.Ret == ilinkSessionExpired
 			if isSessionExpired {
-				slog.Warn("wechat ilink: session expired (errcode=-14), pausing 1 hour")
-				a.sessionExpired = true
-				a.notifySessionExpired()
-				a.sleep(ctx, ilinkSessionExpiredPause)
+				slog.Warn("wechat ilink: session expired (errcode=-14), clearing token and re-login")
+				a.clearToken()
+				if err := a.login(ctx); err != nil {
+					slog.Error("wechat ilink: re-login failed", "error", err)
+					a.notifySessionExpired()
+					a.sleep(ctx, ilinkBackoffDelay)
+				}
 				continue
 			}
 
@@ -784,25 +794,54 @@ func (a *WechatAdapter) sendMessage(body ilinkSendMessageRequest) error {
 // --- Token Persistence ---
 
 func (a *WechatAdapter) tokenPath() string {
-	return filepath.Join(a.storageDir, "token.json")
+	return a.tokenFile
+}
+
+func (a *WechatAdapter) legacyTokenPath() string {
+	return filepath.Join(filepath.Dir(a.storageDir), "token.json")
 }
 
 func (a *WechatAdapter) loadToken() *TokenData {
-	data, err := os.ReadFile(a.tokenPath())
+	path := a.tokenPath()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		legacyPath := a.legacyTokenPath()
+		if legacyPath == path {
+			return nil
+		}
+		data, err = os.ReadFile(legacyPath)
+		if err != nil {
+			return nil
+		}
+		path = legacyPath
 	}
 	var token TokenData
 	if err := json.Unmarshal(data, &token); err != nil {
-		slog.Warn("wechat ilink: failed to parse token file", "error", err)
+		slog.Warn("wechat ilink: failed to parse token file", "path", path, "error", err)
 		return nil
+	}
+	if path != a.tokenPath() {
+		a.token = &token
+		a.saveToken()
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("wechat ilink: failed to remove legacy token file", "path", path, "error", err)
+		}
+		slog.Info("wechat ilink: migrated token file", "from", path, "to", a.tokenPath())
 	}
 	return &token
 }
 
+func (a *WechatAdapter) clearToken() {
+	a.sessionExpired = false
+	a.token = nil
+	if err := os.Remove(a.tokenPath()); err != nil && !os.IsNotExist(err) {
+		slog.Warn("wechat ilink: failed to remove token file", "error", err)
+	}
+}
+
 func (a *WechatAdapter) saveToken() {
-	if err := os.MkdirAll(a.storageDir, 0700); err != nil {
-		slog.Error("wechat ilink: failed to create storage dir", "error", err)
+	if err := os.MkdirAll(filepath.Dir(a.tokenPath()), 0700); err != nil {
+		slog.Error("wechat ilink: failed to create token dir", "error", err)
 		return
 	}
 	data, err := json.MarshalIndent(a.token, "", "  ")
@@ -821,16 +860,36 @@ func (a *WechatAdapter) syncBufPath() string {
 	return filepath.Join(a.storageDir, "sync-buf.json")
 }
 
+func (a *WechatAdapter) legacySyncBufPath() string {
+	return filepath.Join(filepath.Dir(a.storageDir), "sync-buf.json")
+}
+
 func (a *WechatAdapter) loadSyncBuf() string {
-	data, err := os.ReadFile(a.syncBufPath())
+	path := a.syncBufPath()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		legacyPath := a.legacySyncBufPath()
+		if legacyPath == path {
+			return ""
+		}
+		data, err = os.ReadFile(legacyPath)
+		if err != nil {
+			return ""
+		}
+		path = legacyPath
 	}
 	var obj struct {
 		GetUpdatesBuf string `json:"get_updates_buf"`
 	}
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return ""
+	}
+	if path != a.syncBufPath() {
+		a.syncBuf = obj.GetUpdatesBuf
+		a.saveSyncBuf()
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("wechat ilink: failed to remove legacy sync buf file", "path", path, "error", err)
+		}
 	}
 	return obj.GetUpdatesBuf
 }

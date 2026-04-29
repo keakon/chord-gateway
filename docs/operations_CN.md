@@ -37,7 +37,7 @@ idle_timeout: 30m
 状态数据包括：
 
 - 日志
-- 微信 token 文件
+- 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims[].wechat.token_path`）
 - 飞书去重存储
 - session pin 存储
 
@@ -95,11 +95,11 @@ app_id + chat_id + message_id
 
 ## 工作区路由
 
-微信始终路由到一个工作区。如果配置了多个工作区且启用了微信，需要通过 `wechat_workspace_id` 指定微信使用哪个工作区。
+微信始终路由到一个工作区。如果配置了多个工作区且启用了微信，需要通过 `ims[].wechat.workspace_id` 指定微信使用哪个工作区。
 
-飞书支持多个工作区，可通过 `workspaces[].im_chat_id` 把每个工作区绑定到一个飞书 `chat_id`。
+飞书支持多个工作区，可通过 `ims[].feishu.chat_bindings` 把飞书 `chat_id` 映射到 workspace ID。
 
-飞书单工作区时可省略 `im_chat_id`，所有聊天使用第一个工作区。飞书多工作区时，每个工作区必须有唯一且非空的 `im_chat_id`。
+飞书单工作区时可省略 `chat_bindings`，所有聊天使用该工作区。飞书多工作区时，请为需要路由的聊天配置 `chat_bindings`。
 
 ## 事件协议
 

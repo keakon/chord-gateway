@@ -40,9 +40,9 @@ chord_path: ~/go/bin/chord
 Common causes:
 
 - `workspaces[].path` does not exist.
-- WeChat is enabled with multiple workspaces but `wechat_workspace_id` is not set.
-- Feishu has multiple workspaces but one or more entries are missing `im_chat_id`.
-- Feishu multi-workspace entries reuse the same `im_chat_id`.
+- WeChat is enabled with multiple workspaces but `ims[].wechat.workspace_id` is not set.
+- Feishu has multiple workspaces but `ims[].feishu.chat_bindings` is missing or incomplete.
+- A Feishu `chat_bindings` entry points to the wrong workspace ID.
 
 ## WeChat issues
 
@@ -50,12 +50,12 @@ Common causes:
 
 Check:
 
-- `im.type` is `wechat`, or a WeChat entry exists under `ims`.
+- `ims` includes a WeChat entry.
 - `base_url` is correct.
-- Existing token files are not stale or corrupt.
+- Existing token files are not stale or corrupt. The default path is `<state_dir>/wechat/token.json`; if `ims[].wechat.token_path` is configured, check that custom path instead.
 - Gateway logs under the state directory.
 
-To force a new login, stop the gateway and remove the saved WeChat token file from the state directory.
+To force a new login, stop the gateway and remove the saved WeChat token file (`<state_dir>/wechat/token.json` by default, or `ims[].wechat.token_path` if configured).
 
 ### Token expired
 
@@ -65,7 +65,7 @@ In multi-IM mode, send this from another active channel:
 /login weixin
 ```
 
-Then open the returned login link and scan the QR code.
+Then open the returned login link and scan the QR code. When the gateway itself detects an expired WeChat token, it clears the saved token and starts QR login automatically.
 
 ## Feishu issues
 
@@ -109,9 +109,9 @@ Feishu may retry callbacks. The gateway deduplicates by `app_id + chat_id + mess
 
 ### Wrong workspace receives messages
 
-For Feishu multi-workspace mode, confirm every workspace has the intended `im_chat_id` and that each value is unique.
+For Feishu multi-workspace mode, confirm `ims[].feishu.chat_bindings` maps each Feishu chat ID to the intended workspace ID.
 
-For a single Feishu workspace without `im_chat_id`, all chats use the first workspace.
+For a single Feishu workspace without `chat_bindings`, all chats use that workspace.
 
 ### Session context is not what you expected
 
@@ -153,7 +153,7 @@ State directory priority:
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
-Logs, tokens, dedupe data, and session pins are stored there.
+Logs, tokens, dedupe data, and session pins are stored there. WeChat token state defaults to `<state_dir>/wechat/token.json`; legacy `<state_dir>/token.json` is migrated automatically.
 
 ## Still stuck
 

@@ -7,9 +7,9 @@ import (
 )
 
 func TestNewIMAdapter_UnsupportedType(t *testing.T) {
-	cfg := &config.Config{IM: config.IMConfig{Type: "unsupported"}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{}}}
 	adapter, err := NewIMAdapter(cfg, testPaths(t), nil)
-	if err == nil || err.Error() != "unsupported IM type: unsupported" {
+	if err == nil || err.Error() != "unsupported IM type: " {
 		t.Fatalf("NewIMAdapter() adapter=%#v err=%v", adapter, err)
 	}
 }
@@ -18,7 +18,7 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 	paths := testPaths(t)
 
 	t.Run("wechat", func(t *testing.T) {
-		cfg := &config.Config{IM: config.IMConfig{Type: "wechat", Wechat: &config.WechatConfig{}}}
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}}
 		adapter, err := NewIMAdapter(cfg, paths, nil)
 		if err != nil {
 			t.Fatalf("NewIMAdapter() error = %v", err)
@@ -29,7 +29,7 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 	})
 
 	t.Run("feishu", func(t *testing.T) {
-		cfg := &config.Config{IM: config.IMConfig{Type: "feishu", Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret"}}}
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret"}}}}
 		adapter, err := NewIMAdapter(cfg, paths, nil)
 		if err != nil {
 			t.Fatalf("NewIMAdapter() error = %v", err)
@@ -43,7 +43,7 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 
 func TestNewIMAdapter_WithSingleActiveIMUsesAdapterConfig(t *testing.T) {
 	paths := testPaths(t)
-	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Type: "wechat", Wechat: &config.WechatConfig{BaseURL: "https://example.com"}}}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{BaseURL: "https://example.com"}}}}
 	adapter, err := NewIMAdapter(cfg, paths, nil)
 	if err != nil {
 		t.Fatalf("NewIMAdapter() error = %v", err)
@@ -58,8 +58,9 @@ func TestNewIMAdapter_WithSingleActiveIMUsesAdapterConfig(t *testing.T) {
 }
 
 func TestNewAdapterFromConfig_UnsupportedType(t *testing.T) {
-	adapter, err := newAdapterFromConfig(config.IMAdapterConfig{Type: "bad"}, testPaths(t), nil)
-	if err == nil || err.Error() != "unsupported IM type: bad" {
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{}}}
+	adapter, err := newAdapterFromConfig(config.IMAdapterConfig{}, cfg, testPaths(t), nil)
+	if err == nil || err.Error() != "unsupported IM type: " {
 		t.Fatalf("newAdapterFromConfig() adapter=%#v err=%v", adapter, err)
 	}
 }

@@ -10,92 +10,88 @@ import (
 
 func TestValidate_WechatMultiWorkspace_RequiresWorkspaceID(t *testing.T) {
 	cfg := &Config{
-		IM: IMConfig{Type: "wechat"},
+		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "wechat_workspace_id") {
-		t.Fatalf("expected wechat_workspace_id validation error, got: %v", err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "wechat.workspace_id") {
+		t.Fatalf("expected wechat workspace_id validation error, got: %v", err)
 	}
 }
 
-func TestValidate_WechatMultiWorkspace_WithWorkspaceID(t *testing.T) {
+func TestValidate_WechatWorkspaceID_OK(t *testing.T) {
 	cfg := &Config{
-		IM:                IMConfig{Type: "wechat"},
-		WechatWorkspaceID: "ws1",
+		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "ws1"}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("unexpected validation error: %v", err)
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 
 func TestValidate_WechatWorkspaceID_NotFound(t *testing.T) {
 	cfg := &Config{
-		IM:                IMConfig{Type: "wechat"},
-		WechatWorkspaceID: "missing",
-		Workspaces: []Workspace{
-			{ID: "ws1", Path: "/tmp/ws1"},
-		},
+		IMs:        []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "missing"}}},
+		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), `wechat_workspace_id "missing"`) {
-		t.Fatalf("expected missing wechat_workspace_id error, got: %v", err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), `workspace_id "missing"`) {
+		t.Fatalf("expected missing workspace_id error, got: %v", err)
 	}
 }
 
-func TestValidate_FeishuMultiWorkspace_RequiresChatIDs(t *testing.T) {
+func TestValidate_FeishuMultiWorkspace_RequiresChatBindings(t *testing.T) {
 	cfg := &Config{
-		IM: IMConfig{Type: "feishu", Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}},
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}},
 		Workspaces: []Workspace{
-			{ID: "ws1", Path: "/tmp/ws1", IMChatID: "oc_1"},
+			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires a non-empty im_chat_id") {
-		t.Fatalf("expected im_chat_id validation error, got: %v", err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "feishu.chat_bindings") {
+		t.Fatalf("expected chat_bindings validation error, got: %v", err)
 	}
 }
 
-func TestValidate_FeishuMultiWorkspace_DuplicateChatID(t *testing.T) {
+func TestValidate_FeishuChatBindingsUnknownWorkspace(t *testing.T) {
 	cfg := &Config{
-		IM: IMConfig{Type: "feishu", Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}},
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"oc_1": "missing"}}}},
 		Workspaces: []Workspace{
-			{ID: "ws1", Path: "/tmp/ws1", IMChatID: "oc_dup"},
-			{ID: "ws2", Path: "/tmp/ws2", IMChatID: "oc_dup"},
+			{ID: "ws1", Path: "/tmp/ws1"},
+			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate im_chat_id") {
-		t.Fatalf("expected duplicate im_chat_id error, got: %v", err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unknown workspace") {
+		t.Fatalf("expected unknown workspace error, got: %v", err)
 	}
 }
 
 func TestValidate_DedupesAllowedOpenIDs_AndAddsOwner(t *testing.T) {
 	cfg := &Config{
-		IM: IMConfig{Type: "feishu", Feishu: &FeishuConfig{
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{
 			AppID:          "app",
 			AppSecret:      "secret",
 			OwnerOpenID:    "ou_owner",
 			AllowedOpenIDs: []string{"ou_a", "ou_a"},
-		}},
+		}}},
 		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	got := cfg.IM.Feishu.AllowedOpenIDs
+	got := cfg.IMs[0].Feishu.AllowedOpenIDs
 	if len(got) != 2 || got[0] != "ou_a" || got[1] != "ou_owner" {
 		t.Fatalf("AllowedOpenIDs = %v", got)
 	}
 }
 
-func TestResolveWorkspace_Wechat_UsesPinnedWorkspace(t *testing.T) {
+func TestResolveWorkspace_Wechat_UsesConfiguredWorkspace(t *testing.T) {
 	cfg := &Config{
-		WechatWorkspaceID: "ws2",
+		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "ws2"}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
@@ -110,19 +106,19 @@ func TestResolveWorkspace_Wechat_UsesPinnedWorkspace(t *testing.T) {
 	}
 }
 
-func TestResolveWorkspace_Wechat_PinnedWorkspaceMissing(t *testing.T) {
+func TestResolveWorkspace_Wechat_ConfiguredWorkspaceMissing(t *testing.T) {
 	cfg := &Config{
-		WechatWorkspaceID: "missing",
-		Workspaces:        []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
+		IMs:        []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "missing"}}},
+		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
 	_, err := cfg.ResolveWorkspace("wechat", "any-chat-id")
-	if err == nil || !strings.Contains(err.Error(), `wechat_workspace_id "missing"`) {
+	if err == nil || !strings.Contains(err.Error(), `workspace_id "missing"`) {
 		t.Fatalf("expected missing workspace error, got: %v", err)
 	}
 }
 
 func TestResolveWorkspace_Feishu_SingleWorkspace(t *testing.T) {
-	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+	cfg := &Config{IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}}, Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 	ws, err := cfg.ResolveWorkspace("feishu", "any-chat-id")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -134,9 +130,10 @@ func TestResolveWorkspace_Feishu_SingleWorkspace(t *testing.T) {
 
 func TestResolveWorkspace_Feishu_MultiWorkspace(t *testing.T) {
 	cfg := &Config{
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"oc_2": "ws2"}}}},
 		Workspaces: []Workspace{
-			{ID: "ws1", Path: "/tmp/ws1", IMChatID: "oc_1"},
-			{ID: "ws2", Path: "/tmp/ws2", IMChatID: "oc_2"},
+			{ID: "ws1", Path: "/tmp/ws1"},
+			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
 	ws, err := cfg.ResolveWorkspace("feishu", "oc_2")
@@ -150,9 +147,10 @@ func TestResolveWorkspace_Feishu_MultiWorkspace(t *testing.T) {
 
 func TestResolveWorkspace_Feishu_NoMatch(t *testing.T) {
 	cfg := &Config{
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"oc_1": "ws1"}}}},
 		Workspaces: []Workspace{
-			{ID: "ws1", Path: "/tmp/ws1", IMChatID: "oc_1"},
-			{ID: "ws2", Path: "/tmp/ws2", IMChatID: "oc_2"},
+			{ID: "ws1", Path: "/tmp/ws1"},
+			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
 	_, err := cfg.ResolveWorkspace("feishu", "oc_missing")
@@ -175,8 +173,8 @@ func TestResolveWorkspace_Console_SingleWorkspace(t *testing.T) {
 func TestResolveWorkspace_Console_NoMatch(t *testing.T) {
 	cfg := &Config{
 		Workspaces: []Workspace{
-			{ID: "ws1", Path: "/tmp/ws1", IMChatID: "oc_1"},
-			{ID: "ws2", Path: "/tmp/ws2", IMChatID: "oc_2"},
+			{ID: "ws1", Path: "/tmp/ws1"},
+			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
 	_, err := cfg.ResolveWorkspace("console", "console-chat")
@@ -185,8 +183,8 @@ func TestResolveWorkspace_Console_NoMatch(t *testing.T) {
 	}
 }
 
-func TestResolveWorkspace_OtherByChatID(t *testing.T) {
-	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "custom-chat"}}}
+func TestResolveWorkspace_OtherSingleWorkspace(t *testing.T) {
+	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 	ws, err := cfg.ResolveWorkspace("custom", "custom-chat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -196,18 +194,20 @@ func TestResolveWorkspace_OtherByChatID(t *testing.T) {
 	}
 }
 
-func TestResolveWorkspace_OtherNoMatch(t *testing.T) {
-	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "custom-chat"}}}
+func TestResolveWorkspace_OtherNoRoute(t *testing.T) {
+	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}, {ID: "ws2", Path: "/tmp/ws2"}}}
 	_, err := cfg.ResolveWorkspace("custom", "missing")
-	if err == nil || !strings.Contains(err.Error(), `no workspace configured for chat_id "missing"`) {
-		t.Fatalf("expected other no-match error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), `no custom adapter configured`) {
+		t.Fatalf("expected other no-route error, got: %v", err)
 	}
 }
 
-func TestLoad_UnknownFieldErrors(t *testing.T) {
+func TestLoad_IgnoresUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := []byte(`
+ims:
+  - wechat: {}
 workspaces:
   - id: ws1
     path: ~/project
@@ -216,9 +216,67 @@ storage_dir: /tmp/x
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "storage_dir") {
-		t.Fatalf("expected unknown field error mentioning storage_dir, got: %v", err)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.IMs) != 1 || cfg.IMs[0].Type() != "wechat" {
+		t.Fatalf("loaded IMs = %#v", cfg.IMs)
+	}
+}
+
+func TestLoad_ExpandsWechatTokenPath(t *testing.T) {
+	dir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	t.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", oldHome) })
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte(`
+ims:
+  - wechat:
+      token_path: ~/secrets/wechat-token.json
+workspaces:
+  - id: ws1
+    path: ~/project
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := filepath.Join(dir, "secrets", "wechat-token.json")
+	if got := cfg.IMs[0].Wechat.TokenPath; got != want {
+		t.Fatalf("TokenPath = %q, want %q", got, want)
+	}
+}
+
+func TestLoad_IgnoresRemovedConfigFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte(`
+im:
+  type: wechat
+  wechat:
+    bot_type: "3"
+ims:
+  - feishu:
+      app_id: app
+      app_secret: secret
+workspaces:
+  - id: ws1
+    path: ~/project
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.IMs) != 1 || cfg.IMs[0].Type() != "feishu" {
+		t.Fatalf("loaded IMs = %#v", cfg.IMs)
 	}
 }
 
@@ -245,7 +303,7 @@ func TestConfigHelpers(t *testing.T) {
 		if got := cfg.IdleTimeoutDuration(); got != 45*time.Second {
 			t.Fatalf("custom idle timeout = %v", got)
 		}
-		cfg.IdleTimeout = "bad"
+		cfg.IdleTimeout = "not-a-duration"
 		if got := cfg.IdleTimeoutDuration(); got != 30*time.Minute {
 			t.Fatalf("invalid idle timeout fallback = %v", got)
 		}
@@ -267,60 +325,49 @@ func TestConfigHelpers(t *testing.T) {
 		if got := cfg.ActiveIMs(); got != nil {
 			t.Fatalf("ActiveIMs nil config = %v", got)
 		}
-		cfg.IM = IMConfig{Type: "wechat", Wechat: &WechatConfig{BaseURL: "https://api"}}
+		cfg.IMs = []IMAdapterConfig{{Wechat: &WechatConfig{BaseURL: "https://api"}}}
 		got := cfg.ActiveIMs()
-		if len(got) != 1 || got[0].Type != "wechat" || got[0].Wechat.BaseURL != "https://api" {
-			t.Fatalf("ActiveIMs fallback = %#v", got)
+		if len(got) != 1 || got[0].Type() != "wechat" || got[0].Wechat.BaseURL != "https://api" {
+			t.Fatalf("ActiveIMs = %#v", got)
 		}
 		if cfg.IsMultiIM() {
-			t.Fatal("single IM should not be multi")
+			t.Fatal("single IM adapter should not be multi")
 		}
-		cfg.IMs = []IMAdapterConfig{{Type: "wechat"}, {Type: "feishu"}}
+		cfg.IMs = append(cfg.IMs, IMAdapterConfig{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}})
 		if !cfg.IsMultiIM() {
-			t.Fatal("two IMs should be multi")
+			t.Fatal("two IM adapters should be multi")
 		}
 	})
 
-	t.Run("FindWorkspace backward compatibility", func(t *testing.T) {
-		cfg := &Config{IM: IMConfig{Type: "wechat"}, Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}, {ID: "ws2", Path: "/tmp/ws2"}}}
-		if ws := cfg.FindWorkspace("chat"); ws == nil || ws.ID != "ws1" {
-			t.Fatalf("FindWorkspace wechat = %#v", ws)
+	t.Run("FindWorkspace single workspace", func(t *testing.T) {
+		cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+		if got := cfg.FindWorkspace("any"); got == nil || got.ID != "ws1" {
+			t.Fatalf("FindWorkspace single = %#v", got)
 		}
-		cfg = &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "chat-1"}, {ID: "ws2", Path: "/tmp/ws2", IMChatID: "chat-2"}}}
-		if ws := cfg.FindWorkspace("chat-2"); ws == nil || ws.ID != "ws2" {
-			t.Fatalf("FindWorkspace by chatID = %#v", ws)
-		}
-		if ws := cfg.FindWorkspace("missing"); ws != nil {
-			t.Fatalf("FindWorkspace missing = %#v", ws)
+		cfg = &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}, {ID: "ws2", Path: "/tmp/ws2"}}}
+		if got := cfg.FindWorkspace("chat-1"); got != nil {
+			t.Fatalf("FindWorkspace ambiguous = %#v", got)
 		}
 	})
 
-	t.Run("ExpandPath expands chord path and workspaces", func(t *testing.T) {
-		cfg := &Config{ChordPath: "~/bin/chord", Workspaces: []Workspace{{ID: "ws1", Path: "~/project"}}}
-		cfg.ExpandPath(func(p string) string { return strings.ReplaceAll(p, "~", "/home/test") })
-		if cfg.ChordPath != "/home/test/bin/chord" || cfg.Workspaces[0].Path != "/home/test/project" {
-			t.Fatalf("expanded cfg = %#v", cfg)
+	t.Run("Feishu allowlist", func(t *testing.T) {
+		fc := &FeishuConfig{}
+		if !fc.IsOpenIDAllowed("any") {
+			t.Fatal("empty allowlist should allow")
+		}
+		fc.OwnerOpenID = "ou_owner"
+		if !fc.IsOpenIDAllowed("ou_owner") {
+			t.Fatal("owner should be allowed")
+		}
+		if fc.IsOpenIDAllowed("ou_x") {
+			t.Fatal("non-owner should be denied")
+		}
+		fc.AllowedOpenIDs = []string{"ou_a"}
+		if !fc.IsOpenIDAllowed("ou_a") {
+			t.Fatal("allowlisted user should be allowed")
+		}
+		if fc.IsOpenIDAllowed("ou_x") {
+			t.Fatal("non-allowlisted user should be denied")
 		}
 	})
-}
-
-func TestFeishuConfig_IsOpenIDAllowed(t *testing.T) {
-	var fc *FeishuConfig
-	if !fc.IsOpenIDAllowed("any") {
-		t.Fatal("nil config should allow everyone")
-	}
-	fc = &FeishuConfig{}
-	if !fc.IsOpenIDAllowed("any") {
-		t.Fatal("empty allowlist should allow everyone")
-	}
-	fc = &FeishuConfig{OwnerOpenID: "ou_owner", AllowedOpenIDs: []string{"ou_a", "ou_b"}}
-	if !fc.IsOpenIDAllowed("ou_owner") {
-		t.Fatal("owner should be allowed even if not in allowlist")
-	}
-	if !fc.IsOpenIDAllowed("ou_a") {
-		t.Fatal("allowlisted user should be allowed")
-	}
-	if fc.IsOpenIDAllowed("ou_x") {
-		t.Fatal("non-allowlisted user should be denied")
-	}
 }

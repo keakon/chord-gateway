@@ -30,18 +30,16 @@ go build -o chord-gateway .
 
 关键路由规则：
 
-- 微信始终路由到一个工作区。
-- 飞书在多工作区模式下要求每个 workspace 配置唯一 `im_chat_id`。
-- 如果同时启用微信且存在多个 workspace，需要通过 `wechat_workspace_id` 指定微信使用哪个 workspace。
+- 微信始终通过 `ims[].wechat.workspace_id` 路由到一个工作区。
+- 飞书通过 `ims[].feishu.chat_bindings` 把 chat ID 映射到 workspace ID。
+- 如果只有一个 workspace，微信 `workspace_id` 和飞书 `chat_bindings` 都可以省略。
 
 ### 3.1 微信
 
 ```yaml
-im:
-  type: wechat
-  wechat:
-    base_url: https://ilinkai.weixin.qq.com
-    bot_type: "3"
+ims:
+  - wechat:
+      base_url: https://ilinkai.weixin.qq.com
 workspaces:
   - id: default
     path: /path/to/project
@@ -53,19 +51,18 @@ idle_timeout: 30m
 
 - gateway 会打印二维码登录 URL。
 - 用微信扫码登录。
-- token 会保存到 gateway 状态目录，后续运行可复用。
+- token 会保存到 `<state_dir>/wechat/token.json`，后续运行可复用。如需单独管理该密钥，可通过 `ims[].wechat.token_path` 覆盖路径。
 
 ### 3.2 飞书
 
 ```yaml
-im:
-  type: feishu
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    verification_token: your-token
-    listen: ":8080"
-    webhook_path: /feishu/callback
+ims:
+  - feishu:
+      app_id: cli_xxx
+      app_secret: your-app-secret
+      verification_token: your-token
+      listen: ":8080"
+      webhook_path: /feishu/callback
 workspaces:
   - id: default
     path: /path/to/project
@@ -98,25 +95,23 @@ idle_timeout: 30m
 
 ```yaml
 ims:
-  - type: wechat
-    wechat:
+  - wechat:
       base_url: https://ilinkai.weixin.qq.com
-      bot_type: "3"
-  - type: feishu
-    feishu:
+      workspace_id: project-a
+  - feishu:
       app_id: cli_xxx
       app_secret: your-app-secret
       verification_token: your-token
       listen: ":8080"
       webhook_path: /feishu/callback
-wechat_workspace_id: project-a
+      chat_bindings:
+        oc_project_a: project-a
+        oc_project_b: project-b
 workspaces:
   - id: project-a
     path: ~/work/project-a
-    im_chat_id: oc_project_a
   - id: project-b
     path: ~/work/project-b
-    im_chat_id: oc_project_b
 chord_path: chord
 idle_timeout: 30m
 ```
@@ -139,39 +134,19 @@ chord-gateway -f config.yaml
 2. 确认 gateway 能正确解析到预期 workspace，并成功连接 `chord headless`
 3. 再发送普通文本开始与 Chord 交互
 
-配置文件查找优先级：
+## 5. 状态文件位置
 
-1. `--config` / `-f`
-2. `CHORD_GATEWAY_CONFIG`
-3. `$XDG_CONFIG_HOME/chord-gateway/config.yaml`
-4. `~/.config/chord-gateway/config.yaml`
+默认情况下，gateway 会把运行时状态存储到：
 
-运行态状态目录优先级：
+- macOS: `~/Library/Application Support/chord-gateway`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`
+- 配置文件: `${XDG_CONFIG_HOME:-~/.config}/chord-gateway/config.yaml`
 
-1. `CHORD_GATEWAY_STATE_DIR`
-2. `$XDG_STATE_HOME/chord-gateway`
-3. `~/.local/state/chord-gateway`
+状态内容包括日志、微信 token 文件（默认 `<state_dir>/wechat/token.json`）、飞书去重数据和 session pin。飞书 `app_id`/`app_secret` 仍属于配置凭据；短期 access token 只保存在内存中并按需刷新。
 
-状态目录中会存储日志、微信 token 文件、飞书去重数据和 session pin。默认日志文件为 `<state_dir>/gateway.log`。
+## 6. 下一步文档
 
-## 5. 常用 IM 命令
-
-- `/status` – 查看当前 Chord 状态
-- `/cancel` – 取消当前 turn
-- `/allow`, `/deny` – 批准或拒绝待确认请求
-- `/answer <text>` – 回答待处理问题
-- `/todos` – 查看当前 todo 列表
-- `/new` – 清除当前绑定的 session pin，并启动全新 session
-- `/resume <id>` – 恢复并 pin 指定 session
-- `/sessions` – 列出 workspace 中最近的 session
-- `/current` – 查看当前绑定状态和 pin 的 session
-- `/login [platform]` – 发起登录流程，例如 `/login weixin`
-
-## 6. 后续文档
-
-- [README](./README_CN.md) – 发布入口概览
-- [使用指南](./docs/usage_CN.md) – session 行为和 IM 命令
-- [配置参考](./docs/configuration_CN.md) – 全部配置字段
-- [运维说明](./docs/operations_CN.md) – 日志、状态文件、清理和路由
-- [权限与安全边界](./docs/permissions-and-safety_CN.md)
+- [配置参考](./docs/configuration_CN.md)
+- [使用指南](./docs/usage_CN.md)
+- [运维说明](./docs/operations_CN.md)
 - [故障排查](./docs/troubleshooting_CN.md)

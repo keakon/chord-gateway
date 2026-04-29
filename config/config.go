@@ -14,26 +14,12 @@ import (
 
 // Config is the top-level gateway configuration.
 type Config struct {
-	IM          IMConfig          `yaml:"im,omitempty"`
-	IMs         []IMAdapterConfig `yaml:"ims,omitempty"`
-	Workspaces  []Workspace       `yaml:"workspaces"`
-	ChordPath   string            `yaml:"chord_path,omitempty"`
-	IdleTimeout string            `yaml:"idle_timeout,omitempty"`
-
-	// WechatWorkspaceID optionally pins all WeChat traffic to the named workspace.
-	// This enables multi-IM deployments where WeChat uses one workspace while
-	// Feishu routes multiple chats to different workspaces.
-	WechatWorkspaceID string `yaml:"wechat_workspace_id,omitempty"`
-
-	// EventVisibility controls which non-essential headless events the gateway
-	// subscribes to and surfaces. Essential events are always subscribed:
-	// assistant_message / confirm_request / question_request / idle / error /
-	// notification.
-	EventVisibility EventVisibility `yaml:"event_visibility,omitempty"`
-
-	// SessionPinsFile is an optional override for the session pin store path.
-	// If empty, defaults to <state_dir>/session-pins.json.
-	SessionPinsFile string `yaml:"session_pins_file,omitempty"`
+	IMs             []IMAdapterConfig `yaml:"ims"`
+	Workspaces      []Workspace       `yaml:"workspaces"`
+	ChordPath       string            `yaml:"chord_path,omitempty"`
+	IdleTimeout     string            `yaml:"idle_timeout,omitempty"`
+	EventVisibility EventVisibility   `yaml:"event_visibility,omitempty"`
+	SessionPinsFile string            `yaml:"session_pins_file,omitempty"`
 }
 
 // EventVisibility controls optional control-plane event subscriptions.
@@ -46,36 +32,42 @@ type EventVisibility struct {
 	Todos      bool `yaml:"todos,omitempty"`
 }
 
-// IMConfig describes a single IM platform configuration (backward compat).
-type IMConfig struct {
-	Type   string        `yaml:"type,omitempty"`
+// IMAdapterConfig describes one IM adapter in the gateway config.
+type IMAdapterConfig struct {
 	Wechat *WechatConfig `yaml:"wechat,omitempty"`
 	Feishu *FeishuConfig `yaml:"feishu,omitempty"`
 }
 
-// IMAdapterConfig describes one IM adapter in multi-IM mode.
-type IMAdapterConfig struct {
-	Type   string        `yaml:"type"`
-	Wechat *WechatConfig `yaml:"wechat,omitempty"`
-	Feishu *FeishuConfig `yaml:"feishu,omitempty"`
+// Type returns the normalized adapter type name for this config entry.
+func (c IMAdapterConfig) Type() string {
+	switch {
+	case c.Wechat != nil:
+		return "wechat"
+	case c.Feishu != nil:
+		return "feishu"
+	default:
+		return ""
+	}
 }
 
 // WechatConfig holds WeChat iLink Bot configuration.
 type WechatConfig struct {
-	BaseURL string `yaml:"base_url,omitempty"`
-	BotType string `yaml:"bot_type,omitempty"`
+	BaseURL     string `yaml:"base_url,omitempty"`
+	WorkspaceID string `yaml:"workspace_id,omitempty"`
+	TokenPath   string `yaml:"token_path,omitempty"`
 }
 
 // FeishuConfig holds Feishu (飞书) application configuration.
 type FeishuConfig struct {
-	AppID             string   `yaml:"app_id"`
-	AppSecret         string   `yaml:"app_secret"`
-	VerificationToken string   `yaml:"verification_token,omitempty"`
-	EncryptKey        string   `yaml:"encrypt_key,omitempty"`
-	Listen            string   `yaml:"listen,omitempty"`
-	WebhookPath       string   `yaml:"webhook_path,omitempty"`
-	OwnerOpenID       string   `yaml:"owner_open_id,omitempty"`
-	AllowedOpenIDs    []string `yaml:"allowed_open_ids,omitempty"`
+	AppID             string            `yaml:"app_id"`
+	AppSecret         string            `yaml:"app_secret"`
+	VerificationToken string            `yaml:"verification_token,omitempty"`
+	EncryptKey        string            `yaml:"encrypt_key,omitempty"`
+	Listen            string            `yaml:"listen,omitempty"`
+	WebhookPath       string            `yaml:"webhook_path,omitempty"`
+	OwnerOpenID       string            `yaml:"owner_open_id,omitempty"`
+	AllowedOpenIDs    []string          `yaml:"allowed_open_ids,omitempty"`
+	ChatBindings      map[string]string `yaml:"chat_bindings,omitempty"`
 }
 
 // IsOpenIDAllowed checks if an open_id is allowed to send messages.
@@ -98,11 +90,10 @@ func (fc *FeishuConfig) IsOpenIDAllowed(openID string) bool {
 	return false
 }
 
-// Workspace maps an IM chat to a project directory.
+// Workspace defines a project directory.
 type Workspace struct {
-	ID       string `yaml:"id"`
-	Path     string `yaml:"path"`
-	IMChatID string `yaml:"im_chat_id,omitempty"`
+	ID   string `yaml:"id"`
+	Path string `yaml:"path"`
 }
 
 // IdleTimeoutDuration parses and returns the idle timeout duration.
@@ -126,113 +117,101 @@ func (c *Config) ChordBinary() string {
 	return "chord"
 }
 
-// ActiveIMs returns the list of active IM adapter configs.
-// If IMs (multi-IM) is set, return those. Otherwise fall back to the
-// single IM config for backward compatibility.
+// ActiveIMs returns the configured IM adapter list.
 func (c *Config) ActiveIMs() []IMAdapterConfig {
-	if len(c.IMs) > 0 {
-		return c.IMs
-	}
-	if c.IM.Type == "" {
+	if len(c.IMs) == 0 {
 		return nil
 	}
-	return []IMAdapterConfig{{
-		Type:   c.IM.Type,
-		Wechat: c.IM.Wechat,
-		Feishu: c.IM.Feishu,
-	}}
+	return c.IMs
 }
 
 // IsMultiIM returns true if more than one IM adapter is configured.
 func (c *Config) IsMultiIM() bool {
-	return len(c.ActiveIMs()) > 1
+	return len(c.IMs) > 1
 }
 
-// FindWorkspace finds a workspace by chat ID (legacy).
+// FindWorkspace returns the single configured workspace when unambiguous.
 // Deprecated: use ResolveWorkspace(imType, chatID) instead.
-// Kept only for backward compatibility; new code must use ResolveWorkspace.
 func (c *Config) FindWorkspace(chatID string) *Workspace {
-	for _, im := range c.ActiveIMs() {
-		if im.Type == "wechat" || im.Type == "feishu" {
-			if len(c.Workspaces) > 0 {
-				return &c.Workspaces[0]
-			}
-			return nil
-		}
+	if len(c.Workspaces) == 1 {
+		return &c.Workspaces[0]
 	}
-	for i := range c.Workspaces {
-		if c.Workspaces[i].IMChatID == chatID {
-			return &c.Workspaces[i]
+	return nil
+}
+
+// ResolveWorkspace resolves a workspace by IM type and chat ID using routing
+// declared under each IM adapter config.
+func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
+	if len(c.Workspaces) == 0 {
+		return nil, fmt.Errorf("no workspace configured")
+	}
+	imType = normalizeIMType(imType)
+
+	if imType == "console" {
+		if len(c.Workspaces) == 1 {
+			return &c.Workspaces[0], nil
+		}
+		return nil, fmt.Errorf("console chat_id %q is not bound to any workspace; console mode requires exactly one workspace", chatID)
+	}
+
+	imCfg := c.IMConfigByType(imType)
+	if imCfg == nil {
+		if len(c.Workspaces) == 1 {
+			return &c.Workspaces[0], nil
+		}
+		return nil, fmt.Errorf("no %s adapter configured for workspace routing", imType)
+	}
+
+	switch imType {
+	case "wechat":
+		workspaceID := ""
+		if imCfg.Wechat != nil {
+			workspaceID = imCfg.Wechat.WorkspaceID
+		}
+		if workspaceID == "" {
+			if len(c.Workspaces) == 1 {
+				return &c.Workspaces[0], nil
+			}
+			return nil, fmt.Errorf("wechat with multiple workspaces requires ims[].wechat.workspace_id to select a single workspace")
+		}
+		return c.workspaceByID(workspaceID)
+
+	case "feishu":
+		if len(c.Workspaces) == 1 && len(imCfg.Feishu.ChatBindings) == 0 {
+			return &c.Workspaces[0], nil
+		}
+		workspaceID := imCfg.Feishu.ChatBindings[chatID]
+		if workspaceID == "" {
+			return nil, fmt.Errorf("feishu chat_id %q is not bound to any workspace; please configure ims[].feishu.chat_bindings in config", chatID)
+		}
+		return c.workspaceByID(workspaceID)
+
+	default:
+		if len(c.Workspaces) == 1 {
+			return &c.Workspaces[0], nil
+		}
+		return nil, fmt.Errorf("no workspace routing configured for IM type %q and chat_id %q", imType, chatID)
+	}
+}
+
+// IMConfigByType returns the first configured adapter matching imType.
+func (c *Config) IMConfigByType(imType string) *IMAdapterConfig {
+	imType = normalizeIMType(imType)
+	for i := range c.IMs {
+		if c.IMs[i].Type() == imType {
+			return &c.IMs[i]
 		}
 	}
 	return nil
 }
 
-// ResolveWorkspace resolves a workspace by IM type and chat ID, following
-// routing rules:
-//
-//   - wechat:
-//   - if wechat_workspace_id is set, route all WeChat traffic to that workspace.
-//   - otherwise, route to the first workspace for backward compatibility.
-//   - feishu:
-//   - single workspace: returns it regardless of im_chat_id.
-//   - multiple workspaces: requires exact chatID match on im_chat_id; returns
-//     a clear error if no match is found (no fallback to first workspace).
-//   - console:
-//   - single workspace: returns it (legacy compatibility for stdin/stdout mode).
-//   - multiple workspaces: requires exact chatID match on im_chat_id.
-//   - other: exact im_chat_id match.
-func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
-	switch normalizeIMType(imType) {
-	case "wechat":
-		if len(c.Workspaces) == 0 {
-			return nil, fmt.Errorf("no workspace configured")
+func (c *Config) workspaceByID(id string) (*Workspace, error) {
+	for i := range c.Workspaces {
+		if c.Workspaces[i].ID == id {
+			return &c.Workspaces[i], nil
 		}
-		if c.WechatWorkspaceID != "" {
-			for i := range c.Workspaces {
-				if c.Workspaces[i].ID == c.WechatWorkspaceID {
-					return &c.Workspaces[i], nil
-				}
-			}
-			return nil, fmt.Errorf("wechat_workspace_id %q does not match any configured workspace", c.WechatWorkspaceID)
-		}
-		return &c.Workspaces[0], nil
-
-	case "feishu":
-		if len(c.Workspaces) == 1 {
-			return &c.Workspaces[0], nil
-		}
-		// Multi-workspace: require exact chatID match.
-		for i := range c.Workspaces {
-			if c.Workspaces[i].IMChatID == chatID {
-				return &c.Workspaces[i], nil
-			}
-		}
-		return nil, fmt.Errorf("feishu chat_id %q is not bound to any workspace; please configure workspaces[].im_chat_id in config", chatID)
-
-	case "console":
-		// Keep console fallback behavior compatible with legacy single-workspace
-		// mode used by the WeChat adapter when it runs from stdin/stdout.
-		if len(c.Workspaces) == 1 {
-			return &c.Workspaces[0], nil
-		}
-		// Multi-workspace: require explicit binding by im_chat_id.
-		for i := range c.Workspaces {
-			if c.Workspaces[i].IMChatID == chatID {
-				return &c.Workspaces[i], nil
-			}
-		}
-		return nil, fmt.Errorf("console chat_id %q is not bound to any workspace; please configure workspaces[].im_chat_id in config", chatID)
-
-	default:
-		// other: exact chatID match.
-		for i := range c.Workspaces {
-			if c.Workspaces[i].IMChatID == chatID {
-				return &c.Workspaces[i], nil
-			}
-		}
-		return nil, fmt.Errorf("no workspace configured for chat_id %q", chatID)
 	}
+	return nil, fmt.Errorf("workspace_id %q does not match any configured workspace", id)
 }
 
 // normalizeIMType normalizes an IM type name.
@@ -252,10 +231,8 @@ func normalizeIMType(name string) string {
 func (c *Config) Validate() error {
 	activeIMs := c.ActiveIMs()
 
-	// Collect which IM types are active.
-	ims := make(map[string]bool)
-	for _, im := range activeIMs {
-		ims[im.Type] = true
+	if len(activeIMs) == 0 {
+		return fmt.Errorf("at least one IM adapter must be configured in ims")
 	}
 
 	if len(c.Workspaces) == 0 {
@@ -273,43 +250,45 @@ func (c *Config) Validate() error {
 		workspaceByID[ws.ID] = i
 	}
 
-	// 1. WeChat routing.
-	if ims["wechat"] {
-		if len(c.Workspaces) > 1 {
-			if c.WechatWorkspaceID == "" {
-				return fmt.Errorf("wechat with multiple workspaces requires wechat_workspace_id to select a single workspace")
-			}
-			if _, ok := workspaceByID[c.WechatWorkspaceID]; !ok {
-				return fmt.Errorf("wechat_workspace_id %q does not match any configured workspace", c.WechatWorkspaceID)
-			}
-		} else if c.WechatWorkspaceID != "" {
-			if _, ok := workspaceByID[c.WechatWorkspaceID]; !ok {
-				return fmt.Errorf("wechat_workspace_id %q does not match any configured workspace", c.WechatWorkspaceID)
-			}
+	for i := range c.IMs {
+		im := &c.IMs[i]
+		typ := im.Type()
+		if typ == "" {
+			return fmt.Errorf("ims[%d] must contain exactly one platform config", i)
 		}
-	}
-
-	// 2. Feishu: multi-workspace rules.
-	if ims["feishu"] && len(c.Workspaces) > 1 {
-		seen := make(map[string]int) // im_chat_id -> workspace index
-		for i, ws := range c.Workspaces {
-			if ws.IMChatID == "" {
-				return fmt.Errorf("feishu multi-workspace: workspaces[%d] (%s) requires a non-empty im_chat_id", i, ws.ID)
-			}
-			if prev, ok := seen[ws.IMChatID]; ok {
-				return fmt.Errorf("feishu multi-workspace: duplicate im_chat_id %q in workspaces[%d] (%s) and workspaces[%d] (%s)",
-					ws.IMChatID, prev, c.Workspaces[prev].ID, i, ws.ID)
-			}
-			seen[ws.IMChatID] = i
+		if im.Wechat != nil && im.Feishu != nil {
+			return fmt.Errorf("ims[%d] must contain exactly one platform config", i)
 		}
-	}
 
-	// 3. Feishu: validate owner/allowlist.
-	if ims["feishu"] {
-		for _, im := range activeIMs {
-			if im.Type != "feishu" || im.Feishu == nil {
-				continue
+		switch typ {
+		case "wechat":
+			if im.Wechat.WorkspaceID == "" {
+				if len(c.Workspaces) > 1 {
+					return fmt.Errorf("wechat with multiple workspaces requires ims[%d].wechat.workspace_id to select a single workspace", i)
+				}
+			} else if _, ok := workspaceByID[im.Wechat.WorkspaceID]; !ok {
+				return fmt.Errorf("ims[%d].wechat.workspace_id %q does not match any configured workspace", i, im.Wechat.WorkspaceID)
 			}
+
+		case "feishu":
+			if im.Feishu.AppID == "" {
+				return fmt.Errorf("ims[%d].feishu.app_id is required", i)
+			}
+			if im.Feishu.AppSecret == "" {
+				return fmt.Errorf("ims[%d].feishu.app_secret is required", i)
+			}
+			if len(c.Workspaces) > 1 && len(im.Feishu.ChatBindings) == 0 {
+				return fmt.Errorf("feishu with multiple workspaces requires ims[%d].feishu.chat_bindings", i)
+			}
+			for chatID, workspaceID := range im.Feishu.ChatBindings {
+				if strings.TrimSpace(chatID) == "" {
+					return fmt.Errorf("ims[%d].feishu.chat_bindings contains an empty chat_id", i)
+				}
+				if _, ok := workspaceByID[workspaceID]; !ok {
+					return fmt.Errorf("ims[%d].feishu.chat_bindings[%q] references unknown workspace %q", i, chatID, workspaceID)
+				}
+			}
+
 			// Deduplicate allowed_open_ids.
 			if len(im.Feishu.AllowedOpenIDs) > 0 {
 				seen := make(map[string]bool)
@@ -341,11 +320,18 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ExpandPath expands ~ in workspace paths and chord path using XDG paths.
+// ExpandPath expands ~ in workspace paths, chord path, session pin path, and
+// adapter-specific state paths using XDG paths.
 func (c *Config) ExpandPath(pathsResolve func(string) string) {
 	c.ChordPath = pathsResolve(c.ChordPath)
+	c.SessionPinsFile = pathsResolve(c.SessionPinsFile)
 	for i := range c.Workspaces {
 		c.Workspaces[i].Path = pathsResolve(c.Workspaces[i].Path)
+	}
+	for i := range c.IMs {
+		if c.IMs[i].Wechat != nil {
+			c.IMs[i].Wechat.TokenPath = pathsResolve(c.IMs[i].Wechat.TokenPath)
+		}
 	}
 }
 
@@ -362,7 +348,6 @@ func Load(path string) (*Config, error) {
 	}
 	var cfg Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}

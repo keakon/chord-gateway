@@ -41,7 +41,7 @@ func TestMultiAdapter_SendText(t *testing.T) {
 	t.Run("routes via router adapter type", func(t *testing.T) {
 		wechat := &stubIMAdapter{typ: "wechat"}
 		feishu := &stubIMAdapter{typ: "feishu"}
-		r := &NotificationRouter{cfg: &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "feishu-chat"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
+		r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
 		m := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}, router: r}
 		if err := m.SendText("feishu-chat", "hello"); err != nil {
 			t.Fatalf("SendText() error = %v", err)
@@ -138,7 +138,7 @@ func TestMultiAdapter_StartLoginWithoutWechat(t *testing.T) {
 func TestMultiAdapter_BroadcastText(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
-	r := &NotificationRouter{cfg: &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "feishu-chat"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
+	r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
 	m := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}, router: r}
 
 	m.BroadcastText("hello all")
@@ -154,7 +154,7 @@ func TestMultiAdapter_BroadcastTextExcept(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
 	console := &stubIMAdapter{typ: "console"}
-	r := &NotificationRouter{cfg: &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "feishu-fallback"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
+	r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-fallback": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
 	m := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}, {IMAdapter: console}}, router: r}
 
 	m.BroadcastTextExcept("wx", map[string]string{"feishu": "feishu-direct"}, "cross notify")
@@ -170,16 +170,16 @@ func TestMultiAdapter_BroadcastTextExcept(t *testing.T) {
 }
 
 func TestNewMultiAdapter_ErrorsForUnsupportedAdapter(t *testing.T) {
-	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Type: "unsupported"}}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{}}}
 	_, err := NewMultiAdapter(cfg, testPaths(t), nil)
-	if err == nil || err.Error() != "create unsupported adapter: unsupported IM type: unsupported" {
+	if err == nil || err.Error() != "create  adapter: unsupported IM type: " {
 		t.Fatalf("NewMultiAdapter() error = %v", err)
 	}
 }
 
 func TestNewMultiAdapter_CreatesConfiguredAdapters(t *testing.T) {
 	paths := testPaths(t)
-	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Type: "wechat", Wechat: &config.WechatConfig{}}, {Type: "feishu", Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret"}}}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}, {Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret"}}}}
 	m, err := NewMultiAdapter(cfg, paths, nil)
 	if err != nil {
 		t.Fatalf("NewMultiAdapter() error = %v", err)

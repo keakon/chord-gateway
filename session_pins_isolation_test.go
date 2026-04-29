@@ -9,7 +9,7 @@ import (
 
 func TestSessionPins_IsolatedByChatAndIMType(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.Config{IM: config.IMConfig{Type: "wechat", Wechat: &config.WechatConfig{}}, SessionPinsFile: filepath.Join(dir, "pins.json")}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}, SessionPinsFile: filepath.Join(dir, "pins.json")}
 	paths, err := config.Resolve("", filepath.Join(dir, "config.yaml"), dir, filepath.Join(dir, "gateway.log"), "", "", dir)
 	if err != nil {
 		t.Fatal(err)

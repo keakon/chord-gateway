@@ -28,9 +28,9 @@ func NewMultiAdapter(cfg *config.Config, paths *config.Paths, router *Notificati
 
 	m := &MultiAdapter{router: router}
 	for i := range activeIMs {
-		a, err := newAdapterFromConfig(activeIMs[i], paths, router)
+		a, err := newAdapterFromConfig(activeIMs[i], cfg, paths, router)
 		if err != nil {
-			return nil, fmt.Errorf("create %s adapter: %w", activeIMs[i].Type, err)
+			return nil, fmt.Errorf("create %s adapter: %w", activeIMs[i].Type(), err)
 		}
 		m.adapters = append(m.adapters, namedAdapter{IMAdapter: a})
 	}

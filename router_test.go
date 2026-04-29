@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,9 +20,9 @@ import (
 
 func testConfig() *config.Config {
 	return &config.Config{
-		IM: config.IMConfig{Type: "wechat"},
+		IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}},
 		Workspaces: []config.Workspace{
-			{ID: "test", Path: "/tmp/test", IMChatID: "chat-1"},
+			{ID: "test", Path: "/tmp/test"},
 		},
 	}
 }
@@ -32,6 +33,277 @@ func newTestRouter() *NotificationRouter {
 		lastKeyChatID: make(map[string]string),
 		lastTodos:     make(map[string][]TodoItem),
 	}
+}
+
+func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
+	cfg := testConfig()
+	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+	r := NewNotificationRouter(mgr, cfg)
+	if r.mgr != mgr || r.cfg != cfg {
+		t.Fatalf("router links not initialized")
+	}
+	if r.lastKeyChatID == nil || r.lastTodos == nil {
+		t.Fatalf("router maps should be initialized")
+	}
+	if mgr.onEvent == nil {
+		t.Fatalf("manager onEvent should be registered")
+	}
+
+	adapter := &stubIMAdapter{typ: "wechat"}
+	r.SetAdapter(adapter)
+	if r.adapter != adapter {
+		t.Fatalf("adapter was not set")
+	}
+}
+
+func TestHandleMessageRoutesMissingWorkspaceError(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{
+		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{WorkspaceID: "missing"}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+		adapter:       sender,
+		lastKeyChatID: make(map[string]string),
+		lastTodos:     make(map[string][]TodoItem),
+	}
+
+	r.HandleMessage("wechat", "chat-1", "hello")
+	if got := sender.lastMessage().text; !strings.Contains(got, "workspace_id") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestHandleIncomingMessageNoWorkspace(t *testing.T) {
+	sender := &stubIMAdapter{typ: "console"}
+	r := &NotificationRouter{
+		cfg:           &config.Config{Workspaces: nil},
+		adapter:       sender,
+		lastKeyChatID: make(map[string]string),
+		lastTodos:     make(map[string][]TodoItem),
+	}
+
+	r.HandleIncomingMessage(IncomingMessage{IMType: "console", ChatID: "chat-1", Text: "hello"})
+	if got := sender.lastMessage().text; !strings.Contains(got, "no workspace configured") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestHandleSessions(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{adapter: sender}
+
+	t.Run("missing sessions directory", func(t *testing.T) {
+		r.handleSessions(&config.Workspace{ID: "ws", Path: t.TempDir()}, "chat")
+		if got := sender.lastMessage().text; got != "📂 No sessions found." {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("lists directories newest first and skips files", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender}
+		root := t.TempDir()
+		sessionsDir := filepath.Join(root, ".chord", "sessions")
+		if err := os.MkdirAll(filepath.Join(sessionsDir, "2026-01-01"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(sessionsDir, "2026-01-03"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sessionsDir, "not-a-session"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		r.handleSessions(&config.Workspace{ID: "ws", Path: root}, "chat")
+		msg := sender.lastMessage().text
+		if !strings.Contains(msg, "📂 Recent sessions:") || !strings.Contains(msg, "2026-01-03") || !strings.Contains(msg, "2026-01-01") {
+			t.Fatalf("message = %q", msg)
+		}
+		if strings.Contains(msg, "not-a-session") {
+			t.Fatalf("file should be skipped: %q", msg)
+		}
+		if strings.Index(msg, "2026-01-03") > strings.Index(msg, "2026-01-01") {
+			t.Fatalf("sessions should be listed newest name first: %q", msg)
+		}
+	})
+}
+
+func TestHandleChordEventRoutesDirectAndLegacy(t *testing.T) {
+	t.Run("direct assistant message", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender, lastTodos: make(map[string][]TodoItem)}
+		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+		r.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: "done"})
+		if got := sender.lastMessage(); got.chatID != "chat-1" || got.text != "done" {
+			t.Fatalf("message = %#v", got)
+		}
+	})
+
+	t.Run("legacy key broadcasts to workspace", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{
+			cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"configured-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+			adapter:       sender,
+			lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "tracked-chat"}).String(): "tracked-chat"},
+		}
+		r.HandleChordEvent((processKey{workspaceID: "ws1"}).String(), "assistant_message", ControlState{LastAssistantText: "legacy"})
+		if got := sender.lastMessage(); got.chatID == "" || got.text != "legacy" {
+			t.Fatalf("legacy broadcast message = %#v", got)
+		}
+	})
+
+	t.Run("todos notification uses keyed diff", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender, lastTodos: make(map[string][]TodoItem)}
+		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+		state := ControlState{Todos: []TodoItem{{ID: "1", Content: "work", Status: "in_progress"}}}
+		r.HandleChordEvent(key, "todos", state)
+		if got := sender.lastMessage().text; !strings.Contains(got, "work") {
+			t.Fatalf("todos message = %q", got)
+		}
+		count := len(sender.sentMessages())
+		r.HandleChordEvent(key, "todos", state)
+		if got := len(sender.sentMessages()); got != count {
+			t.Fatalf("unchanged todos should not send again: got %d want %d", got, count)
+		}
+	})
+}
+
+func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
+	wechat := &stubIMAdapter{typ: "wechat"}
+	feishu := &stubIMAdapter{typ: "feishu"}
+	r := &NotificationRouter{
+		adapter: &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}},
+		cfg:     &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+		lastKeyChatID: map[string]string{
+			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat",
+		},
+	}
+
+	r.broadcastExcept("wechat", "hello")
+	if got := len(wechat.sentMessages()); got != 0 {
+		t.Fatalf("excluded wechat received %d messages", got)
+	}
+	if got := feishu.lastMessage(); got.chatID != "feishu-chat" || got.text != "hello" {
+		t.Fatalf("feishu message = %#v", got)
+	}
+
+	before := len(feishu.sentMessages())
+	r.broadcastExcept("unknown", "ignored")
+	if got := len(feishu.sentMessages()); got != before+1 {
+		t.Fatalf("unknown excluded adapter should still broadcast to known adapters, got %d want %d", got, before+1)
+	}
+}
+
+func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
+	fakeChord := makeFakeChordBinary(t, "")
+	stateDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
+	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	if err := mgr.pins.Set(key, "old-session"); err != nil {
+		t.Fatalf("set old pin: %v", err)
+	}
+
+	r.handleNew(ws, "chat-1", "wechat")
+	defer mgr.StopAll(time.Second)
+
+	if got := mgr.pins.Get(key); got != "" {
+		t.Fatalf("pin = %q, want cleared", got)
+	}
+	if got := sender.lastMessage().text; got != "🆕 New session started." {
+		t.Fatalf("message = %q", got)
+	}
+	args := readFakeChordArgs(t)
+	requireContains(t, args, "headless")
+	requireContains(t, args, "-d")
+	requireContains(t, args, workspaceDir)
+	if strings.Contains(args, "--resume") {
+		t.Fatalf("new session args should not contain --resume: %q", args)
+	}
+	if got := mgr.GetProcess("ws1"); got == nil || !got.Alive() {
+		t.Fatalf("expected live process, got %#v", got)
+	}
+}
+
+func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
+	fakeChord := makeFakeChordBinary(t, "")
+	stateDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
+	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+
+	r.handleResume(ws, "chat-1", "session-123", "wechat")
+	defer mgr.StopAll(time.Second)
+
+	if got := mgr.pins.Get(key); got != "session-123" {
+		t.Fatalf("pin = %q, want session-123", got)
+	}
+	if got := sender.lastMessage().text; got != "🔄 Resuming session session-123" {
+		t.Fatalf("message = %q", got)
+	}
+	args := readFakeChordArgs(t)
+	requireContains(t, args, "--resume")
+	requireContains(t, args, "session-123")
+	if got := mgr.GetProcess("ws1"); got == nil || !got.Alive() {
+		t.Fatalf("expected live process, got %#v", got)
+	}
+}
+
+func TestHandleNewAndResumeErrorPaths(t *testing.T) {
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	t.Run("new missing workspace", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		cfg := &config.Config{ChordPath: makeFakeChordBinary(t, ""), Workspaces: nil}
+		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), cfg: cfg, adapter: sender}
+
+		r.handleNew(ws, "chat-1", "wechat")
+		if got := sender.lastMessage().text; got != "❌ Failed to start new session." {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("resume spawn failure", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		cfg := &config.Config{ChordPath: filepath.Join(t.TempDir(), "missing-chord"), Workspaces: []config.Workspace{*ws}}
+		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), cfg: cfg, adapter: sender}
+
+		r.handleResume(ws, "chat-1", "session-123", "wechat")
+		if got := sender.lastMessage().text; got != "❌ Failed to resume session." {
+			t.Fatalf("message = %q", got)
+		}
+	})
+}
+
+func TestHandleCurrentAndTodosNoActiveSession(t *testing.T) {
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	cfg := &config.Config{Workspaces: nil}
+	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+
+	t.Run("current no active session", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+		r.handleCurrent(ws, "chat-1", "wechat")
+		msg := sender.lastMessage().text
+		if !strings.Contains(msg, "Workspace: ws1") || !strings.Contains(strings.ToLower(msg), "idle") {
+			t.Fatalf("current message = %q", msg)
+		}
+	})
+
+	t.Run("todos no active session", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+		r.handleTodos(ws, "chat-1", "wechat")
+		if got := sender.lastMessage().text; got != "⏸️ No active session." {
+			t.Fatalf("todos message = %q", got)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -630,10 +902,10 @@ func TestFormatTodosNotification(t *testing.T) {
 func TestChatIDLookupHelpers(t *testing.T) {
 	r := &NotificationRouter{
 		cfg: &config.Config{
-			IMs: []config.IMAdapterConfig{{Type: "wechat"}, {Type: "feishu"}},
+			IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}, {Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"feishu-config": "ws1", "feishu-two": "ws2"}}}},
 			Workspaces: []config.Workspace{
-				{ID: "ws1", Path: "/tmp/ws1", IMChatID: "feishu-config"},
-				{ID: "ws2", Path: "/tmp/ws2", IMChatID: "feishu-two"},
+				{ID: "ws1", Path: "/tmp/ws1"},
+				{ID: "ws2", Path: "/tmp/ws2"},
 			},
 		},
 		lastKeyChatID: map[string]string{
@@ -754,7 +1026,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	multi := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}}
 	r := &NotificationRouter{
 		adapter:       multi,
-		cfg:           &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "feishu-chat"}}},
+		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
 		lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"},
 	}
 
@@ -784,7 +1056,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 
 func TestSendTextAndBroadcastHelpers(t *testing.T) {
 	r := &NotificationRouter{
-		cfg:           &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "feishu-config"}}},
+		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-config": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
 		lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"},
 	}
 
@@ -1058,7 +1330,7 @@ func TestNormalizeIMTypeAndNames(t *testing.T) {
 
 func TestHandleChordCommandAndViews(t *testing.T) {
 	newRouterAndProcess := func(state ControlState) (*NotificationRouter, *ChordProcess, *stubIMAdapter, *captureWriteCloser, string, *config.Workspace) {
-		cfg := &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1", IMChatID: "chat-1"}}}
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"chat-1": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 		mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
 		sender := &stubIMAdapter{typ: "wechat"}
 		stdin := &captureWriteCloser{}

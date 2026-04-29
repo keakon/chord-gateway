@@ -6,55 +6,45 @@
 #   3. $XDG_CONFIG_HOME/chord-gateway/config.yaml
 #   4. ~/.config/chord-gateway/config.yaml
 #
-# Runtime state (logs, tokens, dedupe, session pins) goes to:
+# Runtime state (logs, WeChat QR-login tokens, dedupe, session pins) goes to:
 #   1. $CHORD_GATEWAY_STATE_DIR
 #   2. $XDG_STATE_HOME/chord-gateway
 #   3. ~/.local/state/chord-gateway
 #
-# The following is the only required field.
+# The following are the required sections.
 
 # --- IM Platform Configuration ---
-# Use either the single `im` block (backward compat) or the `ims` list (multi-IM mode).
-# Both can coexist; `ims` takes precedence if non-empty.
+# Configure every IM adapter explicitly under `ims`.
+# Each item contains exactly one platform block.
+ims:
+  - wechat:
+      base_url: https://ilinkai.weixin.qq.com  # optional, defaults to this
+      workspace_id: project-a                  # required when more than one workspace exists
+      # Optional. Defaults to <state_dir>/wechat/token.json.
+      # Use this only when you want to store the WeChat QR-login session token elsewhere.
+      # token_path: ~/.local/state/chord-gateway/wechat/token.json
 
-# Single IM (WeChat example):
-im:
-  type: wechat
-  wechat:
-    base_url: https://ilinkai.weixin.qq.com  # optional, defaults to this
-    bot_type: "3"                            # optional, defaults to "3"
-
-# Multi-IM mode: configure each IM adapter explicitly.
-# ims:
-#   - type: wechat
-#     wechat:
-#       base_url: https://ilinkai.weixin.qq.com
-#       bot_type: "3"
-#   - type: feishu
-#     feishu:
-#       app_id: cli_xxx
-#       app_secret: xxx
-#       listen: ":8080"
-#       webhook_path: /feishu/callback
-#       owner_open_id: ou_owner_xxx
-#       allowed_open_ids:
-#         - ou_owner_xxx
-#         - ou_user2
-# wechat_workspace_id: project-a
+  # - feishu:
+  #     app_id: cli_xxx
+  #     app_secret: xxx
+  #     listen: ":8080"
+  #     webhook_path: /feishu/callback
+  #     owner_open_id: ou_owner_xxx
+  #     allowed_open_ids:
+  #       - ou_owner_xxx
+  #       - ou_user2
+  #     chat_bindings:
+  #       oc_chat_project_a: project-a
+  #       oc_chat_project_b: project-b
 
 # --- Workspace Definitions ---
+# Workspaces only define project directories.
 workspaces:
   - id: project-a
     path: ~/work/project-a
-    im_chat_id: oc_chat_project_a   # required for Feishu multi-workspace; ignored for WeChat
 
   # - id: project-b
   #   path: ~/work/project-b
-  #   im_chat_id: oc_chat_project_b
-
-# If WeChat is enabled and more than one workspace is configured,
-# you must set wechat_workspace_id to the workspace ID that should receive all WeChat traffic.
-# wechat_workspace_id: project-a
 
 # --- Chord Binary ---
 # Path to the chord binary. Supports ~ expansion.

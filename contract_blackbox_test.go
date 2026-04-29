@@ -55,8 +55,8 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 	mustRewriteChordTestConfigAPIURL(t, chordConfigHome, server.URL+"/v1/chat/completions")
 
 	cfg := &config.Config{
-		IM:              config.IMConfig{Type: "console"},
-		Workspaces:      []config.Workspace{{ID: "test", Path: workspaceDir, IMChatID: "console-chat"}},
+		IMs:             []config.IMAdapterConfig{{}},
+		Workspaces:      []config.Workspace{{ID: "test", Path: workspaceDir}},
 		ChordPath:       chordBin,
 		SessionPinsFile: filepath.Join(t.TempDir(), "session-pins.json"),
 		EventVisibility: config.EventVisibility{
@@ -173,8 +173,8 @@ func TestChordHeadlessContract_DefaultSubscribeIncludesIdleAndNotification(t *te
 	mustRewriteChordTestConfigAPIURL(t, chordConfigHome, server.URL+"/v1/chat/completions")
 
 	cfg := &config.Config{
-		IM:              config.IMConfig{Type: "console"},
-		Workspaces:      []config.Workspace{{ID: "test", Path: workspaceDir, IMChatID: "console-chat"}},
+		IMs:             []config.IMAdapterConfig{{}},
+		Workspaces:      []config.Workspace{{ID: "test", Path: workspaceDir}},
 		ChordPath:       chordBin,
 		SessionPinsFile: filepath.Join(t.TempDir(), "session-pins.json"),
 	}

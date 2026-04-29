@@ -502,7 +502,13 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		"assistant_text_len", len(state.LastAssistantText),
 	)
 
-	msg := r.formatNotification(workspaceID, eventType, state)
+	msg := ""
+	// Special-case todos: keyed diff tracking.
+	if eventType == "todos" {
+		msg = r.formatTodosNotification(key, state)
+	} else {
+		msg = r.formatNotification(workspaceID, eventType, state)
+	}
 	willSend := msg != ""
 	msgLen := len(msg)
 	slog.Info("gateway routing decision",
@@ -515,14 +521,6 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	)
 	if msg == "" {
 		return
-	}
-
-	// Special-case todos: keyed diff tracking.
-	if eventType == "todos" {
-		msg = r.formatTodosNotification(key, state)
-		if msg == "" {
-			return
-		}
 	}
 
 	if imType == "feishu" {
@@ -1070,11 +1068,18 @@ func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]
 			result[imType] = chatID
 		}
 	}
-	// Fill in missing from workspace config's IMChatID (typically for feishu).
-	for i := range r.cfg.Workspaces {
-		if r.cfg.Workspaces[i].ID == workspaceID && r.cfg.Workspaces[i].IMChatID != "" {
-			if _, has := result["feishu"]; !has {
-				result["feishu"] = r.cfg.Workspaces[i].IMChatID
+	// Fill in missing IDs from Feishu chat bindings.
+	if r.cfg != nil {
+		for _, im := range r.cfg.IMs {
+			if im.Feishu == nil {
+				continue
+			}
+			for chatID, boundWorkspaceID := range im.Feishu.ChatBindings {
+				if boundWorkspaceID == workspaceID {
+					if _, has := result["feishu"]; !has {
+						result["feishu"] = chatID
+					}
+				}
 			}
 		}
 	}
@@ -1104,9 +1109,14 @@ func (r *NotificationRouter) adapterTypeForChatID(chatID string) string {
 			return imType
 		}
 	}
-	for i := range r.cfg.Workspaces {
-		if r.cfg.Workspaces[i].IMChatID == chatID {
-			return "feishu"
+	if r.cfg != nil {
+		for _, im := range r.cfg.IMs {
+			if im.Feishu == nil {
+				continue
+			}
+			if _, ok := im.Feishu.ChatBindings[chatID]; ok {
+				return "feishu"
+			}
 		}
 	}
 	return ""

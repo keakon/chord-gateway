@@ -21,15 +21,14 @@ gateway 不是多租户安全沙箱。
 如果不是本地测试，建议为飞书配置 `owner_open_id` 和/或 `allowed_open_ids`。
 
 ```yaml
-im:
-  type: feishu
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    verification_token: your-token
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_teammate_xxx
+ims:
+  - feishu:
+      app_id: cli_xxx
+      app_secret: your-app-secret
+      verification_token: your-token
+      owner_open_id: ou_owner_xxx
+      allowed_open_ids:
+        - ou_teammate_xxx
 ```
 
 行为：
@@ -55,7 +54,7 @@ im:
 - 飞书 `app_secret`
 - 飞书 `verification_token`
 - 飞书 `encrypt_key`
-- 微信 token 文件
+- 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims[].wechat.token_path`）
 - gateway 状态目录
 - Chord provider 凭据和 auth 文件
 
@@ -63,7 +62,7 @@ im:
 
 ## 多工作区安全
 
-飞书多工作区模式下，请为每个 workspace 设置唯一的 `im_chat_id`，降低某个群的消息被路由到错误项目的风险。
+飞书多工作区模式下，请配置 `ims[].feishu.chat_bindings`，把每个飞书 chat ID 映射到预期 workspace。
 
 微信只支持一个 workspace。如果需要聊天到工作区的独立绑定，请使用飞书。
 
@@ -73,7 +72,7 @@ im:
 
 1. 停止 gateway。
 2. 吊销或轮换飞书应用密钥和 webhook token。
-3. 删除或轮换微信 token 文件。
+3. 删除或轮换微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims[].wechat.token_path`）。
 4. 检查 gateway 日志和 Chord session 历史。
 5. 检查配置工作区中的变更。
 6. 使用更严格的 allowlist 和 workspace 范围重新启动。

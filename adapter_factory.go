@@ -12,32 +12,20 @@ import (
 // NewIMAdapter creates the appropriate IM adapter based on config.
 func NewIMAdapter(cfg *config.Config, paths *config.Paths, router *NotificationRouter) (IMAdapter, error) {
 	activeIMs := cfg.ActiveIMs()
-	if len(activeIMs) == 1 {
-		return newAdapterFromConfig(activeIMs[0], paths, router)
+	if len(activeIMs) != 1 {
+		return nil, fmt.Errorf("expected exactly one IM adapter, got %d", len(activeIMs))
 	}
-	switch cfg.IM.Type {
-	case "wechat":
-		return NewWechatAdapter(cfg, paths, router)
-	case "feishu":
-		return NewFeishuAdapter(cfg, paths, router)
-	default:
-		return nil, fmt.Errorf("unsupported IM type: %s", cfg.IM.Type)
-	}
+	return newAdapterFromConfig(activeIMs[0], cfg, paths, router)
 }
 
 // newAdapterFromConfig creates an adapter from an IMAdapterConfig.
-func newAdapterFromConfig(imCfg config.IMAdapterConfig, paths *config.Paths, router *NotificationRouter) (IMAdapter, error) {
-	// Build a single-IM Config for the adapter constructors.
-	cfg := &config.Config{
-		IM: config.IMConfig(imCfg),
-	}
-
-	switch imCfg.Type {
+func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, paths *config.Paths, router *NotificationRouter) (IMAdapter, error) {
+	switch imCfg.Type() {
 	case "wechat":
-		return NewWechatAdapter(cfg, paths, router)
+		return NewWechatAdapter(cfg, imCfg, paths, router)
 	case "feishu":
-		return NewFeishuAdapter(cfg, paths, router)
+		return NewFeishuAdapter(cfg, imCfg, paths, router)
 	default:
-		return nil, fmt.Errorf("unsupported IM type: %s", imCfg.Type)
+		return nil, fmt.Errorf("unsupported IM type: %s", imCfg.Type())
 	}
 }

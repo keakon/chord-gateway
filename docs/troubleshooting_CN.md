@@ -40,9 +40,9 @@ chord_path: ~/go/bin/chord
 常见原因：
 
 - `workspaces[].path` 不存在。
-- 配置了多个 workspace 并启用了微信，但没有设置 `wechat_workspace_id`。
-- 飞书配置了多个 workspace，但某些条目缺少 `im_chat_id`。
-- 飞书多 workspace 中复用了相同的 `im_chat_id`。
+- 配置了多个 workspace 并启用了微信，但没有设置 `ims[].wechat.workspace_id`。
+- 飞书配置了多个 workspace，但缺少或漏配了 `ims[].feishu.chat_bindings`。
+- 飞书 `chat_bindings` 中的某个映射指向了错误的 workspace ID。
 
 ## 微信问题
 
@@ -50,12 +50,12 @@ chord_path: ~/go/bin/chord
 
 检查：
 
-- `im.type` 是否为 `wechat`，或 `ims` 中是否存在 WeChat 条目。
+- `ims` 中存在 WeChat 条目。
 - `base_url` 是否正确。
-- 已保存的 token 文件是否过期或损坏。
+- 已保存的 token 文件是否过期或损坏。默认路径是 `<state_dir>/wechat/token.json`；如果配置了 `ims[].wechat.token_path`，请检查该自定义路径。
 - 状态目录下的 gateway 日志。
 
-如果需要强制重新登录，停止 gateway 后删除状态目录中的微信 token 文件。
+如果需要强制重新登录，停止 gateway 后删除微信 token 文件（默认 `<state_dir>/wechat/token.json`；如配置了 `ims[].wechat.token_path`，则删除该自定义路径）。
 
 ### Token 过期
 
@@ -65,7 +65,7 @@ chord_path: ~/go/bin/chord
 /login weixin
 ```
 
-然后打开返回的登录链接并扫码。
+然后打开返回的登录链接并扫码。当 gateway 自身检测到微信 token 过期时，会自动清理已保存 token 并启动二维码登录。
 
 ## 飞书问题
 
@@ -109,9 +109,9 @@ chord_path: ~/go/bin/chord
 
 ### 消息进入了错误 workspace
 
-飞书多 workspace 模式下，请确认每个 workspace 都配置了预期的 `im_chat_id`，且每个值唯一。
+飞书多 workspace 模式下，请确认 `ims[].feishu.chat_bindings` 把每个飞书 chat ID 映射到预期 workspace ID。
 
-飞书单 workspace 且未设置 `im_chat_id` 时，所有聊天会使用第一个 workspace。
+飞书单 workspace 且未设置 `chat_bindings` 时，所有聊天会使用该 workspace。
 
 ### Session 上下文不是预期内容
 
@@ -153,7 +153,7 @@ chord_path: ~/go/bin/chord
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
-日志、token、去重数据和 session pin 都存储在这里。
+日志、token、去重数据和 session pin 都存储在这里。微信 token 默认位于 `<state_dir>/wechat/token.json`；旧版 `<state_dir>/token.json` 会自动迁移。
 
 ## 仍然无法解决
 

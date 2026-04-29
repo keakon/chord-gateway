@@ -6,31 +6,48 @@ This document is the field-by-field reference for `chord-gateway` configuration.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `im` | object | no | - | Single-IM mode (backward compatible). |
-| `ims` | array | no | - | Multi-IM mode. If non-empty, takes precedence over `im`. |
-| `workspaces` | array | yes | - | Workspace list for routing. |
+| `ims` | array | yes | - | IM adapter list. Each item contains exactly one platform block. |
+| `workspaces` | array | yes | - | Workspace list. These entries only define workspace identity and path. |
 | `chord_path` | string | no | `chord` | Path to the Chord binary. Supports `~` expansion. |
 | `idle_timeout` | string | no | `30m` | Idle process timeout (Go duration format). |
-| `wechat_workspace_id` | string | no | first workspace | Optional workspace ID that receives all WeChat traffic. Required when WeChat is enabled alongside multiple workspaces. |
 | `event_visibility` | object | no | all `false` | Optional control-plane event visibility flags. |
 | `session_pins_file` | string | no | `<state_dir>/session-pins.json` | Custom session pin storage path. |
 
-## `im` / `ims[]`
+## `ims[]`
 
-### Common
+Each entry in `ims` must contain exactly one platform object.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `type` | string | yes | `wechat` or `feishu` |
-| `wechat` | object | conditional | Required when `type=wechat` |
-| `feishu` | object | conditional | Required when `type=feishu` |
+Examples:
+
+```yaml
+ims:
+  - wechat:
+      base_url: https://ilinkai.weixin.qq.com
+      workspace_id: default
+
+  - feishu:
+      app_id: cli_xxx
+      app_secret: your-app-secret
+      chat_bindings:
+        oc_project_a: project-a
+        oc_project_b: project-b
+```
 
 ### WeChat Config (`wechat`)
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `base_url` | string | no | `https://ilinkai.weixin.qq.com` | WeChat iLink API base URL |
-| `bot_type` | string | no | `3` | iLink bot type |
+| `workspace_id` | string | conditional | first workspace | Workspace that receives all WeChat traffic. Required when more than one workspace exists. |
+| `token_path` | string | no | `<state_dir>/wechat/token.json` | Custom path for the persisted WeChat QR-login session token. Supports `~` expansion. |
+
+Notes:
+
+- The QR login API requires `bot_type=3`.
+- The gateway hardcodes that fixed protocol constant and does not expose it in config.
+- WeChat always routes to a single workspace.
+- WeChat QR-login token is runtime state, not static config. By default it is saved as JSON at `<state_dir>/wechat/token.json`; set `token_path` only if you want to manage that secret in a custom location.
+- Existing legacy files at `<state_dir>/token.json` and `<state_dir>/sync-buf.json` are migrated automatically to the `wechat/` state subdirectory.
 
 ### Feishu Config (`feishu`)
 
@@ -44,6 +61,7 @@ This document is the field-by-field reference for `chord-gateway` configuration.
 | `webhook_path` | string | no | `/feishu/callback` | Webhook path |
 | `owner_open_id` | string | no | - | Owner `open_id`; if set, it is part of the effective allowlist |
 | `allowed_open_ids` | array | no | `[]` | Additional allowed `open_id`s |
+| `chat_bindings` | object | conditional | - | Mapping from Feishu chat ID to workspace ID. Required when more than one workspace exists. |
 
 Feishu access control behavior:
 
@@ -51,7 +69,14 @@ Feishu access control behavior:
 - If either field is set, only listed `open_id`s are allowed.
 - `owner_open_id` is automatically included in the effective allowlist.
 
-## Workspace Routing Rules
+Feishu routing behavior:
+
+- If exactly one workspace exists, `chat_bindings` may be omitted and all Feishu chats route there.
+- If multiple workspaces exist, `chat_bindings` is required.
+- Each chat ID must map to a valid workspace ID.
+- Multiple chat IDs may point to the same workspace.
+
+## `workspaces[]`
 
 Each workspace item:
 
@@ -59,15 +84,22 @@ Each workspace item:
 |---|---|---|---|
 | `id` | string | yes | Workspace identifier |
 | `path` | string | yes | Absolute or `~` path to project |
-| `im_chat_id` | string | conditional | Feishu/other IM chat binding key |
 
 Validation rules:
 
-- WeChat always routes to a single workspace.
-- If WeChat is enabled and more than one workspace exists, `wechat_workspace_id` is required to choose which workspace receives WeChat traffic.
-- Feishu with multiple workspaces requires non-empty and unique `im_chat_id` values.
-- Feishu with one workspace can omit `im_chat_id`; all chats route to that single workspace.
-- `im_chat_id` is ignored for WeChat routing.
+- Workspace IDs must be non-empty and unique.
+- Workspace paths are expanded from `~` before use.
+- Routing is configured under each IM adapter, not inside workspace entries.
+
+## Routing Model
+
+The gateway uses an IM-owned routing model:
+
+- WeChat defines one `workspace_id`.
+- Feishu defines `chat_bindings`.
+- Workspaces do not contain IM-specific routing fields.
+
+This keeps workspace definitions stable while each IM adapter declares how it maps incoming chats to workspaces.
 
 ## `event_visibility`
 
@@ -103,12 +135,12 @@ Additional path behavior:
 
 - `CHORD_GATEWAY_LOG_FILE` overrides the default log file location.
 - The default log file is `<state_dir>/gateway.log`.
-- `session_pins_file`, `chord_path`, and `workspaces[].path` support `~` expansion.
+- `session_pins_file`, `ims[].wechat.token_path`, `chord_path`, and `workspaces[].path` support `~` expansion.
 
 State data includes:
 
 - logs
-- WeChat token files
+- WeChat token files (`<state_dir>/wechat/token.json` by default)
 - Feishu dedupe store (`<state_dir>/dedupe.json`)
 - session pins (`<state_dir>/session-pins.json` by default)
 
@@ -129,24 +161,24 @@ If `session_pins_file` is not set, the store defaults to `<state_dir>/session-pi
 Use this when you want different Feishu chats to route to different workspaces.
 
 ```yaml
-im:
-  type: feishu
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    verification_token: your-token
-    listen: ":8080"
-    webhook_path: /feishu/callback
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_owner_xxx
+ims:
+  - feishu:
+      app_id: cli_xxx
+      app_secret: your-app-secret
+      verification_token: your-token
+      listen: ":8080"
+      webhook_path: /feishu/callback
+      owner_open_id: ou_owner_xxx
+      allowed_open_ids:
+        - ou_owner_xxx
+      chat_bindings:
+        oc_project_a: project-a
+        oc_project_b: project-b
 workspaces:
   - id: project-a
     path: ~/work/project-a
-    im_chat_id: oc_project_a
   - id: project-b
     path: ~/work/project-b
-    im_chat_id: oc_project_b
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
@@ -164,12 +196,10 @@ Use this when WeChat should control one fixed workspace while Feishu groups map 
 
 ```yaml
 ims:
-  - type: wechat
-    wechat:
+  - wechat:
       base_url: https://ilinkai.weixin.qq.com
-      bot_type: "3"
-  - type: feishu
-    feishu:
+      workspace_id: project-a
+  - feishu:
       app_id: cli_xxx
       app_secret: your-app-secret
       verification_token: your-token
@@ -178,14 +208,14 @@ ims:
       owner_open_id: ou_owner_xxx
       allowed_open_ids:
         - ou_owner_xxx
-wechat_workspace_id: project-a
+      chat_bindings:
+        oc_project_a: project-a
+        oc_project_b: project-b
 workspaces:
   - id: project-a
     path: ~/work/project-a
-    im_chat_id: oc_project_a
   - id: project-b
     path: ~/work/project-b
-    im_chat_id: oc_project_b
 chord_path: chord
 idle_timeout: 30m
 event_visibility:

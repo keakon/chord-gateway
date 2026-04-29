@@ -30,18 +30,16 @@ Point `workspaces[].path` at the project you want Chord to operate on.
 
 Important routing rules:
 
-- WeChat always routes to one workspace.
-- Feishu with multiple workspaces requires a unique `im_chat_id` on every workspace.
-- If WeChat is enabled alongside multiple workspaces, set `wechat_workspace_id` to choose the workspace used by WeChat.
+- WeChat always routes to one workspace through `ims[].wechat.workspace_id`.
+- Feishu uses `ims[].feishu.chat_bindings` to map chat IDs to workspace IDs.
+- If there is exactly one workspace, both WeChat `workspace_id` and Feishu `chat_bindings` may be omitted.
 
 ### 3.1 WeChat
 
 ```yaml
-im:
-  type: wechat
-  wechat:
-    base_url: https://ilinkai.weixin.qq.com
-    bot_type: "3"
+ims:
+  - wechat:
+      base_url: https://ilinkai.weixin.qq.com
 workspaces:
   - id: default
     path: /path/to/project
@@ -53,19 +51,18 @@ First run behavior:
 
 - The gateway prints a QR-code URL.
 - Scan it with WeChat to log in.
-- The token is stored under the gateway state directory for later runs.
+- The token is stored at `<state_dir>/wechat/token.json` for later runs. You can override it with `ims[].wechat.token_path` if you want to manage that secret separately.
 
 ### 3.2 Feishu
 
 ```yaml
-im:
-  type: feishu
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    verification_token: your-token
-    listen: ":8080"
-    webhook_path: /feishu/callback
+ims:
+  - feishu:
+      app_id: cli_xxx
+      app_secret: your-app-secret
+      verification_token: your-token
+      listen: ":8080"
+      webhook_path: /feishu/callback
 workspaces:
   - id: default
     path: /path/to/project
@@ -98,25 +95,23 @@ Use this when WeChat should stay on one fixed workspace while Feishu groups map 
 
 ```yaml
 ims:
-  - type: wechat
-    wechat:
+  - wechat:
       base_url: https://ilinkai.weixin.qq.com
-      bot_type: "3"
-  - type: feishu
-    feishu:
+      workspace_id: project-a
+  - feishu:
       app_id: cli_xxx
       app_secret: your-app-secret
       verification_token: your-token
       listen: ":8080"
       webhook_path: /feishu/callback
-wechat_workspace_id: project-a
+      chat_bindings:
+        oc_project_a: project-a
+        oc_project_b: project-b
 workspaces:
   - id: project-a
     path: ~/work/project-a
-    im_chat_id: oc_project_a
   - id: project-b
     path: ~/work/project-b
-    im_chat_id: oc_project_b
 chord_path: chord
 idle_timeout: 30m
 ```
@@ -139,39 +134,19 @@ After startup:
 2. Confirm the gateway can resolve your workspace and reach `chord headless`.
 3. Send a normal text request to start working with Chord.
 
-Config file resolution priority:
+## 5. Where state is stored
 
-1. `--config` / `-f`
-2. `CHORD_GATEWAY_CONFIG`
-3. `$XDG_CONFIG_HOME/chord-gateway/config.yaml`
-4. `~/.config/chord-gateway/config.yaml`
+By default the gateway stores runtime state under:
 
-Runtime state directory priority:
+- macOS: `~/Library/Application Support/chord-gateway`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`
+- Config file: `${XDG_CONFIG_HOME:-~/.config}/chord-gateway/config.yaml`
 
-1. `CHORD_GATEWAY_STATE_DIR`
-2. `$XDG_STATE_HOME/chord-gateway`
-3. `~/.local/state/chord-gateway`
-
-The state directory stores logs, WeChat token files, Feishu dedupe data, and session pins. The default log file is `<state_dir>/gateway.log`.
-
-## 5. Common IM commands
-
-- `/status` – show current Chord state
-- `/cancel` – cancel the current turn
-- `/allow`, `/deny` – approve or reject a pending confirmation
-- `/answer <text>` – answer a pending question
-- `/todos` – show the current todo list
-- `/new` – clear the current binding's session pin and start fresh
-- `/resume <id>` – resume and pin a specific session
-- `/sessions` – list recent sessions from the workspace
-- `/current` – show the current binding status and pinned session
-- `/login [platform]` – start a login flow, for example `/login weixin`
+State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by default), Feishu dedupe data, and session pins. Feishu `app_id`/`app_secret` remain configuration credentials; its short-lived access token is kept in memory and refreshed as needed.
 
 ## 6. Next docs
 
-- [README](./README.md) – release overview
-- [Usage](./docs/usage.md) – session behavior and IM commands
-- [Configuration reference](./docs/configuration.md) – all config fields
-- [Operations](./docs/operations.md) – logs, state files, cleanup, routing
-- [Permissions & Safety](./docs/permissions-and-safety.md)
+- [Configuration reference](./docs/configuration.md)
+- [Usage guide](./docs/usage.md)
+- [Operations](./docs/operations.md)
 - [Troubleshooting](./docs/troubleshooting.md)

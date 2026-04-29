@@ -21,9 +21,12 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	storageDir := filepath.Join(dir, "wechat")
 	return &WechatAdapter{
-		cfg:           &config.Config{IM: config.IMConfig{Type: "wechat", Wechat: &config.WechatConfig{}}},
-		storageDir:    dir,
+		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}},
+		imCfg:         config.IMAdapterConfig{Wechat: &config.WechatConfig{}},
+		storageDir:    storageDir,
+		tokenFile:     filepath.Join(storageDir, "token.json"),
 		httpClient:    &http.Client{Timeout: 5 * time.Second},
 		contextTokens: make(map[string]string),
 		ctx:           ctx,
@@ -34,11 +37,11 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 func TestWechatAdapter_HelperMethods(t *testing.T) {
 	t.Run("baseURL prefers config then token and trims slash", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
-		a.cfg.IM.Wechat.BaseURL = "https://example.com/"
+		a.imCfg.Wechat.BaseURL = "https://example.com/"
 		if got := a.baseURL(); got != "https://example.com" {
 			t.Fatalf("baseURL from config = %q", got)
 		}
-		a.cfg.IM.Wechat.BaseURL = ""
+		a.imCfg.Wechat.BaseURL = ""
 		a.token = &TokenData{BaseURL: "https://token.example.com/"}
 		if got := a.baseURL(); got != "https://token.example.com" {
 			t.Fatalf("baseURL from token = %q", got)
@@ -52,11 +55,7 @@ func TestWechatAdapter_HelperMethods(t *testing.T) {
 	t.Run("botType defaults and tokenString", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
 		if got := a.botType(); got != ilinkDefaultBotType {
-			t.Fatalf("botType default = %q", got)
-		}
-		a.cfg.IM.Wechat.BotType = "7"
-		if got := a.botType(); got != "7" {
-			t.Fatalf("botType custom = %q", got)
+			t.Fatalf("botType = %q", got)
 		}
 		if got := a.tokenString(); got != "" {
 			t.Fatalf("tokenString nil = %q", got)
@@ -126,7 +125,7 @@ func TestWechatAdapter_APIHelpers(t *testing.T) {
 		defer ts.Close()
 
 		a := newTestWechatAdapter(t)
-		a.cfg.IM.Wechat.BaseURL = ts.URL
+		a.imCfg.Wechat.BaseURL = ts.URL
 		a.token = &TokenData{Token: "abc"}
 
 		resp, err := a.apiGet("foo/bar")
@@ -177,7 +176,7 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 		defer ts.Close()
 
 		a := newTestWechatAdapter(t)
-		a.cfg.IM.Wechat.BaseURL = ts.URL
+		a.imCfg.Wechat.BaseURL = ts.URL
 		qr, err := a.getBotQRCode()
 		if err != nil || qr.QRCode != "qr-id" || qr.QRCodeImgContent != "https://qr" {
 			t.Fatalf("getBotQRCode = %#v, %v", qr, err)
@@ -200,7 +199,7 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 		defer ts.Close()
 
 		a := newTestWechatAdapter(t)
-		a.cfg.IM.Wechat.BaseURL = ts.URL
+		a.imCfg.Wechat.BaseURL = ts.URL
 		a.syncBuf = "prev"
 		resp, err := a.getUpdates()
 		if err != nil {
@@ -217,7 +216,7 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 
 func TestWechatAdapter_MessageHandling(t *testing.T) {
 	t.Run("handleIncomingMessage stores context and forwards text", func(t *testing.T) {
-		cfg := &config.Config{IM: config.IMConfig{Type: "wechat"}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 		mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
 		sender := &stubIMAdapter{typ: "wechat"}
 		stdin := &captureWriteCloser{}
@@ -267,7 +266,7 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 		defer ts.Close()
 
 		a := newTestWechatAdapter(t)
-		a.cfg.IM.Wechat.BaseURL = ts.URL
+		a.imCfg.Wechat.BaseURL = ts.URL
 		if err := a.sendMessage(ilinkSendMessageRequest{}); err != nil {
 			t.Fatalf("sendMessage non-JSON error = %v", err)
 		}
@@ -291,7 +290,7 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 		defer ts.Close()
 
 		a := newTestWechatAdapter(t)
-		a.cfg.IM.Wechat.BaseURL = ts.URL
+		a.imCfg.Wechat.BaseURL = ts.URL
 		a.contextTokens["chat-1"] = "ctx-1"
 		longText := strings.Repeat("a", ilinkMaxMessageLen+10)
 		if err := a.sendILinkText("chat-1", longText); err != nil {
@@ -345,6 +344,129 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		}
 	})
 
+	t.Run("clearToken removes persisted token", func(t *testing.T) {
+		a := newTestWechatAdapter(t)
+		a.token = &TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"}
+		a.sessionExpired = true
+		a.saveToken()
+		if _, err := os.Stat(a.tokenPath()); err != nil {
+			t.Fatalf("token file should exist before clearToken: %v", err)
+		}
+		if filepath.Base(filepath.Dir(a.tokenPath())) != "wechat" {
+			t.Fatalf("default token path = %q, want a wechat subdirectory", a.tokenPath())
+		}
+		a.clearToken()
+		if a.token != nil || a.sessionExpired {
+			t.Fatalf("token=%#v sessionExpired=%v", a.token, a.sessionExpired)
+		}
+		if _, err := os.Stat(a.tokenPath()); !os.IsNotExist(err) {
+			t.Fatalf("token file should be removed, stat error = %v", err)
+		}
+	})
+
+	t.Run("custom token path persists outside default storage dir", func(t *testing.T) {
+		a := newTestWechatAdapter(t)
+		customPath := filepath.Join(t.TempDir(), "secrets", "wechat-token.json")
+		a.tokenFile = customPath
+		a.token = &TokenData{Token: "custom", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"}
+		a.saveToken()
+		if _, err := os.Stat(customPath); err != nil {
+			t.Fatalf("custom token file should exist: %v", err)
+		}
+		loaded := a.loadToken()
+		if loaded == nil || loaded.Token != "custom" {
+			t.Fatalf("loaded custom token = %#v", loaded)
+		}
+	})
+
+	t.Run("legacy token and sync buf are migrated", func(t *testing.T) {
+		a := newTestWechatAdapter(t)
+		stateDir := filepath.Dir(a.storageDir)
+		legacyTokenPath := filepath.Join(stateDir, "token.json")
+		legacySyncBufPath := filepath.Join(stateDir, "sync-buf.json")
+		legacyToken := &TokenData{Token: "legacy", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "old"}
+		data, err := json.Marshal(legacyToken)
+		if err != nil {
+			t.Fatalf("marshal token: %v", err)
+		}
+		if err := os.WriteFile(legacyTokenPath, data, 0o600); err != nil {
+			t.Fatalf("write legacy token: %v", err)
+		}
+		if err := os.WriteFile(legacySyncBufPath, []byte(`{"get_updates_buf":"legacy-sync"}`), 0o600); err != nil {
+			t.Fatalf("write legacy sync buf: %v", err)
+		}
+
+		loaded := a.loadToken()
+		if loaded == nil || loaded.Token != "legacy" {
+			t.Fatalf("loaded legacy token = %#v", loaded)
+		}
+		if _, err := os.Stat(a.tokenPath()); err != nil {
+			t.Fatalf("migrated token file should exist: %v", err)
+		}
+		if _, err := os.Stat(legacyTokenPath); !os.IsNotExist(err) {
+			t.Fatalf("legacy token should be removed, stat error = %v", err)
+		}
+		if got := a.loadSyncBuf(); got != "legacy-sync" {
+			t.Fatalf("legacy sync buf = %q", got)
+		}
+		if _, err := os.Stat(a.syncBufPath()); err != nil {
+			t.Fatalf("migrated sync buf file should exist: %v", err)
+		}
+		if _, err := os.Stat(legacySyncBufPath); !os.IsNotExist(err) {
+			t.Fatalf("legacy sync buf should be removed, stat error = %v", err)
+		}
+	})
+
+	t.Run("connectILink re-logins when saved token is expired", func(t *testing.T) {
+		var cancel context.CancelFunc
+		var serverURL string
+		var getUpdates, getQR, getStatus int
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.Contains(r.URL.Path, "getupdates"):
+				getUpdates++
+				if getUpdates == 1 {
+					_, _ = io.WriteString(w, `{"errcode":-14,"errmsg":"expired"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"ret":0,"msgs":[]}`)
+				go cancel()
+			case strings.Contains(r.URL.Path, "get_bot_qrcode"):
+				getQR++
+				_, _ = io.WriteString(w, `{"qrcode":"qr-id","qrcode_img_content":"https://qr"}`)
+			case strings.Contains(r.URL.Path, "get_qrcode_status"):
+				getStatus++
+				_, _ = io.WriteString(w, `{"status":"confirmed","bot_token":"new-tok","baseurl":"`+serverURL+`","ilink_bot_id":"acc","ilink_user_id":"u1"}`)
+			default:
+				t.Fatalf("unexpected path %s", r.URL.Path)
+			}
+		}))
+		serverURL = ts.URL
+		defer ts.Close()
+
+		a := newTestWechatAdapter(t)
+		a.imCfg.Wechat.BaseURL = ts.URL
+		a.token = &TokenData{Token: "old-tok", BaseURL: ts.URL, AccountID: "old-acc", UserID: "old-user", SavedAt: "old"}
+		a.saveToken()
+		ctx, ctxCancel := context.WithCancel(context.Background())
+		cancel = ctxCancel
+		defer ctxCancel()
+		a.ctx = ctx
+		if err := a.connectILink(ctx); err != nil {
+			t.Fatalf("connectILink error = %v", err)
+		}
+		if getUpdates == 0 || getQR != 1 || getStatus != 1 {
+			t.Fatalf("getUpdates=%d getQR=%d getStatus=%d", getUpdates, getQR, getStatus)
+		}
+		if a.token == nil || a.token.Token != "new-tok" || a.token.AccountID != "acc" {
+			t.Fatalf("token after re-login = %#v", a.token)
+		}
+		loaded := a.loadToken()
+		if loaded == nil || loaded.Token != "new-tok" {
+			t.Fatalf("persisted token after re-login = %#v", loaded)
+		}
+	})
+
 	t.Run("sync buf persistence round trip and invalid file", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
 		a.syncBuf = "next-buf"
@@ -370,7 +492,12 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		}
 		paths := testPaths(t)
 		paths.StateDir = dir
-		a, err := NewWechatAdapter(&config.Config{IM: config.IMConfig{Type: "wechat", Wechat: &config.WechatConfig{}}}, paths, nil)
+		a, err := NewWechatAdapter(
+			&config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}},
+			config.IMAdapterConfig{Wechat: &config.WechatConfig{}},
+			paths,
+			nil,
+		)
 		if err != nil {
 			t.Fatalf("NewWechatAdapter error = %v", err)
 		}
