@@ -59,13 +59,15 @@ To force a new login, stop the gateway and remove the saved WeChat token file (`
 
 ### Token expired
 
-In multi-IM mode, send this from another active channel:
+When a WeChat token expires, in multi-IM mode send this from another active channel:
 
 ```text
 /login wechat
 ```
 
 Then open the returned login link and scan the QR code. When the gateway itself detects an expired WeChat token, it clears the saved token and starts QR login automatically.
+
+Feishu does not need in-chat login or manual renewal; the gateway automatically obtains and refreshes Feishu access tokens from the configured app credentials. If the Feishu connection becomes invalid, check the deployment configuration and Feishu developer console for app credentials, permissions, event subscriptions, and long-connection settings. Do not send or change `app_id` / `app_secret` in an IM chat.
 
 ## Feishu issues
 

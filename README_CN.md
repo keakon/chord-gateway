@@ -18,7 +18,7 @@
 - 支持同时运行多个 IM adapter
 - 按聊天会话和工作区隔离 Chord session
 - 会话 pin 与恢复命令（`/new`、`/resume`、`/sessions`、`/current`）
-- 某个 IM 过期时可通过其他 IM 发送登录通知
+- 某个 IM 过期时，可通过其他 IM 发送登录通知（例如提示重新登录）
 - 本地 `chord headless` 子进程生命周期管理与清理
 - 可配置可选控制面事件的可见性
 
@@ -46,7 +46,7 @@ chord-gateway --version
 
 ## 快速开始
 
-创建一个最小配置，并把 `workspaces.default.path` 指向你希望 Chord 操作的项目目录。以下是微信示例：
+创建一个最小配置，并把 `workspaces.default.path` 指向你希望 Chord 操作的项目目录。workspace 路径必须以 `/`、`~`、Windows 盘符前缀或 UNC 前缀开头。以下是微信示例：
 
 ```yaml
 ims:
@@ -68,6 +68,8 @@ chord-gateway -f config.yaml
 仅支持 YAML 配置文件（`.yaml` 或 `.yml`）。
 
 启动后，在已连接的 IM 聊天中发送 `/status` 确认路由正常，再发送普通文本开始与 Chord 交互。
+
+提示：微信始终路由到单个 workspace；当前飞书入站处理只接受文本消息。详见“支持范围 / 已知限制”。
 
 飞书配置和多工作区路由请参见 [QUICKSTART_CN.md](./QUICKSTART_CN.md)。
 

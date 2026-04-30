@@ -1533,7 +1533,7 @@ func (r *NotificationRouter) sendTextAll(workspaceID, text string) {
 func (r *NotificationRouter) HandleSessionExpired(imType string) {
 	msg := fmt.Sprintf("⚠️ %s session expired: send /login %s to renew", imDisplayName(imType), loginCommandName(imType))
 	if normalizeIMType(imType) == "feishu" {
-		msg = "⚠️ Feishu session expired: please check configuration"
+		msg = "⚠️ Feishu connection invalid: Feishu tokens are refreshed automatically from configured app credentials; check deployment configuration and Feishu app event settings. /login feishu is not supported."
 	}
 	r.broadcastExcept(imType, msg)
 }

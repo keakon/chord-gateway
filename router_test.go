@@ -1447,7 +1447,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	}
 
 	r.HandleSessionExpired("feishu")
-	if msgs := wechat.sentMessages(); len(msgs) == 0 || !strings.Contains(msgs[len(msgs)-1].text, "Feishu session expired") {
+	if msgs := wechat.sentMessages(); len(msgs) == 0 || !strings.Contains(msgs[len(msgs)-1].text, "Feishu connection invalid") || strings.Contains(msgs[len(msgs)-1].text, "/login feishu") == false {
 		t.Fatalf("wechat messages after feishu expiry = %#v", msgs)
 	}
 

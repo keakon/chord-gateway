@@ -125,7 +125,7 @@ Gateway: 🆕 Started new session
 
 ## 多 IM 登录
 
-在多 IM 模式下，如果某个平台登录过期，gateway 可以通过其他活跃 IM 通知你重新登录。
+在多 IM 模式下，如果某个平台登录过期或连接失效，gateway 可以通过其他活跃 IM 发送通知。
 
 示例：如果微信登录过期，可以在飞书中发送：
 
@@ -133,7 +133,14 @@ Gateway: 🆕 Started new session
 /login wechat
 ```
 
-gateway 会返回微信二维码登录链接。扫码后 token 会自动更新，无需重启 gateway。
+gateway 会返回微信二维码登录链接。扫码后 token 会自动更新，无需重启 gateway。登录成功或失败结果也会通过其他 IM 通知。
+
+注意：
+
+- `/login` 只用于支持交互式登录续期的平台；当前文档化的续期流程是 `/login wechat`。
+- 飞书不需要、也不支持在会话中通过 `/login feishu` 登录或续期。飞书 access token 会由 gateway 使用已配置的应用凭证自动获取和刷新。
+- 如果收到飞书连接或配置失效通知，请在部署配置或飞书开放平台中检查应用凭证、权限、事件订阅和长连接设置；不要在 IM 会话中发送或修改 `app_id` / `app_secret`。
+- 跨 IM 通知需要至少另一个 IM 仍然可用，并且 gateway 能找到该 IM 的聊天 ID。飞书建议配置 `chat_bindings`，或先在目标聊天中发送过消息。
 
 ## 通知
 

@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+### Changed
+
+- 明确飞书续期行为：用户文档和跨 IM 通知现在说明飞书 access token 会基于已配置的应用凭证自动刷新，`/login feishu` 不受支持，且不应在 IM 会话中发送或修改应用凭证。
+
 ## 0.2.0 – 2026-04-30
 
 ### Added

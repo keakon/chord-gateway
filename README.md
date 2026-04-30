@@ -14,11 +14,11 @@
 ## Features
 
 - WeChat iLink support with QR-code login and token persistence (`<state_dir>/wechat/token.json` by default)
-- Feishu bot support with long connection mode, owner allowlist, and event dedupe
+- Feishu bot support with long-lived connection mode, owner allowlist, and event deduplication
 - Multiple IM adapters can run together
 - Per-chat and per-workspace session isolation
 - Session pinning and resume commands (`/new`, `/resume`, `/sessions`, `/current`)
-- Cross-IM login notification when one channel expires
+- Cross-IM login notification (for example, when one channel expires, use another channel to prompt re-login)
 - Local `chord headless` subprocess lifecycle management and cleanup
 - Configurable visibility for optional control-plane events
 
@@ -46,7 +46,7 @@ chord-gateway --version
 
 ## Quickstart
 
-Create a minimal config and point `workspaces.default.path` at the project you want Chord to operate on. Here is a WeChat example:
+Create a minimal config and point `workspaces.default.path` at the project you want Chord to operate on. Workspace paths must start with `/`, `~`, a Windows drive prefix, or a UNC prefix. Here is a WeChat example:
 
 ```yaml
 ims:
@@ -68,6 +68,8 @@ chord-gateway -f config.yaml
 Only YAML config files are supported (`.yaml` or `.yml`).
 
 After the gateway is running, send `/status` from the connected IM chat to verify the route, then send a normal text message to talk to Chord.
+
+Notes: WeChat routes to a single workspace; Feishu inbound handling currently accepts text messages only. See “Support scope / known limitations” for details.
 
 For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.md).
 

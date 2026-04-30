@@ -27,6 +27,7 @@ go build -o chord-gateway .
 ## 3. Create a minimal config
 
 Point `workspaces.default.path` at the project you want Chord to operate on.
+Workspace paths must start with `/`, `~`, a Windows drive prefix (for example `C:\` or `C:/`), or a UNC prefix (for example `\\server\share`). `~` is expanded before use.
 
 Important routing rules:
 

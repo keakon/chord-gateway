@@ -144,7 +144,7 @@ Gateway: 🆕 New session started.
 
 ## Multi-IM login
 
-In multi-IM mode, the gateway can notify another active IM channel when one platform expires.
+In multi-IM mode, the gateway can notify another active IM channel when one platform expires or becomes unavailable.
 
 Example: if WeChat login expires, send this from Feishu:
 
@@ -152,9 +152,14 @@ Example: if WeChat login expires, send this from Feishu:
 /login wechat
 ```
 
-The gateway replies with a WeChat QR login link. After scanning, it updates the token without requiring a gateway restart.
+The gateway replies with a WeChat QR login link. After scanning, it updates the token without requiring a gateway restart. Login success or failure is also reported through another IM channel.
 
-If Feishu becomes invalid, the gateway cannot renew it through `/login`; update the Feishu configuration instead.
+Notes:
+
+- `/login` is only for platforms that support interactive login renewal; the documented renewal flow today is `/login wechat`.
+- Feishu does not need and does not support in-chat login or renewal through `/login feishu`. The gateway automatically obtains and refreshes Feishu access tokens from the configured app credentials.
+- If Feishu connection/configuration becomes invalid, check the deployment configuration and Feishu developer console for app credentials, permissions, event subscriptions, and long-connection settings; do not send or change `app_id` / `app_secret` in an IM chat.
+- Cross-IM notification requires at least one other IM channel to remain available, and the gateway must know that channel's chat ID. For Feishu, configure `chat_bindings` or send a message once in the target chat.
 
 ## Notifications
 
