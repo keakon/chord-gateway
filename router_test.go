@@ -1500,20 +1500,32 @@ func TestBuildFeishuCardsAndButton(t *testing.T) {
 		ArgsJSON:      `{"command":"pwd"}`,
 		RequestID:     "req-1",
 		NeedsApproval: []string{"Run shell command"},
-	})
+	}, feishuCardContext{WorkspaceID: "ws-1", SessionID: "session-1234567890", ProcessKey: "ws-1|feishu|chat-1"})
+	header := confirm["header"].(map[string]any)
+	if header["template"] != "red" || !strings.Contains(fmt.Sprint(header), "High risk") {
+		t.Fatalf("confirm risk header = %v", header)
+	}
+	if configMap := confirm["config"].(map[string]any); configMap["update_multi"] != true {
+		t.Fatalf("confirm card config = %v", configMap)
+	}
 	body := confirm["body"].(map[string]any)
 	elements := body["elements"].([]any)
 	if len(elements) < 5 {
 		t.Fatalf("confirm card elements = %v", elements)
 	}
 	confirmText := fmt.Sprint(elements)
-	for _, want := range []string{"Run shell command", "`/allow`", "`/deny [reason]`"} {
+	for _, want := range []string{"Run shell command", "`/allow`", "`/deny [reason]`", "Workspace: `ws-1`", "Request: `req-1`"} {
 		if !strings.Contains(confirmText, want) {
 			t.Fatalf("confirm card missing %q: %v", want, elements)
 		}
 	}
-	if btn := elements[len(elements)-1].(map[string]any); btn["tag"] != "button" {
-		t.Fatalf("confirm card button missing: %v", btn)
+	allow := elements[len(elements)-2].(map[string]any)
+	behaviors := allow["behaviors"].([]any)
+	value := behaviors[0].(map[string]any)["value"].(map[string]any)
+	for k, want := range map[string]any{"type": "confirm", "action": "allow", "request_id": "req-1", "chat_id": "chat-1", "im_type": "feishu"} {
+		if value[k] != want {
+			t.Fatalf("confirm button value[%s] = %#v, want %#v in %#v", k, value[k], want, value)
+		}
 	}
 	if strings.Contains(confirmText, "tag:action") || strings.Contains(confirmText, "\"action\"") {
 		t.Fatalf("confirm card should not use legacy action tag: %v", elements)
@@ -1543,9 +1555,9 @@ func TestBuildFeishuCardsAndButton(t *testing.T) {
 	}
 
 	btn := feishuCardButton("Allow", "primary", map[string]any{"request_id": "req"})
-	behaviors := btn["behaviors"].([]any)
-	if len(behaviors) != 1 {
-		t.Fatalf("button behaviors = %v", behaviors)
+	buttonBehaviors := btn["behaviors"].([]any)
+	if len(buttonBehaviors) != 1 {
+		t.Fatalf("button behaviors = %v", buttonBehaviors)
 	}
 }
 
@@ -1972,6 +1984,85 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestFeishuCardRiskLevelsAndQuestionFallbackPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		tool     string
+		template string
+		title    string
+	}{
+		{tool: "Delete", template: "red", title: "High risk"},
+		{tool: "Read", template: "blue", title: "Low risk"},
+		{tool: "Grep", template: "blue", title: "Low risk"},
+		{tool: "Glob", template: "blue", title: "Low risk"},
+		{tool: "Lsp", template: "blue", title: "Low risk"},
+		{tool: "Write", template: "orange", title: "Medium risk"},
+	} {
+		t.Run(tt.tool, func(t *testing.T) {
+			card := buildFeishuConfirmCard("chat", &ConfirmPayload{ToolName: tt.tool, RequestID: "req"})
+			header := card["header"].(map[string]any)
+			if header["template"] != tt.template || !strings.Contains(fmt.Sprint(header), tt.title) {
+				t.Fatalf("header = %v", header)
+			}
+		})
+	}
+
+	if !shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"1", "2", "3", "4", "5", "6"}}) {
+		t.Fatal("short 6-option single-select should use a card")
+	}
+	if shouldSendFeishuQuestionCard(&QuestionPayload{Multiple: true, Options: []string{"1", "2"}}) {
+		t.Fatal("multi-select should fallback to text")
+	}
+	if shouldSendFeishuQuestionCard(&QuestionPayload{}) {
+		t.Fatal("free-answer question should fallback to text in this implementation")
+	}
+	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"1", "2", "3", "4", "5", "this option label is intentionally too long for mobile buttons"}}) {
+		t.Fatal("long option label should fallback to text when there are more than five options")
+	}
+	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"this option label is intentionally too long for mobile buttons", "no"}}) {
+		t.Fatal("long option label should fallback to text even when there are at most five options")
+	}
+	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"yes", "no"}, OptionDetails: []string{"this detail is intentionally made very long so the interactive card would become too tall on mobile clients and should fallback to plain text instead of rendering a card", "short"}}) {
+		t.Fatal("long option detail should fallback to text")
+	}
+}
+
+func TestSummarizeToolArgsTruncatesLongPathsAndURLs(t *testing.T) {
+	longPath := "/" + strings.Repeat("deep/", 60) + "file.txt"
+	for _, tt := range []struct {
+		name     string
+		tool     string
+		argsJSON string
+		prefix   string
+	}{
+		{name: "write path", tool: "Write", argsJSON: fmt.Sprintf(`{"path":%q}`, longPath), prefix: "📝 "},
+		{name: "delete path", tool: "Delete", argsJSON: fmt.Sprintf(`{"paths":[%q]}`, longPath), prefix: "🗑️ "},
+		{name: "read path", tool: "Read", argsJSON: fmt.Sprintf(`{"path":%q}`, longPath), prefix: "📖 "},
+		{name: "glob pattern", tool: "Glob", argsJSON: fmt.Sprintf(`{"pattern":%q}`, strings.Repeat("src/**/", 40)+"*.go"), prefix: "🔍 "},
+		{name: "webfetch url", tool: "WebFetch", argsJSON: fmt.Sprintf(`{"url":%q}`, "https://example.com/"+strings.Repeat("segment/", 40)+"?"+strings.Repeat("q=1&", 30)), prefix: "🌐 "},
+		{name: "lsp path", tool: "Lsp", argsJSON: fmt.Sprintf(`{"operation":"definition","path":%q}`, longPath), prefix: "🔎 "},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := summarizeToolArgs(tt.tool, tt.argsJSON)
+			if !strings.HasPrefix(summary, tt.prefix) {
+				t.Fatalf("summary prefix = %q, want %q", summary, tt.prefix)
+			}
+			if !strings.Contains(summary, "…") {
+				t.Fatalf("summary should be truncated: %q", summary)
+			}
+		})
+	}
+}
+
+func TestBuildFeishuQuestionCardListsPlainOptions(t *testing.T) {
+	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Pick", Options: []string{"yes", "no"}, RequestID: "req"})
+	text := fmt.Sprint(card["body"])
+	for _, want := range []string{"1. yes", "2. no"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("question card missing %q: %v", want, card)
+		}
+	}
 }
 
 func TestFeishuCardJSONRoundTrip(t *testing.T) {

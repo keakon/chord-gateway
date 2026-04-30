@@ -48,6 +48,11 @@ type ControlState struct {
 	LastNotification *NotificationPayload `json:"-"`
 }
 
+type InteractiveCardHandle struct {
+	MessageID string
+	Token     string
+}
+
 // ConfirmPayload is the confirm_request event payload.
 type ConfirmPayload struct {
 	ToolName       string   `json:"tool_name"`
@@ -150,6 +155,7 @@ type InternalAction struct {
 	Action    string
 	RequestID string
 	Value     string
+	Handle    InteractiveCardHandle
 }
 
 // MessageRouter is the interface for routing incoming messages.

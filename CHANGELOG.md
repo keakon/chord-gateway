@@ -8,6 +8,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+### Added
+
+- Improved Feishu interactive cards for confirmations and questions, including risk/context display, safer callback validation, message-card update handles, resolved-card status updates, and broader unit-test coverage.
+
 ### Changed
 
 - Clarified Feishu renewal behavior in user docs and cross-IM notifications: Feishu access tokens are refreshed automatically from configured app credentials, `/login feishu` is unsupported, and app credentials must not be sent or changed in IM chats.

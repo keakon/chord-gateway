@@ -29,11 +29,12 @@ const (
 	feishuQueueSize        = 256
 	feishuDedupeKeyFmt     = "%s|%s|%s"      // app_id|chat_id|message_id
 	feishuCardActionFmt    = "%s|card|%s|%s" // app_id|chat_id|request_id
-	feishuOpenBaseURL      = "https://open.feishu.cn"
 	feishuDefaultPing      = 2 * time.Minute
 	feishuDefaultReconnect = 2 * time.Minute
 	feishuFragmentTTL      = 5 * time.Second
 )
+
+var feishuOpenBaseURL = "https://open.feishu.cn"
 
 // --- Feishu API types ---
 
@@ -49,6 +50,9 @@ type FeishuTokenResponse struct {
 type FeishuSendResponse struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
+	Data struct {
+		MessageID string `json:"message_id"`
+	} `json:"data"`
 }
 
 // FeishuMessageContent is the parsed content of a text or post message.
@@ -104,13 +108,19 @@ type FeishuAdapter struct {
 	wg           sync.WaitGroup
 }
 
-func (a *FeishuAdapter) sendCardOrFallback(chatID string, card map[string]any, fallback string) {
-	if err := a.SendInteractive(chatID, card); err != nil {
+func (a *FeishuAdapter) sendCardOrFallback(chatID string, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
+	handle, err := a.SendInteractiveWithHandle(chatID, card)
+	if err != nil {
 		slog.Warn("feishu: send interactive card failed, falling back to text", "chat_id", chatID, "error", err)
 		if strings.TrimSpace(fallback) != "" {
-			_ = a.SendText(chatID, fallback)
+			if fallbackErr := a.SendText(chatID, fallback); fallbackErr != nil {
+				return nil, fmt.Errorf("send interactive card: %w; fallback text: %v", err, fallbackErr)
+			}
+			return nil, nil
 		}
+		return nil, err
 	}
+	return handle, nil
 }
 
 // NewFeishuAdapter creates a new Feishu adapter.
@@ -605,7 +615,22 @@ func (a *FeishuAdapter) SendText(chatID, text string) error {
 }
 
 func (a *FeishuAdapter) SendInteractive(chatID string, card map[string]any) error {
+	_, err := a.SendInteractiveWithHandle(chatID, card)
+	return err
+}
+
+func (a *FeishuAdapter) SendInteractiveWithHandle(chatID string, card map[string]any) (*InteractiveCardHandle, error) {
 	return a.sendMessage(chatID, "interactive", card, false)
+}
+
+func (a *FeishuAdapter) UpdateInteractiveCard(handle InteractiveCardHandle, card map[string]any) error {
+	if strings.TrimSpace(handle.MessageID) == "" {
+		if strings.TrimSpace(handle.Token) != "" {
+			return fmt.Errorf("feishu card callback token can only be used in the immediate callback response")
+		}
+		return fmt.Errorf("feishu card update handle has no message_id")
+	}
+	return a.updateInteractiveMessage(handle.MessageID, card, false)
 }
 
 // Disconnect signals the adapter to stop and shuts down the long connection.
@@ -764,6 +789,10 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 		slog.Warn("feishu: stale/wrong-context card action ignored", "request_id", requestID, "chat_id", chatID, "context_chat_id", contextChatID, "action_type", actionType)
 		return nil, nil
 	}
+	if !isValidFeishuCardAction(actionType, action, value) {
+		slog.Warn("feishu: invalid card action ignored", "request_id", requestID, "chat_id", chatID, "action_type", actionType, "action", action)
+		return nil, nil
+	}
 
 	dedupeKey := fmt.Sprintf(feishuCardActionFmt, fc.AppID, chatID, requestID+"|"+actionType+"|"+action+"|"+value)
 	if !a.dedupe.TryBegin(dedupeKey) {
@@ -771,13 +800,24 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 		return nil, nil
 	}
 
-	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: requestID + ":" + actionType + ":" + action + ":" + value, ConversationID: chatID, AppID: fc.AppID, InternalAction: &InternalAction{Type: actionType, Action: action, RequestID: requestID, Value: value}}
+	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: requestID + ":" + actionType + ":" + action + ":" + value, ConversationID: chatID, AppID: fc.AppID, InternalAction: &InternalAction{Type: actionType, Action: action, RequestID: requestID, Value: value, Handle: InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
 	if a.enqueueIncomingMessage(msg) {
 		a.dedupe.Commit(dedupeKey)
 	} else {
 		a.dedupe.Release(dedupeKey)
 	}
-	return nil, nil
+	return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "已收到，正在处理..."}, Card: &larkcallback.Card{Type: "raw", Data: buildFeishuResolvedCard("Processing", "⌛ Your response was received and is being processed.", "blue")}}, nil
+}
+
+func isValidFeishuCardAction(actionType, action, value string) bool {
+	switch actionType {
+	case "confirm":
+		return action == "allow" || action == "deny"
+	case "question":
+		return action == "answer" && strings.TrimSpace(value) != ""
+	default:
+		return false
+	}
 }
 
 func (a *FeishuAdapter) enqueueIncomingMessage(msg IncomingMessage) bool {
@@ -845,18 +885,19 @@ func (a *FeishuAdapter) getAccessToken() (string, error) {
 // --- Sending messages ---
 
 func (a *FeishuAdapter) sendTextChunk(chatID, text string, retry bool) error {
-	return a.sendMessage(chatID, "text", map[string]string{"text": text}, retry)
+	_, err := a.sendMessage(chatID, "text", map[string]string{"text": text}, retry)
+	return err
 }
 
-func (a *FeishuAdapter) sendMessage(chatID, msgType string, content any, retry bool) error {
+func (a *FeishuAdapter) sendMessage(chatID, msgType string, content any, retry bool) (*InteractiveCardHandle, error) {
 	token, err := a.getAccessToken()
 	if err != nil {
-		return fmt.Errorf("get access token: %w", err)
+		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
-		return fmt.Errorf("marshal message content: %w", err)
+		return nil, fmt.Errorf("marshal message content: %w", err)
 	}
 
 	reqBody := map[string]string{
@@ -866,26 +907,26 @@ func (a *FeishuAdapter) sendMessage(chatID, msgType string, content any, retry b
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("marshal send request: %w", err)
+		return nil, fmt.Errorf("marshal send request: %w", err)
 	}
 
 	url := feishuOpenBaseURL + "/open-apis/im/v1/messages?receive_id_type=chat_id"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create send request: %w", err)
+		return nil, fmt.Errorf("create send request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("send message HTTP request: %w", err)
+		return nil, fmt.Errorf("send message HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var result FeishuSendResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode send response: %w", err)
+		return nil, fmt.Errorf("decode send response: %w", err)
 	}
 
 	if result.Code != 0 {
@@ -897,9 +938,55 @@ func (a *FeishuAdapter) sendMessage(chatID, msgType string, content any, retry b
 			a.mu.Unlock()
 			return a.sendMessage(chatID, msgType, content, true)
 		}
-		return fmt.Errorf("feishu send error: code=%d msg=%s", result.Code, result.Msg)
+		return nil, fmt.Errorf("feishu send error: code=%d msg=%s", result.Code, result.Msg)
 	}
 
+	return &InteractiveCardHandle{MessageID: result.Data.MessageID}, nil
+}
+
+func (a *FeishuAdapter) updateInteractiveMessage(messageID string, card map[string]any, retry bool) error {
+	token, err := a.getAccessToken()
+	if err != nil {
+		return fmt.Errorf("get access token: %w", err)
+	}
+	contentJSON, err := json.Marshal(card)
+	if err != nil {
+		return fmt.Errorf("marshal interactive card content: %w", err)
+	}
+	reqBody := map[string]string{
+		"content": string(contentJSON),
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal update request: %w", err)
+	}
+	url := feishuOpenBaseURL + "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create update request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("update message HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+	var result FeishuSendResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode update response: %w", err)
+	}
+	if result.Code != 0 {
+		if result.Code == 99991663 && !retry {
+			slog.Warn("feishu: access token expired, refreshing")
+			a.mu.Lock()
+			a.accessToken = ""
+			a.tokenExpireAt = time.Time{}
+			a.mu.Unlock()
+			return a.updateInteractiveMessage(messageID, card, true)
+		}
+		return fmt.Errorf("feishu update interactive message error: code=%d msg=%s", result.Code, result.Msg)
+	}
 	return nil
 }
 

@@ -49,7 +49,9 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 
 ## 问题交互
 
-当 Chord 发送 `question_request` 时，gateway 会把问题和选项发送到 IM 聊天。飞书中，受支持的单选问题会展示为带选项按钮的交互卡片；用户可以点击按钮，也可以直接文字回复。
+当 Chord 发送 `question_request` 时，gateway 会把问题和选项发送到 IM 聊天。飞书中，受支持的单选问题会展示为带选项按钮的交互卡片；用户可以点击按钮，也可以直接文字回复。单选且选项数不超过 10 的问题，只有在选项文本和可展示正文都足够短时才会使用按钮卡片。多选、自由回答、选项过多，或会让卡片正文过长的选项/详情，会回退到文本形式。
+
+飞书按钮点击被接受后，gateway 会尝试把原卡片更新为已处理状态。如果更新失败，仍会发送文本确认，且不会回滚已经提交给 Chord 的审批或回答。
 
 ```text
 ❓ Continue?
@@ -76,7 +78,7 @@ Reply /answer 1 / 1,2 / or type your answer
 
 ## 确认交互
 
-当 Chord 请求权限确认时，飞书可以展示带 `Allow` / `Deny` 按钮的交互确认卡片。你也可以直接文字回复：
+当 Chord 请求权限确认时，飞书可以展示带 `Allow` / `Deny` 按钮的交互确认卡片。卡片会展示风险等级、工具名、参数摘要、request ID，以及可用时的 workspace/session 上下文。你也可以直接文字回复：
 
 - `/allow` 批准
 - `/deny [reason]` 拒绝；可选原因会转发给 Chord

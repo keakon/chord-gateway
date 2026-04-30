@@ -37,6 +37,7 @@ type NotificationRouter struct {
 	lastKeyChatID  map[string]string
 	reminders      map[string]*reminderState
 	expiredPending map[string]expiredPendingState
+	cardHandles    map[string]InteractiveCardHandle
 }
 
 type reminderState struct {
@@ -57,6 +58,7 @@ func NewNotificationRouter(mgr *ChordManager, cfg *config.Config) *NotificationR
 		lastKeyChatID:  make(map[string]string),
 		reminders:      make(map[string]*reminderState),
 		expiredPending: make(map[string]expiredPendingState),
+		cardHandles:    make(map[string]InteractiveCardHandle),
 	}
 	mgr.SetOnEvent(r.HandleChordEvent)
 	return r
@@ -126,6 +128,49 @@ func (r *NotificationRouter) lookupExpiredPending(key string) expiredPendingStat
 		return expiredPendingState{}
 	}
 	return expired
+}
+
+func cardHandleKey(processKey, requestType, requestID string) string {
+	return processKey + "|" + requestType + "|" + requestID
+}
+
+func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID string, handle *InteractiveCardHandle) {
+	if strings.TrimSpace(requestID) == "" || handle == nil || (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
+		return
+	}
+	r.mu.Lock()
+	if r.cardHandles == nil {
+		r.cardHandles = make(map[string]InteractiveCardHandle)
+	}
+	r.cardHandles[cardHandleKey(processKey, requestType, requestID)] = *handle
+	r.mu.Unlock()
+}
+
+func (r *NotificationRouter) takeCardHandle(processKey, requestType, requestID string) (InteractiveCardHandle, bool) {
+	if strings.TrimSpace(requestID) == "" {
+		return InteractiveCardHandle{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cardHandles == nil {
+		return InteractiveCardHandle{}, false
+	}
+	key := cardHandleKey(processKey, requestType, requestID)
+	handle, ok := r.cardHandles[key]
+	if ok {
+		delete(r.cardHandles, key)
+	}
+	return handle, ok
+}
+
+func mergeCardHandles(primary, fallback InteractiveCardHandle) InteractiveCardHandle {
+	if strings.TrimSpace(primary.MessageID) == "" {
+		primary.MessageID = fallback.MessageID
+	}
+	if strings.TrimSpace(primary.Token) == "" {
+		primary.Token = fallback.Token
+	}
+	return primary
 }
 
 func (r *NotificationRouter) expiredPendingTTL() time.Duration {
@@ -229,7 +274,7 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	case "login":
 		r.handleLogin(ws, chatID, imType, cmd.Content)
 	default:
-		r.handleChordCommand(ws, chatID, cmd, imType)
+		r.handleChordCommand(ws, chatID, cmd, imType, msg)
 	}
 }
 
@@ -504,7 +549,11 @@ func loginCommandName(name string) string {
 }
 
 // handleChordCommand dispatches a command to the chord process.
-func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd IMCommand, imType string) {
+func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd IMCommand, imType string, messages ...IncomingMessage) {
+	msg := IncomingMessage{IMType: imType, ChatID: chatID, SenderID: chatID}
+	if len(messages) > 0 {
+		msg = messages[0]
+	}
 	procKey := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	proc, err := r.mgr.GetOrSpawnForKey(procKey)
 	if err != nil {
@@ -563,12 +612,14 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 				return
 			}
 			r.beginTurn(procKey)
+			r.updateFeishuCardStatus(msg, procKey, "confirm", cmd.RequestID, buildFeishuResolvedCard("Confirmation expired", "⌛ The pending confirmation has expired.", "grey"))
 			r.sendText(chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
 			return
 		}
 		requestID := pc.RequestID
 		if cmd.RequestID != "" {
 			if cmd.RequestID != pc.RequestID {
+				r.updateFeishuCardStatus(msg, procKey, "confirm", cmd.RequestID, buildFeishuResolvedCard("No matching confirmation", "⚠️ This confirmation has already been handled or no longer matches the current request.", "grey"))
 				r.sendText(chatID, "⚠️ No matching pending confirmation to respond to.")
 				return
 			}
@@ -588,25 +639,31 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 			return
 		}
 		r.beginTurn(procKey)
+		sender := displaySender(msg)
 		if cmd.Action == "deny" {
-			msg := "✅ denied"
+			text := "✅ denied"
+			status := "❌ Denied by " + sender
 			if strings.TrimSpace(cmd.Reason) != "" {
-				msg += ": " + strings.TrimSpace(cmd.Reason)
+				text += ": " + strings.TrimSpace(cmd.Reason)
+				status += ": " + strings.TrimSpace(cmd.Reason)
 			}
-			r.sendText(chatID, msg)
+			r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation denied", status, "red"))
+			slog.Info("confirm.responded", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "action", cmd.Action, "tool", pc.ToolName)
+			r.sendText(chatID, text)
 			return
 		}
+		r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation approved", "✅ Approved by "+sender, "green"))
+		slog.Info("confirm.responded", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "action", cmd.Action, "tool", pc.ToolName)
 		r.sendText(chatID, "✅ allowed")
 
 	case "question":
-		// If no request ID given, use the current pending question's ID.
 		state := proc.State()
 		pq := state.PendingQuestion
 		requestID := cmd.RequestID
 		if requestID == "" && pq != nil {
 			requestID = pq.RequestID
 		}
-		if requestID == "" {
+		if requestID == "" || pq == nil {
 			expired := r.lookupExpiredPending(procKey)
 			q := state.ExpiredQuestion
 			if q == nil {
@@ -619,10 +676,15 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 				return
 			}
 			r.beginTurn(procKey)
+			r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question expired", "⌛ The pending question has expired.", "grey"))
 			r.sendText(chatID, "⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.")
 			return
 		}
-		// Map numeric answers to option labels (e.g. "1" → first option).
+		if requestID != pq.RequestID {
+			r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("No matching question", "⚠️ This question has already been handled or no longer matches the current request.", "grey"))
+			r.sendText(chatID, "⚠️ No matching pending question to answer.")
+			return
+		}
 		answers := resolveQuestionAnswers(strings.Join(cmd.Answers, " "), pq)
 		questionCmd := map[string]any{
 			"type":       "question",
@@ -635,7 +697,10 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 			return
 		}
 		r.beginTurn(procKey)
-		r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
+		answerText := strings.Join(answers, ", ")
+		r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
+		slog.Info("question.answered", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "tool", pq.ToolName)
+		r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
 
 	case "send":
 		// If a pending question exists (and no pending confirm),
@@ -733,13 +798,13 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
-			if r.sendFeishuConfirmCard(chatID, state) {
+			if r.sendFeishuConfirmCard(chatID, key, state) {
 				r.markVisibleOutput(key)
 				return
 			}
 		}
 		if eventType == "question_request" {
-			if r.sendFeishuQuestionCard(chatID, state) {
+			if r.sendFeishuQuestionCard(chatID, key, state) {
 				r.markVisibleOutput(key)
 				return
 			}
@@ -767,6 +832,48 @@ func buildExpiredQuestionFollowup(answers []string, q *QuestionPayload) string {
 		sb.WriteString(answer)
 	}
 	return sb.String()
+}
+
+func buildFeishuResolvedCard(title, message, template string) map[string]any {
+	return map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
+		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": title}, "template": template},
+		"body": map[string]any{"elements": []any{
+			map[string]any{"tag": "markdown", "content": message},
+		}},
+	}
+}
+
+func displaySender(msg IncomingMessage) string {
+	if strings.TrimSpace(msg.SenderName) != "" {
+		return strings.TrimSpace(msg.SenderName)
+	}
+	if strings.TrimSpace(msg.SenderID) != "" {
+		return shortID(msg.SenderID)
+	}
+	return "user"
+}
+
+func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, processKey, requestType, requestID string, card map[string]any) {
+	if msg.IMType != "feishu" {
+		return
+	}
+	feishu := r.findFeishuAdapter()
+	if feishu == nil {
+		return
+	}
+	stored, ok := r.takeCardHandle(processKey, requestType, requestID)
+	handle := stored
+	if msg.InternalAction != nil {
+		handle = mergeCardHandles(msg.InternalAction.Handle, stored)
+	}
+	if !ok && (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
+		return
+	}
+	if err := feishu.UpdateInteractiveCard(handle, card); err != nil {
+		slog.Warn("feishu: failed to update interactive card", "request_id", requestID, "request_type", requestType, "message_id", handle.MessageID, "error", err)
+	}
 }
 
 func buildExpiredConfirmFollowup(cmd IMCommand, c *ConfirmPayload) string {
@@ -929,25 +1036,25 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 		}
 	case "Write", "Edit":
 		if path, _ := args["path"].(string); path != "" {
-			return "📝 " + path
+			return "📝 " + truncateLine(path, 160)
 		}
 	case "Delete":
 		if paths, _ := args["paths"].([]any); len(paths) > 0 {
 			if s, ok := paths[0].(string); ok {
-				return "🗑️ " + s
+				return "🗑️ " + truncateLine(s, 160)
 			}
 		}
 	case "Read":
 		if path, _ := args["path"].(string); path != "" {
-			return "📖 " + path
+			return "📖 " + truncateLine(path, 160)
 		}
 	case "Grep", "Glob":
 		if pat, _ := args["pattern"].(string); pat != "" {
-			return "🔍 " + pat
+			return "🔍 " + truncateLine(pat, 160)
 		}
 	case "WebFetch":
 		if url, _ := args["url"].(string); url != "" {
-			return "🌐 " + url
+			return "🌐 " + truncateLine(url, 160)
 		}
 	case "Lsp":
 		// Show operation + path if available
@@ -955,7 +1062,7 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 		path, _ := args["path"].(string)
 		summary := strings.TrimSpace(op + " " + path)
 		if summary != "" {
-			return "🔎 " + summary
+			return "🔎 " + truncateLine(summary, 180)
 		}
 	}
 
@@ -1022,7 +1129,7 @@ func (r *NotificationRouter) formatQuestionNotification(state ControlState) stri
 	return truncate(sb.String())
 }
 
-func (r *NotificationRouter) sendFeishuConfirmCard(chatID string, state ControlState) bool {
+func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state ControlState) bool {
 	if state.PendingConfirm == nil {
 		return false
 	}
@@ -1030,27 +1137,77 @@ func (r *NotificationRouter) sendFeishuConfirmCard(chatID string, state ControlS
 	if feishu == nil {
 		return false
 	}
-	card := buildFeishuConfirmCard(chatID, state.PendingConfirm)
-	feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
-	return true
+	workspaceID, _, _ := parseProcessKey(key)
+	card := buildFeishuConfirmCard(chatID, state.PendingConfirm, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
+	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
+	r.recordCardHandle(key, "confirm", state.PendingConfirm.RequestID, handle)
+	return err == nil
 }
 
-func (r *NotificationRouter) sendFeishuQuestionCard(chatID string, state ControlState) bool {
-	if state.PendingQuestion == nil || state.PendingQuestion.Multiple || len(state.PendingQuestion.Options) == 0 || len(state.PendingQuestion.Options) > 5 {
+func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state ControlState) bool {
+	if state.PendingQuestion == nil || !shouldSendFeishuQuestionCard(state.PendingQuestion) {
 		return false
 	}
 	feishu := r.findFeishuAdapter()
 	if feishu == nil {
 		return false
 	}
-	card := buildFeishuQuestionCard(chatID, state.PendingQuestion)
-	feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
+	workspaceID, _, _ := parseProcessKey(key)
+	card := buildFeishuQuestionCard(chatID, state.PendingQuestion, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
+	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
+	r.recordCardHandle(key, "question", state.PendingQuestion.RequestID, handle)
+	return err == nil
+}
+
+type feishuCardContext struct {
+	WorkspaceID string
+	SessionID   string
+	RequestedAt string
+	ProcessKey  string
+}
+
+func shouldSendFeishuQuestionCard(q *QuestionPayload) bool {
+	if q == nil || q.Multiple || len(q.Options) == 0 || len(q.Options) > 10 {
+		return false
+	}
+	for i, opt := range q.Options {
+		if len([]rune(strings.TrimSpace(opt))) > 24 {
+			return false
+		}
+		if i < len(q.OptionDetails) {
+			detail := strings.TrimSpace(q.OptionDetails[i])
+			if detail != "" && detail != opt && len([]rune(detail)) > 120 {
+				return false
+			}
+		}
+	}
 	return true
 }
 
-func buildFeishuConfirmCard(chatID string, c *ConfirmPayload) map[string]any {
+func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, ctx ...feishuCardContext) map[string]any {
+	cardCtx := feishuCardContext{}
+	if len(ctx) > 0 {
+		cardCtx = ctx[0]
+	}
+	risk := riskLevelForTool(c.ToolName)
 	summary := summarizeToolArgs(c.ToolName, c.ArgsJSON)
-	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**🔧 Confirm required**\n%s", c.ToolName)}}
+	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**🔧 %s**\nTool: `%s`", risk.Title, c.ToolName)}}
+	var contextLines []string
+	if strings.TrimSpace(cardCtx.WorkspaceID) != "" {
+		contextLines = append(contextLines, "Workspace: `"+cardCtx.WorkspaceID+"`")
+	}
+	if strings.TrimSpace(cardCtx.SessionID) != "" {
+		contextLines = append(contextLines, "Session: `"+shortID(cardCtx.SessionID)+"`")
+	}
+	if strings.TrimSpace(c.RequestID) != "" {
+		contextLines = append(contextLines, "Request: `"+shortID(c.RequestID)+"`")
+	}
+	if strings.TrimSpace(cardCtx.RequestedAt) != "" {
+		contextLines = append(contextLines, "Requested: `"+cardCtx.RequestedAt+"`")
+	}
+	if len(contextLines) > 0 {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": strings.Join(contextLines, "\n")})
+	}
 	if summary != "" {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": summary})
 	}
@@ -1070,27 +1227,63 @@ func buildFeishuConfirmCard(chatID string, c *ConfirmPayload) map[string]any {
 		}
 	}
 	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click a button, or reply `/allow` / `/deny [reason]`."})
+	baseValue := map[string]any{"request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
+	allowValue := cloneCardValue(baseValue)
+	allowValue["type"] = "confirm"
+	allowValue["action"] = "allow"
+	denyValue := cloneCardValue(baseValue)
+	denyValue["type"] = "confirm"
+	denyValue["action"] = "deny"
 	actions := []any{
-		feishuCardButton("Allow", "primary", map[string]any{"type": "confirm", "action": "allow", "request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu"}),
-		feishuCardButton("Deny", "danger", map[string]any{"type": "confirm", "action": "deny", "request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu"}),
+		feishuCardButton("Allow", "primary", allowValue),
+		feishuCardButton("Deny", "danger", denyValue),
 	}
 	elements = append(elements, actions...)
 	return map[string]any{
 		"schema": "2.0",
-		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Confirm required"}, "template": "orange"},
+		"config": map[string]any{"update_multi": true},
+		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": risk.Header}, "template": risk.Template},
 		"body":   map[string]any{"elements": elements},
 	}
 }
 
-func buildFeishuQuestionCard(chatID string, q *QuestionPayload) map[string]any {
+func buildFeishuQuestionCard(chatID string, q *QuestionPayload, ctx ...feishuCardContext) map[string]any {
+	cardCtx := feishuCardContext{}
+	if len(ctx) > 0 {
+		cardCtx = ctx[0]
+	}
 	question := strings.TrimSpace(q.Question)
 	if q.Header != "" {
 		question = strings.TrimSpace(q.Header) + ": " + question
 	}
 	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**❓ %s**", question)}}
+	var contextLines []string
+	if q.Multiple {
+		contextLines = append(contextLines, "Multiple answers allowed")
+	}
+	if strings.TrimSpace(cardCtx.WorkspaceID) != "" {
+		contextLines = append(contextLines, "Workspace: `"+cardCtx.WorkspaceID+"`")
+	}
+	if strings.TrimSpace(cardCtx.SessionID) != "" {
+		contextLines = append(contextLines, "Session: `"+shortID(cardCtx.SessionID)+"`")
+	}
+	if strings.TrimSpace(q.RequestID) != "" {
+		contextLines = append(contextLines, "Request: `"+shortID(q.RequestID)+"`")
+	}
+	if len(contextLines) > 0 {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": strings.Join(contextLines, "\n")})
+	}
 	for i, opt := range q.Options {
-		if i < len(q.OptionDetails) && strings.TrimSpace(q.OptionDetails[i]) != "" && q.OptionDetails[i] != opt {
-			elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("**%d. %s**\n%s", i+1, opt, q.OptionDetails[i])})
+		opt = strings.TrimSpace(opt)
+		detail := ""
+		if i < len(q.OptionDetails) {
+			detail = strings.TrimSpace(q.OptionDetails[i])
+		}
+		switch {
+		case detail != "" && detail != opt:
+			elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("**%d. %s**\n%s", i+1, opt, detail)})
+		case opt != "":
+			elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("%d. %s", i+1, opt)})
 		}
 	}
 	if q.DefaultAnswer != "" {
@@ -1098,15 +1291,69 @@ func buildFeishuQuestionCard(chatID string, q *QuestionPayload) map[string]any {
 	}
 	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click an option, or reply with the option number/text. `/answer 1` also works."})
 	actions := make([]any, 0, len(q.Options))
+	baseValue := map[string]any{"type": "question", "action": "answer", "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
 	for _, opt := range q.Options {
-		actions = append(actions, feishuCardButton(opt, "default", map[string]any{"type": "question", "value": opt, "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu"}))
+		value := cloneCardValue(baseValue)
+		value["value"] = opt
+		actions = append(actions, feishuCardButton(truncateButtonLabel(opt), "default", value))
 	}
 	elements = append(elements, actions...)
 	return map[string]any{
 		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
 		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Question"}, "template": "blue"},
 		"body":   map[string]any{"elements": elements},
 	}
+}
+
+type feishuRiskLevel struct {
+	Header   string
+	Title    string
+	Template string
+}
+
+func riskLevelForTool(tool string) feishuRiskLevel {
+	switch strings.TrimSpace(tool) {
+	case "Read", "Glob", "Grep", "Lsp":
+		return feishuRiskLevel{Header: "Low risk confirmation required", Title: "Low risk · read-only operation", Template: "blue"}
+	case "Delete", "Bash", "Spawn":
+		return feishuRiskLevel{Header: "High risk confirmation required", Title: "High risk · destructive or command execution", Template: "red"}
+	case "Edit", "Write":
+		return feishuRiskLevel{Header: "Medium risk confirmation required", Title: "Medium risk · file modification", Template: "orange"}
+	case "WebFetch":
+		return feishuRiskLevel{Header: "Medium risk confirmation required", Title: "Medium risk · external network access", Template: "orange"}
+	default:
+		return feishuRiskLevel{Header: "Confirmation required", Title: "Medium risk · confirmation required", Template: "orange"}
+	}
+}
+
+func shortID(s string) string {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) <= 12 {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:8]) + "…" + string(r[len(r)-4:])
+}
+
+func cloneCardValue(value map[string]any) map[string]any {
+	out := make(map[string]any, len(value)+2)
+	for k, v := range value {
+		if str, ok := v.(string); ok && str == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func truncateButtonLabel(label string) string {
+	label = strings.TrimSpace(label)
+	r := []rune(label)
+	if len(r) <= 24 {
+		return label
+	}
+	return string(r[:23]) + "…"
 }
 
 func feishuCardButton(label, style string, value map[string]any) map[string]any {

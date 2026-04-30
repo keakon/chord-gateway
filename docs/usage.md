@@ -64,7 +64,9 @@ Notes:
 
 ## Question interaction
 
-When Chord sends a `question_request`, the gateway sends a numbered question to the IM chat. In Feishu, supported single-select questions are shown as interactive cards with option buttons; users can click an option or reply with text.
+When Chord sends a `question_request`, the gateway sends a numbered question to the IM chat. In Feishu, supported single-select questions are shown as interactive cards with option buttons; users can click an option or reply with text. Single-select questions with up to 10 options use button cards only when the option text and rendered body stay short enough. Multi-select, free-answer, too many options, or option/detail content that would make the card too long fall back to the text form.
+
+After a Feishu button click is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
 
 ```text
 ❓ Continue?
@@ -91,7 +93,7 @@ The user-facing notice is in English, for example:
 
 ## Confirmation interaction
 
-When Chord asks for permission, Feishu can show an interactive confirmation card with `Allow` and `Deny` buttons. You can also reply with text:
+When Chord asks for permission, Feishu can show an interactive confirmation card with `Allow` and `Deny` buttons. The card includes the risk level, tool name, argument summary, request ID, and workspace/session context when available. You can also reply with text:
 
 - `/allow` to approve
 - `/deny [reason]` to reject, optionally including a reason

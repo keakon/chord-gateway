@@ -132,7 +132,8 @@ func makeFeishuCardActionEvent(openID, chatID, requestID, action string) *larkca
 					"im_type":    "feishu",
 				},
 			},
-			Context: &larkcallback.Context{OpenChatID: chatID},
+			Context: &larkcallback.Context{OpenChatID: chatID, OpenMessageID: "om_" + requestID},
+			Token:   "token_" + requestID,
 		},
 	}
 }
@@ -311,6 +312,43 @@ func TestFeishuCardActionEvent_WrongContextIgnored(t *testing.T) {
 	}
 }
 
+func TestFeishuCardActionEvent_InvalidActionIgnored(t *testing.T) {
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
+	defer a.dedupe.Close()
+	defer cancel()
+
+	tests := []struct {
+		name   string
+		mutate func(*larkcallback.CardActionTriggerEvent)
+	}{
+		{name: "unknown confirm action", mutate: func(e *larkcallback.CardActionTriggerEvent) { e.Event.Action.Value["action"] = "approve_forever" }},
+		{name: "unknown type", mutate: func(e *larkcallback.CardActionTriggerEvent) { e.Event.Action.Value["type"] = "admin" }},
+		{name: "question wrong action", mutate: func(e *larkcallback.CardActionTriggerEvent) {
+			e.Event.Action.Value["type"] = "question"
+			e.Event.Action.Value["action"] = "allow"
+			e.Event.Action.Value["value"] = "yes"
+		}},
+		{name: "question empty value", mutate: func(e *larkcallback.CardActionTriggerEvent) {
+			e.Event.Action.Value["type"] = "question"
+			e.Event.Action.Value["action"] = "answer"
+			e.Event.Action.Value["value"] = ""
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := makeFeishuCardActionEvent("ou_owner", "oc_chat1", "req_invalid_"+strings.ReplaceAll(tt.name, " ", "_"), "allow")
+			tt.mutate(event)
+			if resp, err := a.handleCardActionEvent(context.Background(), event); err != nil || resp != nil {
+				t.Fatalf("handleCardActionEvent() resp=%#v err=%v", resp, err)
+			}
+		})
+	}
+	time.Sleep(50 * time.Millisecond)
+	if dispatched.Load() != 0 {
+		t.Fatalf("invalid card actions should not be dispatched, got %d", dispatched.Load())
+	}
+}
 func TestFeishuCardActionEvent_QueueFullRelease(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
 	a := testFeishuAdapter(t, fc)
@@ -393,6 +431,9 @@ func TestFeishuCardActionEvent_UsesRequestIDAndInternalActionAsMessageID(t *test
 		if msg.InternalAction == nil || msg.InternalAction.Type != "confirm" || msg.InternalAction.Action != "allow" || msg.InternalAction.RequestID != "req_9" {
 			t.Fatalf("InternalAction = %#v", msg.InternalAction)
 		}
+		if msg.InternalAction.Handle.MessageID != "om_req_9" || msg.InternalAction.Handle.Token != "token_req_9" {
+			t.Fatalf("InternalAction.Handle = %#v", msg.InternalAction.Handle)
+		}
 	default:
 		t.Fatal("expected card action to be enqueued")
 	}
@@ -446,6 +487,86 @@ func TestFeishuMessageEvent_MessageContentEncodingMatchesFeishu(t *testing.T) {
 	}
 	if string(bs) != `{"text":"hello"}` {
 		t.Fatalf("content JSON = %s", string(bs))
+	}
+}
+
+func TestFeishuSendInteractiveWithHandleParsesMessageID(t *testing.T) {
+	var sawSend bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/app_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case "/open-apis/im/v1/messages":
+			sawSend = true
+			if r.URL.Query().Get("receive_id_type") != "chat_id" {
+				t.Fatalf("receive_id_type = %q", r.URL.Query().Get("receive_id_type"))
+			}
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"message_id":"om_msg_1"}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	defer a.dedupe.Close()
+	a.httpClient = server.Client()
+	oldBaseURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldBaseURL }()
+
+	handle, err := a.SendInteractiveWithHandle("oc_chat", map[string]any{"schema": "2.0"})
+	if err != nil {
+		t.Fatalf("SendInteractiveWithHandle() error = %v", err)
+	}
+	if !sawSend {
+		t.Fatal("send endpoint was not called")
+	}
+	if handle == nil || handle.MessageID != "om_msg_1" {
+		t.Fatalf("handle = %#v", handle)
+	}
+}
+
+func TestFeishuUpdateInteractiveCardPatchesMessageCardContent(t *testing.T) {
+	var sawPatch bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/app_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case "/open-apis/im/v1/messages/om_msg_1":
+			sawPatch = true
+			if r.Method != http.MethodPatch {
+				t.Fatalf("method = %s", r.Method)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			if _, ok := body["msg_type"]; ok {
+				t.Fatalf("message card patch body must not include msg_type: %#v", body)
+			}
+			if !strings.Contains(body["content"], `"update_multi":true`) || !strings.Contains(body["content"], `"schema":"2.0"`) {
+				t.Fatalf("unexpected card content: %s", body["content"])
+			}
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	defer a.dedupe.Close()
+	a.httpClient = server.Client()
+	oldBaseURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldBaseURL }()
+
+	if err := a.UpdateInteractiveCard(InteractiveCardHandle{MessageID: "om_msg_1"}, buildFeishuResolvedCard("Done", "✅ Done", "green")); err != nil {
+		t.Fatalf("UpdateInteractiveCard() error = %v", err)
+	}
+	if !sawPatch {
+		t.Fatal("patch endpoint was not called")
 	}
 }
 
