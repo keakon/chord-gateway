@@ -11,12 +11,8 @@ import (
 
 // MultiAdapter runs multiple IM adapters in parallel.
 type MultiAdapter struct {
-	adapters []namedAdapter
+	adapters []IMAdapter
 	router   *NotificationRouter
-}
-
-type namedAdapter struct {
-	IMAdapter
 }
 
 // NewMultiAdapter creates a MultiAdapter from the active IM configs.
@@ -32,7 +28,7 @@ func NewMultiAdapter(cfg *config.Config, paths *config.Paths, router *Notificati
 		if err != nil {
 			return nil, fmt.Errorf("create %s adapter: %w", activeIMs[i].Type(), err)
 		}
-		m.adapters = append(m.adapters, namedAdapter{IMAdapter: a})
+		m.adapters = append(m.adapters, a)
 	}
 	return m, nil
 }
@@ -46,7 +42,7 @@ func (m *MultiAdapter) Connect() error {
 	)
 	for _, a := range m.adapters {
 		wg.Add(1)
-		go func(a namedAdapter) {
+		go func(a IMAdapter) {
 			defer wg.Done()
 			slog.Info("starting IM adapter", "type", a.Type())
 			if err := a.Connect(); err != nil {
@@ -133,7 +129,7 @@ func (m *MultiAdapter) FindAdapterByType(adapterType string) IMAdapter {
 	adapterType = normalizeIMType(adapterType)
 	for _, a := range m.adapters {
 		if a.Type() == adapterType {
-			return a.IMAdapter
+			return a
 		}
 	}
 	return nil
@@ -142,9 +138,7 @@ func (m *MultiAdapter) FindAdapterByType(adapterType string) IMAdapter {
 // Adapters returns all adapters.
 func (m *MultiAdapter) Adapters() []IMAdapter {
 	result := make([]IMAdapter, len(m.adapters))
-	for i, a := range m.adapters {
-		result[i] = a.IMAdapter
-	}
+	copy(result, m.adapters)
 	return result
 }
 

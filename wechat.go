@@ -126,24 +126,21 @@ type TokenData struct {
 
 // WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
-	cfg        *config.Config
-	imCfg      config.IMAdapterConfig
-	router     *NotificationRouter
-	token      *TokenData
-	syncBuf    string
-	mu         sync.Mutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	storageDir string
-	tokenFile  string
-	httpClient *http.Client
+	cfg            *config.Config
+	imCfg          config.IMAdapterConfig
+	router         *NotificationRouter
+	token          *TokenData
+	syncBuf        string // monitorLoop-only: written/read from a single goroutine
+	mu             sync.Mutex
+	sessionExpired bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	storageDir     string
+	tokenFile      string
+	httpClient     *http.Client
 
 	// contextToken per user — needed to send replies.
 	contextTokens map[string]string
-
-	// sessionExpired is set when errcode=-14 is detected (in getUpdates or sendMessage).
-	// It is cleared on successful login. monitorLoop checks this flag.
-	sessionExpired bool
 }
 
 // NewWechatAdapter creates a new WeChat iLink adapter.
@@ -214,8 +211,6 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 		}
 		switch resp.Status {
 		case "confirmed":
-			a.mu.Lock()
-			a.sessionExpired = false
 			a.token = &TokenData{
 				Token:     resp.BotToken,
 				BaseURL:   resp.BaseURL,
@@ -224,7 +219,6 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 				SavedAt:   time.Now().Format(time.RFC3339),
 			}
 			a.saveToken()
-			a.mu.Unlock()
 			slog.Info("wechat ilink: re-login successful via QR scan")
 			if a.router != nil {
 				a.router.HandleLoginResult("wechat", true, "")
@@ -316,9 +310,10 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 		}
 	}
 
+	tok := a.token
 	slog.Info("wechat ilink: connected, starting monitor loop",
-		"account_id", a.token.AccountID,
-		"base_url", a.token.BaseURL,
+		"account_id", tok.AccountID,
+		"base_url", tok.BaseURL,
 	)
 
 	a.monitorLoop(ctx)
@@ -348,8 +343,8 @@ func (a *WechatAdapter) baseURL() string {
 	if a.imCfg.Wechat != nil && a.imCfg.Wechat.BaseURL != "" {
 		return strings.TrimRight(a.imCfg.Wechat.BaseURL, "/")
 	}
-	if a.token != nil && a.token.BaseURL != "" {
-		return strings.TrimRight(a.token.BaseURL, "/")
+	if tok := a.token; tok != nil && tok.BaseURL != "" {
+		return strings.TrimRight(tok.BaseURL, "/")
 	}
 	return ""
 }
@@ -361,10 +356,11 @@ func (a *WechatAdapter) botType() string {
 }
 
 func (a *WechatAdapter) tokenString() string {
-	if a.token == nil {
+	tok := a.token
+	if tok == nil {
 		return ""
 	}
-	return a.token.Token
+	return tok.Token
 }
 
 // randomWechatUIN generates a random X-WECHAT-UIN header value.

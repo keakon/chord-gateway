@@ -175,7 +175,7 @@ func (ds *DedupeStore) saveToFileLocked() {
 		slog.Error("dedupe: failed to marshal entries", "error", err)
 		return
 	}
-	if err := os.WriteFile(ds.storagePath, data, 0600); err != nil {
+	if err := writeFileAtomically(ds.storagePath, data, 0o600); err != nil {
 		slog.Error("dedupe: failed to write file", "error", err)
 	}
 }

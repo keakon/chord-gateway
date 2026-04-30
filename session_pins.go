@@ -10,15 +10,17 @@ import (
 )
 
 type sessionPinStore struct {
-	mu   sync.Mutex
-	path string
-	pins map[string]string // processKey.String() -> sessionID
+	mu     sync.Mutex
+	path   string
+	pins   map[string]string // processKey.String() -> sessionID
+	writer func(path string, data []byte, perm os.FileMode) error
 }
 
 func newSessionPinStore(storageDir string) *sessionPinStore {
 	return &sessionPinStore{
-		path: filepath.Join(storageDir, "session-pins.json"),
-		pins: make(map[string]string),
+		path:   filepath.Join(storageDir, "session-pins.json"),
+		pins:   make(map[string]string),
+		writer: writeFileAtomically,
 	}
 }
 
@@ -46,14 +48,15 @@ func (s *sessionPinStore) Load() error {
 func (s *sessionPinStore) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("mkdir pins dir: %w", err)
-	}
-	data, err := json.MarshalIndent(s.pins, "", "  ")
+	return s.savePinsLocked(s.pins)
+}
+
+func (s *sessionPinStore) savePinsLocked(pins map[string]string) error {
+	data, err := json.MarshalIndent(pins, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal pins: %w", err)
 	}
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
+	if err := s.writer(s.path, data, 0o644); err != nil {
 		return fmt.Errorf("write pins: %w", err)
 	}
 	return nil
@@ -67,11 +70,25 @@ func (s *sessionPinStore) Get(workspaceID string) string {
 
 func (s *sessionPinStore) Set(workspaceID, sessionID string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	updated := cloneStringMap(s.pins)
 	if strings.TrimSpace(sessionID) == "" {
-		delete(s.pins, workspaceID)
+		delete(updated, workspaceID)
 	} else {
-		s.pins[workspaceID] = sessionID
+		updated[workspaceID] = sessionID
 	}
-	s.mu.Unlock()
-	return s.Save()
+	if err := s.savePinsLocked(updated); err != nil {
+		return err
+	}
+	s.pins = updated
+	return nil
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	clone := make(map[string]string, len(src))
+	for k, v := range src {
+		clone[k] = v
+	}
+	return clone
 }

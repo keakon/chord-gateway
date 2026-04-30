@@ -508,7 +508,7 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
 	r := &NotificationRouter{
-		adapter: &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}},
+		adapter: &MultiAdapter{adapters: []IMAdapter{wechat, feishu}},
 		cfg:     &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
 		lastKeyChatID: map[string]string{
 			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat",
@@ -1044,7 +1044,7 @@ func TestTruncateLineAndTruncate(t *testing.T) {
 	if got := truncateLine("abcdef", 4); got != "abc…" {
 		t.Fatalf("truncateLine = %q", got)
 	}
-	if got := truncate(strings.Repeat("a", maxNotificationLen+10)); !strings.HasSuffix(got, "...") || len(got) != maxNotificationLen {
+	if got := truncate(strings.Repeat("a", maxNotificationRunes+10)); !strings.HasSuffix(got, "...") || len([]rune(got)) != maxNotificationRunes {
 		t.Fatalf("truncate len/suffix failed: len=%d got=%q", len(got), got)
 	}
 }
@@ -1343,7 +1343,7 @@ func TestChatIDLookupHelpers(t *testing.T) {
 func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 	feishu := &stubIMAdapter{typ: "feishu", startLoginFunc: func() (string, error) { return "", ErrLoginNotSupported }}
-	multi := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}}
+	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{adapter: multi}
 
 	if got := r.findAdapterByType("wechat"); got != wechat {
@@ -1401,7 +1401,7 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("login not supported", func(t *testing.T) {
 		loginless := &stubIMAdapter{typ: "feishu"}
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{adapter: &MultiAdapter{adapters: []namedAdapter{{IMAdapter: sender}, {IMAdapter: loginless}}}}
+		r := &NotificationRouter{adapter: &MultiAdapter{adapters: []IMAdapter{sender, loginless}}}
 		r.handleLogin(ws, "chat", "wechat", "feishu")
 		if got := sender.lastMessage().text; !strings.Contains(got, "Feishu does not support login renewal") {
 			t.Fatalf("message = %q", got)
@@ -1431,7 +1431,7 @@ func TestHandleLogin(t *testing.T) {
 func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
-	multi := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}}
+	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{
 		adapter:       multi,
 		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
@@ -1484,7 +1484,7 @@ func TestSendTextAndBroadcastHelpers(t *testing.T) {
 
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
-	r.adapter = &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}, router: r}
+	r.adapter = &MultiAdapter{adapters: []IMAdapter{wechat, feishu}, router: r}
 	r.sendTextAll("ws1", "workspace-msg")
 	if got := wechat.lastMessage().chatID; got != "wechat-chat" {
 		t.Fatalf("wechat broadcast chatID = %q", got)

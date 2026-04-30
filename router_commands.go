@@ -1,0 +1,228 @@
+package main
+
+import (
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/keakon/chord-gateway/config"
+)
+
+// handleChordCommand dispatches a command to the chord process.
+func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd IMCommand, imType string, messages ...IncomingMessage) {
+	msg := IncomingMessage{IMType: imType, ChatID: chatID, SenderID: chatID}
+	if len(messages) > 0 {
+		msg = messages[0]
+	}
+	procKey := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
+	proc, err := r.mgr.GetOrSpawnForKey(procKey)
+	if err != nil {
+		slog.Error("failed to get or spawn process", "workspace", ws.ID, "error", err)
+		r.sendText(chatID, "❌ Failed to connect to chord process.")
+		return
+	}
+	if proc == nil {
+		slog.Error("no process for workspace", "workspace", ws.ID)
+		r.sendText(chatID, "❌ Workspace not configured.")
+		return
+	}
+
+	switch cmd.Type {
+	case "status":
+		r.handleStatusCommand(ws, chatID, imType, proc)
+	case "cancel":
+		r.handleCancelCommand(ws, chatID, procKey, proc)
+	case "confirm":
+		r.handleConfirmCommand(ws, chatID, cmd, msg, procKey, proc)
+	case "question":
+		r.handleQuestionCommand(ws, chatID, cmd, msg, procKey, proc)
+	case "send":
+		r.handleSendCommand(ws, chatID, cmd, procKey, proc)
+	default:
+		slog.Warn("unknown command type", "type", cmd.Type)
+		r.sendText(chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
+	}
+}
+
+func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, imType string, proc *ChordProcess) {
+	// Record the LastStatusResponseAt before sending so we can detect
+	// when the actual status_response arrives (not just UpdatedAt which
+	// is also written on spawn/init).
+	prevStatusResponseAt := proc.State().LastStatusResponseAt
+	if err := proc.SendCommand(map[string]any{"type": "status"}); err != nil {
+		slog.Error("failed to send status command", "workspace", ws.ID, "error", err)
+		r.sendText(chatID, "❌ Failed to get status.")
+		return
+	}
+	// Poll for the response to be processed by readLoop.
+	// Wait up to 10s for LastStatusResponseAt to advance.
+	for i := 0; i < 20; i++ {
+		time.Sleep(500 * time.Millisecond)
+		cur := proc.State().LastStatusResponseAt
+		if !cur.IsZero() && (prevStatusResponseAt.IsZero() || !cur.Equal(prevStatusResponseAt)) {
+			r.sendText(chatID, formatBindingStatus(ws, imType, chatID, proc.State()))
+			return
+		}
+	}
+	state := proc.State()
+	r.sendText(chatID, formatBindingStatus(ws, imType, chatID, state))
+}
+
+func (r *NotificationRouter) handleCancelCommand(ws *config.Workspace, chatID, procKey string, proc *ChordProcess) {
+	if err := proc.SendCommand(map[string]any{"type": "cancel"}); err != nil {
+		slog.Error("failed to send cancel command", "workspace", ws.ID, "error", err)
+		r.sendText(chatID, "❌ Failed to cancel.")
+		return
+	}
+	r.beginTurn(procKey)
+	r.sendText(chatID, "🛑 Cancel requested.")
+}
+
+func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
+	state := proc.State()
+	pc := state.PendingConfirm
+	if pc == nil || strings.TrimSpace(pc.RequestID) == "" {
+		expired := r.lookupExpiredPending(procKey)
+		content := buildExpiredConfirmFollowup(cmd, expired.Confirm)
+		if err := proc.SendUserMessage(content); err != nil {
+			slog.Error("failed to send expired confirmation follow-up", "workspace", ws.ID, "error", err)
+			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
+			return
+		}
+		r.beginTurn(procKey)
+		r.updateFeishuCardStatus(msg, procKey, "confirm", cmd.RequestID, buildFeishuResolvedCard("Confirmation expired", "⌛ The pending confirmation has expired.", "grey"))
+		r.sendText(chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
+		return
+	}
+	requestID := pc.RequestID
+	if cmd.RequestID != "" {
+		if cmd.RequestID != pc.RequestID {
+			r.updateFeishuCardStatus(msg, procKey, "confirm", cmd.RequestID, buildFeishuResolvedCard("No matching confirmation", "⚠️ This confirmation has already been handled or no longer matches the current request.", "grey"))
+			r.sendText(chatID, "⚠️ No matching pending confirmation to respond to.")
+			return
+		}
+		requestID = cmd.RequestID
+	}
+	confirmCmd := map[string]any{
+		"type":       "confirm",
+		"request_id": requestID,
+		"action":     cmd.Action,
+	}
+	if cmd.Action == "deny" && strings.TrimSpace(cmd.Reason) != "" {
+		confirmCmd["deny_reason"] = strings.TrimSpace(cmd.Reason)
+	}
+	if err := proc.SendCommand(confirmCmd); err != nil {
+		slog.Error("failed to send confirm response", "workspace", ws.ID, "error", err)
+		r.sendText(chatID, "❌ Failed to send confirmation.")
+		return
+	}
+	r.beginTurn(procKey)
+	sender := displaySender(msg)
+	if cmd.Action == "deny" {
+		text := "✅ denied"
+		status := "❌ Denied by " + sender
+		if strings.TrimSpace(cmd.Reason) != "" {
+			text += ": " + strings.TrimSpace(cmd.Reason)
+			status += ": " + strings.TrimSpace(cmd.Reason)
+		}
+		r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation denied", status, "red"))
+		slog.Info("confirm.responded", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "action", cmd.Action, "tool", pc.ToolName)
+		r.sendText(chatID, text)
+		return
+	}
+	r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation approved", "✅ Approved by "+sender, "green"))
+	slog.Info("confirm.responded", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "action", cmd.Action, "tool", pc.ToolName)
+	r.sendText(chatID, "✅ allowed")
+}
+
+func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
+	state := proc.State()
+	pq := state.PendingQuestion
+	requestID := cmd.RequestID
+	if requestID == "" && pq != nil {
+		requestID = pq.RequestID
+	}
+	if requestID == "" || pq == nil {
+		expired := r.lookupExpiredPending(procKey)
+		q := state.ExpiredQuestion
+		if q == nil {
+			q = expired.Question
+		}
+		content := buildExpiredQuestionFollowup(cmd.Answers, q)
+		if err := proc.SendUserMessage(content); err != nil {
+			slog.Error("failed to send expired question follow-up", "workspace", ws.ID, "error", err)
+			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
+			return
+		}
+		r.beginTurn(procKey)
+		r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question expired", "⌛ The pending question has expired.", "grey"))
+		r.sendText(chatID, "⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.")
+		return
+	}
+	if requestID != pq.RequestID {
+		r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("No matching question", "⚠️ This question has already been handled or no longer matches the current request.", "grey"))
+		r.sendText(chatID, "⚠️ No matching pending question to answer.")
+		return
+	}
+	answers := resolveQuestionAnswers(strings.Join(cmd.Answers, " "), pq)
+	questionCmd := map[string]any{
+		"type":       "question",
+		"request_id": requestID,
+		"answers":    answers,
+	}
+	if err := proc.SendCommand(questionCmd); err != nil {
+		slog.Error("failed to send question response", "workspace", ws.ID, "error", err)
+		r.sendText(chatID, "❌ Failed to send answer.")
+		return
+	}
+	r.beginTurn(procKey)
+	answerText := strings.Join(answers, ", ")
+	r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
+	slog.Info("question.answered", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "tool", pq.ToolName)
+	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
+}
+
+func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
+	// If a pending question exists (and no pending confirm),
+	// reinterpret plain text as an answer. This allows the user
+	// to simply type their response without /answer prefix.
+	// Unlike /answer which supports numeric shortcuts, direct
+	// replies are always sent as custom text — no comma splitting
+	// or index mapping, because natural language may contain commas.
+	if proc.State().PendingQuestion != nil && proc.State().PendingConfirm == nil {
+		if !strings.HasPrefix(cmd.Content, "/") {
+			pq := proc.State().PendingQuestion
+			answers := []string{cmd.Content}
+			requestID := pq.RequestID
+			questionCmd := map[string]any{
+				"type":       "question",
+				"request_id": requestID,
+				"answers":    answers,
+			}
+			if err := proc.SendCommand(questionCmd); err != nil {
+				slog.Error("failed to send question response (auto-redirect)", "workspace", ws.ID, "error", err)
+				r.sendText(chatID, "❌ Failed to send answer.")
+				return
+			}
+			r.beginTurn(procKey)
+			r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
+			return
+		}
+	}
+	// Filter slash commands that are only supported in local TUI.
+	// Remote control plane must not forward them.
+	switch strings.ToLower(strings.TrimSpace(cmd.Content)) {
+	case "/model", "/new", "/resume", "/export":
+		r.sendText(chatID, "⚠️ This command is only available in local TUI.")
+		return
+	}
+	if err := proc.SendUserMessage(cmd.Content); err != nil {
+		slog.Error("failed to send user message", "workspace", ws.ID, "error", err)
+		r.sendText(chatID, "❌ Failed to send message to chord.")
+		return
+	}
+	r.beginTurn(procKey)
+	// Force a quick control-plane response (helps debug init failures).
+	_ = proc.SendCommand(map[string]any{"type": "status"})
+}

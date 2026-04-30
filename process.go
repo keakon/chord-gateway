@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -41,6 +39,9 @@ type ChordProcess struct {
 
 	// Callback for events that need IM notification.
 	onEvent func(key string, eventType string, state ControlState)
+
+	// statusWaiters are notified when a status_response envelope arrives.
+	statusWaiters []chan ControlState
 }
 
 // tailBuffer keeps the last N bytes written.
@@ -100,64 +101,6 @@ type ChordManager struct {
 	pins *sessionPinStore
 }
 
-// TerminateGroup attempts to gracefully stop the chord process and, if needed,
-// force-kill its whole process group.
-func (p *ChordProcess) TerminateGroup(grace time.Duration) {
-	if p == nil {
-		return
-	}
-	p.exitOnce.Do(func() {
-		// Mark as stopped by gateway to avoid crash restarts.
-		p.mu.Lock()
-		p.stoppedByGateway = true
-		// Close stdin first to let chord exit gracefully.
-		if p.stdin != nil {
-			_ = p.stdin.Close()
-			p.stdin = nil
-		}
-		cmd := p.cmd
-		pgid := p.pgid
-		p.mu.Unlock()
-
-		// If no process, nothing to do.
-		if cmd == nil || cmd.Process == nil {
-			return
-		}
-
-		// Best-effort: send SIGTERM to process group.
-		if pgid > 0 {
-			_ = terminateProcessGroup(pgid)
-		} else {
-			_ = terminateProcess(cmd.Process)
-		}
-
-		// Wait for graceful exit up to grace.
-		if grace <= 0 {
-			grace = 2 * time.Second
-		}
-		done := make(chan struct{})
-		go func() {
-			p.waitOnce.Do(func() {
-				_ = cmd.Wait()
-			})
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			return
-		case <-time.After(grace):
-		}
-
-		// Force kill.
-		if pgid > 0 {
-			_ = killProcessGroup(pgid)
-		} else {
-			_ = cmd.Process.Kill()
-		}
-	})
-}
-
 // NewChordManager creates a new ChordManager.
 func NewChordManager(cfg *config.Config, paths *config.Paths) *ChordManager {
 	pinsPath := ""
@@ -205,7 +148,6 @@ func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 		return nil, fmt.Errorf("invalid process key %q", key)
 	}
 
-	// Find workspace config.
 	ws := m.cfg.WorkspaceByID(workspaceID)
 	if ws == nil {
 		m.mu.Unlock()
@@ -378,6 +320,39 @@ func (p *ChordProcess) State() ControlState {
 	return p.state
 }
 
+// WaitStatus sends a status command and waits for the next status_response.
+// Returns the resulting ControlState, or ctx.Err() if the context expires first.
+func (p *ChordProcess) WaitStatus(ctx context.Context) (ControlState, error) {
+	ch := make(chan ControlState, 1)
+	p.mu.Lock()
+	p.statusWaiters = append(p.statusWaiters, ch)
+	p.mu.Unlock()
+
+	if err := p.SendCommand(map[string]any{"type": "status"}); err != nil {
+		p.removeStatusWaiter(ch)
+		return ControlState{}, err
+	}
+
+	select {
+	case state := <-ch:
+		return state, nil
+	case <-ctx.Done():
+		p.removeStatusWaiter(ch)
+		return ControlState{}, ctx.Err()
+	}
+}
+
+func (p *ChordProcess) removeStatusWaiter(target chan ControlState) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, ch := range p.statusWaiters {
+		if ch == target {
+			p.statusWaiters = append(p.statusWaiters[:i], p.statusWaiters[i+1:]...)
+			return
+		}
+	}
+}
+
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, idle, error, notification.
@@ -443,452 +418,3 @@ func (p *ChordProcess) SendUserMessage(content string) error {
 		"content": content,
 	})
 }
-
-// readLoop reads stdout from the chord process, parses JSON envelopes,
-// updates state, and calls onEvent for notable events.
-func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		var env HeadlessEnvelope
-		if err := json.Unmarshal(line, &env); err != nil {
-			slog.Warn("failed to parse headless envelope", "line", string(line), "error", err)
-			continue
-		}
-
-		p.processEnvelope(&env)
-	}
-
-	// stdout EOF — chord process has exited.
-	p.handleExit()
-}
-
-// processEnvelope updates ControlState based on the envelope type and calls onEvent.
-func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
-	p.mu.Lock()
-
-	p.lastActivity = time.Now()
-	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-
-	var eventType string
-
-	switch env.Type {
-	case "ready":
-		var payload struct {
-			SessionID string `json:"session_id"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			if strings.TrimSpace(payload.SessionID) != "" {
-				p.state.SessionID = payload.SessionID
-				if p.mgr != nil && p.mgr.pins != nil {
-					_ = p.mgr.pins.Set(p.key, payload.SessionID)
-				}
-			}
-		}
-		slog.Info("gateway event", "event", "ready", "raw_type", "ready", "key", p.key, "workspace", p.workspaceID, "channel", func() string { _, imType, _ := parseProcessKey(p.key); return imType }(), "session_id", p.state.SessionID)
-		// No notification.
-		eventType = ""
-
-	case "activity":
-		p.state.Busy = true
-		p.lastActivity = time.Now()
-		if p.state.LastPushAt.IsZero() {
-			p.state.LastPushAt = time.Now()
-		}
-		var payload struct {
-			AgentID string `json:"agent_id"`
-			Type    string `json:"type"`
-			Detail  string `json:"detail"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.Phase = payload.Type
-			p.state.PhaseDetail = payload.Detail
-		}
-		eventType = "activity"
-
-	case "idle":
-		p.state.Busy = false
-		var payload struct {
-			LastOutcome string `json:"last_outcome"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.LastOutcome = payload.LastOutcome
-		}
-		p.state.ExpiredConfirm = p.state.PendingConfirm
-		p.state.ExpiredQuestion = p.state.PendingQuestion
-		p.state.PendingConfirm = nil
-		p.state.PendingQuestion = nil
-		p.state.LastError = ""
-		eventType = "idle"
-
-	case "confirm_request":
-		var payload ConfirmPayload
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.PendingConfirm = &payload
-			p.state.ExpiredConfirm = nil
-		}
-		eventType = "confirm_request"
-
-	case "question_request":
-		var payload QuestionPayload
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.PendingQuestion = &payload
-			p.state.ExpiredQuestion = nil
-		}
-		eventType = "question_request"
-
-	case "error":
-		var payload struct {
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.LastError = payload.Message
-		}
-		eventType = "error"
-	case "notification":
-		var payload NotificationPayload
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.LastNotification = &payload
-		}
-		eventType = "notification"
-
-	case "agent_done":
-		p.lastActivity = time.Now()
-		eventType = "agent_done"
-
-	case "info":
-		p.lastActivity = time.Now()
-		var payload struct {
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.InfoMessage = payload.Message
-		}
-		eventType = "info"
-
-	case "toast":
-		p.lastActivity = time.Now()
-		var payload struct {
-			Message string `json:"message"`
-			Level   string `json:"level"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.ToastMessage = payload.Message
-			p.state.ToastLevel = payload.Level
-		}
-		eventType = "toast"
-
-	case "status_response":
-		var resp StatusResponse
-		if err := json.Unmarshal(env.Payload, &resp); err == nil {
-			p.state.SessionID = resp.SessionID
-			p.state.Busy = resp.Busy
-			p.state.Phase = resp.Phase
-			p.state.PhaseDetail = resp.PhaseDetail
-			p.state.PendingConfirm = resp.PendingConfirm
-			p.state.PendingQuestion = resp.PendingQuestion
-			if resp.PendingConfirm != nil || resp.PendingQuestion != nil {
-				p.state.ExpiredConfirm = nil
-				p.state.ExpiredQuestion = nil
-			}
-			p.state.LastError = resp.LastError
-			p.state.UpdatedAt = resp.UpdatedAt
-			p.state.LastOutcome = resp.LastOutcome
-			p.state.LastStatusResponseAt = time.Now()
-		}
-		// No onEvent — solicited response.
-
-	case "subscribe_response":
-		// No onEvent — ack response.
-
-	case "tool_result":
-		var payload struct {
-			CallID  string `json:"call_id"`
-			Name    string `json:"name"`
-			Status  string `json:"status"`
-			AgentID string `json:"agent_id"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.LastToolResult = &ToolResultInfo{
-				CallID:  payload.CallID,
-				Name:    payload.Name,
-				Status:  payload.Status,
-				AgentID: payload.AgentID,
-			}
-			p.state.InternalEventsSinceLastPush++
-			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-			p.lastActivity = time.Now()
-		}
-		eventType = "tool_result"
-
-	case "assistant_message":
-		var payload struct {
-			Text      string `json:"text"`
-			AgentID   string `json:"agent_id"`
-			ToolCalls int    `json:"tool_calls"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			if strings.TrimSpace(payload.Text) != "" {
-				p.state.LastAssistantText = payload.Text
-				eventType = "assistant_message"
-			} else {
-				slog.Debug("gateway assistant_message had empty text; skipping notification",
-					"key", p.key,
-					"workspace", p.workspaceID,
-					"agent_id", payload.AgentID,
-					"tool_calls", payload.ToolCalls,
-				)
-			}
-			p.state.LastAssistantToolCalls = payload.ToolCalls
-			p.state.InternalEventsSinceLastPush = 0
-			p.state.LastPushAt = time.Now()
-		}
-
-	case "todos":
-		var wrapper struct {
-			Todos []TodoItem `json:"todos"`
-		}
-		if json.Unmarshal(env.Payload, &wrapper) == nil && wrapper.Todos != nil {
-			p.state.Todos = wrapper.Todos
-			p.lastActivity = time.Now()
-		} else {
-			var todos []TodoItem
-			if json.Unmarshal(env.Payload, &todos) == nil {
-				p.state.Todos = todos
-				p.lastActivity = time.Now()
-			} else {
-				slog.Warn("failed to parse todos payload", "key", p.key)
-				p.state.Todos = nil
-			}
-		}
-		if !p.state.LastPushAt.IsZero() {
-			p.state.InternalEventsSinceLastPush++
-		}
-		eventType = "todos"
-
-	case "assistant_rollback":
-		p.state.StreamText = ""
-		p.state.LastAssistantText = ""
-		p.state.LastThinkingText = ""
-		eventType = "assistant_rollback"
-
-	default:
-		slog.Debug("unknown headless event type", "type", env.Type)
-	}
-
-	if eventType != "" {
-		_, imType, chatID := parseProcessKey(p.key)
-		slog.Info("gateway event",
-			"event", eventType,
-			"raw_type", env.Type,
-			"key", p.key,
-			"workspace", p.workspaceID,
-			"im", imType,
-			"channel", imType,
-			"chat_id", chatID,
-			"session_id", p.state.SessionID,
-			"busy", p.state.Busy,
-			"phase", p.state.Phase,
-			"last_outcome", p.state.LastOutcome,
-			"assistant_text_len", len(p.state.LastAssistantText),
-			"assistant_tool_calls", p.state.LastAssistantToolCalls,
-			"pending_confirm", p.state.PendingConfirm != nil,
-			"pending_question", p.state.PendingQuestion != nil,
-			"last_error", p.state.LastError,
-		)
-	}
-
-	// Capture callback params under lock, then invoke outside lock to prevent
-	// deadlock: onEvent → router → proc.Alive/SendCommand → p.mu.
-	var (
-		onEvent = p.onEvent
-		key     = p.key
-		state   = p.state // copy
-	)
-	p.mu.Unlock()
-
-	if eventType != "" && onEvent != nil {
-		onEvent(key, eventType, state)
-	}
-}
-
-// handleExit cleans up when the chord process exits.
-func (p *ChordProcess) handleExit() {
-	p.mu.Lock()
-	p.state.Busy = false
-	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-	if p.stdin != nil {
-		p.stdin.Close()
-		p.stdin = nil
-	}
-	if p.cancel != nil {
-		p.cancel()
-	}
-	cmd := p.cmd
-	pid := 0
-	if cmd != nil && cmd.Process != nil {
-		pid = cmd.Process.Pid
-	}
-	crashed := !p.stoppedByGateway
-	autoRestart := p.autoRestart && crashed
-	key := p.key
-	state := p.state
-	stderr := ""
-	if p.stderr != nil {
-		stderr = p.stderr.String()
-	}
-	// If this is an expected init failure (e.g. session lock), don't spam auto-restart.
-	// Cobra prints errors to stderr; chord exits with code 1 on init errors.
-	if strings.Contains(stderr, "acquire session lock") {
-		autoRestart = false
-	}
-	p.mu.Unlock()
-
-	// Serialize Cmd.Wait calls. TerminateGroup may call Wait concurrently.
-	// Waiting here guarantees ProcessState is fully populated before reading it.
-	if cmd != nil {
-		p.waitOnce.Do(func() {
-			_ = cmd.Wait()
-		})
-	}
-
-	exitCode := 0
-	if cmd != nil && cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-
-	slog.Info("chord process exited", "key", key, "pid", pid, "exit_code", exitCode, "crashed", crashed)
-	if crashed && strings.TrimSpace(stderr) != "" {
-		// Keep stderr short; full details are usually in chord.log.
-		slog.Warn("chord process stderr", "key", key, "pid", pid, "stderr", truncateStderr(stderr, 2000))
-	}
-
-	if p.onEvent != nil {
-		p.onEvent(key, "exit", state)
-	}
-
-	if autoRestart {
-		go func() {
-			slog.Info("auto-restarting crashed chord process in 5s", "key", key)
-			time.Sleep(5 * time.Second)
-			// Use the manager to respawn; it handles the procs map.
-			if p.mgr != nil {
-				if _, err := p.mgr.GetOrSpawnForKey(key); err != nil {
-					slog.Error("auto-restart failed", "key", key, "error", err)
-				} else {
-					slog.Info("auto-restart succeeded", "key", key)
-				}
-			}
-		}()
-	}
-}
-
-// IdleCheckLoop periodically checks all processes and closes idle ones.
-func (m *ChordManager) IdleCheckLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		m.mu.Lock()
-		idle := make([]*ChordProcess, 0)
-		timeout := m.cfg.IdleTimeoutDuration()
-		for _, p := range m.procs {
-			p.mu.Lock()
-			if time.Since(p.lastActivity) > timeout {
-				idle = append(idle, p)
-			}
-			p.mu.Unlock()
-		}
-		// Remove idle procs from map.
-		for _, p := range idle {
-			delete(m.procs, p.key)
-		}
-		m.mu.Unlock()
-
-		// Close stdin for idle processes to let them exit gracefully.
-		// Then, if they don't exit quickly, terminate the whole process group.
-		for _, p := range idle {
-			p.mu.Lock()
-			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil {
-				p.state.ExpiredConfirm = p.state.PendingConfirm
-				p.state.ExpiredQuestion = p.state.PendingQuestion
-				p.state.PendingConfirm = nil
-				p.state.PendingQuestion = nil
-				p.state.Busy = false
-				p.state.LastError = ""
-				p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-				state := p.state
-				p.mu.Unlock()
-				if p.onEvent != nil {
-					p.onEvent(p.key, "idle_timeout", state)
-				}
-			} else {
-				p.mu.Unlock()
-			}
-			slog.Info("idle timeout, stopping chord process", "workspace", p.workspaceID)
-			p.TerminateGroup(2 * time.Second)
-		}
-	}
-}
-
-// loginShellEnv returns os.Environ() with PATH replaced by the user's login
-// shell PATH.  This ensures that binaries installed in user-local paths
-// (e.g. ~/.local/bin, /opt/homebrew/bin) are findable even when the gateway
-// is launched from a context that doesn't source .zshrc / .bash_profile.
-var loginShellEnv = sync.OnceValue(func() []string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	// Run a login shell that just prints PATH; -l (--login) sources
-	// /etc/profile + ~/.profile (or ~/.zprofile / ~/.zshenv etc.).
-	out, err := exec.Command(shell, "-l", "-c", "echo $PATH").Output()
-	if err != nil {
-		slog.Warn("failed to get login shell PATH, using current env", "error", err)
-		return os.Environ()
-	}
-	loginPATH := strings.TrimSpace(string(out))
-	if loginPATH == "" {
-		return os.Environ()
-	}
-	// Merge: keep current env PATH entries that aren't in login PATH,
-	// then append login PATH entries — this preserves runtime-added
-	// paths (e.g. nvm) while also picking up login-only paths.
-	currentPATH := os.Getenv("PATH")
-	var merged []string
-	if currentPATH != "" {
-		seen := make(map[string]bool)
-		for _, p := range append(
-			strings.Split(currentPATH, ":"),
-			strings.Split(loginPATH, ":")...,
-		) {
-			if p != "" && !seen[p] {
-				seen[p] = true
-				merged = append(merged, p)
-			}
-		}
-	} else {
-		merged = strings.Split(loginPATH, ":")
-	}
-	env := make([]string, 0, len(os.Environ()))
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "PATH=") {
-			continue
-		}
-		env = append(env, e)
-	}
-	env = append(env, "PATH="+strings.Join(merged, ":"))
-	return env
-})

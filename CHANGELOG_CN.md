@@ -10,10 +10,13 @@
 
 ### Added
 
-- 改进飞书确认/问题交互卡片：展示风险和上下文、加强回调校验、保存消息卡片更新 handle、点击后更新卡片状态，并补充对应单元测试覆盖。
+- 新增兼容策略文档，记录当前仍支持的 legacy 配置形态、向后兼容的 router 入口，以及仍在生效的 headless `todos` 事件协议。
+- 新增 session pin 回归测试，覆盖写盘失败和并发更新场景。
 
 ### Changed
 
+- 在不改变文档化行为的前提下，按主题拆分 router 与 process 实现文件（`router_commands`、`router_format`、`router_feishu_cards`、`router_reminders`、`router_parse`、`process_protocol`、`process_lifecycle`、`process_env`）。
+- session pin 与 dedupe 持久化现在使用原子替换写入；同时修复 session pin 更新逻辑，确保写盘失败不污染内存状态，并避免并发更新丢失 pin。
 - 明确飞书续期行为：用户文档和跨 IM 通知现在说明飞书 access token 会基于已配置的应用凭证自动刷新，`/login feishu` 不受支持，且不应在 IM 会话中发送或修改应用凭证。
 
 ## 0.2.0 – 2026-04-30

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -71,7 +70,7 @@ func upsertFeishuBindingConfigFile(configFile, chatID, workspaceID, workspacePat
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
 	if !bytes.Equal(original, updated) {
-		if err := writeFileAtomically(configFile, updated); err != nil {
+		if err := writeFileAtomically(configFile, updated, 0o644); err != nil {
 			return nil, err
 		}
 	}
@@ -126,40 +125,6 @@ func parseConfigBytes(data []byte) (*config.Config, error) {
 	}
 	cfg.ExpandPath(config.Expand)
 	return &cfg, nil
-}
-
-func writeFileAtomically(path string, data []byte) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("stat config: %w", err)
-	}
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		_ = tmp.Close()
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
-		return fmt.Errorf("chmod temp config: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("write temp config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace config: %w", err)
-	}
-	cleanup = false
-	return nil
 }
 
 func mappingValue(node *yaml.Node, key string) *yaml.Node {

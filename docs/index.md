@@ -18,6 +18,7 @@ This documentation is for users who want to run `chord-gateway`, connect IM plat
 
 - [Operations](./operations.md) – process lifecycle, state files, logs, dedupe, and cleanup behavior
 - [Permissions & Safety](./permissions-and-safety.md) – security boundaries, credential handling, and deployment precautions
+- [Compatibility policy](./compatibility.md) – supported legacy config forms and current compatibility boundaries
 - [Troubleshooting](./troubleshooting.md) – common startup, WeChat, Feishu, routing, and runtime issues
 
 ## Project documents
