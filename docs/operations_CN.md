@@ -18,7 +18,9 @@ gateway 会按需为每个活跃绑定启动 `chord headless` 子进程。
 
 ## 空闲超时
 
-`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。
+`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题或待确认请求，也使用同一个 timeout。
+
+如果 gateway 清理空闲进程时仍存在待回答问题或待确认请求，会先记录该已过期交互，向 IM 聊天发送英文失效提示，然后再终止进程。之后的 `/answer`、`/allow` 或 `/deny` 不能继续使用旧的结构化 request ID；router 会把它作为后续上下文转发。
 
 使用 Go duration 语法，例如：
 
@@ -37,7 +39,7 @@ idle_timeout: 30m
 状态数据包括：
 
 - 日志
-- 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims[].wechat.token_path`）
+- 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）
 - 飞书去重存储
 - session pin 存储
 
@@ -73,9 +75,9 @@ gateway 会记录关键路由阶段：
 
 ## 飞书异步分发和去重
 
-飞书 webhook 处理采用快速 ACK + 异步分发：
+飞书事件处理采用长连接模式加异步分发：
 
-- webhook handler 校验并解析回调，然后尽快返回 `200 OK`。
+- gateway 会维护一个长期存活的飞书 websocket 连接。
 - 实际路由到 `chord headless` 的操作通过进程内有界队列完成。
 - 重复投递会由轻量去重存储过滤。
 
@@ -95,9 +97,9 @@ app_id + chat_id + message_id
 
 ## 工作区路由
 
-微信始终路由到一个工作区。如果配置了多个工作区且启用了微信，需要通过 `ims[].wechat.workspace_id` 指定微信使用哪个工作区。
+微信始终路由到一个工作区。如果配置了多个工作区且启用了微信，需要通过 `ims.wechat.workspace_id` 指定微信使用哪个工作区。
 
-飞书支持多个工作区，可通过 `ims[].feishu.chat_bindings` 把飞书 `chat_id` 映射到 workspace ID。
+飞书支持多个工作区，可通过 `ims.feishu.chat_bindings` 把飞书 `chat_id` 映射到 workspace ID。
 
 飞书单工作区时可省略 `chat_bindings`，所有聊天使用该工作区。飞书多工作区时，请为需要路由的聊天配置 `chat_bindings`。
 

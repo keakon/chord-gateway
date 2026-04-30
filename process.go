@@ -34,10 +34,6 @@ type ChordProcess struct {
 	state        ControlState
 	lastActivity time.Time
 
-	// Phase tracking for long-running detection
-	phaseStartedAt time.Time
-	lastPhaseAlert string
-
 	// Auto-restart on crash
 	autoRestart      bool
 	stoppedByGateway bool
@@ -189,25 +185,11 @@ func (m *ChordManager) SetOnEvent(fn func(key, eventType string, state ControlSt
 	m.onEvent = fn
 }
 
-// GetProcess returns the active process for a workspace, or nil if none exists.
-func (m *ChordManager) GetProcess(workspaceID string) *ChordProcess {
+// GetProcessForKey returns the active process for a process key, or nil if none exists.
+func (m *ChordManager) GetProcessForKey(key string) *ChordProcess {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Backward compat: return the first matching workspace process (if any).
-	for k, p := range m.procs {
-		w, _, _ := parseProcessKey(k)
-		if w == workspaceID {
-			return p
-		}
-	}
-	return nil
-}
-
-// GetOrSpawn returns the active process for a workspace, or spawns one if none exists.
-func (m *ChordManager) GetOrSpawn(workspaceID string) (*ChordProcess, error) {
-	// Backward compat for legacy call sites: spawn a single shared chat key.
-	// New code should call GetOrSpawnForKey.
-	return m.GetOrSpawnForKey(processKey{workspaceID: workspaceID}.String())
+	return m.procs[key]
 }
 
 func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
@@ -219,18 +201,12 @@ func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 
 	workspaceID, _, _ := parseProcessKey(key)
 	if workspaceID == "" {
-		// Legacy key: treat as workspace-only.
-		workspaceID = key
+		m.mu.Unlock()
+		return nil, fmt.Errorf("invalid process key %q", key)
 	}
 
 	// Find workspace config.
-	var ws *config.Workspace
-	for i := range m.cfg.Workspaces {
-		if m.cfg.Workspaces[i].ID == workspaceID {
-			ws = &m.cfg.Workspaces[i]
-			break
-		}
-	}
+	ws := m.cfg.WorkspaceByID(workspaceID)
 	if ws == nil {
 		m.mu.Unlock()
 		return nil, nil
@@ -291,23 +267,6 @@ func (m *ChordManager) StopProcessKey(key string) {
 	p.TerminateGroup(2 * time.Second)
 }
 
-// StopProcess closes stdin for the workspace's chord process and waits for it to exit.
-func (m *ChordManager) StopProcess(workspaceID string) {
-	// Backward compat: stop all processes for this workspace.
-	m.mu.Lock()
-	keys := make([]string, 0)
-	for k := range m.procs {
-		w, _, _ := parseProcessKey(k)
-		if w == workspaceID {
-			keys = append(keys, k)
-		}
-	}
-	m.mu.Unlock()
-	for _, k := range keys {
-		m.StopProcessKey(k)
-	}
-}
-
 func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*ChordProcess, error) {
 	m.mu.Lock()
 	// Stop existing process for this key.
@@ -321,16 +280,10 @@ func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*Ch
 
 	workspaceID, _, _ := parseProcessKey(key)
 	if workspaceID == "" {
-		workspaceID = key
+		return nil, fmt.Errorf("invalid process key %q", key)
 	}
 
-	var ws *config.Workspace
-	for i := range m.cfg.Workspaces {
-		if m.cfg.Workspaces[i].ID == workspaceID {
-			ws = &m.cfg.Workspaces[i]
-			break
-		}
-	}
+	ws := m.cfg.WorkspaceByID(workspaceID)
 	if ws == nil {
 		return nil, fmt.Errorf("workspace %s not found", workspaceID)
 	}
@@ -345,15 +298,6 @@ func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*Ch
 	m.procs[key] = p
 	m.mu.Unlock()
 	return p, nil
-}
-
-// SpawnWithArgs creates a new chord process with extra arguments (e.g. --resume <id>).
-// If no extra args are provided, a fresh session is created (no --continue).
-func (m *ChordManager) SpawnWithArgs(workspaceID string, extraArgs ...string) (*ChordProcess, error) {
-	// Backward compat: spawn a single shared chat key.
-	// New code should call SpawnWithArgsForKey.
-	key := processKey{workspaceID: workspaceID}.String()
-	return m.SpawnWithArgsForKey(key, extraArgs...)
 }
 
 // spawn starts a new chord headless process for the given workspace.
@@ -569,11 +513,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			Detail  string `json:"detail"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			// Track phase changes for long-running detection
-			if payload.Type != p.state.Phase {
-				p.phaseStartedAt = time.Now()
-				p.lastPhaseAlert = "" // reset so a new alert can fire
-			}
 			p.state.Phase = payload.Type
 			p.state.PhaseDetail = payload.Detail
 		}
@@ -587,17 +526,18 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastOutcome = payload.LastOutcome
 		}
+		p.state.ExpiredConfirm = p.state.PendingConfirm
+		p.state.ExpiredQuestion = p.state.PendingQuestion
 		p.state.PendingConfirm = nil
 		p.state.PendingQuestion = nil
 		p.state.LastError = ""
-		// AgentDoneSummary is preserved for the idle notification
-		// (cleared when the next activity starts).
 		eventType = "idle"
 
 	case "confirm_request":
 		var payload ConfirmPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.PendingConfirm = &payload
+			p.state.ExpiredConfirm = nil
 		}
 		eventType = "confirm_request"
 
@@ -605,6 +545,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		var payload QuestionPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.PendingQuestion = &payload
+			p.state.ExpiredQuestion = nil
 		}
 		eventType = "question_request"
 
@@ -625,14 +566,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "agent_done":
 		p.lastActivity = time.Now()
-		var payload struct {
-			AgentID string `json:"agent_id"`
-			TaskID  string `json:"task_id"`
-			Summary string `json:"summary"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.AgentDoneSummary = payload.Summary
-		}
 		eventType = "agent_done"
 
 	case "info":
@@ -666,6 +599,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			p.state.PhaseDetail = resp.PhaseDetail
 			p.state.PendingConfirm = resp.PendingConfirm
 			p.state.PendingQuestion = resp.PendingQuestion
+			if resp.PendingConfirm != nil || resp.PendingQuestion != nil {
+				p.state.ExpiredConfirm = nil
+				p.state.ExpiredQuestion = nil
+			}
 			p.state.LastError = resp.LastError
 			p.state.UpdatedAt = resp.UpdatedAt
 			p.state.LastOutcome = resp.LastOutcome
@@ -690,7 +627,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				Status:  payload.Status,
 				AgentID: payload.AgentID,
 			}
-			p.state.ToolCallsSinceLastPush++
+			p.state.InternalEventsSinceLastPush++
 			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 			p.lastActivity = time.Now()
 		}
@@ -715,28 +652,29 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				)
 			}
 			p.state.LastAssistantToolCalls = payload.ToolCalls
-			p.state.ToolCallsSinceLastPush = 0
+			p.state.InternalEventsSinceLastPush = 0
 			p.state.LastPushAt = time.Now()
 		}
 
 	case "todos":
-		// Support both formats:
-		// a) New: {"todos": [...]}  (chord headless current format)
-		// b) Old: [...]  (bare array)
-		var items []TodoItem
-		// Try new format first.
 		var wrapper struct {
 			Todos []TodoItem `json:"todos"`
 		}
 		if json.Unmarshal(env.Payload, &wrapper) == nil && wrapper.Todos != nil {
-			items = wrapper.Todos
+			p.state.Todos = wrapper.Todos
 			p.lastActivity = time.Now()
-		} else if err := json.Unmarshal(env.Payload, &items); err != nil {
-			slog.Warn("failed to parse todos payload", "key", p.key, "error", err)
+		} else {
+			var todos []TodoItem
+			if json.Unmarshal(env.Payload, &todos) == nil {
+				p.state.Todos = todos
+				p.lastActivity = time.Now()
+			} else {
+				slog.Warn("failed to parse todos payload", "key", p.key)
+				p.state.Todos = nil
+			}
 		}
-		p.state.Todos = items
 		if !p.state.LastPushAt.IsZero() {
-			p.state.ToolCallsSinceLastPush++
+			p.state.InternalEventsSinceLastPush++
 		}
 		eventType = "todos"
 
@@ -866,22 +804,10 @@ func (m *ChordManager) IdleCheckLoop() {
 		m.mu.Lock()
 		idle := make([]*ChordProcess, 0)
 		timeout := m.cfg.IdleTimeoutDuration()
-		type longRunningAlert struct {
-			workspaceID string
-			state       ControlState
-		}
-		var alerts []longRunningAlert
-		for wid, p := range m.procs {
+		for _, p := range m.procs {
 			p.mu.Lock()
 			if time.Since(p.lastActivity) > timeout {
 				idle = append(idle, p)
-			}
-			// Long-running phase alert
-			if p.state.Busy && !p.phaseStartedAt.IsZero() && time.Since(p.phaseStartedAt) > 5*time.Minute {
-				if p.lastPhaseAlert != p.state.Phase {
-					p.lastPhaseAlert = p.state.Phase
-					alerts = append(alerts, longRunningAlert{workspaceID: wid, state: p.state})
-				}
 			}
 			p.mu.Unlock()
 		}
@@ -889,19 +815,28 @@ func (m *ChordManager) IdleCheckLoop() {
 		for _, p := range idle {
 			delete(m.procs, p.key)
 		}
-		onEvent := m.onEvent
 		m.mu.Unlock()
-
-		// Fire long-running alerts outside all locks.
-		if onEvent != nil {
-			for _, a := range alerts {
-				onEvent(a.workspaceID, "long_running", a.state)
-			}
-		}
 
 		// Close stdin for idle processes to let them exit gracefully.
 		// Then, if they don't exit quickly, terminate the whole process group.
 		for _, p := range idle {
+			p.mu.Lock()
+			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil {
+				p.state.ExpiredConfirm = p.state.PendingConfirm
+				p.state.ExpiredQuestion = p.state.PendingQuestion
+				p.state.PendingConfirm = nil
+				p.state.PendingQuestion = nil
+				p.state.Busy = false
+				p.state.LastError = ""
+				p.state.UpdatedAt = time.Now().Format(time.RFC3339)
+				state := p.state
+				p.mu.Unlock()
+				if p.onEvent != nil {
+					p.onEvent(p.key, "idle_timeout", state)
+				}
+			} else {
+				p.mu.Unlock()
+			}
 			slog.Info("idle timeout, stopping chord process", "workspace", p.workspaceID)
 			p.TerminateGroup(2 * time.Second)
 		}

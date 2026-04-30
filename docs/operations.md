@@ -18,7 +18,9 @@ If the gateway itself is killed with `SIGKILL` (`kill -9`), it cannot run cleanu
 
 ## Idle timeout
 
-`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`.
+`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question or confirmation.
+
+If the gateway removes an idle process while a question or confirmation is still pending, it first records the expired interaction, sends an expiry notification to the IM chat, and then terminates the process. A later `/answer`, `/allow`, or `/deny` cannot use the old structured request ID; the router forwards it as follow-up context instead.
 
 Use Go duration syntax, for example:
 
@@ -37,7 +39,7 @@ Runtime state is stored in this priority order:
 State data includes:
 
 - logs
-- WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims[].wechat.token_path`)
+- WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`)
 - Feishu dedupe store
 - session pin store
 
@@ -73,10 +75,10 @@ Useful fields include:
 
 ## Feishu async dispatch and dedupe
 
-Feishu webhook handling uses fast ACK plus async dispatch:
+Feishu event handling uses long connection mode plus async dispatch:
 
-- The webhook handler validates and parses the callback, then returns `200 OK` quickly.
-- Actual routing to `chord headless` happens through an in-process bounded queue.
+- The gateway maintains a long-lived Feishu websocket connection.
+- Incoming events are routed to `chord headless` through an in-process bounded queue.
 - Duplicate deliveries are filtered by a lightweight dedupe store.
 
 The dedupe key is based on:
@@ -95,9 +97,9 @@ The current TTL is 24 hours.
 
 ## Workspace routing
 
-WeChat always routes to one workspace. If multiple workspaces are configured and WeChat is enabled, set `ims[].wechat.workspace_id` to choose the workspace used by WeChat.
+WeChat always routes to one workspace. If multiple workspaces are configured and WeChat is enabled, set `ims.wechat.workspace_id` to choose the workspace used by WeChat.
 
-Feishu supports multiple workspaces through `ims[].feishu.chat_bindings`, which maps Feishu `chat_id` values to workspace IDs.
+Feishu supports multiple workspaces through `ims.feishu.chat_bindings`, which maps Feishu `chat_id` values to workspace IDs.
 
 For a single Feishu workspace, `chat_bindings` may be omitted and all chats use that workspace. For multiple Feishu workspaces, configure `chat_bindings` for the chats you want to route.
 

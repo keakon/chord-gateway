@@ -20,6 +20,8 @@ type ControlState struct {
 	// Pending interactions
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
 	PendingQuestion *QuestionPayload `json:"pending_question,omitempty"`
+	ExpiredConfirm  *ConfirmPayload  `json:"-"`
+	ExpiredQuestion *QuestionPayload `json:"-"`
 
 	// Todos from chord process
 	Todos []TodoItem `json:"todos,omitempty"`
@@ -33,13 +35,12 @@ type ControlState struct {
 	LastThinkingText       string `json:"-"` // last completed thinking block(s)
 	LastAssistantToolCalls int    `json:"-"` // tool calls executed in the last turn
 
-	// For silence notifications
-	ToolCallsSinceLastPush int       `json:"-"`
-	LastPushAt             time.Time `json:"-"`
-	InfoMessage            string    `json:"-"` // from info event
-	ToastMessage           string    `json:"-"` // from toast event
-	ToastLevel             string    `json:"-"` // from toast event
-	AgentDoneSummary       string    `json:"-"` // from agent_done event, for idle notification
+	// For long-running reminders.
+	InternalEventsSinceLastPush int       `json:"-"`
+	LastPushAt                  time.Time `json:"-"`
+	InfoMessage                 string    `json:"-"` // from info event
+	ToastMessage                string    `json:"-"` // from toast event
+	ToastLevel                  string    `json:"-"` // from toast event
 	// LastStatusResponseAt is set only when a status_response envelope is received.
 	// Used for /status freshness polling instead of UpdatedAt (which is also updated on spawn).
 	LastStatusResponseAt time.Time `json:"-"`
@@ -98,13 +99,16 @@ type StatusResponse struct {
 
 // IMCommand is a parsed command from IM user.
 type IMCommand struct {
-	Type      string   // "status", "send", "confirm", "question", "cancel", "new", "resume", "sessions", "current", "todos", "login"
-	Content   string   // for send
-	RequestID string   // for confirm/question
-	Action    string   // for confirm: "allow" or "deny"
-	Answers   []string // for question
-	Cancelled bool     // for question
-	SessionID string   // for resume
+	Type        string   // "status", "send", "confirm", "question", "cancel", "new", "resume", "sessions", "current", "todos", "login", "bind"
+	Content     string   // for send/login target
+	RequestID   string   // for confirm/question
+	Action      string   // for confirm: "allow" or "deny"
+	Reason      string   // for deny: human-readable reason text
+	Answers     []string // for question
+	SessionID   string   // for resume
+	WorkspaceID string   // for bind
+	Path        string   // for bind workspace path
+	Invalid     bool     // command-specific parse failure (currently used by /bind)
 }
 
 // TodoItem represents a todo item from the chord process.
@@ -135,6 +139,17 @@ type IncomingMessage struct {
 	ConversationID string `json:"conversation_id,omitempty"` // optional conversation thread ID
 	Text           string `json:"text"`                      // message text content
 	AppID          string `json:"app_id,omitempty"`          // feishu app_id for multi-account dedupe
+
+	// InternalAction carries trusted structured commands from platform callbacks.
+	// User-authored text must not set this field; parseIMCommand handles that path.
+	InternalAction *InternalAction `json:"-"`
+}
+
+type InternalAction struct {
+	Type      string
+	Action    string
+	RequestID string
+	Value     string
 }
 
 // MessageRouter is the interface for routing incoming messages.

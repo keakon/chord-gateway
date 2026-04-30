@@ -22,7 +22,7 @@ Please include:
 ## Operational Notes
 
 `chord-gateway` can execute local `chord headless` processes and route IM messages.
-Treat credentials (Feishu app secret, webhook verification token, encryption key, WeChat token files)
+Treat credentials (Feishu app secret, WeChat token files)
 as sensitive data and keep them outside version control.
 
 For runtime security boundaries, access control, and deployment guidance, see [docs/permissions-and-safety.md](./docs/permissions-and-safety.md).

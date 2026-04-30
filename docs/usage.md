@@ -46,25 +46,25 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/status` | Show current Chord state: busy/idle, phase, and pending interaction |
 | `/cancel` | Cancel the current turn |
 | `/allow` | Approve the pending confirmation |
-| `/deny` | Deny the pending confirmation |
+| `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
 | `/todos` | Show the current todo list |
 | `/new` | Clear the current session pin and start a fresh session |
 | `/resume <id>` | Resume and pin a specific session |
 | `/sessions` | List recent sessions from the workspace |
 | `/current` | Show the current binding status, including workspace, IM/chat binding, active session, and pending interaction |
-| `/login [platform]` | Start a login flow, for example `/login weixin` |
+| `/login [platform]` | Start a login flow, for example `/login wechat` |
 | any other text | Send the text to Chord, or answer a pending question if one exists |
 
 Notes:
 
-- `/login weixin` is the documented command name for WeChat login renewal.
+- `/login wechat` is the documented command name for WeChat login renewal.
 - Unrecognized slash commands are forwarded to Chord as normal text.
 - `/summary` is not part of the documented gateway command set.
 
 ## Question interaction
 
-When Chord sends a `question_request`, the gateway sends a numbered question to the IM chat:
+When Chord sends a `question_request`, the gateway sends a numbered question to the IM chat. In Feishu, supported single-select questions are shown as interactive cards with option buttons; users can click an option or reply with text.
 
 ```text
 ❓ Continue?
@@ -73,21 +73,38 @@ When Chord sends a `question_request`, the gateway sends a numbered question to 
 Reply /answer 1 / 1,2 / or type your answer
 ```
 
-You can answer in two ways:
+You can answer in these ways:
 
+- Click a Feishu option button when an interactive question card is shown.
 - Use `/answer`, for example `/answer 1` or `/answer 1,3` for a multi-select question.
 - Send a plain text message while a question is pending. The gateway treats it as a free-text answer.
 
 Invalid numeric shortcuts are sent as custom text instead of being silently accepted.
 
+If the pending question expires because Chord becomes idle or the gateway removes the idle process, the gateway sends an expiry notice. A later `/answer` is not sent as the original structured answer because the request ID is no longer pending. Instead, the gateway forwards it to Chord as a normal follow-up message, including the expired question when it is still available.
+
+The user-facing notice is in English, for example:
+
+```text
+⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.
+```
+
 ## Confirmation interaction
 
-When Chord asks for permission, use:
+When Chord asks for permission, Feishu can show an interactive confirmation card with `Allow` and `Deny` buttons. You can also reply with text:
 
 - `/allow` to approve
-- `/deny` to reject
+- `/deny [reason]` to reject, optionally including a reason
 
 Use `/status` if you are unsure whether a confirmation is pending.
+
+If the pending confirmation expires because Chord becomes idle or the gateway removes the idle process, the gateway sends an expiry notice. A later `/allow` or `/deny` is not sent as an approval or denial. Instead, the gateway forwards it to Chord as follow-up context that explicitly says it must not be treated as confirmation.
+
+The user-facing notice is in English, for example:
+
+```text
+⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.
+```
 
 ## Session examples
 
@@ -132,7 +149,7 @@ In multi-IM mode, the gateway can notify another active IM channel when one plat
 Example: if WeChat login expires, send this from Feishu:
 
 ```text
-/login weixin
+/login wechat
 ```
 
 The gateway replies with a WeChat QR login link. After scanning, it updates the token without requiring a gateway restart.
@@ -149,6 +166,14 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - task completed
 - error or blocked state
 - tool failure
-- long-running phase alert
+- long-running reminders every 5 minutes while a turn is still busy
+
+Long-running reminders intentionally do not expose low-level phases such as `connecting`. Any user-visible output resets the next 5-minute reminder window. When internal progress events were observed in the current reminder window, the reminder includes a compact count, for example:
+
+```text
+⏳ Still working (4 internal events)
+```
+
+The internal-event count currently comes from gateway-tracked progress events such as `tool_result` and `todos`; it is reset after each user-visible output or reminder. If `event_visibility.todos` is enabled, every `todos` event is sent as the full current todo list without deduplication.
 
 Optional lower-level events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).

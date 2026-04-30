@@ -14,36 +14,34 @@
 # The following are the required sections.
 
 # --- IM Platform Configuration ---
-# Configure every IM adapter explicitly under `ims`.
-# Each item contains exactly one platform block.
+# Configure adapters explicitly under `ims`.
 ims:
-  - wechat:
-      base_url: https://ilinkai.weixin.qq.com  # optional, defaults to this
-      workspace_id: project-a                  # required when more than one workspace exists
-      # Optional. Defaults to <state_dir>/wechat/token.json.
-      # Use this only when you want to store the WeChat QR-login session token elsewhere.
-      # token_path: ~/.local/state/chord-gateway/wechat/token.json
+  wechat:
+    base_url: https://ilinkai.weixin.qq.com  # optional, defaults to this
+    workspace_id: project-a                  # required when more than one workspace exists
+    # Optional. Defaults to <state_dir>/wechat/token.json.
+    # Use this only when you want to store the WeChat QR-login session token elsewhere.
+    # token_path: ~/.local/state/chord-gateway/wechat/token.json
 
-  # - feishu:
-  #     app_id: cli_xxx
-  #     app_secret: xxx
-  #     listen: ":8080"
-  #     webhook_path: /feishu/callback
-  #     owner_open_id: ou_owner_xxx
-  #     allowed_open_ids:
-  #       - ou_owner_xxx
-  #       - ou_user2
-  #     chat_bindings:
-  #       oc_chat_project_a: project-a
-  #       oc_chat_project_b: project-b
+  # feishu:
+  #   app_id: cli_xxx
+  #   app_secret: xxx
+  #   # owner_open_id: ou_owner_xxx     # Only this user's messages/commands are processed.
+  #   # allowed_open_ids:               # Additional allowed users (owner is auto-included).
+  #   #   - ou_user2
+  #   # To discover your open_id: send a message, then check gateway log for
+  #   #   open_id=ou_xxx in the "feishu: received message" line.
+  #   chat_bindings:
+  #     oc_chat_project_a: project-a
+  #     oc_chat_project_b: project-b
 
 # --- Workspace Definitions ---
 # Workspaces only define project directories.
 workspaces:
-  - id: project-a
+  project-a:
     path: ~/work/project-a
 
-  # - id: project-b
+  # project-b:
   #   path: ~/work/project-b
 
 # --- Chord Binary ---

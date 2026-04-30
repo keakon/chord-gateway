@@ -15,40 +15,153 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-const maxNotificationLen = 1000
+const (
+	maxNotificationLen = 1000
+	reminderInterval   = 5 * time.Minute
+)
 
 // NotificationRouter connects the IM adapter to the chord process manager.
 // It parses incoming IM messages as commands, dispatches them to chord processes,
 // and routes chord events back to IM users as notifications.
 type NotificationRouter struct {
-	mgr     *ChordManager
-	cfg     *config.Config
-	adapter IMAdapter // set after creation via SetAdapter
+	mgr        *ChordManager
+	cfg        *config.Config
+	cfgMu      sync.RWMutex // protects cfg for concurrent read/write
+	adapter    IMAdapter    // set after creation via SetAdapter
+	configFile string
+	bindMu     sync.Mutex
 
 	mu sync.Mutex
 
 	// Per-binding chatID tracking: key -> chatID.
-	lastKeyChatID map[string]string
+	lastKeyChatID  map[string]string
+	reminders      map[string]*reminderState
+	expiredPending map[string]expiredPendingState
+}
 
-	// Previous todos per key, for change detection.
-	lastTodos map[string][]TodoItem
+type reminderState struct {
+	timer *time.Timer
+}
+
+type expiredPendingState struct {
+	Question  *QuestionPayload
+	Confirm   *ConfirmPayload
+	ExpiresAt time.Time
 }
 
 // NewNotificationRouter creates a new NotificationRouter.
 func NewNotificationRouter(mgr *ChordManager, cfg *config.Config) *NotificationRouter {
 	r := &NotificationRouter{
-		mgr:           mgr,
-		cfg:           cfg,
-		lastKeyChatID: make(map[string]string),
-		lastTodos:     make(map[string][]TodoItem),
+		mgr:            mgr,
+		cfg:            cfg,
+		lastKeyChatID:  make(map[string]string),
+		reminders:      make(map[string]*reminderState),
+		expiredPending: make(map[string]expiredPendingState),
 	}
 	mgr.SetOnEvent(r.HandleChordEvent)
 	return r
 }
 
+// SetConfigFile sets the config path used by chat-binding commands.
+func (r *NotificationRouter) SetConfigFile(path string) {
+	r.configFile = strings.TrimSpace(path)
+}
+
 // SetAdapter sets the IM adapter used for sending notifications.
 func (r *NotificationRouter) SetAdapter(adapter IMAdapter) {
 	r.adapter = adapter
+}
+
+// getConfig returns the current config snapshot under read lock.
+func (r *NotificationRouter) getConfig() *config.Config {
+	r.cfgMu.RLock()
+	defer r.cfgMu.RUnlock()
+	return r.cfg
+}
+
+// setConfig replaces the config under write lock.
+func (r *NotificationRouter) setConfig(cfg *config.Config) {
+	r.cfgMu.Lock()
+	r.cfg = cfg
+	r.cfgMu.Unlock()
+}
+
+func (r *NotificationRouter) recordChatID(key, chatID string) {
+	r.mu.Lock()
+	r.lastKeyChatID[key] = chatID
+	r.mu.Unlock()
+}
+
+func (r *NotificationRouter) recordExpiredPending(key string, state ControlState) {
+	if state.ExpiredQuestion == nil && state.ExpiredConfirm == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.expiredPending == nil {
+		r.expiredPending = make(map[string]expiredPendingState)
+	}
+	r.expiredPending[key] = expiredPendingState{
+		Question:  state.ExpiredQuestion,
+		Confirm:   state.ExpiredConfirm,
+		ExpiresAt: time.Now().Add(r.expiredPendingTTL()),
+	}
+	r.mu.Unlock()
+}
+
+func (r *NotificationRouter) clearExpiredPending(key string) {
+	r.mu.Lock()
+	delete(r.expiredPending, key)
+	r.mu.Unlock()
+}
+
+func (r *NotificationRouter) lookupExpiredPending(key string) expiredPendingState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.expiredPending == nil {
+		return expiredPendingState{}
+	}
+	expired := r.expiredPending[key]
+	if !expired.ExpiresAt.IsZero() && time.Now().After(expired.ExpiresAt) {
+		delete(r.expiredPending, key)
+		return expiredPendingState{}
+	}
+	return expired
+}
+
+func (r *NotificationRouter) expiredPendingTTL() time.Duration {
+	cfg := r.getConfig()
+	if cfg == nil {
+		return 30 * time.Minute
+	}
+	return cfg.IdleTimeoutDuration()
+}
+
+func (r *NotificationRouter) snapshotLastKeyChatID() map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make(map[string]string, len(r.lastKeyChatID))
+	for k, v := range r.lastKeyChatID {
+		cp[k] = v
+	}
+	return cp
+}
+
+// findFeishuAdapter resolves the FeishuAdapter from the adapter chain.
+func (r *NotificationRouter) findFeishuAdapter() *FeishuAdapter {
+	if r.adapter == nil {
+		return nil
+	}
+	if multi, ok := r.adapter.(*MultiAdapter); ok {
+		if fa := multi.FindAdapterByType("feishu"); fa != nil {
+			if feishu, ok := fa.(*FeishuAdapter); ok {
+				return feishu
+			}
+		}
+	}
+	if feishu, ok := r.adapter.(*FeishuAdapter); ok {
+		return feishu
+	}
+	return nil
 }
 
 // HandleMessage is a backward-compatible wrapper that constructs an
@@ -70,6 +183,9 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	text := msg.Text
 
 	cmd := parseIMCommand(text)
+	if msg.InternalAction != nil {
+		cmd = commandFromInternalAction(msg.InternalAction)
+	}
 	slog.Debug("im command parsed",
 		"chatID", chatID,
 		"senderID", msg.SenderID,
@@ -78,7 +194,13 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 		"action", cmd.Action,
 	)
 
-	ws, err := r.cfg.ResolveWorkspace(imType, chatID)
+	if cmd.Type == "bind" {
+		r.handleBind(chatID, msg, cmd)
+		return
+	}
+
+	cfg := r.getConfig()
+	ws, err := cfg.ResolveWorkspace(imType, chatID)
 	if err != nil {
 		slog.Warn("resolve workspace failed", "imType", imType, "chatID", chatID, "error", err)
 		r.sendText(chatID, fmt.Sprintf("⚠️ %v", err))
@@ -91,10 +213,7 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	}
 
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	go r.silenceWatcher(key)
-	r.mu.Lock()
-	r.lastKeyChatID[key] = chatID
-	r.mu.Unlock()
+	r.recordChatID(key, chatID)
 
 	switch cmd.Type {
 	case "new":
@@ -216,28 +335,7 @@ func (r *NotificationRouter) handleTodos(ws *config.Workspace, chatID string, im
 		return
 	}
 	state := proc.State()
-	if len(state.Todos) == 0 {
-		r.sendText(chatID, "📋 No todos.")
-		return
-	}
-	var lines []string
-	for _, t := range state.Todos {
-		emoji := "⬜"
-		switch t.Status {
-		case "in_progress":
-			emoji = "🔄"
-		case "completed":
-			emoji = "✅"
-		case "cancelled":
-			emoji = "❌"
-		}
-		line := fmt.Sprintf("%s %s", emoji, t.Content)
-		if t.ActiveForm != "" {
-			line += fmt.Sprintf(" (%s)", t.ActiveForm)
-		}
-		lines = append(lines, line)
-	}
-	r.sendText(chatID, "📋 Todos:\n"+strings.Join(lines, "\n"))
+	r.sendText(chatID, formatTodoList(state.Todos))
 }
 
 // handleLogin initiates a login flow for the specified IM adapter.
@@ -249,30 +347,117 @@ func (r *NotificationRouter) handleLogin(ws *config.Workspace, chatID string, im
 	if target == "" {
 		options := r.availableLoginTargets()
 		if len(options) == 0 {
-			r.sendText(chatID, "⚠️ 当前没有支持登录续期的 IM 适配器。")
+			r.sendText(chatID, "⚠️ No IM adapter supports login renewal.")
 			return
 		}
-		r.sendText(chatID, "用法：/login <平台>\n支持的平台："+strings.Join(options, "、"))
+		r.sendText(chatID, "Usage: /login <platform>\nSupported platforms: "+strings.Join(options, ", "))
 		return
 	}
 
 	adapter := r.findAdapterByType(target)
 	if adapter == nil {
-		r.sendText(chatID, fmt.Sprintf("⚠️ 未找到 %s 适配器，请检查配置。", loginCommandName(target)))
+		r.sendText(chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", loginCommandName(target)))
 		return
 	}
 
 	qrURL, err := adapter.StartLogin()
 	if err != nil {
 		if errors.Is(err, ErrLoginNotSupported) {
-			r.sendText(chatID, fmt.Sprintf("⚠️ %s 不支持通过 /login 续期。", imDisplayName(target)))
+			r.sendText(chatID, fmt.Sprintf("⚠️ %s does not support login renewal via /login.", imDisplayName(target)))
 			return
 		}
-		r.sendText(chatID, fmt.Sprintf("❌ 获取 %s 登录链接失败：%v", imDisplayName(target), err))
+		r.sendText(chatID, fmt.Sprintf("❌ Failed to get %s login link: %v", imDisplayName(target), err))
 		return
 	}
 
-	r.sendText(chatID, fmt.Sprintf("⚠️ 请点击链接扫码续期%s登录：\n%s", imDisplayName(target), qrURL))
+	r.sendText(chatID, fmt.Sprintf("⚠️ Click the link to scan and renew %s login:\n%s", imDisplayName(target), qrURL))
+}
+
+func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd IMCommand) {
+	if normalizeIMType(msg.IMType) != "feishu" {
+		r.sendText(chatID, "⚠️ /bind is only supported in Feishu chats.")
+		return
+	}
+	cfg := r.getConfig()
+	if cfg == nil {
+		r.sendText(chatID, "❌ Configuration not loaded.")
+		return
+	}
+	imCfg := cfg.IMConfigByType("feishu")
+	if imCfg == nil || imCfg.Feishu == nil {
+		r.sendText(chatID, "❌ Feishu configuration not loaded.")
+		return
+	}
+	// Permission check: only allowed open_ids can execute /bind.
+	feishuCfg := imCfg.Feishu
+	if feishuCfg != nil && !feishuCfg.IsOpenIDAllowed(msg.SenderID) {
+		slog.Warn("bind: sender not allowed, ignoring", "sender_id", msg.SenderID, "chat_id", chatID)
+		return
+	}
+	if cmd.Invalid || strings.TrimSpace(cmd.WorkspaceID) == "" || strings.TrimSpace(cmd.Path) == "" {
+		r.sendText(chatID, "⚠️ Usage: /bind <workspace_id> <path>")
+		return
+	}
+	if strings.TrimSpace(r.configFile) == "" {
+		r.sendText(chatID, "❌ Cannot update config: config file path not set.")
+		return
+	}
+
+	oldWorkspaceID := currentFeishuBinding(cfg, chatID)
+	hadOldBinding := oldWorkspaceID != ""
+	if oldWorkspaceID == "" {
+		if oldWS, err := cfg.ResolveWorkspace(msg.IMType, chatID); err == nil && oldWS != nil {
+			oldWorkspaceID = oldWS.ID
+		}
+	}
+
+	r.bindMu.Lock()
+	updatedCfg, err := upsertFeishuBindingConfigFile(r.configFile, chatID, cmd.WorkspaceID, cmd.Path)
+	if err == nil {
+		r.setConfig(updatedCfg)
+		if feishu := r.findFeishuAdapter(); feishu != nil {
+			if updatedIMCfg := updatedCfg.IMConfigByType("feishu"); updatedIMCfg != nil {
+				feishu.updateIMConfig(*updatedIMCfg)
+			}
+		}
+		if r.mgr != nil {
+			r.mgr.mu.Lock()
+			r.mgr.cfg = updatedCfg
+			r.mgr.mu.Unlock()
+		}
+	}
+	r.bindMu.Unlock()
+	if err != nil {
+		r.sendText(chatID, fmt.Sprintf("❌ Failed to update config: %v", err))
+		return
+	}
+
+	oldKey := ""
+	if oldWorkspaceID != "" && oldWorkspaceID != cmd.WorkspaceID {
+		oldKey = (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
+	}
+	newKey := (processKey{workspaceID: cmd.WorkspaceID, imType: msg.IMType, chatID: chatID}).String()
+
+	r.mu.Lock()
+	if oldKey != "" {
+		delete(r.lastKeyChatID, oldKey)
+	}
+	r.lastKeyChatID[newKey] = chatID
+	r.mu.Unlock()
+
+	if r.mgr != nil && oldKey != "" {
+		r.stopReminder(oldKey)
+		r.mgr.StopProcessKey(oldKey)
+		if r.mgr.pins != nil {
+			_ = r.mgr.pins.Set(oldKey, "")
+		}
+	}
+
+	action := "Bound"
+	if hadOldBinding {
+		action = "Binding updated"
+	}
+	r.sendText(chatID, fmt.Sprintf("✅ %s：feishu/%s → workspace %s (%s)", action, chatID, cmd.WorkspaceID, cmd.Path))
 }
 
 func (r *NotificationRouter) availableLoginTargets() []string {
@@ -295,7 +480,7 @@ func (r *NotificationRouter) availableLoginTargets() []string {
 	return targets
 }
 
-// findAdapterByType finds an adapter by type name (e.g. "weixin" → "wechat").
+// findAdapterByType finds an adapter by type name.
 func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 	if r.adapter == nil {
 		return nil
@@ -311,20 +496,10 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 }
 
 func normalizeIMType(name string) string {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "weixin", "wx":
-		return "wechat"
-	case "lark":
-		return "feishu"
-	default:
-		return strings.ToLower(strings.TrimSpace(name))
-	}
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func loginCommandName(name string) string {
-	if normalizeIMType(name) == "wechat" {
-		return "weixin"
-	}
 	return normalizeIMType(name)
 }
 
@@ -373,45 +548,78 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 			r.sendText(chatID, "❌ Failed to cancel.")
 			return
 		}
+		r.beginTurn(procKey)
 		r.sendText(chatID, "🛑 Cancel requested.")
 
 	case "confirm":
-		// If no request ID given, use the current pending confirm's ID.
-		requestID := cmd.RequestID
-		if requestID == "" {
-			if pc := proc.State().PendingConfirm; pc != nil {
-				requestID = pc.RequestID
+		state := proc.State()
+		pc := state.PendingConfirm
+		if pc == nil || strings.TrimSpace(pc.RequestID) == "" {
+			expired := r.lookupExpiredPending(procKey)
+			content := buildExpiredConfirmFollowup(cmd, expired.Confirm)
+			if err := proc.SendUserMessage(content); err != nil {
+				slog.Error("failed to send expired confirmation follow-up", "workspace", ws.ID, "error", err)
+				r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
+				return
 			}
-		}
-		if requestID == "" {
-			r.sendText(chatID, "⚠️ No pending confirmation to respond to.")
+			r.beginTurn(procKey)
+			r.sendText(chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
 			return
+		}
+		requestID := pc.RequestID
+		if cmd.RequestID != "" {
+			if cmd.RequestID != pc.RequestID {
+				r.sendText(chatID, "⚠️ No matching pending confirmation to respond to.")
+				return
+			}
+			requestID = cmd.RequestID
 		}
 		confirmCmd := map[string]any{
 			"type":       "confirm",
 			"request_id": requestID,
 			"action":     cmd.Action,
 		}
+		if cmd.Action == "deny" && strings.TrimSpace(cmd.Reason) != "" {
+			confirmCmd["deny_reason"] = strings.TrimSpace(cmd.Reason)
+		}
 		if err := proc.SendCommand(confirmCmd); err != nil {
 			slog.Error("failed to send confirm response", "workspace", ws.ID, "error", err)
 			r.sendText(chatID, "❌ Failed to send confirmation.")
 			return
 		}
-		actionVerb := "allowed"
+		r.beginTurn(procKey)
 		if cmd.Action == "deny" {
-			actionVerb = "denied"
+			msg := "✅ denied"
+			if strings.TrimSpace(cmd.Reason) != "" {
+				msg += ": " + strings.TrimSpace(cmd.Reason)
+			}
+			r.sendText(chatID, msg)
+			return
 		}
-		r.sendText(chatID, fmt.Sprintf("✅ %s", actionVerb))
+		r.sendText(chatID, "✅ allowed")
 
 	case "question":
 		// If no request ID given, use the current pending question's ID.
-		pq := proc.State().PendingQuestion
+		state := proc.State()
+		pq := state.PendingQuestion
 		requestID := cmd.RequestID
 		if requestID == "" && pq != nil {
 			requestID = pq.RequestID
 		}
 		if requestID == "" {
-			r.sendText(chatID, "⚠️ No pending question to answer.")
+			expired := r.lookupExpiredPending(procKey)
+			q := state.ExpiredQuestion
+			if q == nil {
+				q = expired.Question
+			}
+			content := buildExpiredQuestionFollowup(cmd.Answers, q)
+			if err := proc.SendUserMessage(content); err != nil {
+				slog.Error("failed to send expired question follow-up", "workspace", ws.ID, "error", err)
+				r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
+				return
+			}
+			r.beginTurn(procKey)
+			r.sendText(chatID, "⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.")
 			return
 		}
 		// Map numeric answers to option labels (e.g. "1" → first option).
@@ -426,6 +634,7 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 			r.sendText(chatID, "❌ Failed to send answer.")
 			return
 		}
+		r.beginTurn(procKey)
 		r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
 
 	case "send":
@@ -450,6 +659,7 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 					r.sendText(chatID, "❌ Failed to send answer.")
 					return
 				}
+				r.beginTurn(procKey)
 				r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
 				return
 			}
@@ -466,6 +676,7 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 			r.sendText(chatID, "❌ Failed to send message to chord.")
 			return
 		}
+		r.beginTurn(procKey)
 		// Force a quick control-plane response (helps debug init failures).
 		_ = proc.SendCommand(map[string]any{"type": "status"})
 
@@ -478,13 +689,13 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
+	if state.PendingQuestion != nil || state.PendingConfirm != nil {
+		r.clearExpiredPending(key)
+	}
+	r.recordExpiredPending(key, state)
 	workspaceID, imType, chatID := parseProcessKey(key)
-	if chatID == "" {
-		// Fallback to legacy routing: broadcast to workspace.
-		msg := r.formatNotification(workspaceID, eventType, state)
-		if msg != "" {
-			r.sendTextAll(workspaceID, msg)
-		}
+	if workspaceID == "" || imType == "" || chatID == "" {
+		slog.Warn("gateway event has invalid process key", "event", eventType, "key", key)
 		return
 	}
 
@@ -502,13 +713,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		"assistant_text_len", len(state.LastAssistantText),
 	)
 
-	msg := ""
-	// Special-case todos: keyed diff tracking.
-	if eventType == "todos" {
-		msg = r.formatTodosNotification(key, state)
-	} else {
-		msg = r.formatNotification(workspaceID, eventType, state)
-	}
+	msg := r.formatNotification(key, workspaceID, eventType, state)
 	willSend := msg != ""
 	msgLen := len(msg)
 	slog.Info("gateway routing decision",
@@ -520,28 +725,77 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		"will_send", willSend,
 	)
 	if msg == "" {
+		if eventType == "idle" || eventType == "idle_timeout" || eventType == "exit" {
+			r.stopReminder(key)
+		}
 		return
 	}
 
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
 			if r.sendFeishuConfirmCard(chatID, state) {
+				r.markVisibleOutput(key)
 				return
 			}
 		}
 		if eventType == "question_request" {
 			if r.sendFeishuQuestionCard(chatID, state) {
+				r.markVisibleOutput(key)
 				return
 			}
 		}
 	}
 
 	r.sendText(chatID, msg)
+	r.markVisibleOutput(key)
+}
+
+func buildExpiredQuestionFollowup(answers []string, q *QuestionPayload) string {
+	answer := strings.TrimSpace(strings.Join(answers, " "))
+	var sb strings.Builder
+	sb.WriteString("The previous pending question has expired, so this cannot be submitted as a structured answer. Treat the user's response below as a follow-up message and continue from the existing context if applicable.")
+	if q != nil && strings.TrimSpace(q.Question) != "" {
+		sb.WriteString("\n\nExpired question:\n")
+		sb.WriteString(strings.TrimSpace(q.Question))
+		if len(q.Options) > 0 {
+			sb.WriteString("\nOptions: ")
+			sb.WriteString(strings.Join(q.Options, ", "))
+		}
+	}
+	if answer != "" {
+		sb.WriteString("\n\nUser response:\n")
+		sb.WriteString(answer)
+	}
+	return sb.String()
+}
+
+func buildExpiredConfirmFollowup(cmd IMCommand, c *ConfirmPayload) string {
+	var sb strings.Builder
+	sb.WriteString("The previous pending confirmation has expired, so this must not be treated as an approval or denial. Treat this only as follow-up context and ask the user to retry the original request if confirmation is still required.")
+	if c != nil {
+		if strings.TrimSpace(c.ToolName) != "" {
+			sb.WriteString("\n\nExpired confirmation tool: ")
+			sb.WriteString(strings.TrimSpace(c.ToolName))
+		}
+		if strings.TrimSpace(c.ArgsJSON) != "" {
+			sb.WriteString("\nExpired confirmation arguments: ")
+			sb.WriteString(strings.TrimSpace(c.ArgsJSON))
+		}
+	}
+	if strings.TrimSpace(cmd.Action) != "" {
+		sb.WriteString("\n\nExpired confirmation response: ")
+		sb.WriteString(strings.TrimSpace(cmd.Action))
+	}
+	if strings.TrimSpace(cmd.Reason) != "" {
+		sb.WriteString("\nReason: ")
+		sb.WriteString(strings.TrimSpace(cmd.Reason))
+	}
+	return sb.String()
 }
 
 // formatNotification returns the notification text for the given event,
 // or empty string if the event should not trigger a notification.
-func (r *NotificationRouter) formatNotification(workspaceID, eventType string, state ControlState) string {
+func (r *NotificationRouter) formatNotification(key, workspaceID, eventType string, state ControlState) string {
 	switch eventType {
 	case "notification":
 		return r.formatHeadlessNotification(state)
@@ -552,8 +806,8 @@ func (r *NotificationRouter) formatNotification(workspaceID, eventType string, s
 	case "question_request":
 		return r.formatQuestionNotification(state)
 
-	case "idle":
-		return ""
+	case "idle", "idle_timeout":
+		return r.formatExpiredPendingNotification(state)
 
 	case "error":
 		return ""
@@ -587,9 +841,7 @@ func (r *NotificationRouter) formatNotification(workspaceID, eventType string, s
 		return r.formatToolResultNotification(state)
 
 	case "todos":
-		// Todos notifications are keyed by binding; formatTodosNotification is called
-		// from HandleChordEvent where key is available.
-		return ""
+		return r.formatTodosNotification(state)
 
 	case "long_running":
 		return r.formatLongRunningNotification(state)
@@ -597,6 +849,16 @@ func (r *NotificationRouter) formatNotification(workspaceID, eventType string, s
 	default:
 		return ""
 	}
+}
+
+func (r *NotificationRouter) formatExpiredPendingNotification(state ControlState) string {
+	if state.ExpiredQuestion != nil {
+		return "⌛ The pending question has expired. You can still reply, and I will send it as a follow-up message instead of a structured answer."
+	}
+	if state.ExpiredConfirm != nil {
+		return "⌛ The pending confirmation has expired. It was not approved or denied. Please retry the original request if confirmation is still needed."
+	}
+	return ""
 }
 
 func (r *NotificationRouter) formatHeadlessNotification(state ControlState) string {
@@ -645,7 +907,7 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState) strin
 			sb.WriteString(p)
 		}
 	}
-	sb.WriteString("\nReply /allow or /deny")
+	sb.WriteString("\nReply /allow or /deny [reason]")
 	return truncate(sb.String())
 }
 
@@ -764,44 +1026,26 @@ func (r *NotificationRouter) sendFeishuConfirmCard(chatID string, state ControlS
 	if state.PendingConfirm == nil {
 		return false
 	}
-	adapter, ok := r.adapter.(*MultiAdapter)
-	if ok {
-		if fa := adapter.FindAdapterByType("feishu"); fa != nil {
-			if feishu, ok := fa.(*FeishuAdapter); ok {
-				card := buildFeishuConfirmCard(chatID, state.PendingConfirm)
-				feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
-				return true
-			}
-		}
+	feishu := r.findFeishuAdapter()
+	if feishu == nil {
+		return false
 	}
-	if feishu, ok := r.adapter.(*FeishuAdapter); ok {
-		card := buildFeishuConfirmCard(chatID, state.PendingConfirm)
-		feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
-		return true
-	}
-	return false
+	card := buildFeishuConfirmCard(chatID, state.PendingConfirm)
+	feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
+	return true
 }
 
 func (r *NotificationRouter) sendFeishuQuestionCard(chatID string, state ControlState) bool {
 	if state.PendingQuestion == nil || state.PendingQuestion.Multiple || len(state.PendingQuestion.Options) == 0 || len(state.PendingQuestion.Options) > 5 {
 		return false
 	}
-	adapter, ok := r.adapter.(*MultiAdapter)
-	if ok {
-		if fa := adapter.FindAdapterByType("feishu"); fa != nil {
-			if feishu, ok := fa.(*FeishuAdapter); ok {
-				card := buildFeishuQuestionCard(chatID, state.PendingQuestion)
-				feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
-				return true
-			}
-		}
+	feishu := r.findFeishuAdapter()
+	if feishu == nil {
+		return false
 	}
-	if feishu, ok := r.adapter.(*FeishuAdapter); ok {
-		card := buildFeishuQuestionCard(chatID, state.PendingQuestion)
-		feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
-		return true
-	}
-	return false
+	card := buildFeishuQuestionCard(chatID, state.PendingQuestion)
+	feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
+	return true
 }
 
 func buildFeishuConfirmCard(chatID string, c *ConfirmPayload) map[string]any {
@@ -810,11 +1054,27 @@ func buildFeishuConfirmCard(chatID string, c *ConfirmPayload) map[string]any {
 	if summary != "" {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": summary})
 	}
-	actions := []any{
-		feishuCardButton("Allow", "primary", map[string]any{"command": "/allow " + c.RequestID, "request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu"}),
-		feishuCardButton("Deny", "danger", map[string]any{"command": "/deny " + c.RequestID, "request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu"}),
+	if len(c.NeedsApproval) > 0 {
+		var sb strings.Builder
+		sb.WriteString("**Needs approval**")
+		for _, p := range c.NeedsApproval {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			sb.WriteString("\n• ")
+			sb.WriteString(p)
+		}
+		if sb.String() != "**Needs approval**" {
+			elements = append(elements, map[string]any{"tag": "markdown", "content": truncate(sb.String())})
+		}
 	}
-	elements = append(elements, map[string]any{"tag": "action", "actions": actions})
+	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click a button, or reply `/allow` / `/deny [reason]`."})
+	actions := []any{
+		feishuCardButton("Allow", "primary", map[string]any{"type": "confirm", "action": "allow", "request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu"}),
+		feishuCardButton("Deny", "danger", map[string]any{"type": "confirm", "action": "deny", "request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu"}),
+	}
+	elements = append(elements, actions...)
 	return map[string]any{
 		"schema": "2.0",
 		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Confirm required"}, "template": "orange"},
@@ -823,12 +1083,25 @@ func buildFeishuConfirmCard(chatID string, c *ConfirmPayload) map[string]any {
 }
 
 func buildFeishuQuestionCard(chatID string, q *QuestionPayload) map[string]any {
-	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**❓ %s**", q.Question)}}
+	question := strings.TrimSpace(q.Question)
+	if q.Header != "" {
+		question = strings.TrimSpace(q.Header) + ": " + question
+	}
+	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**❓ %s**", question)}}
+	for i, opt := range q.Options {
+		if i < len(q.OptionDetails) && strings.TrimSpace(q.OptionDetails[i]) != "" && q.OptionDetails[i] != opt {
+			elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("**%d. %s**\n%s", i+1, opt, q.OptionDetails[i])})
+		}
+	}
+	if q.DefaultAnswer != "" {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "Default: " + q.DefaultAnswer})
+	}
+	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click an option, or reply with the option number/text. `/answer 1` also works."})
 	actions := make([]any, 0, len(q.Options))
 	for _, opt := range q.Options {
-		actions = append(actions, feishuCardButton(opt, "default", map[string]any{"command": "/answer " + opt, "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu"}))
+		actions = append(actions, feishuCardButton(opt, "default", map[string]any{"type": "question", "value": opt, "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu"}))
 	}
-	elements = append(elements, map[string]any{"tag": "action", "actions": actions})
+	elements = append(elements, actions...)
 	return map[string]any{
 		"schema": "2.0",
 		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Question"}, "template": "blue"},
@@ -872,34 +1145,6 @@ func resolveQuestionAnswers(input string, q *QuestionPayload) []string {
 	return result
 }
 
-func (r *NotificationRouter) formatIdleNotification(workspaceID string, state ControlState) string {
-	switch state.LastOutcome {
-	case "completed":
-		return ""
-
-	case "error":
-		msg := "❌ Error"
-		if state.LastError != "" {
-			msg += ": " + state.LastError
-		}
-		return truncate(msg)
-
-	case "cancelled":
-		return ""
-
-	default:
-		return ""
-	}
-}
-
-func (r *NotificationRouter) formatErrorNotification(workspaceID string, state ControlState) string {
-	msg := "⚠️ Error"
-	if state.LastError != "" {
-		msg += ": " + state.LastError
-	}
-	return truncate(msg)
-}
-
 func (r *NotificationRouter) formatInfoNotification(state ControlState) string {
 	if state.InfoMessage == "" {
 		return ""
@@ -937,38 +1182,39 @@ func (r *NotificationRouter) formatToolResultNotification(state ControlState) st
 	return ""
 }
 
-func (r *NotificationRouter) formatTodosNotification(key string, state ControlState) string {
-	prev := r.lastTodos[key]
-	r.lastTodos[key] = state.Todos
-
-	// Build a map of previous todos by ID for quick lookup.
-	prevMap := make(map[string]TodoItem, len(prev))
-	for _, t := range prev {
-		prevMap[t.ID] = t
+func formatTodoList(todos []TodoItem) string {
+	if len(todos) == 0 {
+		return "📋 No todos."
 	}
 
-	// Check for new todos or status changes to in_progress.
-	for _, t := range state.Todos {
-		if t.Status == "in_progress" {
-			old, exists := prevMap[t.ID]
-			if !exists || old.Status != "in_progress" {
-				return truncate(fmt.Sprintf("🔄 %s", t.Content))
-			}
+	var lines []string
+	for _, t := range todos {
+		prefix := "⬜"
+		switch t.Status {
+		case "in_progress":
+			prefix = "▶"
+		case "completed":
+			prefix = "✅"
+		case "cancelled":
+			prefix = "❌"
 		}
+		line := fmt.Sprintf("%s %s", prefix, t.Content)
+		if t.ActiveForm != "" {
+			line += fmt.Sprintf(" (%s)", t.ActiveForm)
+		}
+		lines = append(lines, line)
 	}
-	return ""
+	return truncate("📋 Todos:\n" + strings.Join(lines, "\n"))
+}
+
+func (r *NotificationRouter) formatTodosNotification(state ControlState) string {
+	return formatTodoList(state.Todos)
 }
 
 func (r *NotificationRouter) formatLongRunningNotification(state ControlState) string {
 	msg := "⏳ Still working"
-	if state.Phase != "" {
-		msg += " — " + state.Phase
-		if state.PhaseDetail != "" {
-			msg += ": " + state.PhaseDetail
-		}
-	}
-	if state.ToolCallsSinceLastPush > 0 {
-		msg += fmt.Sprintf(" (%d tool updates)", state.ToolCallsSinceLastPush)
+	if state.InternalEventsSinceLastPush > 0 {
+		msg += fmt.Sprintf(" (%d internal events)", state.InternalEventsSinceLastPush)
 	}
 	return truncate(msg)
 }
@@ -1059,7 +1305,7 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 // known chatID for this workspace. Used for multi-IM notification routing.
 func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]string {
 	result := make(map[string]string)
-	for k, chatID := range r.lastKeyChatID {
+	for k, chatID := range r.snapshotLastKeyChatID() {
 		w, imType, _ := parseProcessKey(k)
 		if w != workspaceID {
 			continue
@@ -1069,11 +1315,9 @@ func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]
 		}
 	}
 	// Fill in missing IDs from Feishu chat bindings.
-	if r.cfg != nil {
-		for _, im := range r.cfg.IMs {
-			if im.Feishu == nil {
-				continue
-			}
+	cfg := r.getConfig()
+	if cfg != nil {
+		if im := cfg.IMConfigByType("feishu"); im != nil && im.Feishu != nil {
 			for chatID, boundWorkspaceID := range im.Feishu.ChatBindings {
 				if boundWorkspaceID == workspaceID {
 					if _, has := result["feishu"]; !has {
@@ -1089,8 +1333,12 @@ func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]
 // chatIDForAdapter returns the most suitable chatID for a specific adapter type.
 func (r *NotificationRouter) chatIDForAdapter(adapterType string) string {
 	adapterType = normalizeIMType(adapterType)
-	for i := range r.cfg.Workspaces {
-		chatIDs := r.chatIDsForWorkspace(r.cfg.Workspaces[i].ID)
+	cfg := r.getConfig()
+	if cfg == nil {
+		return ""
+	}
+	for i := range cfg.Workspaces {
+		chatIDs := r.chatIDsForWorkspace(cfg.Workspaces[i].ID)
 		if chatID := chatIDs[adapterType]; chatID != "" {
 			return chatID
 		}
@@ -1100,7 +1348,7 @@ func (r *NotificationRouter) chatIDForAdapter(adapterType string) string {
 
 // adapterTypeForChatID returns the adapter type associated with a known chatID.
 func (r *NotificationRouter) adapterTypeForChatID(chatID string) string {
-	for k, knownChatID := range r.lastKeyChatID {
+	for k, knownChatID := range r.snapshotLastKeyChatID() {
 		if knownChatID != chatID {
 			continue
 		}
@@ -1109,11 +1357,9 @@ func (r *NotificationRouter) adapterTypeForChatID(chatID string) string {
 			return imType
 		}
 	}
-	if r.cfg != nil {
-		for _, im := range r.cfg.IMs {
-			if im.Feishu == nil {
-				continue
-			}
+	cfg := r.getConfig()
+	if cfg != nil {
+		if im := cfg.IMConfigByType("feishu"); im != nil && im.Feishu != nil {
 			if _, ok := im.Feishu.ChatBindings[chatID]; ok {
 				return "feishu"
 			}
@@ -1122,56 +1368,124 @@ func (r *NotificationRouter) adapterTypeForChatID(chatID string) string {
 	return ""
 }
 
-func (r *NotificationRouter) silenceWatcher(key string) {
-	const (
-		minQuiet  = 3 * time.Minute
-		interval  = 30 * time.Second
-		maxAlerts = 3
-	)
+func (r *NotificationRouter) ensureReminderState(key string) *reminderState {
+	if r.reminders == nil {
+		r.reminders = make(map[string]*reminderState)
+	}
+	st := r.reminders[key]
+	if st == nil {
+		st = &reminderState{}
+		r.reminders[key] = st
+	}
+	return st
+}
 
-	alerts := 0
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// resetReminderTimer arms or resets the reminder timer for the given key.
+// Must be called with r.mu held.
+func (r *NotificationRouter) resetReminderTimer(key string, st *reminderState, d time.Duration) {
+	if d <= 0 {
+		d = time.Nanosecond
+	}
+	if st.timer == nil {
+		st.timer = time.AfterFunc(d, func() { r.fireReminder(key) })
+	} else {
+		st.timer.Reset(d)
+	}
+}
 
-	for range ticker.C {
-		proc, err := r.mgr.GetOrSpawnForKey(key)
-		if err != nil {
-			return
-		}
-		if proc == nil || !proc.Alive() {
-			return
-		}
-		state := proc.State()
-		if !state.Busy {
-			return
-		}
-		if alerts >= maxAlerts {
-			return
-		}
-		if state.LastPushAt.IsZero() || time.Since(state.LastPushAt) < minQuiet {
-			continue
-		}
-		if state.ToolCallsSinceLastPush <= 0 && state.Phase == "" {
-			continue
-		}
+func reminderDelay(lastPush time.Time, now time.Time) time.Duration {
+	if lastPush.IsZero() {
+		return reminderInterval
+	}
+	elapsed := now.Sub(lastPush)
+	if elapsed >= reminderInterval {
+		return time.Nanosecond
+	}
+	return reminderInterval - elapsed
+}
 
-		_, _, chatID := parseProcessKey(key)
-		if chatID == "" {
-			return
-		}
-		msg := r.formatLongRunningNotification(state)
-		if msg == "" {
-			continue
-		}
-		r.sendText(chatID, msg)
-		alerts++
+func (r *NotificationRouter) scheduleReminder(key string, lastPush time.Time) {
+	now := time.Now()
+	r.mu.Lock()
+	st := r.ensureReminderState(key)
+	r.resetReminderTimer(key, st, reminderDelay(lastPush, now))
+	r.mu.Unlock()
+}
 
-		// Reset counters under process lock.
+func (r *NotificationRouter) beginTurn(key string) {
+	now := time.Now()
+
+	if proc, ok := r.lookupProcessByKey(key); ok {
 		proc.mu.Lock()
-		proc.state.ToolCallsSinceLastPush = 0
-		proc.state.LastPushAt = time.Now()
+		proc.state.Busy = true
+		proc.state.LastPushAt = now
+		proc.state.InternalEventsSinceLastPush = 0
 		proc.mu.Unlock()
 	}
+
+	r.scheduleReminder(key, now)
+}
+
+func (r *NotificationRouter) markVisibleOutput(key string) {
+	now := time.Now()
+	if proc, ok := r.lookupProcessByKey(key); ok {
+		proc.mu.Lock()
+		proc.state.LastPushAt = now
+		proc.state.InternalEventsSinceLastPush = 0
+		proc.mu.Unlock()
+	}
+
+	r.mu.Lock()
+	if st := r.reminders[key]; st != nil {
+		r.resetReminderTimer(key, st, reminderInterval)
+	}
+	r.mu.Unlock()
+}
+
+func (r *NotificationRouter) stopReminder(key string) {
+	r.mu.Lock()
+	if st := r.reminders[key]; st != nil {
+		if st.timer != nil {
+			st.timer.Stop()
+		}
+		delete(r.reminders, key)
+	}
+	r.mu.Unlock()
+}
+
+func (r *NotificationRouter) fireReminder(key string) {
+	proc, ok := r.lookupProcessByKey(key)
+	if !ok || proc == nil || !proc.Alive() {
+		r.stopReminder(key)
+		return
+	}
+	state := proc.State()
+	if !state.Busy {
+		r.stopReminder(key)
+		return
+	}
+	_, _, chatID := parseProcessKey(key)
+	if chatID == "" {
+		r.stopReminder(key)
+		return
+	}
+	msg := r.formatLongRunningNotification(state)
+	if msg != "" {
+		r.sendText(chatID, msg)
+		r.markVisibleOutput(key)
+		return
+	}
+	r.scheduleReminder(key, state.LastPushAt)
+}
+
+func (r *NotificationRouter) lookupProcessByKey(key string) (*ChordProcess, bool) {
+	if r.mgr == nil {
+		return nil, false
+	}
+	r.mgr.mu.Lock()
+	defer r.mgr.mu.Unlock()
+	p, ok := r.mgr.procs[key]
+	return p, ok
 }
 
 // sendText sends a text message via the IM adapter, logging errors.
@@ -1217,9 +1531,9 @@ func (r *NotificationRouter) sendTextAll(workspaceID, text string) {
 // expired (e.g. WeChat iLink errcode=-14). It broadcasts a notification to
 // all OTHER adapters so the user can take action.
 func (r *NotificationRouter) HandleSessionExpired(imType string) {
-	msg := fmt.Sprintf("⚠️ %s 会话已失效：请发送 /login %s 续期", imDisplayName(imType), loginCommandName(imType))
+	msg := fmt.Sprintf("⚠️ %s session expired: send /login %s to renew", imDisplayName(imType), loginCommandName(imType))
 	if normalizeIMType(imType) == "feishu" {
-		msg = "⚠️ 飞书会话已失效：请检查配置"
+		msg = "⚠️ Feishu session expired: please check configuration"
 	}
 	r.broadcastExcept(imType, msg)
 }
@@ -1229,9 +1543,9 @@ func (r *NotificationRouter) HandleSessionExpired(imType string) {
 // (since that adapter may not be able to send yet).
 func (r *NotificationRouter) HandleLoginResult(imType string, success bool, errMsg string) {
 	if success {
-		r.broadcastExcept(imType, fmt.Sprintf("✅ %s 登录已续期", imDisplayName(imType)))
+		r.broadcastExcept(imType, fmt.Sprintf("✅ %s login renewed", imDisplayName(imType)))
 	} else {
-		r.broadcastExcept(imType, fmt.Sprintf("❌ %s 登录续期失败：%s", imDisplayName(imType), errMsg))
+		r.broadcastExcept(imType, fmt.Sprintf("❌ %s login renewal failed: %s", imDisplayName(imType), errMsg))
 	}
 }
 
@@ -1243,8 +1557,13 @@ func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
 		return
 	}
 	if multi, ok := r.adapter.(*MultiAdapter); ok {
-		for i := range r.cfg.Workspaces {
-			chatIDs := r.chatIDsForWorkspace(r.cfg.Workspaces[i].ID)
+		cfg := r.getConfig()
+		if cfg == nil {
+			slog.Warn("no config set, cannot broadcast notification")
+			return
+		}
+		for i := range cfg.Workspaces {
+			chatIDs := r.chatIDsForWorkspace(cfg.Workspaces[i].ID)
 			if len(chatIDs) == 0 {
 				continue
 			}
@@ -1260,9 +1579,9 @@ func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
 func imDisplayName(imType string) string {
 	switch normalizeIMType(imType) {
 	case "wechat":
-		return "微信"
+		return "WeChat"
 	case "feishu":
-		return "飞书"
+		return "Feishu"
 	default:
 		return imType
 	}
@@ -1292,11 +1611,11 @@ func parseIMCommand(text string) IMCommand {
 		}
 		return IMCommand{Type: "confirm", Action: "allow", RequestID: requestID}
 	case "/deny":
-		requestID := ""
+		reason := ""
 		if len(parts) > 1 {
-			requestID = strings.TrimSpace(parts[1])
+			reason = strings.TrimSpace(text[len(parts[0]):])
 		}
-		return IMCommand{Type: "confirm", Action: "deny", RequestID: requestID}
+		return IMCommand{Type: "confirm", Action: "deny", Reason: reason}
 	case "/answer":
 		answer := ""
 		if len(parts) > 1 {
@@ -1323,9 +1642,92 @@ func parseIMCommand(text string) IMCommand {
 			target = strings.TrimSpace(parts[1])
 		}
 		return IMCommand{Type: "login", Content: target}
+	case "/bind":
+		workspaceID, path, ok := parseBindArgs(strings.TrimSpace(strings.TrimPrefix(text, parts[0])))
+		return IMCommand{Type: "bind", WorkspaceID: workspaceID, Path: path, Invalid: !ok}
 	default:
 		return IMCommand{Type: "send", Content: text}
 	}
+}
+
+func commandFromInternalAction(action *InternalAction) IMCommand {
+	if action == nil {
+		return IMCommand{Type: "send"}
+	}
+	switch action.Type {
+	case "confirm":
+		return IMCommand{Type: "confirm", Action: action.Action, RequestID: action.RequestID}
+	case "question":
+		return IMCommand{Type: "question", RequestID: action.RequestID, Answers: []string{action.Value}}
+	default:
+		return IMCommand{Type: "send"}
+	}
+}
+
+func parseBindArgs(rest string) (workspaceID, path string, ok bool) {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "", "", true
+	}
+	workspaceID, remaining, ok := nextCommandArg(rest)
+	if !ok {
+		return "", "", false
+	}
+	if strings.TrimSpace(remaining) == "" {
+		return workspaceID, "", true
+	}
+	path, remaining, ok = nextCommandArg(remaining)
+	if !ok {
+		return "", "", false
+	}
+	if strings.TrimSpace(remaining) != "" {
+		return "", "", false
+	}
+	return workspaceID, path, true
+}
+
+func nextCommandArg(s string) (arg, rest string, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "", false
+	}
+	if s[0] != '"' {
+		fields := strings.Fields(s)
+		if len(fields) == 0 {
+			return "", "", false
+		}
+		idx := strings.Index(s, fields[0]) + len(fields[0])
+		return fields[0], strings.TrimSpace(s[idx:]), true
+	}
+
+	var b strings.Builder
+	escaped := false
+	for i := 1; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			switch ch {
+			case '"', '\\':
+				b.WriteByte(ch)
+			default:
+				b.WriteByte('\\')
+				b.WriteByte(ch)
+			}
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			return b.String(), strings.TrimSpace(s[i+1:]), true
+		}
+		b.WriteByte(ch)
+	}
+	if escaped {
+		b.WriteByte('\\')
+	}
+	return "", "", false
 }
 
 // formatStatus formats a ControlState as a human-readable status message.

@@ -14,7 +14,7 @@
 ## Features
 
 - WeChat iLink support with QR-code login and token persistence (`<state_dir>/wechat/token.json` by default)
-- Feishu bot support with webhook verification, optional encryption, owner allowlist, and callback dedupe
+- Feishu bot support with long connection mode, owner allowlist, and event dedupe
 - Multiple IM adapters can run together
 - Per-chat and per-workspace session isolation
 - Session pinning and resume commands (`/new`, `/resume`, `/sessions`, `/current`)
@@ -46,14 +46,14 @@ chord-gateway --version
 
 ## Quickstart
 
-Create a minimal config and point `workspaces[].path` at the project you want Chord to operate on. Here is a WeChat example:
+Create a minimal config and point `workspaces.default.path` at the project you want Chord to operate on. Here is a WeChat example:
 
 ```yaml
 ims:
-  - wechat:
-      base_url: https://ilinkai.weixin.qq.com
+  wechat:
+    base_url: https://ilinkai.weixin.qq.com
 workspaces:
-  - id: default
+  default:
     path: /path/to/project
 chord_path: chord
 idle_timeout: 30m
@@ -75,8 +75,8 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 
 - Source builds require Go 1.26+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
 - CI currently builds these targets: `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, and `windows/amd64`.
-- WeChat always routes to one workspace. When multiple workspaces exist, set `ims[].wechat.workspace_id` to choose the workspace used by WeChat.
-- Feishu multi-workspace routing uses `ims[].feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.
+- WeChat always routes to one workspace. When multiple workspaces exist, set `ims.wechat.workspace_id` to choose the workspace used by WeChat.
+- Feishu multi-workspace routing uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.
 - `/login [platform]` is only useful for adapters that support interactive login renewal. Today that flow is available for WeChat, not Feishu.
 
 ## Common IM commands
@@ -85,8 +85,8 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 |---|---|
 | `/status` | Show current Chord state |
 | `/cancel` | Cancel the current turn |
-| `/allow` / `/deny` | Approve or deny a pending confirmation |
-| `/answer <text>` | Answer a pending question |
+| `/allow` / `/deny [reason]` | Approve or deny a pending confirmation |
+| `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
 | `/todos` | Show the current todo list |
 | `/new` | Start a fresh session for the current binding |
 | `/resume <id>` | Resume and pin a session |
@@ -112,7 +112,7 @@ See [docs/usage.md](./docs/usage.md) for full command behavior and session seman
 
 `chord-gateway` routes IM messages to a local `chord headless` process that can interact with the configured workspace. Treat IM access as control-plane access to that workspace.
 
-For public Feishu deployments, configure webhook verification and an allowlist (`owner_open_id` and/or `allowed_open_ids`). Keep Feishu secrets, WeChat token files (`<state_dir>/wechat/token.json` unless `ims[].wechat.token_path` is set), and the gateway state directory out of version control. See [docs/permissions-and-safety.md](./docs/permissions-and-safety.md) and [SECURITY.md](./SECURITY.md).
+For public Feishu deployments, configure an allowlist (`owner_open_id` and/or `allowed_open_ids`). Keep Feishu secrets, WeChat token files (`<state_dir>/wechat/token.json` unless `ims.wechat.token_path` is set), and the gateway state directory out of version control. See [docs/permissions-and-safety.md](./docs/permissions-and-safety.md) and [SECURITY.md](./SECURITY.md).
 
 ## License
 

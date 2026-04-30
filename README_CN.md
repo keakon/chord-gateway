@@ -14,7 +14,7 @@
 ## 功能特性
 
 - 微信 iLink：扫码登录与 token 持久化（默认 `<state_dir>/wechat/token.json`）
-- 飞书机器人：webhook 校验、可选加密、owner allowlist、回调去重
+- 飞书机器人：长连接模式、owner allowlist、事件去重
 - 支持同时运行多个 IM adapter
 - 按聊天会话和工作区隔离 Chord session
 - 会话 pin 与恢复命令（`/new`、`/resume`、`/sessions`、`/current`）
@@ -46,14 +46,14 @@ chord-gateway --version
 
 ## 快速开始
 
-创建一个最小配置，并把 `workspaces[].path` 指向你希望 Chord 操作的项目目录。以下是微信示例：
+创建一个最小配置，并把 `workspaces.default.path` 指向你希望 Chord 操作的项目目录。以下是微信示例：
 
 ```yaml
 ims:
-  - wechat:
-      base_url: https://ilinkai.weixin.qq.com
+  wechat:
+    base_url: https://ilinkai.weixin.qq.com
 workspaces:
-  - id: default
+  default:
     path: /path/to/project
 chord_path: chord
 idle_timeout: 30m
@@ -75,8 +75,8 @@ chord-gateway -f config.yaml
 
 - 源码构建需要 Go 1.26+，并且需要单独安装 `chord` 二进制；`chord-gateway` 不会内置 Chord。
 - 当前 CI 会构建这些目标：`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`、`windows/amd64`。
-- 微信始终路由到一个 workspace。存在多个 workspace 时，必须通过 `ims[].wechat.workspace_id` 指定微信使用哪个 workspace。
-- 飞书多 workspace 路由通过 `ims[].feishu.chat_bindings` 把 chat ID 映射到 workspace ID。当前飞书入站处理只接受文本消息，非文本消息会被忽略。
+- 微信始终路由到一个 workspace。存在多个 workspace 时，必须通过 `ims.wechat.workspace_id` 指定微信使用哪个 workspace。
+- 飞书多 workspace 路由通过 `ims.feishu.chat_bindings` 把 chat ID 映射到 workspace ID。当前飞书入站处理只接受文本消息，非文本消息会被忽略。
 - `/login [platform]` 仅适用于支持交互式登录续期的适配器；目前该流程适用于微信，不适用于飞书。
 
 ## 常用 IM 命令
@@ -85,8 +85,8 @@ chord-gateway -f config.yaml
 |---|---|
 | `/status` | 查看当前 Chord 状态 |
 | `/cancel` | 取消当前 turn |
-| `/allow` / `/deny` | 批准或拒绝待确认请求 |
-| `/answer <text>` | 回答待处理问题 |
+| `/allow` / `/deny [reason]` | 批准或拒绝待确认请求 |
+| `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 为当前绑定启动新 session |
 | `/resume <id>` | 恢复并 pin 指定 session |
@@ -112,7 +112,7 @@ chord-gateway -f config.yaml
 
 `chord-gateway` 会把 IM 消息路由到本地 `chord headless` 进程，而该进程可以与配置的工作区交互。请把 IM 访问视为对该工作区的控制面访问。
 
-公网飞书部署建议启用 webhook 校验和 allowlist（`owner_open_id` 和/或 `allowed_open_ids`）。请不要把飞书密钥、微信 token 文件（默认 `<state_dir>/wechat/token.json`，除非设置了 `ims[].wechat.token_path`）或 gateway 状态目录提交到版本控制。详见 [docs/permissions-and-safety_CN.md](./docs/permissions-and-safety_CN.md) 和 [SECURITY_CN.md](./SECURITY_CN.md)。
+公网飞书部署建议配置 allowlist（`owner_open_id` 和/或 `allowed_open_ids`）。请不要把飞书密钥、微信 token 文件（默认 `<state_dir>/wechat/token.json`，除非设置了 `ims.wechat.token_path`）或 gateway 状态目录提交到版本控制。详见 [docs/permissions-and-safety_CN.md](./docs/permissions-and-safety_CN.md) 和 [SECURITY_CN.md](./SECURITY_CN.md)。
 
 ## License
 

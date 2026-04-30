@@ -23,7 +23,7 @@
 ## 运行安全说明
 
 `chord-gateway` 会启动本地 `chord headless` 进程并转发 IM 消息。
-请将飞书 `app_secret`、webhook 校验 token、加密 key、微信 token 文件等视为敏感信息，
+请将飞书 `app_secret`、微信 token 文件等视为敏感信息，
 并确保不进入版本控制。
 
 关于运行时安全边界、访问控制和部署建议，参见 [docs/permissions-and-safety_CN.md](./docs/permissions-and-safety_CN.md)。

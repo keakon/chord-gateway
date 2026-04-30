@@ -11,7 +11,7 @@ gateway 不是多租户安全沙箱。
 ## 推荐部署方式
 
 - 尽量使用专用机器、用户账号、容器或 VM 运行 gateway。
-- 只把 `workspaces[].path` 指向允许从 IM 控制的项目。
+- 只把 `workspaces.<id>.path` 指向允许从 IM 控制的项目。
 - 不要把整个 home 目录配置为 workspace。
 - 保持 Chord 权限和工具审批策略保守。
 - 监控日志中是否出现异常发送者、聊天、命令或工作区路由。
@@ -22,13 +22,12 @@ gateway 不是多租户安全沙箱。
 
 ```yaml
 ims:
-  - feishu:
-      app_id: cli_xxx
-      app_secret: your-app-secret
-      verification_token: your-token
-      owner_open_id: ou_owner_xxx
-      allowed_open_ids:
-        - ou_teammate_xxx
+  feishu:
+    app_id: cli_xxx
+    app_secret: your-app-secret
+    owner_open_id: ou_owner_xxx
+    allowed_open_ids:
+      - ou_teammate_xxx
 ```
 
 行为：
@@ -36,25 +35,14 @@ ims:
 - 如果两个字段都未设置，则允许所有用户。
 - 如果任一字段已设置，则只允许列表中的 `open_id`。
 - `owner_open_id` 会自动进入有效 allowlist。
-- 被拒绝的消息会以 HTTP 200 静默忽略，避免产生噪音。
-
-## Webhook 校验和加密
-
-公网飞书部署建议：
-
-- 配置 `verification_token`。
-- 如果飞书启用了事件加密，则配置 `encrypt_key`。
-- webhook 使用 HTTPS。
-- 不要在没有网络层或平台层保护的情况下直接暴露 gateway。
+- 被拒绝的消息会被静默忽略。
 
 ## 凭据处理
 
 以下内容都应视为敏感信息：
 
 - 飞书 `app_secret`
-- 飞书 `verification_token`
-- 飞书 `encrypt_key`
-- 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims[].wechat.token_path`）
+- 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）
 - gateway 状态目录
 - Chord provider 凭据和 auth 文件
 
@@ -62,7 +50,7 @@ ims:
 
 ## 多工作区安全
 
-飞书多工作区模式下，请配置 `ims[].feishu.chat_bindings`，把每个飞书 chat ID 映射到预期 workspace。
+飞书多工作区模式下，请配置 `ims.feishu.chat_bindings`，把每个飞书 chat ID 映射到预期 workspace。
 
 微信只支持一个 workspace。如果需要聊天到工作区的独立绑定，请使用飞书。
 
@@ -71,8 +59,8 @@ ims:
 如果怀疑出现未授权访问：
 
 1. 停止 gateway。
-2. 吊销或轮换飞书应用密钥和 webhook token。
-3. 删除或轮换微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims[].wechat.token_path`）。
+2. 吊销或轮换飞书应用密钥。
+3. 删除或轮换微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）。
 4. 检查 gateway 日志和 Chord session 历史。
 5. 检查配置工作区中的变更。
 6. 使用更严格的 allowlist 和 workspace 范围重新启动。

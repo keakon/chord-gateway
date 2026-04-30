@@ -222,7 +222,7 @@ func TestWechatAdapter_MessageHandling(t *testing.T) {
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "user-1"}).String()
 		mgr.procs[key] = &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, cmd: &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}}
-		router := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string), lastTodos: make(map[string][]TodoItem)}
+		router := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string)}
 		a := newTestWechatAdapter(t)
 		a.router = router
 
@@ -379,44 +379,6 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy token and sync buf are migrated", func(t *testing.T) {
-		a := newTestWechatAdapter(t)
-		stateDir := filepath.Dir(a.storageDir)
-		legacyTokenPath := filepath.Join(stateDir, "token.json")
-		legacySyncBufPath := filepath.Join(stateDir, "sync-buf.json")
-		legacyToken := &TokenData{Token: "legacy", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "old"}
-		data, err := json.Marshal(legacyToken)
-		if err != nil {
-			t.Fatalf("marshal token: %v", err)
-		}
-		if err := os.WriteFile(legacyTokenPath, data, 0o600); err != nil {
-			t.Fatalf("write legacy token: %v", err)
-		}
-		if err := os.WriteFile(legacySyncBufPath, []byte(`{"get_updates_buf":"legacy-sync"}`), 0o600); err != nil {
-			t.Fatalf("write legacy sync buf: %v", err)
-		}
-
-		loaded := a.loadToken()
-		if loaded == nil || loaded.Token != "legacy" {
-			t.Fatalf("loaded legacy token = %#v", loaded)
-		}
-		if _, err := os.Stat(a.tokenPath()); err != nil {
-			t.Fatalf("migrated token file should exist: %v", err)
-		}
-		if _, err := os.Stat(legacyTokenPath); !os.IsNotExist(err) {
-			t.Fatalf("legacy token should be removed, stat error = %v", err)
-		}
-		if got := a.loadSyncBuf(); got != "legacy-sync" {
-			t.Fatalf("legacy sync buf = %q", got)
-		}
-		if _, err := os.Stat(a.syncBufPath()); err != nil {
-			t.Fatalf("migrated sync buf file should exist: %v", err)
-		}
-		if _, err := os.Stat(legacySyncBufPath); !os.IsNotExist(err) {
-			t.Fatalf("legacy sync buf should be removed, stat error = %v", err)
-		}
-	})
-
 	t.Run("connectILink re-logins when saved token is expired", func(t *testing.T) {
 		var cancel context.CancelFunc
 		var serverURL string
@@ -484,10 +446,14 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 
 	t.Run("NewWechatAdapter loads persisted files", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "token.json"), []byte(`{"token":"tok","baseUrl":"https://api","accountId":"acc","userId":"u1","savedAt":"now"}`), 0o600); err != nil {
+		wechatDir := filepath.Join(dir, "wechat")
+		if err := os.MkdirAll(wechatDir, 0o700); err != nil {
+			t.Fatalf("create wechat dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(wechatDir, "token.json"), []byte(`{"token":"tok","baseUrl":"https://api","accountId":"acc","userId":"u1","savedAt":"now"}`), 0o600); err != nil {
 			t.Fatalf("write token.json: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "sync-buf.json"), []byte(`{"get_updates_buf":"sync-1"}`), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(wechatDir, "sync-buf.json"), []byte(`{"get_updates_buf":"sync-1"}`), 0o600); err != nil {
 			t.Fatalf("write sync-buf.json: %v", err)
 		}
 		paths := testPaths(t)

@@ -31,7 +31,6 @@ func newTestRouter() *NotificationRouter {
 	return &NotificationRouter{
 		cfg:           testConfig(),
 		lastKeyChatID: make(map[string]string),
-		lastTodos:     make(map[string][]TodoItem),
 	}
 }
 
@@ -42,7 +41,7 @@ func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
 	if r.mgr != mgr || r.cfg != cfg {
 		t.Fatalf("router links not initialized")
 	}
-	if r.lastKeyChatID == nil || r.lastTodos == nil {
+	if r.lastKeyChatID == nil {
 		t.Fatalf("router maps should be initialized")
 	}
 	if mgr.onEvent == nil {
@@ -62,7 +61,6 @@ func TestHandleMessageRoutesMissingWorkspaceError(t *testing.T) {
 		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{WorkspaceID: "missing"}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
 		adapter:       sender,
 		lastKeyChatID: make(map[string]string),
-		lastTodos:     make(map[string][]TodoItem),
 	}
 
 	r.HandleMessage("wechat", "chat-1", "hello")
@@ -77,12 +75,349 @@ func TestHandleIncomingMessageNoWorkspace(t *testing.T) {
 		cfg:           &config.Config{Workspaces: nil},
 		adapter:       sender,
 		lastKeyChatID: make(map[string]string),
-		lastTodos:     make(map[string][]TodoItem),
 	}
 
 	r.HandleIncomingMessage(IncomingMessage{IMType: "console", ChatID: "chat-1", Text: "hello"})
 	if got := sender.lastMessage().text; !strings.Contains(got, "no workspace configured") {
 		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
+	cfg := &config.Config{
+		IMs:        []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", ChatBindings: map[string]string{"oc_chat": "ws1"}}}},
+		Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
+	}
+	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+	sender := &stubIMAdapter{typ: "feishu"}
+	stdin := &captureWriteCloser{}
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "oc_chat"}).String()
+	mgr.procs[key] = &ChordProcess{
+		key:         key,
+		workspaceID: "ws1",
+		stdin:       stdin,
+		state: ControlState{
+			PendingConfirm:  &ConfirmPayload{RequestID: "req-confirm"},
+			PendingQuestion: &QuestionPayload{RequestID: "req-question", Options: []string{"yes", "no"}},
+		},
+	}
+	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+
+	r.HandleIncomingMessage(IncomingMessage{
+		IMType: "feishu",
+		ChatID: "oc_chat",
+		Text:   "",
+		InternalAction: &InternalAction{
+			Type:      "confirm",
+			Action:    "allow",
+			RequestID: "req-confirm",
+		},
+	})
+	out := stdin.String()
+	for _, want := range []string{`"type":"confirm"`, `"request_id":"req-confirm"`, `"action":"allow"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("confirm internal action missing %s in %q", want, out)
+		}
+	}
+	if strings.Contains(out, `"type":"send"`) {
+		t.Fatalf("confirm internal action was treated as send: %q", out)
+	}
+
+	stdin = &captureWriteCloser{}
+	mgr.procs[key].stdin = stdin
+	r.HandleIncomingMessage(IncomingMessage{
+		IMType: "feishu",
+		ChatID: "oc_chat",
+		Text:   "",
+		InternalAction: &InternalAction{
+			Type:      "question",
+			RequestID: "req-question",
+			Value:     "yes",
+		},
+	})
+	out = stdin.String()
+	for _, want := range []string{`"type":"question"`, `"request_id":"req-question"`, `"answers":["yes"]`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("question internal action missing %s in %q", want, out)
+		}
+	}
+}
+
+func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
+	dir := t.TempDir()
+	defaultDir := filepath.Join(dir, "default")
+	projectDir := filepath.Join(dir, "project-a")
+	for _, p := range []string{defaultDir, projectDir} {
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\nworkspaces:\n  default:\n    path: " + defaultDir + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr, cfg)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_user", Text: "/bind project-a \"" + projectDir + "\""})
+
+	msg := sender.lastMessage().text
+	if !strings.Contains(msg, "Bound") || !strings.Contains(msg, "project-a") {
+		t.Fatalf("message = %q", msg)
+	}
+	if got := currentFeishuBinding(r.getConfig(), "oc_new"); got != "project-a" {
+		t.Fatalf("binding = %q, want project-a", got)
+	}
+	ws := workspaceByID(r.cfg, "project-a")
+	if ws == nil || ws.Path != projectDir {
+		t.Fatalf("workspace project-a = %#v", ws)
+	}
+	r.mu.Lock()
+	got := r.lastKeyChatID[(processKey{workspaceID: "project-a", imType: "feishu", chatID: "oc_new"}).String()]
+	r.mu.Unlock()
+	if got != "oc_new" {
+		t.Fatalf("lastKeyChatID new binding = %q", got)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "oc_new: project-a") {
+		t.Fatalf("updated config missing chat binding:\n%s", string(data))
+	}
+}
+
+func TestHandleBindRejectsInvalidQuotedPath(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\nworkspaces:\n  default:\n    path: ~/default\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr, cfg)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_user", Text: "/bind project-a \"~/work/project a"})
+
+	if got := sender.lastMessage().text; got != "⚠️ Usage: /bind <workspace_id> <path>" {
+		t.Fatalf("message = %q", got)
+	}
+	if got := currentFeishuBinding(r.getConfig(), "oc_new"); got != "" {
+		t.Fatalf("binding = %q, want empty", got)
+	}
+	if ws := workspaceByID(r.getConfig(), "project-a"); ws != nil {
+		t.Fatalf("workspace should not be created, got %#v", ws)
+	}
+}
+
+func TestHandleBindFromDefaultWorkspaceStopsOldProcess(t *testing.T) {
+	fakeChord := makeFakeChordBinary(t, "")
+	stateDir := t.TempDir()
+	dir := t.TempDir()
+	defaultDir := filepath.Join(dir, "default")
+	projectDir := filepath.Join(dir, "project a")
+	for _, p := range []string{defaultDir, projectDir} {
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: " + defaultDir + "\nchord_path: " + fakeChord + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr, cfg)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+	oldKey := (processKey{workspaceID: "default", imType: "feishu", chatID: "oc_chat"}).String()
+	r.mu.Lock()
+	r.lastKeyChatID[oldKey] = "oc_chat"
+	r.mu.Unlock()
+	r.scheduleReminder(oldKey, time.Now())
+	if err := mgr.pins.Set(oldKey, "session-default"); err != nil {
+		t.Fatalf("set pin: %v", err)
+	}
+	proc, err := mgr.SpawnWithArgsForKey(oldKey)
+	if err != nil {
+		t.Fatalf("SpawnWithArgsForKey() error = %v", err)
+	}
+	if proc == nil || !proc.Alive() {
+		t.Fatalf("expected live old process, got %#v", proc)
+	}
+
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind project-a \"" + projectDir + "\""})
+	defer mgr.StopAll(time.Second)
+
+	if got := currentFeishuBinding(r.getConfig(), "oc_chat"); got != "project-a" {
+		t.Fatalf("binding = %q, want project-a", got)
+	}
+	if got := mgr.pins.Get(oldKey); got != "" {
+		t.Fatalf("old pin = %q, want cleared", got)
+	}
+	if got := mgr.procs[oldKey]; got != nil {
+		t.Fatalf("old process should be removed, got %#v", got)
+	}
+	r.mu.Lock()
+	_, ok := r.lastKeyChatID[oldKey]
+	r.mu.Unlock()
+	if ok {
+		t.Fatalf("old key should be removed from lastKeyChatID")
+	}
+	if _, ok := r.reminders[oldKey]; ok {
+		t.Fatalf("old reminder should be removed")
+	}
+	ws := workspaceByID(r.getConfig(), "project-a")
+	if ws == nil || ws.Path != projectDir {
+		t.Fatalf("workspace project-a = %#v", ws)
+	}
+}
+
+func TestHandleBindUpdatesExistingBindingAndStopsOldProcess(t *testing.T) {
+	fakeChord := makeFakeChordBinary(t, "")
+	stateDir := t.TempDir()
+	dir := t.TempDir()
+	oldDir := filepath.Join(dir, "old")
+	newDir := filepath.Join(dir, "new")
+	for _, p := range []string{oldDir, newDir} {
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\n    chat_bindings:\n      oc_chat: ws-old\nworkspaces:\n  ws-old:\n    path: " + oldDir + "\n  ws-new:\n    path: " + newDir + "\nchord_path: " + fakeChord + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr, cfg)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+	oldKey := (processKey{workspaceID: "ws-old", imType: "feishu", chatID: "oc_chat"}).String()
+	r.mu.Lock()
+	r.lastKeyChatID[oldKey] = "oc_chat"
+	r.mu.Unlock()
+	if err := mgr.pins.Set(oldKey, "session-old"); err != nil {
+		t.Fatalf("set pin: %v", err)
+	}
+	proc, err := mgr.SpawnWithArgsForKey(oldKey)
+	if err != nil {
+		t.Fatalf("SpawnWithArgsForKey() error = %v", err)
+	}
+	if proc == nil || !proc.Alive() {
+		t.Fatalf("expected live old process, got %#v", proc)
+	}
+
+	// Bind to ws-new with its existing path (path must match).
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws-new \"" + newDir + "\""})
+	defer mgr.StopAll(time.Second)
+
+	msg := sender.lastMessage().text
+	if !strings.Contains(msg, "Binding updated") || !strings.Contains(msg, "ws-new") {
+		t.Fatalf("message = %q", msg)
+	}
+	if got := currentFeishuBinding(r.getConfig(), "oc_chat"); got != "ws-new" {
+		t.Fatalf("binding = %q, want ws-new", got)
+	}
+	if got := mgr.pins.Get(oldKey); got != "" {
+		t.Fatalf("old pin = %q, want cleared", got)
+	}
+	if got := mgr.procs[oldKey]; got != nil {
+		t.Fatalf("old process should be removed, got %#v", got)
+	}
+	r.mu.Lock()
+	_, ok := r.lastKeyChatID[oldKey]
+	r.mu.Unlock()
+	if ok {
+		t.Fatalf("old key should be removed from lastKeyChatID")
+	}
+	newKey := (processKey{workspaceID: "ws-new", imType: "feishu", chatID: "oc_chat"}).String()
+	r.mu.Lock()
+	got := r.lastKeyChatID[newKey]
+	r.mu.Unlock()
+	if got != "oc_chat" {
+		t.Fatalf("new key chat id = %q", got)
+	}
+}
+
+func TestHandleBindRejectsPathMismatch(t *testing.T) {
+	dir := t.TempDir()
+	originalDir := filepath.Join(dir, "original")
+	differentDir := filepath.Join(dir, "different")
+	for _, p := range []string{originalDir, differentDir} {
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  ws1:\n    path: " + originalDir + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr, cfg)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+
+	// Try to bind to ws1 with a different path — should error.
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws1 \"" + differentDir + "\""})
+	msg := sender.lastMessage().text
+	if !strings.Contains(msg, "❌") || !strings.Contains(msg, "refusing to overwrite") {
+		t.Fatalf("expected path mismatch error, got: %q", msg)
+	}
+}
+
+func TestHandleBindRejectsUnauthorizedSender(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: ~/default\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr, cfg)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+
+	// Sender not in allowed list: gateway must not reply.
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_stranger", Text: "/bind project-a ~/work/project-a"})
+	if msg := sender.lastMessage(); msg.text != "" {
+		t.Fatalf("expected no reply for unauthorized sender, got: %q", msg.text)
 	}
 }
 
@@ -129,7 +464,7 @@ func TestHandleSessions(t *testing.T) {
 func TestHandleChordEventRoutesDirectAndLegacy(t *testing.T) {
 	t.Run("direct assistant message", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{adapter: sender, lastTodos: make(map[string][]TodoItem)}
+		r := &NotificationRouter{adapter: sender}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 		r.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: "done"})
 		if got := sender.lastMessage(); got.chatID != "chat-1" || got.text != "done" {
@@ -137,32 +472,34 @@ func TestHandleChordEventRoutesDirectAndLegacy(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy key broadcasts to workspace", func(t *testing.T) {
+	t.Run("invalid key is ignored", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{
-			cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"configured-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
-			adapter:       sender,
-			lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "tracked-chat"}).String(): "tracked-chat"},
-		}
+		r := &NotificationRouter{adapter: sender}
 		r.HandleChordEvent((processKey{workspaceID: "ws1"}).String(), "assistant_message", ControlState{LastAssistantText: "legacy"})
-		if got := sender.lastMessage(); got.chatID == "" || got.text != "legacy" {
-			t.Fatalf("legacy broadcast message = %#v", got)
+		if got := sender.lastMessage(); got.text != "" {
+			t.Fatalf("invalid key should not send message, got %#v", got)
 		}
 	})
 
-	t.Run("todos notification uses keyed diff", func(t *testing.T) {
+	t.Run("todos notification forwards full list", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{adapter: sender, lastTodos: make(map[string][]TodoItem)}
+		r := &NotificationRouter{adapter: sender}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
-		state := ControlState{Todos: []TodoItem{{ID: "1", Content: "work", Status: "in_progress"}}}
+		state := ControlState{Todos: []TodoItem{
+			{ID: "1", Content: "work", Status: "in_progress", ActiveForm: "editing"},
+			{ID: "2", Content: "test", Status: "pending"},
+		}}
 		r.HandleChordEvent(key, "todos", state)
-		if got := sender.lastMessage().text; !strings.Contains(got, "work") {
-			t.Fatalf("todos message = %q", got)
+		got := sender.lastMessage().text
+		for _, want := range []string{"📋 Todos:", "▶ work (editing)", "⬜ test"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("todos message missing %q in %q", want, got)
+			}
 		}
 		count := len(sender.sentMessages())
 		r.HandleChordEvent(key, "todos", state)
-		if got := len(sender.sentMessages()); got != count {
-			t.Fatalf("unchanged todos should not send again: got %d want %d", got, count)
+		if got := len(sender.sentMessages()); got != count+1 {
+			t.Fatalf("todos event should forward every time: got %d want %d", got, count+1)
 		}
 	})
 }
@@ -223,7 +560,7 @@ func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
 	if strings.Contains(args, "--resume") {
 		t.Fatalf("new session args should not contain --resume: %q", args)
 	}
-	if got := mgr.GetProcess("ws1"); got == nil || !got.Alive() {
+	if got := mgr.GetProcessForKey(key); got == nil || !got.Alive() {
 		t.Fatalf("expected live process, got %#v", got)
 	}
 }
@@ -251,7 +588,7 @@ func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
 	args := readFakeChordArgs(t, argsFile)
 	requireContains(t, args, "--resume")
 	requireContains(t, args, "session-123")
-	if got := mgr.GetProcess("ws1"); got == nil || !got.Alive() {
+	if got := mgr.GetProcessForKey(key); got == nil || !got.Alive() {
 		t.Fatalf("expected live process, got %#v", got)
 	}
 }
@@ -312,31 +649,39 @@ func TestHandleCurrentAndTodosNoActiveSession(t *testing.T) {
 
 func TestParseIMCommand(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
-		wantType      string
-		wantContent   string
-		wantRequestID string
-		wantAction    string
-		wantAnswers   []string
-		wantSessionID string
+		name            string
+		input           string
+		wantType        string
+		wantContent     string
+		wantRequestID   string
+		wantAction      string
+		wantAnswers     []string
+		wantSessionID   string
+		wantWorkspaceID string
+		wantPath        string
+		wantReason      string
+		wantInvalid     bool
 	}{
 		{name: "status", input: "/status", wantType: "status"},
 		{name: "summary", input: "/summary", wantType: "send", wantContent: "/summary"},
 		{name: "cancel", input: "/cancel", wantType: "cancel"},
 		{name: "allow with request_id", input: "/allow req-1", wantType: "confirm", wantAction: "allow", wantRequestID: "req-1"},
-		{name: "deny with request_id", input: "/deny req-2", wantType: "confirm", wantAction: "deny", wantRequestID: "req-2"},
+		{name: "deny with reason", input: "/deny not good", wantType: "confirm", wantAction: "deny", wantReason: "not good"},
 		{name: "answer", input: "/answer yes", wantType: "question", wantAnswers: []string{"yes"}},
 		{name: "new", input: "/new", wantType: "new"},
 		{name: "resume with session_id", input: "/resume 123", wantType: "resume", wantSessionID: "123"},
 		{name: "sessions", input: "/sessions", wantType: "sessions"},
 		{name: "current", input: "/current", wantType: "current"},
 		{name: "todos", input: "/todos", wantType: "todos"},
+		{name: "bind with workspace and path", input: "/bind project-a ~/work/project-a", wantType: "bind", wantWorkspaceID: "project-a", wantPath: "~/work/project-a"},
+		{name: "bind with quoted path", input: "/bind project-a \"~/work/project a\"", wantType: "bind", wantWorkspaceID: "project-a", wantPath: "~/work/project a"},
+		{name: "bind with unterminated quoted path", input: "/bind project-a \"~/work/project a", wantType: "bind", wantInvalid: true},
+		{name: "bind with extra argument", input: "/bind project-a ~/work/project-a extra", wantType: "bind", wantInvalid: true},
 		{name: "plain text becomes send", input: "hello world", wantType: "send", wantContent: "hello world"},
 		{name: "unknown slash command becomes send", input: "/unknown", wantType: "send", wantContent: "/unknown"},
 		{name: "allow without request_id", input: "/allow", wantType: "confirm", wantAction: "allow", wantRequestID: ""},
 		{name: "login without target", input: "/login", wantType: "login", wantContent: ""},
-		{name: "login weixin", input: "/login weixin", wantType: "login", wantContent: "weixin"},
+		{name: "login wechat", input: "/login wechat", wantType: "login", wantContent: "wechat"},
 		{name: "login feishu", input: "/login feishu", wantType: "login", wantContent: "feishu"},
 	}
 
@@ -368,6 +713,18 @@ func TestParseIMCommand(t *testing.T) {
 			}
 			if got.SessionID != tt.wantSessionID {
 				t.Errorf("SessionID = %q, want %q", got.SessionID, tt.wantSessionID)
+			}
+			if got.WorkspaceID != tt.wantWorkspaceID {
+				t.Errorf("WorkspaceID = %q, want %q", got.WorkspaceID, tt.wantWorkspaceID)
+			}
+			if got.Path != tt.wantPath {
+				t.Errorf("Path = %q, want %q", got.Path, tt.wantPath)
+			}
+			if got.Invalid != tt.wantInvalid {
+				t.Errorf("Invalid = %v, want %v", got.Invalid, tt.wantInvalid)
+			}
+			if got.Reason != tt.wantReason {
+				t.Errorf("Reason = %q, want %q", got.Reason, tt.wantReason)
 			}
 		})
 	}
@@ -469,7 +826,7 @@ func TestFormatNotification_NotificationEvent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTestRouter()
-			msg := r.formatNotification("test", "notification", ControlState{
+			msg := r.formatNotification("test-key", "test", "notification", ControlState{
 				LastNotification: &NotificationPayload{Reason: tt.reason, Message: tt.msg},
 			})
 			if msg == "" {
@@ -482,27 +839,40 @@ func TestFormatNotification_NotificationEvent(t *testing.T) {
 	}
 }
 
+func TestReminderDelayUsesLastVisiblePush(t *testing.T) {
+	now := time.Now()
+	if got := reminderDelay(time.Time{}, now); got != reminderInterval {
+		t.Fatalf("zero last push delay = %v, want %v", got, reminderInterval)
+	}
+	if got := reminderDelay(now.Add(-2*time.Minute), now); got < 3*time.Minute-time.Second || got > 3*time.Minute+time.Second {
+		t.Fatalf("recent last push delay = %v, want about 3m", got)
+	}
+	if got := reminderDelay(now.Add(-6*time.Minute), now); got > time.Millisecond {
+		t.Fatalf("stale last push delay = %v, want immediate", got)
+	}
+}
+
 func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	r := newTestRouter()
-	if msg := r.formatNotification("test", "confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Bash"}}); msg == "" {
+	if msg := r.formatNotification("test-key", "test", "confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Bash"}}); msg == "" {
 		t.Fatal("confirm_request should push")
 	}
-	if msg := r.formatNotification("test", "question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
+	if msg := r.formatNotification("test-key", "test", "question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
 		t.Fatal("question_request should push")
 	}
-	if msg := r.formatNotification("test", "error", ControlState{LastError: "boom"}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "error", ControlState{LastError: "boom"}); msg != "" {
 		t.Fatalf("error = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test", "idle", ControlState{LastOutcome: "completed"}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "idle", ControlState{LastOutcome: "completed"}); msg != "" {
 		t.Fatalf("idle = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test", "agent_done", ControlState{}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "agent_done", ControlState{}); msg != "" {
 		t.Fatalf("agent_done = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test", "todos", ControlState{}); msg != "" {
-		t.Fatalf("todos = %q, want empty", msg)
+	if msg := r.formatNotification("test-key", "test", "todos", ControlState{}); msg != "📋 No todos." {
+		t.Fatalf("todos = %q, want %q", msg, "📋 No todos.")
 	}
-	if msg := r.formatNotification("test", "unknown", ControlState{}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "unknown", ControlState{}); msg != "" {
 		t.Fatalf("unknown = %q, want empty", msg)
 	}
 }
@@ -746,6 +1116,44 @@ func TestFormatQuestionNotification(t *testing.T) {
 	})
 }
 
+func TestFormatExpiredPendingNotification(t *testing.T) {
+	r := &NotificationRouter{}
+	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{}); got != "" {
+		t.Fatalf("idle without expired pending = %q", got)
+	}
+	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env"}}); !strings.Contains(got, "pending question has expired") {
+		t.Fatalf("expired question notification = %q", got)
+	}
+	if got := r.formatNotification("test-key", "ws1", "idle_timeout", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
+		t.Fatalf("expired confirm notification = %q", got)
+	}
+}
+
+func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T) {
+	r := &NotificationRouter{cfg: &config.Config{}, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat1"}).String()
+
+	r.HandleChordEvent(key, "idle", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "old-confirm"}})
+	if got := r.lookupExpiredPending(key).Confirm; got == nil || got.RequestID != "old-confirm" {
+		t.Fatalf("expired confirm was not recorded: %#v", got)
+	}
+
+	r.HandleChordEvent(key, "confirm_request", ControlState{PendingConfirm: &ConfirmPayload{RequestID: "new-confirm"}})
+	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil {
+		t.Fatalf("expired pending was not cleared by new confirm: %#v", got)
+	}
+
+	r.HandleChordEvent(key, "idle", ControlState{ExpiredQuestion: &QuestionPayload{RequestID: "old-question"}})
+	if got := r.lookupExpiredPending(key).Question; got == nil || got.RequestID != "old-question" {
+		t.Fatalf("expired question was not recorded: %#v", got)
+	}
+
+	r.HandleChordEvent(key, "question_request", ControlState{PendingQuestion: &QuestionPayload{RequestID: "new-question", Question: "Continue?"}})
+	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil {
+		t.Fatalf("expired pending was not cleared by new question: %#v", got)
+	}
+}
+
 func TestResolveQuestionAnswers(t *testing.T) {
 	opts := []string{"yes", "no", "maybe"}
 	q := &QuestionPayload{Options: opts}
@@ -818,49 +1226,37 @@ func TestResolveQuestionAnswers(t *testing.T) {
 
 func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	r := newTestRouter()
-	if msg := r.formatNotification("test", "assistant_message", ControlState{LastAssistantText: "final answer"}); msg != "final answer" {
+	if msg := r.formatNotification("test-key", "test", "assistant_message", ControlState{LastAssistantText: "final answer"}); msg != "final answer" {
 		t.Fatalf("assistant_message = %q, want final answer", msg)
 	}
-	if msg := r.formatNotification("test", "assistant_message", ControlState{}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "assistant_message", ControlState{}); msg != "" {
 		t.Fatalf("assistant_message empty = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test", "activity", ControlState{Busy: true}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "activity", ControlState{Busy: true}); msg != "" {
 		t.Fatalf("activity should not push: %q", msg)
 	}
-	if msg := r.formatNotification("test", "info", ControlState{InfoMessage: "something happened"}); !strings.Contains(msg, "ℹ️") {
+	if msg := r.formatNotification("test-key", "test", "info", ControlState{InfoMessage: "something happened"}); !strings.Contains(msg, "ℹ️") {
 		t.Fatalf("info notification = %q", msg)
 	}
-	if msg := r.formatNotification("test", "info", ControlState{}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "info", ControlState{}); msg != "" {
 		t.Fatalf("empty info = %q", msg)
 	}
-	if msg := r.formatNotification("test", "toast", ControlState{ToastMessage: "careful", ToastLevel: "warn"}); !strings.Contains(msg, "🔔") {
+	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "careful", ToastLevel: "warn"}); !strings.Contains(msg, "🔔") {
 		t.Fatalf("warn toast = %q", msg)
 	}
-	if msg := r.formatNotification("test", "toast", ControlState{ToastMessage: "broken", ToastLevel: "error"}); !strings.Contains(msg, "🔔") {
+	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "broken", ToastLevel: "error"}); !strings.Contains(msg, "🔔") {
 		t.Fatalf("error toast = %q", msg)
 	}
-	if msg := r.formatNotification("test", "toast", ControlState{ToastMessage: "just info", ToastLevel: "info"}); msg != "" {
+	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "just info", ToastLevel: "info"}); msg != "" {
 		t.Fatalf("info toast = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test", "long_running", ControlState{Phase: "thinking", PhaseDetail: "analyzing", ToolCallsSinceLastPush: 2}); !strings.Contains(msg, "Still working") {
+	if msg := r.formatNotification("test-key", "test", "long_running", ControlState{Phase: "thinking", PhaseDetail: "analyzing", InternalEventsSinceLastPush: 2}); !strings.Contains(msg, "Still working") || !strings.Contains(msg, "2 internal events") || strings.Contains(msg, "thinking") {
 		t.Fatalf("long_running = %q", msg)
 	}
 }
 
 func TestFormatOtherNotifications(t *testing.T) {
 	r := newTestRouter()
-	if got := r.formatIdleNotification("ws", ControlState{LastOutcome: "completed"}); got != "" {
-		t.Fatalf("idle completed = %q", got)
-	}
-	if got := r.formatIdleNotification("ws", ControlState{LastOutcome: "error", LastError: "boom"}); !strings.Contains(got, "boom") {
-		t.Fatalf("idle error = %q", got)
-	}
-	if got := r.formatIdleNotification("ws", ControlState{LastOutcome: "cancelled"}); got != "" {
-		t.Fatalf("idle cancelled = %q", got)
-	}
-	if got := r.formatErrorNotification("ws", ControlState{LastError: "boom"}); !strings.Contains(got, "boom") {
-		t.Fatalf("error notification = %q", got)
-	}
 	if got := r.formatInfoNotification(ControlState{}); got != "" {
 		t.Fatalf("empty info = %q", got)
 	}
@@ -886,16 +1282,19 @@ func TestFormatOtherNotifications(t *testing.T) {
 
 func TestFormatTodosNotification(t *testing.T) {
 	r := newTestRouter()
-	key := "ws|wechat|chat"
-	if got := r.formatTodosNotification(key, ControlState{Todos: []TodoItem{{ID: "1", Content: "task", Status: "pending"}}}); got != "" {
-		t.Fatalf("pending todo should not notify: %q", got)
+	got := r.formatTodosNotification(ControlState{Todos: []TodoItem{
+		{ID: "1", Content: "plan work", Status: "in_progress", ActiveForm: "inspecting"},
+		{ID: "2", Content: "write tests", Status: "pending"},
+		{ID: "3", Content: "ship", Status: "completed"},
+	}})
+	for _, want := range []string{"📋 Todos:", "▶ plan work (inspecting)", "⬜ write tests", "✅ ship"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("todos notification missing %q in %q", want, got)
+		}
 	}
-	got := r.formatTodosNotification(key, ControlState{Todos: []TodoItem{{ID: "1", Content: "task", Status: "in_progress"}}})
-	if !strings.Contains(got, "task") {
-		t.Fatalf("expected in-progress notification, got %q", got)
-	}
-	if got := r.formatTodosNotification(key, ControlState{Todos: []TodoItem{{ID: "1", Content: "task", Status: "in_progress"}}}); got != "" {
-		t.Fatalf("unchanged in-progress should not notify: %q", got)
+
+	if got := r.formatTodosNotification(ControlState{}); got != "📋 No todos." {
+		t.Fatalf("empty todos = %q", got)
 	}
 }
 
@@ -921,10 +1320,13 @@ func TestChatIDLookupHelpers(t *testing.T) {
 	if got := chatIDs["feishu"]; got != "feishu-tracked" {
 		t.Fatalf("feishu chatID = %q", got)
 	}
-	if got := r.chatIDForAdapter("weixin"); got != "wechat-chat" {
+	if got := r.chatIDForAdapter("wechat"); got != "wechat-chat" {
+		t.Fatalf("chatIDForAdapter wechat = %q", got)
+	}
+	if got := r.chatIDForAdapter("weixin"); got != "" {
 		t.Fatalf("chatIDForAdapter weixin = %q", got)
 	}
-	if got := r.chatIDForAdapter("lark"); got != "feishu-tracked" {
+	if got := r.chatIDForAdapter("lark"); got != "" {
 		t.Fatalf("chatIDForAdapter lark = %q", got)
 	}
 	if got := r.adapterTypeForChatID("wechat-chat"); got != "wechat" {
@@ -944,18 +1346,24 @@ func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
 	multi := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}}
 	r := &NotificationRouter{adapter: multi}
 
-	if got := r.findAdapterByType("wx"); got != wechat {
-		t.Fatalf("findAdapterByType wx failed")
+	if got := r.findAdapterByType("wechat"); got != wechat {
+		t.Fatalf("findAdapterByType wechat failed")
 	}
-	if got := r.findAdapterByType("lark"); got != feishu {
-		t.Fatalf("findAdapterByType lark failed")
+	if got := r.findAdapterByType("wx"); got != nil {
+		t.Fatalf("findAdapterByType wx = %#v", got)
+	}
+	if got := r.findAdapterByType("feishu"); got != feishu {
+		t.Fatalf("findAdapterByType feishu failed")
+	}
+	if got := r.findAdapterByType("lark"); got != nil {
+		t.Fatalf("findAdapterByType lark = %#v", got)
 	}
 	if got := r.findAdapterByType("unknown"); got != nil {
 		t.Fatalf("findAdapterByType unknown = %#v", got)
 	}
 
 	targets := r.availableLoginTargets()
-	if len(targets) != 1 || targets[0] != "weixin" {
+	if len(targets) != 1 || targets[0] != "wechat" {
 		t.Fatalf("availableLoginTargets = %v", targets)
 	}
 }
@@ -967,7 +1375,7 @@ func TestHandleLogin(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		r := &NotificationRouter{adapter: sender}
 		r.handleLogin(ws, "chat", "wechat", "")
-		if got := sender.lastMessage().text; !strings.Contains(got, "当前没有支持登录续期") {
+		if got := sender.lastMessage().text; !strings.Contains(got, "No IM adapter supports login renewal") {
 			t.Fatalf("message = %q", got)
 		}
 	})
@@ -976,7 +1384,7 @@ func TestHandleLogin(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: sender}
 		r.handleLogin(ws, "chat", "wechat", "")
-		if got := sender.lastMessage().text; !strings.Contains(got, "/login <平台>") || !strings.Contains(got, "weixin") {
+		if got := sender.lastMessage().text; !strings.Contains(got, "/login <platform>") || !strings.Contains(got, "wechat") {
 			t.Fatalf("message = %q", got)
 		}
 	})
@@ -985,7 +1393,7 @@ func TestHandleLogin(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: sender}
 		r.handleLogin(ws, "chat", "wechat", "feishu")
-		if got := sender.lastMessage().text; !strings.Contains(got, "未找到 feishu 适配器") {
+		if got := sender.lastMessage().text; !strings.Contains(got, "No feishu adapter found") {
 			t.Fatalf("message = %q", got)
 		}
 	})
@@ -995,7 +1403,7 @@ func TestHandleLogin(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		r := &NotificationRouter{adapter: &MultiAdapter{adapters: []namedAdapter{{IMAdapter: sender}, {IMAdapter: loginless}}}}
 		r.handleLogin(ws, "chat", "wechat", "feishu")
-		if got := sender.lastMessage().text; !strings.Contains(got, "飞书 不支持通过 /login 续期") {
+		if got := sender.lastMessage().text; !strings.Contains(got, "Feishu does not support login renewal") {
 			t.Fatalf("message = %q", got)
 		}
 	})
@@ -1004,8 +1412,8 @@ func TestHandleLogin(t *testing.T) {
 		loginErr := errors.New("boom")
 		loginAdapter := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "", loginErr }}
 		r := &NotificationRouter{adapter: loginAdapter}
-		r.handleLogin(ws, "chat", "wechat", "weixin")
-		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "获取 微信 登录链接失败") {
+		r.handleLogin(ws, "chat", "wechat", "wechat")
+		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "Failed to get WeChat login link") {
 			t.Fatalf("message = %q", got)
 		}
 	})
@@ -1013,7 +1421,7 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("login success", func(t *testing.T) {
 		loginAdapter := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: loginAdapter}
-		r.handleLogin(ws, "chat", "wechat", "wx")
+		r.handleLogin(ws, "chat", "wechat", "wechat")
 		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "https://wx-login") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1031,7 +1439,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	}
 
 	r.HandleSessionExpired("wechat")
-	if msgs := feishu.sentMessages(); len(msgs) != 1 || !strings.Contains(msgs[0].text, "/login weixin") {
+	if msgs := feishu.sentMessages(); len(msgs) != 1 || !strings.Contains(msgs[0].text, "/login wechat") {
 		t.Fatalf("feishu messages after wechat expiry = %#v", msgs)
 	}
 	if got := len(wechat.sentMessages()); got != 0 {
@@ -1039,17 +1447,17 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	}
 
 	r.HandleSessionExpired("feishu")
-	if msgs := wechat.sentMessages(); len(msgs) == 0 || !strings.Contains(msgs[len(msgs)-1].text, "飞书会话已失效") {
+	if msgs := wechat.sentMessages(); len(msgs) == 0 || !strings.Contains(msgs[len(msgs)-1].text, "Feishu session expired") {
 		t.Fatalf("wechat messages after feishu expiry = %#v", msgs)
 	}
 
 	r.HandleLoginResult("wechat", true, "")
-	if msgs := feishu.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "微信 登录已续期") {
+	if msgs := feishu.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "WeChat login renewed") {
 		t.Fatalf("feishu messages after login success = %#v", msgs)
 	}
 
 	r.HandleLoginResult("wechat", false, "network")
-	if msgs := feishu.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "登录续期失败") {
+	if msgs := feishu.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "login renewal failed") {
 		t.Fatalf("feishu messages after login failure = %#v", msgs)
 	}
 }
@@ -1087,21 +1495,51 @@ func TestSendTextAndBroadcastHelpers(t *testing.T) {
 }
 
 func TestBuildFeishuCardsAndButton(t *testing.T) {
-	confirm := buildFeishuConfirmCard("chat-1", &ConfirmPayload{ToolName: "Bash", ArgsJSON: `{"command":"pwd"}`, RequestID: "req-1"})
+	confirm := buildFeishuConfirmCard("chat-1", &ConfirmPayload{
+		ToolName:      "Bash",
+		ArgsJSON:      `{"command":"pwd"}`,
+		RequestID:     "req-1",
+		NeedsApproval: []string{"Run shell command"},
+	})
 	body := confirm["body"].(map[string]any)
 	elements := body["elements"].([]any)
-	if len(elements) < 2 {
+	if len(elements) < 5 {
 		t.Fatalf("confirm card elements = %v", elements)
 	}
-	if action := elements[len(elements)-1].(map[string]any); action["tag"] != "action" {
-		t.Fatalf("confirm card action block missing: %v", action)
+	confirmText := fmt.Sprint(elements)
+	for _, want := range []string{"Run shell command", "`/allow`", "`/deny [reason]`"} {
+		if !strings.Contains(confirmText, want) {
+			t.Fatalf("confirm card missing %q: %v", want, elements)
+		}
+	}
+	if btn := elements[len(elements)-1].(map[string]any); btn["tag"] != "button" {
+		t.Fatalf("confirm card button missing: %v", btn)
+	}
+	if strings.Contains(confirmText, "tag:action") || strings.Contains(confirmText, "\"action\"") {
+		t.Fatalf("confirm card should not use legacy action tag: %v", elements)
 	}
 
-	question := buildFeishuQuestionCard("chat-2", &QuestionPayload{Question: "Continue?", Options: []string{"yes", "no"}, RequestID: "req-2"})
+	question := buildFeishuQuestionCard("chat-2", &QuestionPayload{
+		Header:        "Choose",
+		Question:      "Continue?",
+		Options:       []string{"yes", "no"},
+		OptionDetails: []string{"Proceed", "Stop"},
+		DefaultAnswer: "yes",
+		RequestID:     "req-2",
+	})
 	qBody := question["body"].(map[string]any)
 	qElements := qBody["elements"].([]any)
-	if len(qElements) != 2 {
+	if len(qElements) < 5 {
 		t.Fatalf("question card elements = %v", qElements)
+	}
+	questionText := fmt.Sprint(qElements)
+	for _, want := range []string{"Choose: Continue?", "Proceed", "Default: yes", "`/answer 1`"} {
+		if !strings.Contains(questionText, want) {
+			t.Fatalf("question card missing %q: %v", want, qElements)
+		}
+	}
+	if strings.Contains(questionText, "tag:action") || strings.Contains(questionText, "\"action\"") {
+		t.Fatalf("question card should not use legacy action tag: %v", qElements)
 	}
 
 	btn := feishuCardButton("Allow", "primary", map[string]any{"request_id": "req"})
@@ -1122,7 +1560,7 @@ func TestProcessEnvelopeNotification(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// processEnvelope: todos parsing (new format {"todos": [...]} and old [...])
+// processEnvelope: todos parsing ({"todos": [...]})
 // ---------------------------------------------------------------------------
 
 func TestProcessEnvelopeTodosNewFormat(t *testing.T) {
@@ -1143,11 +1581,17 @@ func TestProcessEnvelopeTodosNewFormat(t *testing.T) {
 
 func TestProcessEnvelopeTodosOldFormat(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	payload := []byte(`[{"id":"1","content":"Do it","status":"pending"}]`)
+	payload := []byte(`[{"id":"1","content":"Build X","status":"in_progress","active_form":"building X"},{"id":"2","content":"Test Y","status":"completed"}]`)
 	p.processEnvelope(&HeadlessEnvelope{Type: "todos", Payload: payload})
 	state := p.State()
-	if len(state.Todos) != 1 || state.Todos[0].Content != "Do it" {
-		t.Fatalf("todos = %+v", state.Todos)
+	if len(state.Todos) != 2 {
+		t.Fatalf("expected 2 todos, got %d", len(state.Todos))
+	}
+	if state.Todos[0].Content != "Build X" || state.Todos[0].Status != "in_progress" {
+		t.Errorf("todo[0] = %+v", state.Todos[0])
+	}
+	if state.Todos[1].Status != "completed" {
+		t.Errorf("todo[1].status = %q, want completed", state.Todos[1].Status)
 	}
 }
 
@@ -1170,7 +1614,7 @@ func TestProcessEnvelopeTodosEmptyWrapper(t *testing.T) {
 
 func TestProcessEnvelopeToolResult(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	p.state.ToolCallsSinceLastPush = 3
+	p.state.InternalEventsSinceLastPush = 3
 
 	payload := []byte(`{"call_id":"call-123","name":"Bash","status":"success","agent_id":"a1"}`)
 	p.processEnvelope(&HeadlessEnvelope{Type: "tool_result", Payload: payload})
@@ -1188,8 +1632,8 @@ func TestProcessEnvelopeToolResult(t *testing.T) {
 	if state.LastToolResult.Status != "success" {
 		t.Errorf("Status = %q", state.LastToolResult.Status)
 	}
-	if state.ToolCallsSinceLastPush != 4 {
-		t.Errorf("ToolCallsSinceLastPush = %d, want 4", state.ToolCallsSinceLastPush)
+	if state.InternalEventsSinceLastPush != 4 {
+		t.Errorf("InternalEventsSinceLastPush = %d, want 4", state.InternalEventsSinceLastPush)
 	}
 }
 
@@ -1201,8 +1645,19 @@ func TestProcessEnvelopeToolResultError(t *testing.T) {
 	if state.LastToolResult == nil || state.LastToolResult.Status != "error" {
 		t.Fatalf("expected error tool result, got %+v", state.LastToolResult)
 	}
-	if state.ToolCallsSinceLastPush != 1 {
-		t.Errorf("ToolCallsSinceLastPush = %d, want 1", state.ToolCallsSinceLastPush)
+	if state.InternalEventsSinceLastPush != 1 {
+		t.Errorf("InternalEventsSinceLastPush = %d, want 1", state.InternalEventsSinceLastPush)
+	}
+}
+
+func TestProcessEnvelopeAssistantMessageResetsInternalEventCounter(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
+	p.state.InternalEventsSinceLastPush = 3
+	payload := []byte(`{"text":"done","agent_id":"a1","tool_calls":0}`)
+	p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: payload})
+	state := p.State()
+	if state.InternalEventsSinceLastPush != 0 {
+		t.Errorf("InternalEventsSinceLastPush = %d, want 0", state.InternalEventsSinceLastPush)
 	}
 }
 
@@ -1308,22 +1763,22 @@ func TestWaitForStatusResponse_StaysZero_Timeout(t *testing.T) {
 }
 
 func TestNormalizeIMTypeAndNames(t *testing.T) {
-	if got := normalizeIMType(" wx "); got != "wechat" {
+	if got := normalizeIMType(" wx "); got != "wx" {
 		t.Fatalf("normalize wx = %q", got)
 	}
-	if got := normalizeIMType("LARK"); got != "feishu" {
+	if got := normalizeIMType("LARK"); got != "lark" {
 		t.Fatalf("normalize lark = %q", got)
 	}
-	if got := loginCommandName("wechat"); got != "weixin" {
+	if got := loginCommandName("wechat"); got != "wechat" {
 		t.Fatalf("loginCommandName wechat = %q", got)
 	}
 	if got := loginCommandName("feishu"); got != "feishu" {
 		t.Fatalf("loginCommandName feishu = %q", got)
 	}
-	if got := imDisplayName("wechat"); got != "微信" {
+	if got := imDisplayName("wechat"); got != "WeChat" {
 		t.Fatalf("imDisplayName wechat = %q", got)
 	}
-	if got := imDisplayName("lark"); got != "飞书" {
+	if got := imDisplayName("lark"); got != "lark" {
 		t.Fatalf("imDisplayName lark = %q", got)
 	}
 }
@@ -1337,7 +1792,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: state}
 		mgr.procs[key] = proc
-		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string), lastTodos: make(map[string][]TodoItem)}
+		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 		return r, proc, sender, stdin, key, &cfg.Workspaces[0]
 	}
 
@@ -1352,8 +1807,8 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		}
 	})
 
-	t.Run("confirm uses explicit request id", func(t *testing.T) {
-		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
+	t.Run("confirm uses matching internal request id", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-1"}})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-1"}, "wechat")
 		if got := sender.lastMessage().text; got != "✅ allowed" {
 			t.Fatalf("message = %q", got)
@@ -1363,22 +1818,40 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		}
 	})
 
-	t.Run("confirm falls back to pending request id", func(t *testing.T) {
-		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-pending"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny"}, "wechat")
-		if got := sender.lastMessage().text; got != "✅ denied" {
+	t.Run("confirm rejects mismatched internal request id", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-current"}})
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-stale"}, "wechat")
+		if got := sender.lastMessage().text; !strings.Contains(got, "No matching pending confirmation") {
 			t.Fatalf("message = %q", got)
 		}
-		if !strings.Contains(stdin.String(), `"request_id":"req-pending"`) || !strings.Contains(stdin.String(), `"action":"deny"`) {
-			t.Fatalf("stdin = %q", stdin.String())
+		if got := stdin.String(); got != "" {
+			t.Fatalf("stdin should be empty, got %q", got)
 		}
 	})
 
-	t.Run("confirm without pending request warns", func(t *testing.T) {
-		r, _, sender, _, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow"}, "wechat")
-		if got := sender.lastMessage().text; !strings.Contains(got, "No pending confirmation") {
+	t.Run("confirm uses current pending request id and deny reason", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-pending"}})
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny", Reason: "not safe"}, "wechat")
+		if got := sender.lastMessage().text; got != "✅ denied: not safe" {
 			t.Fatalf("message = %q", got)
+		}
+		out := stdin.String()
+		for _, want := range []string{`"request_id":"req-pending"`, `"action":"deny"`, `"deny_reason":"not safe"`} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("stdin missing %s in %q", want, out)
+			}
+		}
+	})
+
+	t.Run("confirm without pending sends follow-up instead of approval", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow"}, "wechat")
+		if got := sender.lastMessage().text; !strings.Contains(got, "sent as a follow-up message") || strings.Contains(got, "No pending confirmation") {
+			t.Fatalf("message = %q", got)
+		}
+		out := stdin.String()
+		if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, "must not be treated as an approval or denial") || strings.Contains(out, `"type":"confirm"`) {
+			t.Fatalf("stdin = %q", out)
 		}
 	})
 
@@ -1393,11 +1866,20 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		}
 	})
 
-	t.Run("question without pending request warns", func(t *testing.T) {
-		r, _, sender, _, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"hi"}}, "wechat")
-		if got := sender.lastMessage().text; !strings.Contains(got, "No pending question") {
+	t.Run("question without pending sends follow-up", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env", Options: []string{"dev", "prod"}}})
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat")
+		if got := sender.lastMessage().text; !strings.Contains(got, "sent as a follow-up message") || strings.Contains(got, "No pending question") {
 			t.Fatalf("message = %q", got)
+		}
+		out := stdin.String()
+		for _, want := range []string{`"type":"send"`, "Expired question", "Choose env", "User response", "prod"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("stdin missing %q in %q", want, out)
+			}
+		}
+		if strings.Contains(out, `"type":"question"`) {
+			t.Fatalf("should not send structured question response: %q", out)
 		}
 	})
 
@@ -1484,7 +1966,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		proc.cmd = &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}
 		r.handleTodos(ws, "chat-1", "wechat")
 		msg := sender.lastMessage().text
-		for _, want := range []string{"📋 Todos:", "⬜ one", "🔄 two (doing two)", "✅ three", "❌ four"} {
+		for _, want := range []string{"📋 Todos:", "⬜ one", "▶ two (doing two)", "✅ three", "❌ four"} {
 			if !strings.Contains(msg, want) {
 				t.Fatalf("expected %q in %q", want, msg)
 			}

@@ -13,6 +13,20 @@ import (
 )
 
 // Config is the top-level gateway configuration.
+//
+// Preferred YAML shape:
+//
+//	ims:
+//	  wechat:
+//	    ...
+//	  feishu:
+//	    ...
+//	workspaces:
+//	  default:
+//	    path: ~/project
+//
+// For backward compatibility, legacy list/sequence forms are still accepted
+// when loading configuration files.
 type Config struct {
 	IMs             []IMAdapterConfig `yaml:"ims"`
 	Workspaces      []Workspace       `yaml:"workspaces"`
@@ -59,15 +73,11 @@ type WechatConfig struct {
 
 // FeishuConfig holds Feishu (飞书) application configuration.
 type FeishuConfig struct {
-	AppID             string            `yaml:"app_id"`
-	AppSecret         string            `yaml:"app_secret"`
-	VerificationToken string            `yaml:"verification_token,omitempty"`
-	EncryptKey        string            `yaml:"encrypt_key,omitempty"`
-	Listen            string            `yaml:"listen,omitempty"`
-	WebhookPath       string            `yaml:"webhook_path,omitempty"`
-	OwnerOpenID       string            `yaml:"owner_open_id,omitempty"`
-	AllowedOpenIDs    []string          `yaml:"allowed_open_ids,omitempty"`
-	ChatBindings      map[string]string `yaml:"chat_bindings,omitempty"`
+	AppID          string            `yaml:"app_id"`
+	AppSecret      string            `yaml:"app_secret"`
+	OwnerOpenID    string            `yaml:"owner_open_id,omitempty"`
+	AllowedOpenIDs []string          `yaml:"allowed_open_ids,omitempty"`
+	ChatBindings   map[string]string `yaml:"chat_bindings,omitempty"`
 }
 
 // IsOpenIDAllowed checks if an open_id is allowed to send messages.
@@ -94,6 +104,138 @@ func (fc *FeishuConfig) IsOpenIDAllowed(openID string) bool {
 type Workspace struct {
 	ID   string `yaml:"id"`
 	Path string `yaml:"path"`
+}
+
+type rawConfig struct {
+	IMs             yaml.Node       `yaml:"ims"`
+	Workspaces      yaml.Node       `yaml:"workspaces"`
+	ChordPath       string          `yaml:"chord_path,omitempty"`
+	IdleTimeout     string          `yaml:"idle_timeout,omitempty"`
+	EventVisibility EventVisibility `yaml:"event_visibility,omitempty"`
+	SessionPinsFile string          `yaml:"session_pins_file,omitempty"`
+}
+
+type rawWorkspace struct {
+	ID   string `yaml:"id,omitempty"`
+	Path string `yaml:"path"`
+}
+
+// UnmarshalYAML accepts both the preferred map-based config shape and the
+// legacy list-based shape for ims/workspaces.
+func (c *Config) UnmarshalYAML(value *yaml.Node) error {
+	var raw rawConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	ims, err := parseIMsNode(&raw.IMs)
+	if err != nil {
+		return err
+	}
+	workspaces, err := parseWorkspacesNode(&raw.Workspaces)
+	if err != nil {
+		return err
+	}
+
+	*c = Config{
+		IMs:             ims,
+		Workspaces:      workspaces,
+		ChordPath:       raw.ChordPath,
+		IdleTimeout:     raw.IdleTimeout,
+		EventVisibility: raw.EventVisibility,
+		SessionPinsFile: raw.SessionPinsFile,
+	}
+	return nil
+}
+
+func parseIMsNode(node *yaml.Node) ([]IMAdapterConfig, error) {
+	if node == nil || node.Kind == 0 || node.Tag == "!!null" {
+		return nil, nil
+	}
+
+	switch node.Kind {
+	case yaml.MappingNode:
+		configs := make([]IMAdapterConfig, 0, len(node.Content)/2)
+		seen := make(map[string]bool)
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			keyNode := node.Content[i]
+			valueNode := node.Content[i+1]
+			if keyNode == nil || valueNode == nil {
+				continue
+			}
+			typ := normalizeIMType(keyNode.Value)
+			if seen[typ] {
+				return nil, fmt.Errorf("parse ims: duplicate adapter %q", keyNode.Value)
+			}
+			seen[typ] = true
+			switch typ {
+			case "wechat":
+				var wc WechatConfig
+				if err := valueNode.Decode(&wc); err != nil {
+					return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
+				}
+				configs = append(configs, IMAdapterConfig{Wechat: &wc})
+			case "feishu":
+				var fc FeishuConfig
+				if err := valueNode.Decode(&fc); err != nil {
+					return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
+				}
+				configs = append(configs, IMAdapterConfig{Feishu: &fc})
+			default:
+				return nil, fmt.Errorf("parse ims: unsupported adapter %q", keyNode.Value)
+			}
+		}
+		return configs, nil
+	case yaml.SequenceNode:
+		var configs []IMAdapterConfig
+		if err := node.Decode(&configs); err != nil {
+			return nil, fmt.Errorf("parse ims: %w", err)
+		}
+		return configs, nil
+	default:
+		return nil, fmt.Errorf("parse ims: expected mapping or sequence")
+	}
+}
+
+func parseWorkspacesNode(node *yaml.Node) ([]Workspace, error) {
+	if node == nil || node.Kind == 0 || node.Tag == "!!null" {
+		return nil, nil
+	}
+
+	switch node.Kind {
+	case yaml.MappingNode:
+		workspaces := make([]Workspace, 0, len(node.Content)/2)
+		seen := make(map[string]bool)
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			keyNode := node.Content[i]
+			valueNode := node.Content[i+1]
+			if keyNode == nil || valueNode == nil {
+				continue
+			}
+			id := strings.TrimSpace(keyNode.Value)
+			if seen[id] {
+				return nil, fmt.Errorf("parse workspaces: duplicate workspace %q", id)
+			}
+			seen[id] = true
+			var rawWS rawWorkspace
+			if err := valueNode.Decode(&rawWS); err != nil {
+				return nil, fmt.Errorf("parse workspaces.%s: %w", id, err)
+			}
+			if rawWS.ID != "" && strings.TrimSpace(rawWS.ID) != id {
+				return nil, fmt.Errorf("parse workspaces.%s: nested id %q does not match map key", id, rawWS.ID)
+			}
+			workspaces = append(workspaces, Workspace{ID: id, Path: rawWS.Path})
+		}
+		return workspaces, nil
+	case yaml.SequenceNode:
+		var workspaces []Workspace
+		if err := node.Decode(&workspaces); err != nil {
+			return nil, fmt.Errorf("parse workspaces: %w", err)
+		}
+		return workspaces, nil
+	default:
+		return nil, fmt.Errorf("parse workspaces: expected mapping or sequence")
+	}
 }
 
 // IdleTimeoutDuration parses and returns the idle timeout duration.
@@ -130,15 +272,6 @@ func (c *Config) IsMultiIM() bool {
 	return len(c.IMs) > 1
 }
 
-// FindWorkspace returns the single configured workspace when unambiguous.
-// Deprecated: use ResolveWorkspace(imType, chatID) instead.
-func (c *Config) FindWorkspace(chatID string) *Workspace {
-	if len(c.Workspaces) == 1 {
-		return &c.Workspaces[0]
-	}
-	return nil
-}
-
 // ResolveWorkspace resolves a workspace by IM type and chat ID using routing
 // declared under each IM adapter config.
 func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
@@ -172,7 +305,7 @@ func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
 			if len(c.Workspaces) == 1 {
 				return &c.Workspaces[0], nil
 			}
-			return nil, fmt.Errorf("wechat with multiple workspaces requires ims[].wechat.workspace_id to select a single workspace")
+			return nil, fmt.Errorf("wechat with multiple workspaces requires ims.wechat.workspace_id to select a single workspace")
 		}
 		return c.workspaceByID(workspaceID)
 
@@ -182,7 +315,7 @@ func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
 		}
 		workspaceID := imCfg.Feishu.ChatBindings[chatID]
 		if workspaceID == "" {
-			return nil, fmt.Errorf("feishu chat_id %q is not bound to any workspace; please configure ims[].feishu.chat_bindings in config", chatID)
+			return nil, fmt.Errorf("feishu chat_id %q is not bound to any workspace; please configure ims.feishu.chat_bindings in config", chatID)
 		}
 		return c.workspaceByID(workspaceID)
 
@@ -205,25 +338,40 @@ func (c *Config) IMConfigByType(imType string) *IMAdapterConfig {
 	return nil
 }
 
-func (c *Config) workspaceByID(id string) (*Workspace, error) {
+// WorkspaceByID returns the workspace with the given ID, or nil if not found.
+func (c *Config) WorkspaceByID(id string) *Workspace {
 	for i := range c.Workspaces {
 		if c.Workspaces[i].ID == id {
-			return &c.Workspaces[i], nil
+			return &c.Workspaces[i]
 		}
 	}
-	return nil, fmt.Errorf("workspace_id %q does not match any configured workspace", id)
+	return nil
+}
+
+func (c *Config) workspaceByID(id string) (*Workspace, error) {
+	ws := c.WorkspaceByID(id)
+	if ws == nil {
+		return nil, fmt.Errorf("workspace_id %q does not match any configured workspace", id)
+	}
+	return ws, nil
 }
 
 // normalizeIMType normalizes an IM type name.
 func normalizeIMType(name string) string {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "weixin", "wx":
-		return "wechat"
-	case "lark":
-		return "feishu"
-	default:
-		return strings.ToLower(strings.TrimSpace(name))
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// IsAllowedWorkspacePath reports whether a workspace path uses an accepted
+// absolute/home-rooted form: Unix absolute, ~, Windows drive absolute, or UNC.
+func IsAllowedWorkspacePath(path string) bool {
+	path = strings.TrimSpace(path)
+	if strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~") || strings.HasPrefix(path, `\\`) {
+		return true
 	}
+	if len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		return true
+	}
+	return false
 }
 
 // Validate checks the configuration for correctness, returning an error
@@ -244,48 +392,59 @@ func (c *Config) Validate() error {
 		if ws.ID == "" {
 			return fmt.Errorf("workspaces[%d] requires a non-empty id", i)
 		}
+		if ws.Path == "" {
+			return fmt.Errorf("workspace %q requires a non-empty path", ws.ID)
+		}
+		if !IsAllowedWorkspacePath(ws.Path) {
+			return fmt.Errorf("workspace %q path %q must start with /, ~, a Windows drive prefix, or a UNC prefix", ws.ID, ws.Path)
+		}
 		if prev, ok := workspaceByID[ws.ID]; ok {
 			return fmt.Errorf("duplicate workspace id %q in workspaces[%d] and workspaces[%d]", ws.ID, prev, i)
 		}
 		workspaceByID[ws.ID] = i
 	}
 
+	imCounts := make(map[string]int)
 	for i := range c.IMs {
 		im := &c.IMs[i]
 		typ := im.Type()
 		if typ == "" {
-			return fmt.Errorf("ims[%d] must contain exactly one platform config", i)
+			return fmt.Errorf("ims entries must contain exactly one platform config")
 		}
 		if im.Wechat != nil && im.Feishu != nil {
-			return fmt.Errorf("ims[%d] must contain exactly one platform config", i)
+			return fmt.Errorf("ims entries must contain exactly one platform config")
+		}
+		imCounts[typ]++
+		if imCounts[typ] > 1 {
+			return fmt.Errorf("ims supports at most one %s adapter", typ)
 		}
 
 		switch typ {
 		case "wechat":
 			if im.Wechat.WorkspaceID == "" {
 				if len(c.Workspaces) > 1 {
-					return fmt.Errorf("wechat with multiple workspaces requires ims[%d].wechat.workspace_id to select a single workspace", i)
+					return fmt.Errorf("wechat with multiple workspaces requires ims.wechat.workspace_id to select a single workspace")
 				}
 			} else if _, ok := workspaceByID[im.Wechat.WorkspaceID]; !ok {
-				return fmt.Errorf("ims[%d].wechat.workspace_id %q does not match any configured workspace", i, im.Wechat.WorkspaceID)
+				return fmt.Errorf("ims.wechat.workspace_id %q does not match any configured workspace", im.Wechat.WorkspaceID)
 			}
 
 		case "feishu":
 			if im.Feishu.AppID == "" {
-				return fmt.Errorf("ims[%d].feishu.app_id is required", i)
+				return fmt.Errorf("ims.feishu.app_id is required")
 			}
 			if im.Feishu.AppSecret == "" {
-				return fmt.Errorf("ims[%d].feishu.app_secret is required", i)
+				return fmt.Errorf("ims.feishu.app_secret is required")
 			}
 			if len(c.Workspaces) > 1 && len(im.Feishu.ChatBindings) == 0 {
-				return fmt.Errorf("feishu with multiple workspaces requires ims[%d].feishu.chat_bindings", i)
+				return fmt.Errorf("feishu with multiple workspaces requires ims.feishu.chat_bindings")
 			}
 			for chatID, workspaceID := range im.Feishu.ChatBindings {
 				if strings.TrimSpace(chatID) == "" {
-					return fmt.Errorf("ims[%d].feishu.chat_bindings contains an empty chat_id", i)
+					return fmt.Errorf("ims.feishu.chat_bindings contains an empty chat_id")
 				}
 				if _, ok := workspaceByID[workspaceID]; !ok {
-					return fmt.Errorf("ims[%d].feishu.chat_bindings[%q] references unknown workspace %q", i, chatID, workspaceID)
+					return fmt.Errorf("ims.feishu.chat_bindings[%q] references unknown workspace %q", chatID, workspaceID)
 				}
 			}
 

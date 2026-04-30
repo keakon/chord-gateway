@@ -44,6 +44,43 @@ func TestValidate_WechatWorkspaceID_NotFound(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsInvalidWorkspacePathPrefix(t *testing.T) {
+	cfg := &Config{
+		IMs:        []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}},
+		Workspaces: []Workspace{{ID: "ws1", Path: "./relative"}},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must start with") {
+		t.Fatalf("Validate() error = %v, want workspace path prefix error", err)
+	}
+}
+
+func TestValidate_AcceptsSupportedWorkspacePathPrefixes(t *testing.T) {
+	for _, path := range []string{"/tmp/ws1", "~/ws1", `C:\work\ws1`, "D:/work/ws1", `\\server\share\ws1`} {
+		t.Run(path, func(t *testing.T) {
+			cfg := &Config{
+				IMs:        []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}},
+				Workspaces: []Workspace{{ID: "ws1", Path: path}},
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_RejectsDuplicateIMTypes(t *testing.T) {
+	cfg := &Config{
+		IMs: []IMAdapterConfig{
+			{Wechat: &WechatConfig{}},
+			{Wechat: &WechatConfig{WorkspaceID: "ws1"}},
+		},
+		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "at most one wechat adapter") {
+		t.Fatalf("expected duplicate wechat adapter error, got: %v", err)
+	}
+}
+
 func TestValidate_FeishuMultiWorkspace_RequiresChatBindings(t *testing.T) {
 	cfg := &Config{
 		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}},
@@ -202,14 +239,24 @@ func TestResolveWorkspace_OtherNoRoute(t *testing.T) {
 	}
 }
 
+func TestWorkspaceByID(t *testing.T) {
+	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+	if ws := cfg.WorkspaceByID("ws1"); ws == nil || ws.Path != "/tmp/ws1" {
+		t.Fatalf("WorkspaceByID(ws1) = %#v", ws)
+	}
+	if ws := cfg.WorkspaceByID("missing"); ws != nil {
+		t.Fatalf("WorkspaceByID(missing) = %#v", ws)
+	}
+}
+
 func TestLoad_IgnoresUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := []byte(`
 ims:
-  - wechat: {}
+  wechat: {}
 workspaces:
-  - id: ws1
+  ws1:
     path: ~/project
 storage_dir: /tmp/x
 `)
@@ -223,6 +270,9 @@ storage_dir: /tmp/x
 	if len(cfg.IMs) != 1 || cfg.IMs[0].Type() != "wechat" {
 		t.Fatalf("loaded IMs = %#v", cfg.IMs)
 	}
+	if len(cfg.Workspaces) != 1 || cfg.Workspaces[0].ID != "ws1" {
+		t.Fatalf("loaded Workspaces = %#v", cfg.Workspaces)
+	}
 }
 
 func TestLoad_ExpandsWechatTokenPath(t *testing.T) {
@@ -233,10 +283,10 @@ func TestLoad_ExpandsWechatTokenPath(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	content := []byte(`
 ims:
-  - wechat:
-      token_path: ~/secrets/wechat-token.json
+  wechat:
+    token_path: ~/secrets/wechat-token.json
 workspaces:
-  - id: ws1
+  ws1:
     path: ~/project
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -252,14 +302,10 @@ workspaces:
 	}
 }
 
-func TestLoad_IgnoresRemovedConfigFields(t *testing.T) {
+func TestLoad_AcceptsLegacyListForms(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := []byte(`
-im:
-  type: wechat
-  wechat:
-    bot_type: "3"
 ims:
   - feishu:
       app_id: app
@@ -278,12 +324,63 @@ workspaces:
 	if len(cfg.IMs) != 1 || cfg.IMs[0].Type() != "feishu" {
 		t.Fatalf("loaded IMs = %#v", cfg.IMs)
 	}
+	if len(cfg.Workspaces) != 1 || cfg.Workspaces[0].ID != "ws1" {
+		t.Fatalf("loaded Workspaces = %#v", cfg.Workspaces)
+	}
+}
+
+func TestLoad_RejectsWorkspaceMapIDMismatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte(`
+ims:
+  wechat: {}
+workspaces:
+  ws1:
+    id: other
+    path: ~/project
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "does not match map key") {
+		t.Fatalf("expected map-key mismatch error, got: %v", err)
+	}
+}
+
+func TestLoad_IgnoresRemovedConfigFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte(`
+im:
+  type: wechat
+  wechat:
+    bot_type: "3"
+ims:
+  feishu:
+    app_id: app
+    app_secret: secret
+workspaces:
+  ws1:
+    path: ~/project
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.IMs) != 1 || cfg.IMs[0].Type() != "feishu" {
+		t.Fatalf("loaded IMs = %#v", cfg.IMs)
+	}
 }
 
 func TestLoad_RejectsNonYAMLFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
-	content := []byte(`{"workspaces":[{"id":"ws1","path":"~/project"}]}`)
+	content := []byte(`{"workspaces":{"ws1":{"path":"~/project"}}}`)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -336,17 +433,6 @@ func TestConfigHelpers(t *testing.T) {
 		cfg.IMs = append(cfg.IMs, IMAdapterConfig{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}})
 		if !cfg.IsMultiIM() {
 			t.Fatal("two IM adapters should be multi")
-		}
-	})
-
-	t.Run("FindWorkspace single workspace", func(t *testing.T) {
-		cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-		if got := cfg.FindWorkspace("any"); got == nil || got.ID != "ws1" {
-			t.Fatalf("FindWorkspace single = %#v", got)
-		}
-		cfg = &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}, {ID: "ws2", Path: "/tmp/ws2"}}}
-		if got := cfg.FindWorkspace("chat-1"); got != nil {
-			t.Fatalf("FindWorkspace ambiguous = %#v", got)
 		}
 	})
 

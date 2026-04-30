@@ -30,7 +30,8 @@ func TestChordProcess_TerminateGroupKillsProcessGroup(t *testing.T) {
 
 	// Spawn: /bin/sh headless -d <dir> <extraArgs...>
 	// We abuse extra args to run a shell script.
-	p, err := mgr.SpawnWithArgs("test", "-c", "sleep 60 & sleep 60")
+	key := (processKey{workspaceID: "test", imType: "test", chatID: "test"}).String()
+	p, err := mgr.SpawnWithArgsForKey(key, "-c", "sleep 60 & sleep 60")
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}

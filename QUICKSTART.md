@@ -26,22 +26,22 @@ go build -o chord-gateway .
 
 ## 3. Create a minimal config
 
-Point `workspaces[].path` at the project you want Chord to operate on.
+Point `workspaces.default.path` at the project you want Chord to operate on.
 
 Important routing rules:
 
-- WeChat always routes to one workspace through `ims[].wechat.workspace_id`.
-- Feishu uses `ims[].feishu.chat_bindings` to map chat IDs to workspace IDs.
+- WeChat always routes to one workspace through `ims.wechat.workspace_id`.
+- Feishu uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs.
 - If there is exactly one workspace, both WeChat `workspace_id` and Feishu `chat_bindings` may be omitted.
 
 ### 3.1 WeChat
 
 ```yaml
 ims:
-  - wechat:
-      base_url: https://ilinkai.weixin.qq.com
+  wechat:
+    base_url: https://ilinkai.weixin.qq.com
 workspaces:
-  - id: default
+  default:
     path: /path/to/project
 chord_path: chord
 idle_timeout: 30m
@@ -51,20 +51,17 @@ First run behavior:
 
 - The gateway prints a QR-code URL.
 - Scan it with WeChat to log in.
-- The token is stored at `<state_dir>/wechat/token.json` for later runs. You can override it with `ims[].wechat.token_path` if you want to manage that secret separately.
+- The token is stored at `<state_dir>/wechat/token.json` for later runs. You can override it with `ims.wechat.token_path` if you want to manage that secret separately.
 
 ### 3.2 Feishu
 
 ```yaml
 ims:
-  - feishu:
-      app_id: cli_xxx
-      app_secret: your-app-secret
-      verification_token: your-token
-      listen: ":8080"
-      webhook_path: /feishu/callback
+  feishu:
+    app_id: cli_xxx
+    app_secret: your-app-secret
 workspaces:
-  - id: default
+  default:
     path: /path/to/project
 chord_path: chord
 idle_timeout: 30m
@@ -72,45 +69,52 @@ idle_timeout: 30m
 
 Feishu setup notes:
 
-- Expose the configured `listen + webhook_path` as a public HTTPS URL.
-- Configure that URL in the Feishu developer console event subscription settings.
-- Subscribe at least to `im.message.receive_v1` for inbound messages and `card.action.trigger` for interactive confirm/question actions.
-- If Feishu event encryption is enabled, also set `encrypt_key`.
-- For public deployments, also configure `owner_open_id` and/or `allowed_open_ids`.
+- In the Feishu developer console, set event subscription mode to “Receive events via long connection”.
+- Subscribe to `im.message.receive_v1` in event subscriptions for inbound messages.
+- Add `card.action.trigger` in callback configuration for interactive confirm/question cards.
+- If you want different Feishu groups to route to different workspaces, start with a single workspace and no `chat_bindings`.
+- Then create the target group, add the bot to it, send a plain-text message, and run `/bind <workspace_id> <path>` in that same chat. If the path contains spaces, wrap it in double quotes, for example `/bind project-a "~/work/project a"`.
+- `/bind` updates only Feishu `chat_bindings` and `workspaces` in the running gateway state, then persists the same two sections back to the YAML config file. It is not a general config reload path. Manual edits to the config file still require a gateway restart to take effect.
+- If you prefer editing YAML yourself, you can also read the real group `chat_id` from the gateway log and fill in `chat_bindings` manually.
+- For public deployments, also configure `owner_open_id` and/or `allowed_open_ids`. When neither is set, all users are allowed; when set, only listed `open_id`s can send messages and commands. To discover your `open_id`, send a message and check the gateway log for `open_id=ou_xxx` in the `feishu: received message` line.
 - Inbound Feishu messages must be plain text. Non-text messages are ignored.
+- No public callback URL, `verification_token`, `encrypt_key`, `listen`, or `webhook_path` is required.
 
 Feishu checklist before you send the first message:
 
 1. `app_id` and `app_secret` are valid, and the gateway can obtain an app access token at startup.
-2. The public callback URL resolves to `listen + webhook_path` and responds to Feishu URL verification.
-3. `verification_token` matches the value configured in the Feishu developer console.
-4. If event encryption is enabled in Feishu, `encrypt_key` is set to the same value in the gateway config.
-5. Event subscription is enabled and includes `im.message.receive_v1` and `card.action.trigger`.
-6. If you use `owner_open_id` or `allowed_open_ids`, your sender `open_id` is present in the effective allowlist.
+2. The app is configured for long connection mode in the Feishu developer console.
+3. Event subscription is enabled and includes `im.message.receive_v1`.
+4. Callback configuration includes `card.action.trigger` for interactive cards.
+5. If you need a specific group to route to a specific workspace, create that group first, add the bot, send a plain-text message, and run `/bind <workspace_id> <path>` in that same chat.
+6. If you use `owner_open_id` or `allowed_open_ids`, your sender `open_id` is present in the effective allowlist. (To discover your `open_id`, send a message and check the gateway log for `open_id=ou_xxx`.)
 7. Send a plain text message and then `/status` from the target Feishu chat.
 
 ### 3.3 WeChat + Feishu with multiple workspaces
 
-Use this when WeChat should stay on one fixed workspace while Feishu groups map to different workspaces.
+Use this when WeChat should stay on one fixed workspace while different Feishu groups map to different workspaces. The recommended rollout is:
+
+1. Start with the single-workspace Feishu setup.
+2. In each target Feishu chat, run `/bind <workspace_id> <path>` to create or update its binding.
+3. Keep log-based `chat_id` discovery only as a fallback when you want to edit YAML manually.
+
+Example final config:
 
 ```yaml
 ims:
-  - wechat:
-      base_url: https://ilinkai.weixin.qq.com
-      workspace_id: project-a
-  - feishu:
-      app_id: cli_xxx
-      app_secret: your-app-secret
-      verification_token: your-token
-      listen: ":8080"
-      webhook_path: /feishu/callback
-      chat_bindings:
-        oc_project_a: project-a
-        oc_project_b: project-b
+  wechat:
+    base_url: https://ilinkai.weixin.qq.com
+    workspace_id: project-a
+  feishu:
+    app_id: cli_xxx
+    app_secret: your-app-secret
+    chat_bindings:
+      oc_project_a: project-a
+      oc_project_b: project-b
 workspaces:
-  - id: project-a
+  project-a:
     path: ~/work/project-a
-  - id: project-b
+  project-b:
     path: ~/work/project-b
 chord_path: chord
 idle_timeout: 30m
@@ -121,6 +125,25 @@ In this layout:
 - all WeChat traffic goes to `project-a`
 - Feishu chat `oc_project_a` goes to `project-a`
 - Feishu chat `oc_project_b` goes to `project-b`
+
+Recommended workflow to bind a Feishu group to a workspace:
+
+1. Temporarily keep only one workspace and remove `chat_bindings`
+2. Start the gateway
+3. Create the target Feishu group and add the bot
+4. Send a plain-text message in the group
+5. In that same chat, send `/bind <workspace_id> <path>`
+6. The gateway updates only Feishu `chat_bindings` and `workspaces` in memory, then writes the same two sections back to `config.yaml`.
+
+If you prefer to edit YAML manually, you can still discover the real `chat_id` from a log line like:
+
+```text
+msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx ...
+```
+
+Then copy `chat_id=oc_xxx` back into `chat_bindings`.
+
+Manual edits to the config file still require a gateway restart to take effect.
 
 ## 4. Run
 

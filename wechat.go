@@ -797,36 +797,16 @@ func (a *WechatAdapter) tokenPath() string {
 	return a.tokenFile
 }
 
-func (a *WechatAdapter) legacyTokenPath() string {
-	return filepath.Join(filepath.Dir(a.storageDir), "token.json")
-}
-
 func (a *WechatAdapter) loadToken() *TokenData {
 	path := a.tokenPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		legacyPath := a.legacyTokenPath()
-		if legacyPath == path {
-			return nil
-		}
-		data, err = os.ReadFile(legacyPath)
-		if err != nil {
-			return nil
-		}
-		path = legacyPath
+		return nil
 	}
 	var token TokenData
 	if err := json.Unmarshal(data, &token); err != nil {
 		slog.Warn("wechat ilink: failed to parse token file", "path", path, "error", err)
 		return nil
-	}
-	if path != a.tokenPath() {
-		a.token = &token
-		a.saveToken()
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			slog.Warn("wechat ilink: failed to remove legacy token file", "path", path, "error", err)
-		}
-		slog.Info("wechat ilink: migrated token file", "from", path, "to", a.tokenPath())
 	}
 	return &token
 }
@@ -860,36 +840,17 @@ func (a *WechatAdapter) syncBufPath() string {
 	return filepath.Join(a.storageDir, "sync-buf.json")
 }
 
-func (a *WechatAdapter) legacySyncBufPath() string {
-	return filepath.Join(filepath.Dir(a.storageDir), "sync-buf.json")
-}
-
 func (a *WechatAdapter) loadSyncBuf() string {
 	path := a.syncBufPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		legacyPath := a.legacySyncBufPath()
-		if legacyPath == path {
-			return ""
-		}
-		data, err = os.ReadFile(legacyPath)
-		if err != nil {
-			return ""
-		}
-		path = legacyPath
+		return ""
 	}
 	var obj struct {
 		GetUpdatesBuf string `json:"get_updates_buf"`
 	}
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return ""
-	}
-	if path != a.syncBufPath() {
-		a.syncBuf = obj.GetUpdatesBuf
-		a.saveSyncBuf()
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			slog.Warn("wechat ilink: failed to remove legacy sync buf file", "path", path, "error", err)
-		}
 	}
 	return obj.GetUpdatesBuf
 }

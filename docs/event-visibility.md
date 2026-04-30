@@ -40,12 +40,22 @@ event_visibility:
 
 | Field | Event type | Typical use |
 |---|---|---|
-| `activity` | `activity` | Lower-level progress details |
+| `activity` | `activity` | Lower-level progress details. The gateway records phase state but does not expose phases in long-running reminders. |
 | `agent_done` | `agent_done` | Sub-agent completion notifications |
 | `info` | `info` | Informational messages |
 | `toast` | `toast` | Short transient messages |
-| `tool_result` | `tool_result` | Tool result summaries |
-| `todos` | `todos` | Todo list updates |
+| `tool_result` | `tool_result` | Tool result summaries; counts as an internal event for long-running reminders |
+| `todos` | `todos` | Full todo list updates; every event is forwarded without deduplication and counts as an internal event for long-running reminders |
+
+## Long-running reminders
+
+While a turn remains busy, the gateway sends a compact reminder every 5 minutes. Any user-visible output resets the next 5-minute reminder window. The reminder does not include low-level phases such as `connecting`. If tracked internal progress occurred, it includes the number of internal events observed since the previous visible output or reminder:
+
+```text
+⏳ Still working (4 internal events)
+```
+
+Internal-event counts are currently based on gateway-tracked progress events such as `tool_result` and `todos`. When `event_visibility.todos` is enabled, each `todos` event is pushed as the full current todo list without deduplication, even if it is unchanged or empty.
 
 ## Completion notifications
 
@@ -53,7 +63,7 @@ event_visibility:
 
 `notification` is the canonical event for user alerts, including permission requests, question requests, blocked errors, and fully stopped completion.
 
-If an `idle` event indicates completion but no final assistant text or completion notification was sent, the gateway may send a fallback completion message so the IM user receives a clear end state.
+`idle` events normally do not emit fallback completion messages. If an `idle` event clears a pending question or confirmation, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question or confirmation.
 
 ## Logs
 

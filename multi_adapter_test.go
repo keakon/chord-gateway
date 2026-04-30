@@ -90,7 +90,7 @@ func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 	feishu := &stubIMAdapter{typ: "feishu"}
 	m := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}}}
 
-	if err := m.SendTextVia("wx", "chat-1", "hello"); err != nil {
+	if err := m.SendTextVia("wechat", "chat-1", "hello"); err != nil {
 		t.Fatalf("SendTextVia() error = %v", err)
 	}
 	if got := wechat.lastMessage(); got.chatID != "chat-1" || got.text != "hello" {
@@ -100,7 +100,10 @@ func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 		t.Fatalf("SendTextVia unknown error = %v", err)
 	}
 
-	if got := m.FindAdapterByType("lark"); got != feishu {
+	if got := m.FindAdapterByType("feishu"); got != feishu {
+		t.Fatalf("FindAdapterByType(feishu) = %#v", got)
+	}
+	if got := m.FindAdapterByType("lark"); got != nil {
 		t.Fatalf("FindAdapterByType(lark) = %#v", got)
 	}
 	if got := m.FindAdapterByType("unknown"); got != nil {
@@ -157,7 +160,7 @@ func TestMultiAdapter_BroadcastTextExcept(t *testing.T) {
 	r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-fallback": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
 	m := &MultiAdapter{adapters: []namedAdapter{{IMAdapter: wechat}, {IMAdapter: feishu}, {IMAdapter: console}}, router: r}
 
-	m.BroadcastTextExcept("wx", map[string]string{"feishu": "feishu-direct"}, "cross notify")
+	m.BroadcastTextExcept("wechat", map[string]string{"feishu": "feishu-direct"}, "cross notify")
 	if len(wechat.sentMessages()) != 0 {
 		t.Fatalf("excluded adapter should not receive messages: %v", wechat.sentMessages())
 	}

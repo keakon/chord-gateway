@@ -53,11 +53,11 @@ func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	mgr.procs[key1] = p1
 	mgr.procs[key2] = p2
 
-	if got := mgr.GetProcess("ws1"); got != p1 {
-		t.Fatalf("GetProcess ws1 = %#v, want p1", got)
+	if got := mgr.GetProcessForKey(key1); got != p1 {
+		t.Fatalf("GetProcessForKey key1 = %#v, want p1", got)
 	}
-	if got := mgr.GetProcess("missing"); got != nil {
-		t.Fatalf("GetProcess missing = %#v, want nil", got)
+	if got := mgr.GetProcessForKey("missing"); got != nil {
+		t.Fatalf("GetProcessForKey missing = %#v, want nil", got)
 	}
 
 	mgr.StopProcessKey("missing")
@@ -73,23 +73,24 @@ func TestChordManagerProcessLookupAndStop(t *testing.T) {
 		t.Fatal("StopProcessKey should mark process stopped by gateway")
 	}
 
-	mgr.StopProcess("ws2")
+	mgr.StopProcessKey(key2)
 	if _, ok := mgr.procs[key2]; ok {
-		t.Fatal("StopProcess did not remove workspace process")
+		t.Fatal("StopProcessKey did not remove key2")
 	}
 	if !p2.stoppedByGateway {
-		t.Fatal("StopProcess should mark process stopped by gateway")
+		t.Fatal("StopProcessKey should mark process stopped by gateway")
 	}
 }
 
-func TestChordManagerLegacyGetOrSpawnMissingWorkspace(t *testing.T) {
+func TestChordManagerGetOrSpawnForKeyMissingWorkspace(t *testing.T) {
 	mgr := &ChordManager{cfg: &config.Config{}, procs: make(map[string]*ChordProcess)}
-	p, err := mgr.GetOrSpawn("missing")
+	key := (processKey{workspaceID: "missing", imType: "wechat", chatID: "chat"}).String()
+	p, err := mgr.GetOrSpawnForKey(key)
 	if err != nil {
-		t.Fatalf("GetOrSpawn error = %v", err)
+		t.Fatalf("GetOrSpawnForKey error = %v", err)
 	}
 	if p != nil {
-		t.Fatalf("GetOrSpawn missing = %#v, want nil", p)
+		t.Fatalf("GetOrSpawnForKey missing = %#v, want nil", p)
 	}
 }
 

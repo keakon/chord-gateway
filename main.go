@@ -94,6 +94,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 
 		// Create the notification router
 		router := NewNotificationRouter(mgr, cfg)
+		router.SetConfigFile(*flagConfig)
 
 		// Create and start the IM adapter(s)
 		var adapter IMAdapter

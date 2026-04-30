@@ -37,19 +37,19 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/status` | 查看当前 Chord 状态：busy/idle、phase、待处理交互 |
 | `/cancel` | 取消当前 turn |
 | `/allow` | 批准待确认请求 |
-| `/deny` | 拒绝待确认请求 |
+| `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 清除当前 session pin 并启动新 session |
 | `/resume <id>` | 恢复并 pin 指定 session |
 | `/sessions` | 列出最近 session |
 | `/current` | 查看当前聊天 pin 的 session |
-| `/login [platform]` | 启动登录流程，例如 `/login weixin` |
+| `/login [platform]` | 启动登录流程，例如 `/login wechat` |
 | 其他文本 | 发送给 Chord；如果当前有待回答问题，则作为问题答案 |
 
 ## 问题交互
 
-当 Chord 发送 `question_request` 时，gateway 会把问题和选项发送到 IM 聊天：
+当 Chord 发送 `question_request` 时，gateway 会把问题和选项发送到 IM 聊天。飞书中，受支持的单选问题会展示为带选项按钮的交互卡片；用户可以点击按钮，也可以直接文字回复。
 
 ```text
 ❓ Continue?
@@ -58,21 +58,38 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 Reply /answer 1 / 1,2 / or type your answer
 ```
 
-回答方式有两种：
+回答方式包括：
 
+- 飞书出现交互问题卡片时，点击选项按钮。
 - 使用 `/answer`，例如 `/answer 1`；多选问题可用 `/answer 1,3`。
 - 在问题待处理时直接发送普通文本，gateway 会把它作为自由文本答案。
 
 无效的数字快捷输入不会被静默接受，而是作为自定义文本发送。
 
+如果待回答问题因为 Chord 进入 idle 或 gateway 清理空闲进程而过期，gateway 会发送一条英文失效提示。之后再发送 `/answer` 时，不会继续作为原来的结构化回答提交，因为原 request ID 已不再处于 pending 状态；gateway 会把它作为普通后续消息转发给 Chord，并在仍能找到时附带已过期的问题内容。
+
+用户可见提示示例：
+
+```text
+⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.
+```
+
 ## 确认交互
 
-当 Chord 请求权限确认时：
+当 Chord 请求权限确认时，飞书可以展示带 `Allow` / `Deny` 按钮的交互确认卡片。你也可以直接文字回复：
 
 - `/allow` 批准
-- `/deny` 拒绝
+- `/deny [reason]` 拒绝；可选原因会转发给 Chord
 
 如果不确定是否有待确认请求，可以先发送 `/status`。
+
+如果待确认请求因为 Chord 进入 idle 或 gateway 清理空闲进程而过期，gateway 会发送一条英文失效提示。之后再发送 `/allow` 或 `/deny` 时，不会被当作批准或拒绝执行；gateway 只会把它作为后续上下文转发给 Chord，并明确说明不能把该消息视为确认结果。
+
+用户可见提示示例：
+
+```text
+⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.
+```
 
 ## Session 示例
 
@@ -113,7 +130,7 @@ Gateway: 🆕 Started new session
 示例：如果微信登录过期，可以在飞书中发送：
 
 ```text
-/login weixin
+/login wechat
 ```
 
 gateway 会返回微信二维码登录链接。扫码后 token 会自动更新，无需重启 gateway。
@@ -128,6 +145,14 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 - 任务完成
 - 错误或 blocked 状态
 - 工具失败
-- 长时间 phase 提醒
+- 任务长时间仍在处理时，每 5 分钟发送一次提醒
+
+长时间提醒不会直接暴露 `connecting` 这类低层 phase。只要有新的用户可见输出，下一次 5 分钟提醒窗口就会重新计时。如果当前提醒窗口内观察到内部进展事件，提醒会附带简短计数，例如：
+
+```text
+⏳ Still working (4 internal events)
+```
+
+内部事件数目前来自 gateway 已跟踪的进展事件，例如 `tool_result` 和 `todos`；每次用户可见输出或提醒后会重置。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重。
 
 可选的低层事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。
