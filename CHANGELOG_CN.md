@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+## 0.2.0 – 2026-04-30
+
 ### Added
 
 - 新增飞书 `/bind` 绑定命令，仅支持立即更新内存/YAML 中的飞书 `chat_bindings` 和 `workspaces`。

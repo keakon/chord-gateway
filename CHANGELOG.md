@@ -8,6 +8,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+## 0.2.0 – 2026-04-30
+
 ### Added
 
 - Feishu chat binding updates via `/bind`, limited to in-memory/YAML updates for Feishu `chat_bindings` and `workspaces`.
