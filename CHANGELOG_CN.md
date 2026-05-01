@@ -17,6 +17,7 @@
 
 - 新增兼容策略文档，记录余下的兼容面（Chord headless `todos` 事件名）以及清理规则。
 - 新增 session pin 回归测试，覆盖写盘失败和并发更新场景。
+- 新增 idle 事件渲染和普通 idle 清理待确认状态的回归测试。
 - 恢复 WeChat 关键回归测试覆盖，包括持久化 token / sync 状态加载、过期 token 自动重新登录、自定义 token 路径、`splitText` 以及响应 context 取消的 sleep 行为。
 
 ### Changed
@@ -37,6 +38,8 @@
 - Feishu 发送/更新接口抽出统一的 `doFeishuJSONRequest`，access token 过期重试逻辑只在一个地方维护。
 - 飞书交互式确认/问题卡片现在会携带更完整的上下文，并在批准或回答后尽力把原卡片更新为最终状态；如果卡片发送或更新失败，仍会回退到现有文本通知。
 - 对飞书待回答问题直接发送普通文本时，gateway 现在会在可能时更新原始问题卡片；同时卡片更新会优先使用发送时记录的消息 ID，而不是回调元数据，避免更新到错误消息。
+- gateway 日志轮转现在使用 `github.com/keakon/golog` 替代 lumberjack；轮转后的日志不再 gzip 压缩。
+- Chord `idle` envelope 现在由 gateway 渲染为用户可见的 ready 通知，不再依赖额外的 headless `notification` envelope。
 
 ### Removed
 
@@ -51,6 +54,8 @@
 - `truncateLine` 现在也改为按 rune 截断，工具参数摘要不再把中文或 emoji 截断在多字节字符中间；并补充回归测试以确保输出保持有效 UTF-8。
 - 修正 `Config.UnmarshalYAML` 注释，使其与当前行为一致：只支持 mapping 形式的 `ims` / `workspaces`。
 - 修复 dedupe 持久化：通过查询路径移除过期项时现在会正确标记为待写盘，且成功提交后不会再触发冗余 cleanup 重写。
+- 当 Chord 正在等待确认或问题回答时，不再发送长时间运行的 `⏳ Still working` 提醒。
+- 修复普通 Chord `idle` 处理：陈旧的待确认状态会被清空，但不会被报告为已过期；过期提示现在只用于 gateway idle timeout 终止进程的场景。
 
 ## 0.2.0 – 2026-04-30
 

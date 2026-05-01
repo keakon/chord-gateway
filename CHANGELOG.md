@@ -17,6 +17,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Added a compatibility policy document that records the remaining compatibility surface (the Chord headless `todos` event name) and the cleanup rule.
 - Added regression tests covering session-pin write failures and concurrent session-pin updates.
+- Added regression tests for idle event rendering and normal-idle pending-confirm cleanup.
 - Restored WeChat regression coverage for persisted token / sync state loading, expired-token re-login, custom token paths, `splitText`, and context-aware sleep cancellation.
 
 ### Changed
@@ -37,6 +38,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Refactored Feishu HTTP send / update helpers to share a single `doFeishuJSONRequest` path that handles access-token retry uniformly.
 - Feishu interactive confirm/question cards now carry richer context, try to update the original card to a resolved state after approval/answer, and fall back to the existing text notifications if card delivery or update fails.
 - Plain-text replies to pending Feishu questions now update the original question card when possible, and card updates prefer the stored sent-message ID over callback metadata to avoid patching the wrong message.
+- Gateway log rotation now uses `github.com/keakon/golog` instead of lumberjack. Rotated logs are no longer gzip-compressed.
+- Chord `idle` envelopes are now rendered by the gateway as the user-visible ready notification instead of relying on a separate headless `notification` envelope.
 
 ### Removed
 
@@ -51,6 +54,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - `truncateLine` now also truncates by rune, so tool-argument summaries no longer split Chinese or emoji mid-character; added regression tests to keep UTF-8 output valid.
 - Corrected the `Config.UnmarshalYAML` comment to match current behavior: only map-based `ims` / `workspaces` forms are supported.
 - Fixed dedupe persistence so expired entries removed during lookups are marked dirty and successful commits do not trigger redundant cleanup rewrites.
+- Suppressed long-running `⏳ Still working` reminders while Chord is waiting for a pending confirmation or question.
+- Fixed normal Chord `idle` handling so stale pending confirmations are cleared without being reported as expired; expiry notifications are now reserved for gateway idle-timeout shutdowns.
 
 ## 0.2.0 – 2026-04-30
 
