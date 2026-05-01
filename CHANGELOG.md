@@ -56,6 +56,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Fixed dedupe persistence so expired entries removed during lookups are marked dirty and successful commits do not trigger redundant cleanup rewrites.
 - Suppressed long-running `⏳ Still working` reminders while Chord is waiting for a pending confirmation or question.
 - Fixed normal Chord `idle` handling so stale pending confirmations are cleared without being reported as expired; expiry notifications are now reserved for gateway idle-timeout shutdowns.
+- Fixed `/bind` and `/resume` busy checks so they inspect existing processes without accidentally spawning new Chord processes.
 
 ## 0.2.0 – 2026-04-30
 

@@ -301,7 +301,7 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		return
 	}
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	if proc, err := r.mgr.GetOrSpawnForKey(key); err == nil && proc != nil && proc.Alive() && proc.State().Busy {
+	if proc := r.mgr.GetProcessForKey(key); proc != nil && proc.Alive() && proc.State().Busy {
 		r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
 		return
 	}
@@ -467,7 +467,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		oldWorkspaceID := currentFeishuBinding(cfg, chatID)
 		if oldWorkspaceID != "" {
 			oldKey := (processKey{workspaceID: oldWorkspaceID, imType: "feishu", chatID: chatID}).String()
-			if proc, err := r.mgr.GetOrSpawnForKey(oldKey); err == nil && proc != nil && proc.Alive() && proc.State().Busy {
+			if proc := r.mgr.GetProcessForKey(oldKey); proc != nil && proc.Alive() && proc.State().Busy {
 				r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
 				return
 			}
@@ -493,7 +493,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	// Busy check: cannot rebind while a session is actively running.
 	if r.mgr != nil && oldWorkspaceID != "" {
 		oldKey := (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
-		if proc, err := r.mgr.GetOrSpawnForKey(oldKey); err == nil && proc != nil && proc.Alive() && proc.State().Busy {
+		if proc := r.mgr.GetProcessForKey(oldKey); proc != nil && proc.Alive() && proc.State().Busy {
 			r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
 			return
 		}

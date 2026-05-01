@@ -392,6 +392,50 @@ func TestHandleBindUpdatesExistingBindingAndStopsOldProcess(t *testing.T) {
 	}
 }
 
+func TestHandleBindDoesNotSpawnProcessForBusyCheck(t *testing.T) {
+	fakeChord := makeFakeChordBinary(t, "")
+	stateDir := t.TempDir()
+	dir := t.TempDir()
+	oldDir := filepath.Join(dir, "old")
+	newDir := filepath.Join(dir, "new")
+	for _, p := range []string{oldDir, newDir} {
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\n    chat_bindings:\n      oc_chat: ws-old\nworkspaces:\n  ws-old:\n    path: " + oldDir + "\n  ws-new:\n    path: " + newDir + "\nchord_path: " + fakeChord + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "feishu"}
+	r := NewNotificationRouter(mgr)
+	r.SetConfigFile(configPath)
+	r.SetAdapter(sender)
+	oldKey := (processKey{workspaceID: "ws-old", imType: "feishu", chatID: "oc_chat"}).String()
+	if got := mgr.GetProcessForKey(oldKey); got != nil {
+		t.Fatalf("precondition failed: unexpected process %#v", got)
+	}
+
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws-new \"" + newDir + "\""})
+	defer mgr.StopAll(time.Second)
+
+	if got := sender.lastMessage().text; !strings.Contains(got, "Binding updated") || !strings.Contains(got, "ws-new") {
+		t.Fatalf("message = %q", got)
+	}
+	if got := mgr.GetProcessForKey(oldKey); got != nil {
+		t.Fatalf("busy check should not spawn old process, got %#v", got)
+	}
+	if got := currentFeishuBinding(r.getConfig(), "oc_chat"); got != "ws-new" {
+		t.Fatalf("binding = %q, want ws-new", got)
+	}
+}
+
 func TestHandleBindRejectsPathMismatch(t *testing.T) {
 	dir := t.TempDir()
 	originalDir := filepath.Join(dir, "original")
@@ -618,6 +662,35 @@ func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
 	requireContains(t, args, "session-123")
 	if got := mgr.GetProcessForKey(key); got == nil || !got.Alive() {
 		t.Fatalf("expected live process, got %#v", got)
+	}
+}
+
+func TestHandleResumeDoesNotSpawnProcessForBusyCheck(t *testing.T) {
+	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "")
+	stateDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
+	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{mgr: mgr, adapter: sender}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	if got := mgr.GetProcessForKey(key); got != nil {
+		t.Fatalf("precondition failed: unexpected process %#v", got)
+	}
+
+	r.handleResume(ws, "chat-1", "session-123", "wechat")
+	defer mgr.StopAll(time.Second)
+
+	if got := sender.lastMessage().text; got != "🔄 Resuming session session-123" {
+		t.Fatalf("message = %q", got)
+	}
+	args := readFakeChordArgs(t, argsFile)
+	if got := strings.Count(args, "--resume"); got != 1 {
+		t.Fatalf("resume spawn count = %d, want 1; args = %q", got, args)
+	}
+	if got := mgr.GetProcessForKey(key); got == nil || !got.Alive() {
+		t.Fatalf("expected live resumed process, got %#v", got)
 	}
 }
 
