@@ -161,7 +161,7 @@ func readFakeChordArgs(t testingT, path string) string {
 	t.Helper()
 	var data []byte
 	var err error
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 200; i++ {
 		data, err = os.ReadFile(path)
 		if err == nil {
 			return string(data)

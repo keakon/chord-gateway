@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -159,6 +160,59 @@ func TestDedupeStore_PersistedTTLExpiry(t *testing.T) {
 
 	if !ds2.TryBegin(key) {
 		t.Fatal("TryBegin should succeed for expired persisted key")
+	}
+}
+
+func TestDedupeStore_ContainsExpiryMarksDirtyForPersistence(t *testing.T) {
+	dir := t.TempDir()
+	key := "app1|chat1|msg6"
+
+	ds, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ds.Close()
+
+	ds.mu.Lock()
+	ds.ttl = 50 * time.Millisecond
+	ds.mu.Unlock()
+
+	if !ds.TryBegin(key) {
+		t.Fatal("TryBegin should succeed")
+	}
+	ds.Commit(key)
+
+	data, err := os.ReadFile(ds.storagePath)
+	if err != nil {
+		t.Fatalf("read persisted dedupe file before expiry: %v", err)
+	}
+	if !strings.Contains(string(data), key) {
+		t.Fatalf("persisted dedupe file should contain key %q before expiry: %s", key, data)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if ds.Contains(key) {
+		t.Fatal("Contains should drop expired key")
+	}
+	if !ds.dirty {
+		t.Fatal("Contains should mark store dirty after dropping expired key")
+	}
+
+	ds.mu.Lock()
+	if err := ds.saveToFileLocked(); err != nil {
+		ds.mu.Unlock()
+		t.Fatalf("save cleaned dedupe file: %v", err)
+	}
+	ds.dirty = false
+	ds.mu.Unlock()
+
+	data, err = os.ReadFile(ds.storagePath)
+	if err != nil {
+		t.Fatalf("read persisted dedupe file after cleanup: %v", err)
+	}
+	if strings.Contains(string(data), key) {
+		t.Fatalf("persisted dedupe file should not contain expired key after cleanup: %s", data)
 	}
 }
 

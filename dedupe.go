@@ -53,10 +53,6 @@ func NewDedupeStore(storageDir string) (*DedupeStore, error) {
 
 	// Load persisted entries.
 	ds.loadFromFile()
-	// Clean expired entries on startup.
-	ds.mu.Lock()
-	_ = ds.cleanExpiredLocked()
-	ds.mu.Unlock()
 
 	go ds.cleanupLoop()
 
@@ -102,7 +98,9 @@ func (ds *DedupeStore) Commit(key string) {
 		ExpiresAt: time.Now().Add(ds.ttl),
 	}
 	ds.dirty = true
-	ds.saveToFileLocked()
+	if err := ds.saveToFileLocked(); err == nil {
+		ds.dirty = false
+	}
 }
 
 // Release removes an in-flight reservation without marking as committed.
@@ -126,6 +124,7 @@ func (ds *DedupeStore) Contains(key string) bool {
 	}
 	if time.Now().After(e.ExpiresAt) {
 		delete(ds.entries, key)
+		ds.dirty = true
 		return false
 	}
 	return true
@@ -172,9 +171,9 @@ func (ds *DedupeStore) cleanExpiredLocked() bool {
 }
 
 // saveToFileLocked persists committed entries to disk. Caller must hold ds.mu.
-func (ds *DedupeStore) saveToFileLocked() {
+func (ds *DedupeStore) saveToFileLocked() error {
 	if ds.storagePath == "" {
-		return
+		return nil
 	}
 	// Only persist committed entries (in-flight are transient).
 	var toSave []dedupeEntry
@@ -186,11 +185,13 @@ func (ds *DedupeStore) saveToFileLocked() {
 	data, err := json.Marshal(toSave)
 	if err != nil {
 		slog.Error("dedupe: failed to marshal entries", "error", err)
-		return
+		return err
 	}
 	if err := writeFileAtomically(ds.storagePath, data, 0o600); err != nil {
 		slog.Error("dedupe: failed to write file", "error", err)
+		return err
 	}
+	return nil
 }
 
 // loadFromFile loads committed entries from disk. Caller must NOT hold ds.mu.

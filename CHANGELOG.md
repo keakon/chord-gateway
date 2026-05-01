@@ -44,6 +44,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Removed a debug-time auto `status` command that was being piggy-backed onto every plain `send`, reducing duplicate stdin commands.
 - `truncateLine` now also truncates by rune, so tool-argument summaries no longer split Chinese or emoji mid-character; added regression tests to keep UTF-8 output valid.
 - Corrected the `Config.UnmarshalYAML` comment to match current behavior: only map-based `ims` / `workspaces` forms are supported.
+- Fixed dedupe persistence so expired entries removed during lookups are marked dirty and successful commits do not trigger redundant cleanup rewrites.
 
 ## 0.2.0 – 2026-04-30
 
