@@ -88,7 +88,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "activity"
 
 	case "idle":
-		p.transitionToIdle("")
+		p.transitionToIdle("", false)
 		var payload struct {
 			LastOutcome string `json:"last_outcome"`
 		}

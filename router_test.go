@@ -1705,6 +1705,37 @@ func TestProcessEnvelopeAssistantMessageResetsInternalEventCounter(t *testing.T)
 	}
 }
 
+func TestProcessEnvelopeIdleClearsPendingWithoutExpiring(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
+	p.state.Busy = true
+	p.state.PendingConfirm = &ConfirmPayload{RequestID: "req-1"}
+	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: []byte(`{"last_outcome":"completed"}`)})
+	state := p.State()
+	if state.PendingConfirm != nil {
+		t.Fatalf("PendingConfirm = %#v, want nil", state.PendingConfirm)
+	}
+	if state.ExpiredConfirm != nil {
+		t.Fatalf("ExpiredConfirm = %#v, want nil for normal idle", state.ExpiredConfirm)
+	}
+	if state.LastOutcome != "completed" {
+		t.Fatalf("LastOutcome = %q, want completed", state.LastOutcome)
+	}
+}
+
+func TestTransitionToIdleTimeoutExpiresPending(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
+	p.state.Busy = true
+	p.state.PendingConfirm = &ConfirmPayload{RequestID: "req-1"}
+	p.transitionToIdle("2025-01-01T00:00:00Z", true)
+	state := p.State()
+	if state.PendingConfirm != nil {
+		t.Fatalf("PendingConfirm = %#v, want nil", state.PendingConfirm)
+	}
+	if state.ExpiredConfirm == nil || state.ExpiredConfirm.RequestID != "req-1" {
+		t.Fatalf("ExpiredConfirm = %#v, want req-1", state.ExpiredConfirm)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // processEnvelope: status_response reads last_outcome and updates LastStatusResponseAt
 // ---------------------------------------------------------------------------

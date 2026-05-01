@@ -135,10 +135,15 @@ func (p *ChordProcess) handleExit() {
 	}
 }
 
-func (p *ChordProcess) transitionToIdle(updatedAt string) {
+func (p *ChordProcess) transitionToIdle(updatedAt string, expirePending bool) {
 	p.state.Busy = false
-	p.state.ExpiredConfirm = p.state.PendingConfirm
-	p.state.ExpiredQuestion = p.state.PendingQuestion
+	if expirePending {
+		p.state.ExpiredConfirm = p.state.PendingConfirm
+		p.state.ExpiredQuestion = p.state.PendingQuestion
+	} else {
+		p.state.ExpiredConfirm = nil
+		p.state.ExpiredQuestion = nil
+	}
 	p.state.PendingConfirm = nil
 	p.state.PendingQuestion = nil
 	p.state.LastError = ""
@@ -176,7 +181,7 @@ func (m *ChordManager) IdleCheckLoop() {
 		for _, p := range idle {
 			p.mu.Lock()
 			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil {
-				p.transitionToIdle(time.Now().Format(time.RFC3339))
+				p.transitionToIdle(time.Now().Format(time.RFC3339), true)
 				state := p.state
 				p.mu.Unlock()
 				if p.onEvent != nil {
