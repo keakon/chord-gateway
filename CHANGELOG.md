@@ -18,6 +18,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Refactored the router and process implementation into topic-specific files (`router_commands`, `router_format`, `router_feishu_cards`, `router_reminders`, `router_parse`, `process_protocol`, `process_lifecycle`, `process_env`) without changing documented behavior.
 - Made session-pin and dedupe persistence use atomic file replacement, and fixed session-pin updates so failed writes do not mutate in-memory state while concurrent updates do not lose pins.
 - Clarified Feishu renewal behavior in user docs and cross-IM notifications: Feishu access tokens are refreshed automatically from configured app credentials, `/login feishu` is unsupported, and app credentials must not be sent or changed in IM chats.
+- Feishu interactive confirm/question cards now carry richer context, try to update the original card to a resolved state after approval/answer, and fall back to the existing text notifications if card delivery or update fails.
+- Plain-text replies to pending Feishu questions now update the original question card when possible, and card updates prefer the stored sent-message ID over callback metadata to avoid patching the wrong message.
 
 ## 0.2.0 – 2026-04-30
 

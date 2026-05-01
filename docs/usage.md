@@ -68,6 +68,8 @@ When Chord sends a `question_request`, the gateway sends a numbered question to 
 
 After a Feishu button click is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
 
+When a Feishu question is still pending, users can also send a plain-text reply instead of clicking a button. The gateway submits that text as a free-text answer and, if the card update succeeds, relies on the updated card state instead of sending an extra duplicate `💬 Answered` text confirmation.
+
 ```text
 ❓ Continue?
   1. yes — Yes, proceed
@@ -97,6 +99,8 @@ When Chord asks for permission, Feishu can show an interactive confirmation card
 
 - `/allow` to approve
 - `/deny [reason]` to reject, optionally including a reason
+
+After a Feishu confirmation button is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
 
 Use `/status` if you are unsure whether a confirmation is pending.
 

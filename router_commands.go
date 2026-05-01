@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -38,7 +39,7 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 	case "question":
 		r.handleQuestionCommand(ws, chatID, cmd, msg, procKey, proc)
 	case "send":
-		r.handleSendCommand(ws, chatID, cmd, procKey, proc)
+		r.handleSendCommand(ws, chatID, cmd, msg, procKey, proc)
 	default:
 		slog.Warn("unknown command type", "type", cmd.Type)
 		r.sendText(chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
@@ -46,26 +47,15 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 }
 
 func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, imType string, proc *ChordProcess) {
-	// Record the LastStatusResponseAt before sending so we can detect
-	// when the actual status_response arrives (not just UpdatedAt which
-	// is also written on spawn/init).
-	prevStatusResponseAt := proc.State().LastStatusResponseAt
-	if err := proc.SendCommand(map[string]any{"type": "status"}); err != nil {
-		slog.Error("failed to send status command", "workspace", ws.ID, "error", err)
-		r.sendText(chatID, "❌ Failed to get status.")
-		return
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	state, err := proc.WaitStatus(ctx)
+	if err != nil {
+		// Either the send failed or the response did not arrive in time.
+		// Fall back to whatever state we currently have so the user still gets a reply.
+		slog.Warn("status command did not receive a response in time", "workspace", ws.ID, "error", err)
+		state = proc.State()
 	}
-	// Poll for the response to be processed by readLoop.
-	// Wait up to 10s for LastStatusResponseAt to advance.
-	for i := 0; i < 20; i++ {
-		time.Sleep(500 * time.Millisecond)
-		cur := proc.State().LastStatusResponseAt
-		if !cur.IsZero() && (prevStatusResponseAt.IsZero() || !cur.Equal(prevStatusResponseAt)) {
-			r.sendText(chatID, formatBindingStatus(ws, imType, chatID, proc.State()))
-			return
-		}
-	}
-	state := proc.State()
 	r.sendText(chatID, formatBindingStatus(ws, imType, chatID, state))
 }
 
@@ -183,7 +173,7 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
 }
 
-func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
 	// If a pending question exists (and no pending confirm),
 	// reinterpret plain text as an answer. This allows the user
 	// to simply type their response without /answer prefix.
@@ -206,7 +196,13 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 				return
 			}
 			r.beginTurn(procKey)
-			r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
+			answerText := strings.Join(answers, ", ")
+			r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
+			slog.Info("question.answered", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "tool", pq.ToolName)
+			// Feishu users see the answer reflected on the updated card; avoid duplicating it as a text reply.
+			if normalizeIMType(msg.IMType) != "feishu" {
+				r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
+			}
 			return
 		}
 	}
@@ -223,6 +219,4 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 		return
 	}
 	r.beginTurn(procKey)
-	// Force a quick control-plane response (helps debug init failures).
-	_ = proc.SendCommand(map[string]any{"type": "status"})
 }

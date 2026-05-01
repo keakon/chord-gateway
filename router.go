@@ -22,9 +22,10 @@ const (
 // and routes chord events back to IM users as notifications.
 type NotificationRouter struct {
 	mgr        *ChordManager
-	cfg        *config.Config
-	cfgMu      sync.RWMutex // protects cfg for concurrent read/write
-	adapter    IMAdapter
+	cfg        *config.Config // protected by cfgMu
+	cfgMu      sync.RWMutex
+	adapter    IMAdapter // protected by adapterMu
+	adapterMu  sync.RWMutex
 	configFile string
 	bindMu     sync.Mutex
 
@@ -32,13 +33,9 @@ type NotificationRouter struct {
 
 	// Per-binding chatID tracking: key -> chatID.
 	lastKeyChatID  map[string]string
-	reminders      map[string]*reminderState
+	reminders      map[string]*time.Timer
 	expiredPending map[string]expiredPendingState
 	cardHandles    map[string]InteractiveCardHandle
-}
-
-type reminderState struct {
-	timer *time.Timer
 }
 
 type expiredPendingState struct {
@@ -52,7 +49,7 @@ func NewNotificationRouter(mgr *ChordManager, cfg *config.Config) *NotificationR
 	r := &NotificationRouter{
 		mgr:            mgr,
 		lastKeyChatID:  make(map[string]string),
-		reminders:      make(map[string]*reminderState),
+		reminders:      make(map[string]*time.Timer),
 		expiredPending: make(map[string]expiredPendingState),
 		cardHandles:    make(map[string]InteractiveCardHandle),
 	}
@@ -68,11 +65,15 @@ func (r *NotificationRouter) SetConfigFile(path string) {
 
 // SetAdapter sets the IM adapter used for sending notifications.
 func (r *NotificationRouter) SetAdapter(adapter IMAdapter) {
+	r.adapterMu.Lock()
 	r.adapter = adapter
+	r.adapterMu.Unlock()
 }
 
 // currentAdapter returns the active IM adapter, or nil if not yet set.
 func (r *NotificationRouter) currentAdapter() IMAdapter {
+	r.adapterMu.RLock()
+	defer r.adapterMu.RUnlock()
 	return r.adapter
 }
 
@@ -83,9 +84,11 @@ func (r *NotificationRouter) getConfig() *config.Config {
 	return r.cfg
 }
 
-// setConfig replaces the active config atomically.
+// setConfig replaces the active config under write lock.
 func (r *NotificationRouter) setConfig(cfg *config.Config) {
+	r.cfgMu.Lock()
 	r.cfg = cfg
+	r.cfgMu.Unlock()
 }
 
 func (r *NotificationRouter) recordChatID(key, chatID string) {
@@ -203,17 +206,6 @@ func (r *NotificationRouter) findFeishuAdapter() *FeishuAdapter {
 	return nil
 }
 
-// HandleMessage is a backward-compatible wrapper that constructs an
-// IncomingMessage and delegates to HandleIncomingMessage.
-func (r *NotificationRouter) HandleMessage(imType, chatID, text string) {
-	r.HandleIncomingMessage(IncomingMessage{
-		IMType:   imType,
-		ChatID:   chatID,
-		SenderID: chatID, // fallback: wechat uses FromUserID as chatID, so this is correct
-		Text:     text,
-	})
-}
-
 // HandleIncomingMessage is the primary entry point for IM messages.
 // It parses the message into a command and dispatches it.
 func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
@@ -277,7 +269,9 @@ func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID string, imTy
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	r.mgr.StopProcessKey(key)
 	if r.mgr != nil && r.mgr.pins != nil {
-		_ = r.mgr.pins.Set(key, "")
+		if err := r.mgr.pins.Set(key, ""); err != nil {
+			slog.Warn("clear session pin failed", "key", key, "error", err)
+		}
 	}
 	// SpawnWithArgsForKey without --resume creates a fresh session.
 	proc, err := r.mgr.SpawnWithArgsForKey(key)
@@ -298,7 +292,9 @@ func (r *NotificationRouter) handleResume(ws *config.Workspace, chatID, sessionI
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	r.mgr.StopProcessKey(key)
 	if r.mgr != nil && r.mgr.pins != nil {
-		_ = r.mgr.pins.Set(key, sessionID)
+		if err := r.mgr.pins.Set(key, sessionID); err != nil {
+			slog.Warn("pin resume session failed", "key", key, "session_id", sessionID, "error", err)
+		}
 	}
 	// Spawn directly with --resume flag.
 	proc, err := r.mgr.SpawnWithArgsForKey(key, "--resume", sessionID)
@@ -460,7 +456,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 			}
 		}
 		if r.mgr != nil {
-			r.mgr.cfg = updatedCfg
+			r.mgr.setConfig(updatedCfg)
 		}
 	}
 	r.bindMu.Unlock()
@@ -486,7 +482,9 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		r.stopReminder(oldKey)
 		r.mgr.StopProcessKey(oldKey)
 		if r.mgr.pins != nil {
-			_ = r.mgr.pins.Set(oldKey, "")
+			if err := r.mgr.pins.Set(oldKey, ""); err != nil {
+				slog.Warn("clear old session pin failed", "key", oldKey, "error", err)
+			}
 		}
 	}
 
@@ -656,7 +654,7 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, process
 	stored, ok := r.takeCardHandle(processKey, requestType, requestID)
 	handle := stored
 	if msg.InternalAction != nil {
-		handle = mergeCardHandles(msg.InternalAction.Handle, stored)
+		handle = mergeCardHandles(stored, msg.InternalAction.Handle)
 	}
 	if !ok && (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
 		return

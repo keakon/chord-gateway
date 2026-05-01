@@ -570,6 +570,41 @@ func TestFeishuUpdateInteractiveCardPatchesMessageCardContent(t *testing.T) {
 	}
 }
 
+func TestUpdateFeishuCardStatusPrefersStoredMessageID(t *testing.T) {
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+	paths := &config.Paths{StateDir: t.TempDir(), DedupeDir: t.TempDir()}
+	mgr := NewChordManager(cfg, paths)
+	feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}})
+	defer feishu.dedupe.Close()
+	var patchedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/app_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case "/open-apis/im/v1/messages/om_sent_1":
+			patchedPath = r.URL.Path
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		case "/open-apis/im/v1/messages/om_callback_1":
+			t.Fatalf("should not patch using callback open_message_id")
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	feishu.httpClient = server.Client()
+	oldBaseURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldBaseURL }()
+	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
+	r.recordCardHandle(key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "om_sent_1"})
+	msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", InternalAction: &InternalAction{Handle: InteractiveCardHandle{MessageID: "om_callback_1", Token: "token_1"}}}
+	r.updateFeishuCardStatus(msg, key, "confirm", "req-1", buildFeishuResolvedCard("Done", "✅ Done", "green"))
+	if patchedPath != "/open-apis/im/v1/messages/om_sent_1" {
+		t.Fatalf("patched path = %q", patchedPath)
+	}
+}
+
 func TestFeishuCardActionFrameTypeCard_Dispatches(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
 	a := testFeishuAdapter(t, fc)

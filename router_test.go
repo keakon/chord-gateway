@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +38,7 @@ func newTestRouter() *NotificationRouter {
 
 func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
 	cfg := testConfig()
-	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+	mgr := newTestChordManager(cfg)
 	r := NewNotificationRouter(mgr, cfg)
 	if r.mgr != mgr || r.cfg != cfg {
 		t.Fatalf("router links not initialized")
@@ -55,7 +57,7 @@ func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
 	}
 }
 
-func TestHandleMessageRoutesMissingWorkspaceError(t *testing.T) {
+func TestHandleIncomingMessageRoutesMissingWorkspaceError(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	r := &NotificationRouter{
 		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{WorkspaceID: "missing"}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
@@ -63,7 +65,7 @@ func TestHandleMessageRoutesMissingWorkspaceError(t *testing.T) {
 		lastKeyChatID: make(map[string]string),
 	}
 
-	r.HandleMessage("wechat", "chat-1", "hello")
+	r.HandleIncomingMessage(IncomingMessage{IMType: "wechat", ChatID: "chat-1", SenderID: "chat-1", Text: "hello"})
 	if got := sender.lastMessage().text; !strings.Contains(got, "workspace_id") {
 		t.Fatalf("message = %q", got)
 	}
@@ -88,7 +90,7 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 		IMs:        []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", ChatBindings: map[string]string{"oc_chat": "ws1"}}}},
 		Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
-	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+	mgr := newTestChordManager(cfg)
 	sender := &stubIMAdapter{typ: "feishu"}
 	stdin := &captureWriteCloser{}
 	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "oc_chat"}).String()
@@ -621,7 +623,7 @@ func TestHandleNewAndResumeErrorPaths(t *testing.T) {
 func TestHandleCurrentAndTodosNoActiveSession(t *testing.T) {
 	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
 	cfg := &config.Config{Workspaces: nil}
-	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+	mgr := newTestChordManager(cfg)
 
 	t.Run("current no active session", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
@@ -1798,7 +1800,7 @@ func TestNormalizeIMTypeAndNames(t *testing.T) {
 func TestHandleChordCommandAndViews(t *testing.T) {
 	newRouterAndProcess := func(state ControlState) (*NotificationRouter, *ChordProcess, *stubIMAdapter, *captureWriteCloser, string, *config.Workspace) {
 		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"chat-1": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-		mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+		mgr := newTestChordManager(cfg)
 		sender := &stubIMAdapter{typ: "wechat"}
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
@@ -1906,6 +1908,47 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		}
 	})
 
+	t.Run("feishu plain send with pending question updates card", func(t *testing.T) {
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+		paths := &config.Paths{StateDir: t.TempDir(), DedupeDir: t.TempDir()}
+		mgr := NewChordManager(cfg, paths)
+		stdin := &captureWriteCloser{}
+		key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
+		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: ControlState{PendingQuestion: &QuestionPayload{RequestID: "req-auto", ToolName: "QuestionTool"}}}
+		mgr.procs[key] = proc
+		feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}})
+		defer feishu.dedupe.Close()
+		var patchedPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/open-apis/auth/v3/app_access_token/internal":
+				_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+			case "/open-apis/im/v1/messages/om_sent_1":
+				patchedPath = r.URL.Path
+				_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+			case "/open-apis/im/v1/messages":
+				_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"message_id":"om_text_1"}}`))
+			default:
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+		}))
+		defer server.Close()
+		feishu.httpClient = server.Client()
+		oldBaseURL := feishuOpenBaseURL
+		feishuOpenBaseURL = server.URL
+		defer func() { feishuOpenBaseURL = oldBaseURL }()
+		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
+		r.recordCardHandle(key, "question", "req-auto", &InteractiveCardHandle{MessageID: "om_sent_1"})
+		msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
+		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", msg)
+		if patchedPath != "/open-apis/im/v1/messages/om_sent_1" {
+			t.Fatalf("patched path = %q", patchedPath)
+		}
+		if !strings.Contains(stdin.String(), `"type":"question"`) || !strings.Contains(stdin.String(), `"free text answer"`) {
+			t.Fatalf("stdin = %q", stdin.String())
+		}
+	})
+
 	t.Run("send blocks local-only slash commands", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "/model"}, "wechat")
@@ -1917,15 +1960,18 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		}
 	})
 
-	t.Run("send writes user message and requests status", func(t *testing.T) {
+	t.Run("send writes user message without auxiliary status request", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "hello"}, "wechat")
 		if len(sender.sentMessages()) != 0 {
 			t.Fatalf("unexpected notification messages: %#v", sender.sentMessages())
 		}
 		out := stdin.String()
-		if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, `"content":"hello"`) || !strings.Contains(out, `"type":"status"`) {
+		if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, `"content":"hello"`) {
 			t.Fatalf("stdin = %q", out)
+		}
+		if strings.Contains(out, `"type":"status"`) {
+			t.Fatalf("send should not piggyback a status command, stdin = %q", out)
 		}
 	})
 

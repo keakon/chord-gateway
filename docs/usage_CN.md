@@ -66,6 +66,10 @@ Reply /answer 1 / 1,2 / or type your answer
 - 使用 `/answer`，例如 `/answer 1`；多选问题可用 `/answer 1,3`。
 - 在问题待处理时直接发送普通文本，gateway 会把它作为自由文本答案。
 
+飞书按钮回答被接受后，gateway 会尽力更新原始卡片为最终状态；如果更新失败，仍会发送文本确认，且不会回滚 Chord 动作。
+
+如果飞书问题卡片仍处于 pending 状态，用户也可以直接发送普通文本作为答案。此时 gateway 会把该文本作为自由文本答案提交，并在卡片更新成功时仅显示更新后的卡片状态，不再额外发送一条重复的 `💬 Answered` 文本确认。
+
 无效的数字快捷输入不会被静默接受，而是作为自定义文本发送。
 
 如果待回答问题因为 Chord 进入 idle 或 gateway 清理空闲进程而过期，gateway 会发送一条英文失效提示。之后再发送 `/answer` 时，不会继续作为原来的结构化回答提交，因为原 request ID 已不再处于 pending 状态；gateway 会把它作为普通后续消息转发给 Chord，并在仍能找到时附带已过期的问题内容。
@@ -82,6 +86,8 @@ Reply /answer 1 / 1,2 / or type your answer
 
 - `/allow` 批准
 - `/deny [reason]` 拒绝；可选原因会转发给 Chord
+
+飞书确认按钮被接受后，gateway 会尽力更新原始卡片为最终状态；如果更新失败，仍会发送文本确认，且不会回滚 Chord 动作。
 
 如果不确定是否有待确认请求，可以先发送 `/status`。
 
