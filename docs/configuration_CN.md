@@ -180,7 +180,7 @@ gateway 使用“IM 自带路由”模型：
 额外路径行为：
 
 - `CHORD_GATEWAY_LOG_FILE` 可以覆盖默认日志文件位置。
-- 默认日志文件为 `<state_dir>/gateway.log`。
+- 默认日志文件为 `<state_dir>/gateway.log`；达到 10 MiB 后轮转，保留 3 个备份，轮转后的日志不会 gzip 压缩。
 - `session_pins_file`、`ims.wechat.token_path`、`chord_path` 和 `workspaces.<id>.path` 支持 `~` 展开。
 - gateway 不会监听外部配置文件变更；配置只在启动时加载。
 - `/bind` 是当前内置的唯一会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`、并把这两个部分同步写回 YAML 配置文件的入口；其他配置变更仍需要重启。`/bind` 要求路径是已存在的目录，并可能在保留常见注释的同时规范化 YAML 格式。

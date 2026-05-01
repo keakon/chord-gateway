@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keakon/golog"
 	"github.com/spf13/cobra"
-	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/keakon/chord-gateway/config"
 )
@@ -69,12 +69,11 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		}
 
 		// Set up logging to file with rotation, also mirror to stderr.
-		logFile := &lumberjack.Logger{
-			Filename:   paths.LogFile,
-			MaxSize:    10, // MB
-			MaxBackups: 3,
-			Compress:   true,
+		logFile, err := golog.NewRotatingFileWriter(paths.LogFile, 10*1024*1024, 3)
+		if err != nil {
+			return fmt.Errorf("create rotating log writer: %w", err)
 		}
+		defer logFile.Close()
 		writer := io.MultiWriter(os.Stderr, logFile)
 		slog.SetDefault(slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{
 			AddSource: true,

@@ -182,7 +182,7 @@ State directory priority:
 Additional path behavior:
 
 - `CHORD_GATEWAY_LOG_FILE` overrides the default log file location.
-- The default log file is `<state_dir>/gateway.log`.
+- The default log file is `<state_dir>/gateway.log`; it rotates at 10 MiB, keeps 3 backups, and does not gzip-compress rotated logs.
 - `session_pins_file`, `ims.wechat.token_path`, `chord_path`, and `workspaces.<id>.path` support `~` expansion.
 - The gateway does not watch for external config file changes. Config is loaded at startup.
 - `/bind` is the only built-in path that updates Feishu `chat_bindings` and `workspaces` in memory and writes those same sections back to the YAML config file immediately. Other config changes still require a restart. `/bind` requires an existing directory path and may normalize YAML formatting while preserving common comments.
