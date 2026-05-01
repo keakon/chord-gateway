@@ -40,7 +40,7 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
 | `/todos` | 查看当前 todo 列表 |
-| `/new` | 清除当前 session pin 并启动新 session |
+| `/new` | 向 Chord 发送 /new 命令以开始新会话；清除当前 session pin |
 | `/resume <id>` | 恢复并 pin 指定 session |
 | `/sessions` | 列出最近 session |
 | `/current` | 查看当前聊天 pin 的 session |
@@ -128,7 +128,7 @@ Gateway: 📍 Current session: 2026-04-14-abc123
 
 ```text
 You: /new
-Gateway: 🆕 Started new session
+Gateway: 🆕 /new sent to chord process.
 ```
 
 ## 多 IM 登录

@@ -262,9 +262,33 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	}
 }
 
-// handleNew stops the current process and spawns a fresh one (new session, clears pinned resume).
-func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID string, imType string) {
-	r.respawnSession(ws, chatID, imType, "")
+// handleNew sends /new to the current chord process via stdin.
+// If no process exists yet, it spawns one first.
+func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID, imType string) {
+	if r.mgr == nil {
+		r.sendText(chatID, "❌ Process manager not available.")
+		return
+	}
+	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
+	proc, err := r.mgr.GetOrSpawnForKey(key)
+	if err != nil {
+		r.sendText(chatID, "❌ Failed to connect to chord process.")
+		return
+	}
+	if proc == nil || !proc.Alive() {
+		r.sendText(chatID, "❌ No active chord process.")
+		return
+	}
+	if r.mgr.pins != nil {
+		if err := r.mgr.pins.Set(key, ""); err != nil {
+			slog.Warn("clear session pin failed", "key", key, "error", err)
+		}
+	}
+	if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err != nil {
+		r.sendText(chatID, "❌ Failed to send /new command.")
+		return
+	}
+	r.sendText(chatID, "🆕 /new sent to chord process.")
 }
 
 // handleResume stops the current process and spawns one with --resume.
@@ -278,6 +302,10 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		return
 	}
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
+	if proc, err := r.mgr.GetOrSpawnForKey(key); err == nil && proc != nil && proc.Alive() && proc.State().Busy {
+		r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
+		return
+	}
 	r.mgr.StopProcessKey(key)
 	if r.mgr != nil && r.mgr.pins != nil {
 		if err := r.mgr.pins.Set(key, sessionID); err != nil {
@@ -435,6 +463,17 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		slog.Warn("bind: sender not allowed, ignoring", "sender_id", msg.SenderID, "chat_id", chatID)
 		return
 	}
+	// Busy check: cannot rebind while a session is actively running.
+	if r.mgr != nil {
+		oldWorkspaceID := currentFeishuBinding(cfg, chatID)
+		if oldWorkspaceID != "" {
+			oldKey := (processKey{workspaceID: oldWorkspaceID, imType: "feishu", chatID: chatID}).String()
+			if proc, err := r.mgr.GetOrSpawnForKey(oldKey); err == nil && proc != nil && proc.Alive() && proc.State().Busy {
+				r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
+				return
+			}
+		}
+	}
 	if cmd.Invalid || strings.TrimSpace(cmd.WorkspaceID) == "" || strings.TrimSpace(cmd.Path) == "" {
 		r.sendText(chatID, "⚠️ Usage: /bind <workspace_id> <path>")
 		return
@@ -449,6 +488,15 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	if oldWorkspaceID == "" {
 		if oldWS, err := cfg.ResolveWorkspace(msg.IMType, chatID); err == nil && oldWS != nil {
 			oldWorkspaceID = oldWS.ID
+		}
+	}
+
+	// Busy check: cannot rebind while a session is actively running.
+	if r.mgr != nil && oldWorkspaceID != "" {
+		oldKey := (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
+		if proc, err := r.mgr.GetOrSpawnForKey(oldKey); err == nil && proc != nil && proc.Alive() && proc.State().Busy {
+			r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
+			return
 		}
 	}
 
@@ -471,7 +519,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	}
 
 	oldKey := ""
-	if oldWorkspaceID != "" && oldWorkspaceID != cmd.WorkspaceID {
+	if oldWorkspaceID != "" {
 		oldKey = (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
 	}
 	newKey := (processKey{workspaceID: cmd.WorkspaceID, imType: msg.IMType, chatID: chatID}).String()

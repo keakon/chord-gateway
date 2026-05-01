@@ -22,6 +22,12 @@
 ### Changed
 
 - 在不改变文档化行为的前提下，按主题拆分 router 与 process 实现文件（`router_commands`、`router_format`、`router_feishu_cards`、`router_reminders`、`router_parse`、`process_protocol`、`process_lifecycle`、`process_env`）。
+- 启用 `todos` 事件可见性后，现在每次事件都会直接转发完整的当前任务列表，而不再只提示当前进行中的单项任务。
+- `/deny` 现在接受可选的人类可读拒绝理由文本，而非平台内部的 request_id；gateway 会自动匹配当前待确认请求。
+- `/new` 现在通过 stdin 发送命令给 chord，不再直接杀死进程，让 chord 优雅地管理会话生命周期。
+- `/bind` 现在在进程正在执行时拒绝绑定变更；请先 `/cancel` 取消当前任务。
+- 飞书确认/提问卡片不再在按钮里嵌入用户可见的文本命令，而是通过结构化的内部动作回调，保持 IM 协议干净。
+- 飞书 post 富文本消息现在可以像纯文本一样被解析，允许在富文本编辑器中发送命令。
 - 将 router 的配置读取统一到 `ChordManager`，作为单一配置真理源，避免 `/bind` 更新时还要手动保持 router 与 manager 两份配置副本同步。
 - session pin 与 dedupe 持久化现在使用原子替换写入；同时修复 session pin 更新逻辑，确保写盘失败不污染内存状态，并避免并发更新丢失 pin。
 - 明确飞书续期行为：用户文档和跨 IM 通知现在说明飞书 access token 会基于已配置的应用凭证自动刷新，`/login feishu` 不受支持，且不应在 IM 会话中发送或修改应用凭证。

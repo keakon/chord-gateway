@@ -49,7 +49,7 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
 | `/todos` | Show the current todo list |
-| `/new` | Clear the current session pin and start a fresh session |
+| `/new` | Send a /new command to Chord to start a fresh session; clears the current session pin |
 | `/resume <id>` | Resume and pin a specific session |
 | `/sessions` | List recent sessions from the workspace |
 | `/current` | Show the current binding status, including workspace, IM/chat binding, active session, and pending interaction |
@@ -98,7 +98,9 @@ The user-facing notice is in English, for example:
 When Chord asks for permission, Feishu can show an interactive confirmation card with `Allow` and `Deny` buttons. The card includes the risk level, tool name, argument summary, request ID, and workspace/session context when available. You can also reply with text:
 
 - `/allow` to approve
-- `/deny [reason]` to reject, optionally including a reason
+- `/deny [reason]` to reject, optionally including a reason that is forwarded to Chord
+
+Both commands only apply to the currently pending confirmation. If no confirmation is pending, the gateway warns that there is nothing to respond to. If you supply a request ID that does not match the current pending confirmation, the gateway rejects the action as a mismatch.
 
 After a Feishu confirmation button is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
 
@@ -145,7 +147,7 @@ Start fresh:
 
 ```text
 You: /new
-Gateway: 🆕 New session started.
+Gateway: 🆕 /new sent to chord process.
 ```
 
 ## Multi-IM login

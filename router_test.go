@@ -558,7 +558,7 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 }
 
 func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
-	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "")
+	fakeChord := makeFakeChordBinary(t, "")
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
@@ -571,24 +571,25 @@ func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
 		t.Fatalf("set old pin: %v", err)
 	}
 
+	// Spawn an initial process so /new has something to send to.
+	stdin := &captureWriteCloser{}
+	proc, err := mgr.SpawnWithArgsForKey(key)
+	if err != nil {
+		t.Fatalf("SpawnWithArgsForKey() error = %v", err)
+	}
+	proc.stdin = stdin
+
 	r.handleNew(ws, "chat-1", "wechat")
 	defer mgr.StopAll(time.Second)
 
 	if got := mgr.pins.Get(key); got != "" {
 		t.Fatalf("pin = %q, want cleared", got)
 	}
-	if got := sender.lastMessage().text; got != "🆕 New session started." {
+	if got := sender.lastMessage().text; got != "🆕 /new sent to chord process." {
 		t.Fatalf("message = %q", got)
 	}
-	args := readFakeChordArgs(t, argsFile)
-	requireContains(t, args, "headless")
-	requireContains(t, args, "-d")
-	requireContains(t, args, workspaceDir)
-	if strings.Contains(args, "--resume") {
-		t.Fatalf("new session args should not contain --resume: %q", args)
-	}
-	if got := mgr.GetProcessForKey(key); got == nil || !got.Alive() {
-		t.Fatalf("expected live process, got %#v", got)
+	if !strings.Contains(stdin.String(), `"/new"`) {
+		t.Fatalf("stdin should contain /new command, got %q", stdin.String())
 	}
 }
 
@@ -628,7 +629,7 @@ func TestHandleNewAndResumeErrorPaths(t *testing.T) {
 		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), adapter: sender}
 
 		r.handleNew(ws, "chat-1", "wechat")
-		if got := sender.lastMessage().text; got != "❌ Failed to start new session." {
+		if got := sender.lastMessage().text; got != "❌ No active chord process." {
 			t.Fatalf("message = %q", got)
 		}
 	})
