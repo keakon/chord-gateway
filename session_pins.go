@@ -62,21 +62,25 @@ func (s *sessionPinStore) savePinsLocked(pins map[string]string) error {
 	return nil
 }
 
-func (s *sessionPinStore) Get(workspaceID string) string {
+// Get returns the pinned sessionID for a process key (workspaceID|imType|chatID).
+// Returns the empty string if no pin exists.
+func (s *sessionPinStore) Get(key string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.pins[workspaceID]
+	return s.pins[key]
 }
 
-func (s *sessionPinStore) Set(workspaceID, sessionID string) error {
+// Set persists a pinned sessionID for the given process key. Passing an empty
+// sessionID removes the pin.
+func (s *sessionPinStore) Set(key, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	updated := cloneStringMap(s.pins)
 	if strings.TrimSpace(sessionID) == "" {
-		delete(updated, workspaceID)
+		delete(updated, key)
 	} else {
-		updated[workspaceID] = sessionID
+		updated[key] = sessionID
 	}
 	if err := s.savePinsLocked(updated); err != nil {
 		return err

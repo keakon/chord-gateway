@@ -6,7 +6,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keakon/chord-gateway/config"
 )
+
+// newTestChordManager creates a ChordManager with cfg pre-loaded for tests.
+// Avoids inline struct literals that would conflict with cfg's atomic.Pointer type.
+func newTestChordManager(cfg *config.Config) *ChordManager {
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	mgr.cfg.Store(cfg)
+	return mgr
+}
 
 type sentMessage struct {
 	chatID string

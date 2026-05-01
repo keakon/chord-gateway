@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
@@ -94,7 +95,7 @@ func truncateStderr(s string, max int) string {
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
 	mu      sync.Mutex
-	cfg     *config.Config
+	cfg     atomic.Pointer[config.Config]
 	procs   map[string]*ChordProcess // processKey.String() → active process
 	onEvent func(key string, eventType string, state ControlState)
 
@@ -114,11 +115,22 @@ func NewChordManager(cfg *config.Config, paths *config.Paths) *ChordManager {
 	}
 	_ = pins.Load()
 
-	return &ChordManager{
-		cfg:   cfg,
+	m := &ChordManager{
 		procs: make(map[string]*ChordProcess),
 		pins:  pins,
 	}
+	m.cfg.Store(cfg)
+	return m
+}
+
+// Config returns the current config snapshot.
+func (m *ChordManager) Config() *config.Config {
+	return m.cfg.Load()
+}
+
+// setConfig replaces the active config atomically.
+func (m *ChordManager) setConfig(cfg *config.Config) {
+	m.cfg.Store(cfg)
 }
 
 // SetOnEvent registers a callback invoked when a chord process emits a notable event.
@@ -148,7 +160,8 @@ func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 		return nil, fmt.Errorf("invalid process key %q", key)
 	}
 
-	ws := m.cfg.WorkspaceByID(workspaceID)
+	cfg := m.cfg.Load()
+	ws := cfg.WorkspaceByID(workspaceID)
 	if ws == nil {
 		m.mu.Unlock()
 		return nil, nil
@@ -225,7 +238,8 @@ func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*Ch
 		return nil, fmt.Errorf("invalid process key %q", key)
 	}
 
-	ws := m.cfg.WorkspaceByID(workspaceID)
+	cfg := m.cfg.Load()
+	ws := cfg.WorkspaceByID(workspaceID)
 	if ws == nil {
 		return nil, fmt.Errorf("workspace %s not found", workspaceID)
 	}
@@ -247,7 +261,8 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	args := []string{"headless", "-d", ws.Path}
 	args = append(args, extraArgs...)
 
-	cmd := exec.Command(m.cfg.ChordBinary(), args...)
+	cfg := m.cfg.Load()
+	cmd := exec.Command(cfg.ChordBinary(), args...)
 	cmd.Env = loginShellEnv()
 
 	stdinPipe, err := cmd.StdinPipe()
@@ -307,7 +322,7 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	// If chord headless is too old, it may emit an error; ignore.
 	_ = p.SendCommand(map[string]any{
 		"type":   "subscribe",
-		"events": configuredHeadlessSubscribeEvents(m.cfg),
+		"events": configuredHeadlessSubscribeEvents(cfg),
 	})
 
 	return p, nil
@@ -351,6 +366,21 @@ func (p *ChordProcess) removeStatusWaiter(target chan ControlState) {
 			return
 		}
 	}
+}
+
+// notifyStatusWaiters delivers state to all pending waiters and clears the list.
+// Caller must hold p.mu.
+func (p *ChordProcess) notifyStatusWaiters(state ControlState) {
+	if len(p.statusWaiters) == 0 {
+		return
+	}
+	for _, ch := range p.statusWaiters {
+		select {
+		case ch <- state:
+		default:
+		}
+	}
+	p.statusWaiters = nil
 }
 
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {

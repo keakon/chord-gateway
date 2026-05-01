@@ -29,10 +29,7 @@ type ControlState struct {
 	// Last tool result (not persisted)
 	LastToolResult *ToolResultInfo `json:"-"` // from tool_result event
 
-	// Stream assistant text as it arrives.
-	StreamText             string `json:"-"` // accumulated assistant streamed text (tail only)
 	LastAssistantText      string `json:"-"` // last completed assistant message
-	LastThinkingText       string `json:"-"` // last completed thinking block(s)
 	LastAssistantToolCalls int    `json:"-"` // tool calls executed in the last turn
 
 	// For long-running reminders.
@@ -42,7 +39,7 @@ type ControlState struct {
 	ToastMessage                string    `json:"-"` // from toast event
 	ToastLevel                  string    `json:"-"` // from toast event
 	// LastStatusResponseAt is set only when a status_response envelope is received.
-	// Used for /status freshness polling instead of UpdatedAt (which is also updated on spawn).
+	// Surfaced for diagnostics in tests; not used in production runtime decisions.
 	LastStatusResponseAt time.Time `json:"-"`
 	// Last notification emitted by chord headless for guaranteed user-facing alerts.
 	LastNotification *NotificationPayload `json:"-"`

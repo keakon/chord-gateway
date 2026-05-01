@@ -164,18 +164,10 @@ func ensureIMsMappingNode(root *yaml.Node) (*yaml.Node, error) {
 		root.Content = append(root.Content, scalarNode("ims", 0), imsNode)
 		return imsNode, nil
 	}
-	if imsNode.Kind == yaml.MappingNode {
-		return imsNode, nil
+	if imsNode.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parse config: ims must be a YAML mapping")
 	}
-	if imsNode.Kind == yaml.SequenceNode {
-		converted, err := convertLegacyIMsSequenceToMapping(imsNode)
-		if err != nil {
-			return nil, err
-		}
-		*imsNode = *converted
-		return imsNode, nil
-	}
-	return nil, fmt.Errorf("parse config: ims must be a YAML mapping")
+	return imsNode, nil
 }
 
 func ensureWorkspacesMappingNode(root *yaml.Node) (*yaml.Node, error) {
@@ -185,84 +177,10 @@ func ensureWorkspacesMappingNode(root *yaml.Node) (*yaml.Node, error) {
 		root.Content = append(root.Content, scalarNode("workspaces", 0), workspacesNode)
 		return workspacesNode, nil
 	}
-	if workspacesNode.Kind == yaml.MappingNode {
-		return workspacesNode, nil
+	if workspacesNode.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parse config: workspaces must be a YAML mapping")
 	}
-	if workspacesNode.Kind == yaml.SequenceNode {
-		converted, err := convertLegacyWorkspacesSequenceToMapping(workspacesNode)
-		if err != nil {
-			return nil, err
-		}
-		*workspacesNode = *converted
-		return workspacesNode, nil
-	}
-	return nil, fmt.Errorf("parse config: workspaces must be a YAML mapping")
-}
-
-func convertLegacyIMsSequenceToMapping(seq *yaml.Node) (*yaml.Node, error) {
-	mapping := mappingNode()
-	for _, item := range seq.Content {
-		if item == nil || item.Kind != yaml.MappingNode {
-			return nil, fmt.Errorf("parse config: legacy ims entries must be mappings")
-		}
-		if len(item.Content) != 2 || item.Content[0] == nil || item.Content[1] == nil {
-			return nil, fmt.Errorf("parse config: legacy ims entries must contain exactly one adapter")
-		}
-		keyNode := item.Content[0]
-		valueNode := item.Content[1]
-		if mappingValue(mapping, keyNode.Value) != nil {
-			return nil, fmt.Errorf("parse config: duplicate ims adapter %q", keyNode.Value)
-		}
-		mapping.Content = append(mapping.Content,
-			scalarNode(keyNode.Value, yamlStringStyle(keyNode.Value)),
-			cloneYAMLNode(valueNode),
-		)
-	}
-	return mapping, nil
-}
-
-func convertLegacyWorkspacesSequenceToMapping(seq *yaml.Node) (*yaml.Node, error) {
-	mapping := mappingNode()
-	for _, item := range seq.Content {
-		if item == nil || item.Kind != yaml.MappingNode {
-			return nil, fmt.Errorf("parse config: legacy workspaces entries must be mappings")
-		}
-		idNode := mappingValue(item, "id")
-		if idNode == nil || strings.TrimSpace(idNode.Value) == "" {
-			return nil, fmt.Errorf("parse config: legacy workspace entry requires non-empty id")
-		}
-		id := strings.TrimSpace(idNode.Value)
-		if mappingValue(mapping, id) != nil {
-			return nil, fmt.Errorf("parse config: duplicate workspace %q", id)
-		}
-		workspaceNode := mappingNode()
-		pathNode := mappingValue(item, "path")
-		if pathNode != nil {
-			workspaceNode.Content = append(workspaceNode.Content,
-				scalarNode("path", 0),
-				cloneYAMLNode(pathNode),
-			)
-		}
-		mapping.Content = append(mapping.Content,
-			scalarNode(id, yamlStringStyle(id)),
-			workspaceNode,
-		)
-	}
-	return mapping, nil
-}
-
-func cloneYAMLNode(node *yaml.Node) *yaml.Node {
-	if node == nil {
-		return nil
-	}
-	cp := *node
-	if len(node.Content) > 0 {
-		cp.Content = make([]*yaml.Node, len(node.Content))
-		for i, child := range node.Content {
-			cp.Content[i] = cloneYAMLNode(child)
-		}
-	}
-	return &cp
+	return workspacesNode, nil
 }
 
 func workspaceEntryByID(node *yaml.Node, workspaceID string) *yaml.Node {

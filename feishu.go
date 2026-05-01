@@ -184,7 +184,7 @@ func (a *FeishuAdapter) StartLogin() (string, error) {
 // is called or a fatal error occurs.
 func (a *FeishuAdapter) Connect() error {
 	if a.router == nil {
-		return fmt.Errorf("feishu: router not set, call SetRouter first")
+		return fmt.Errorf("feishu: router not configured")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -231,17 +231,7 @@ func (a *FeishuAdapter) Connect() error {
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		d = time.Second
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
+	return sleepCtx(ctx, d)
 }
 
 func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkdispatcher.EventDispatcher) error {
@@ -614,11 +604,6 @@ func (a *FeishuAdapter) SendText(chatID, text string) error {
 	return nil
 }
 
-func (a *FeishuAdapter) SendInteractive(chatID string, card map[string]any) error {
-	_, err := a.SendInteractiveWithHandle(chatID, card)
-	return err
-}
-
 func (a *FeishuAdapter) SendInteractiveWithHandle(chatID string, card map[string]any) (*InteractiveCardHandle, error) {
 	return a.sendMessage(chatID, "interactive", card, false)
 }
@@ -634,14 +619,12 @@ func (a *FeishuAdapter) UpdateInteractiveCard(handle InteractiveCardHandle, card
 }
 
 // Disconnect signals the adapter to stop and shuts down the long connection.
+// dedupe is closed by Connect's deferred cleanup; we only need to cancel here.
 func (a *FeishuAdapter) Disconnect() {
 	if a.cancel != nil {
 		a.cancel()
 	}
 	a.closeConn()
-	if a.dedupe != nil {
-		a.dedupe.Close()
-	}
 }
 
 // queueConsumer reads messages from the queue and dispatches them.
@@ -889,105 +872,78 @@ func (a *FeishuAdapter) sendTextChunk(chatID, text string, retry bool) error {
 	return err
 }
 
-func (a *FeishuAdapter) sendMessage(chatID, msgType string, content any, retry bool) (*InteractiveCardHandle, error) {
+// doFeishuJSONRequest sends a JSON request to a Feishu OpenAPI endpoint and
+// decodes the JSON envelope. On 99991663 (access token expired) it clears the
+// cached token and retries once.
+func (a *FeishuAdapter) doFeishuJSONRequest(method, url string, reqBody any, result *FeishuSendResponse, retry bool) error {
 	token, err := a.getAccessToken()
 	if err != nil {
-		return nil, fmt.Errorf("get access token: %w", err)
+		return fmt.Errorf("get access token: %w", err)
 	}
 
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	if result.Code != 0 {
+		if result.Code == 99991663 && !retry {
+			slog.Warn("feishu: access token expired, refreshing")
+			a.mu.Lock()
+			a.accessToken = ""
+			a.tokenExpireAt = time.Time{}
+			a.mu.Unlock()
+			return a.doFeishuJSONRequest(method, url, reqBody, result, true)
+		}
+		return fmt.Errorf("feishu API error: code=%d msg=%s", result.Code, result.Msg)
+	}
+	return nil
+}
+
+func (a *FeishuAdapter) sendMessage(chatID, msgType string, content any, retry bool) (*InteractiveCardHandle, error) {
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("marshal message content: %w", err)
 	}
-
 	reqBody := map[string]string{
 		"receive_id": chatID,
 		"msg_type":   msgType,
 		"content":    string(contentJSON),
 	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("marshal send request: %w", err)
-	}
-
 	url := feishuOpenBaseURL + "/open-apis/im/v1/messages?receive_id_type=chat_id"
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create send request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("send message HTTP request: %w", err)
-	}
-	defer resp.Body.Close()
-
 	var result FeishuSendResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode send response: %w", err)
+	if err := a.doFeishuJSONRequest(http.MethodPost, url, reqBody, &result, retry); err != nil {
+		return nil, err
 	}
-
-	if result.Code != 0 {
-		if result.Code == 99991663 && !retry {
-			slog.Warn("feishu: access token expired, refreshing")
-			a.mu.Lock()
-			a.accessToken = ""
-			a.tokenExpireAt = time.Time{}
-			a.mu.Unlock()
-			return a.sendMessage(chatID, msgType, content, true)
-		}
-		return nil, fmt.Errorf("feishu send error: code=%d msg=%s", result.Code, result.Msg)
-	}
-
 	return &InteractiveCardHandle{MessageID: result.Data.MessageID}, nil
 }
 
 func (a *FeishuAdapter) updateInteractiveMessage(messageID string, card map[string]any, retry bool) error {
-	token, err := a.getAccessToken()
-	if err != nil {
-		return fmt.Errorf("get access token: %w", err)
-	}
 	contentJSON, err := json.Marshal(card)
 	if err != nil {
 		return fmt.Errorf("marshal interactive card content: %w", err)
 	}
-	reqBody := map[string]string{
-		"content": string(contentJSON),
-	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("marshal update request: %w", err)
-	}
-	url := feishuOpenBaseURL + "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
-	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create update request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("update message HTTP request: %w", err)
-	}
-	defer resp.Body.Close()
+	reqBody := map[string]string{"content": string(contentJSON)}
+	requestURL := feishuOpenBaseURL + "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
 	var result FeishuSendResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode update response: %w", err)
-	}
-	if result.Code != 0 {
-		if result.Code == 99991663 && !retry {
-			slog.Warn("feishu: access token expired, refreshing")
-			a.mu.Lock()
-			a.accessToken = ""
-			a.tokenExpireAt = time.Time{}
-			a.mu.Unlock()
-			return a.updateInteractiveMessage(messageID, card, true)
-		}
-		return fmt.Errorf("feishu update interactive message error: code=%d msg=%s", result.Code, result.Msg)
-	}
-	return nil
+	return a.doFeishuJSONRequest(http.MethodPatch, requestURL, reqBody, &result, retry)
 }
 
 func derefString(s *string) string {

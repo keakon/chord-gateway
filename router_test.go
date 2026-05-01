@@ -1593,19 +1593,13 @@ func TestProcessEnvelopeTodosNewFormat(t *testing.T) {
 	}
 }
 
-func TestProcessEnvelopeTodosOldFormat(t *testing.T) {
+func TestProcessEnvelopeTodosRawArrayIgnored(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	payload := []byte(`[{"id":"1","content":"Build X","status":"in_progress","active_form":"building X"},{"id":"2","content":"Test Y","status":"completed"}]`)
+	payload := []byte(`[{"id":"1","content":"Build X","status":"in_progress"}]`)
 	p.processEnvelope(&HeadlessEnvelope{Type: "todos", Payload: payload})
 	state := p.State()
-	if len(state.Todos) != 2 {
-		t.Fatalf("expected 2 todos, got %d", len(state.Todos))
-	}
-	if state.Todos[0].Content != "Build X" || state.Todos[0].Status != "in_progress" {
-		t.Errorf("todo[0] = %+v", state.Todos[0])
-	}
-	if state.Todos[1].Status != "completed" {
-		t.Errorf("todo[1].status = %q, want completed", state.Todos[1].Status)
+	if state.Todos != nil {
+		t.Fatalf("expected raw array payload to be ignored, got %+v", state.Todos)
 	}
 }
 

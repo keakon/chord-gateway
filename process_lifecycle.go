@@ -143,7 +143,7 @@ func (m *ChordManager) IdleCheckLoop() {
 	for range ticker.C {
 		m.mu.Lock()
 		idle := make([]*ChordProcess, 0)
-		timeout := m.cfg.IdleTimeoutDuration()
+		timeout := m.cfg.Load().IdleTimeoutDuration()
 		for _, p := range m.procs {
 			p.mu.Lock()
 			if time.Since(p.lastActivity) > timeout {

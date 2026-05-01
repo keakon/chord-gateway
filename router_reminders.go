@@ -2,29 +2,20 @@ package main
 
 import "time"
 
-func (r *NotificationRouter) ensureReminderState(key string) *reminderState {
-	if r.reminders == nil {
-		r.reminders = make(map[string]*reminderState)
-	}
-	st := r.reminders[key]
-	if st == nil {
-		st = &reminderState{}
-		r.reminders[key] = st
-	}
-	return st
-}
-
 // resetReminderTimer arms or resets the reminder timer for the given key.
 // Must be called with r.mu held.
-func (r *NotificationRouter) resetReminderTimer(key string, st *reminderState, d time.Duration) {
+func (r *NotificationRouter) resetReminderTimer(key string, d time.Duration) {
 	if d <= 0 {
 		d = time.Nanosecond
 	}
-	if st.timer == nil {
-		st.timer = time.AfterFunc(d, func() { r.fireReminder(key) })
-	} else {
-		st.timer.Reset(d)
+	if r.reminders == nil {
+		r.reminders = make(map[string]*time.Timer)
 	}
+	if t := r.reminders[key]; t != nil {
+		t.Reset(d)
+		return
+	}
+	r.reminders[key] = time.AfterFunc(d, func() { r.fireReminder(key) })
 }
 
 func reminderDelay(lastPush time.Time, now time.Time) time.Duration {
@@ -41,8 +32,7 @@ func reminderDelay(lastPush time.Time, now time.Time) time.Duration {
 func (r *NotificationRouter) scheduleReminder(key string, lastPush time.Time) {
 	now := time.Now()
 	r.mu.Lock()
-	st := r.ensureReminderState(key)
-	r.resetReminderTimer(key, st, reminderDelay(lastPush, now))
+	r.resetReminderTimer(key, reminderDelay(lastPush, now))
 	r.mu.Unlock()
 }
 
@@ -70,18 +60,16 @@ func (r *NotificationRouter) markVisibleOutput(key string) {
 	}
 
 	r.mu.Lock()
-	if st := r.reminders[key]; st != nil {
-		r.resetReminderTimer(key, st, reminderInterval)
+	if t := r.reminders[key]; t != nil {
+		t.Reset(reminderInterval)
 	}
 	r.mu.Unlock()
 }
 
 func (r *NotificationRouter) stopReminder(key string) {
 	r.mu.Lock()
-	if st := r.reminders[key]; st != nil {
-		if st.timer != nil {
-			st.timer.Stop()
-		}
+	if t := r.reminders[key]; t != nil {
+		t.Stop()
 		delete(r.reminders, key)
 	}
 	r.mu.Unlock()

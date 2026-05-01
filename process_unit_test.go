@@ -44,7 +44,8 @@ func TestTruncateStderr(t *testing.T) {
 
 func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	cfg := &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: t.TempDir()}, {ID: "ws2", Path: t.TempDir()}}}
-	mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	mgr.cfg.Store(cfg)
 
 	key1 := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 	key2 := (processKey{workspaceID: "ws2", imType: "feishu", chatID: "chat-2"}).String()
@@ -83,7 +84,8 @@ func TestChordManagerProcessLookupAndStop(t *testing.T) {
 }
 
 func TestChordManagerGetOrSpawnForKeyMissingWorkspace(t *testing.T) {
-	mgr := &ChordManager{cfg: &config.Config{}, procs: make(map[string]*ChordProcess)}
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	mgr.cfg.Store(&config.Config{})
 	key := (processKey{workspaceID: "missing", imType: "wechat", chatID: "chat"}).String()
 	p, err := mgr.GetOrSpawnForKey(key)
 	if err != nil {

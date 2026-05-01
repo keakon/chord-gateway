@@ -110,9 +110,8 @@ func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 		t.Fatalf("FindAdapterByType(unknown) = %#v", got)
 	}
 
-	adapters := m.Adapters()
-	if len(adapters) != 2 || adapters[0] != wechat || adapters[1] != feishu {
-		t.Fatalf("Adapters() = %#v", adapters)
+	if len(m.adapters) != 2 || m.adapters[0] != wechat || m.adapters[1] != feishu {
+		t.Fatalf("adapters = %#v", m.adapters)
 	}
 
 	if got := m.Type(); got != "multi" {
@@ -120,7 +119,7 @@ func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 	}
 
 	qrURL, err := m.StartLogin()
-	if err != nil || qrURL != "https://wx-login" {
+	if !errors.Is(err, ErrLoginNotSupported) || qrURL != "" {
 		t.Fatalf("StartLogin() = %q, %v", qrURL, err)
 	}
 
@@ -135,21 +134,6 @@ func TestMultiAdapter_StartLoginWithoutWechat(t *testing.T) {
 	qrURL, err := m.StartLogin()
 	if !errors.Is(err, ErrLoginNotSupported) || qrURL != "" {
 		t.Fatalf("StartLogin() = %q, %v", qrURL, err)
-	}
-}
-
-func TestMultiAdapter_BroadcastText(t *testing.T) {
-	wechat := &stubIMAdapter{typ: "wechat"}
-	feishu := &stubIMAdapter{typ: "feishu"}
-	r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
-	m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}, router: r}
-
-	m.BroadcastText("hello all")
-	if got := wechat.lastMessage().chatID; got != "wechat-chat" {
-		t.Fatalf("wechat chatID = %q", got)
-	}
-	if got := feishu.lastMessage().chatID; got != "feishu-chat" {
-		t.Fatalf("feishu chatID = %q", got)
 	}
 }
 

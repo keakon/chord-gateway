@@ -8,9 +8,14 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- 移除 `HandleMessage(imType, chatID, text)` router 入口；改用 `HandleIncomingMessage` 配合结构化的 `IncomingMessage`。
+- 移除 `config.yaml` 中 `ims` 与 `workspaces` 的 sequence（列表）写法，两者必须为按 adapter 类型 / workspace id 索引的 mapping。
+
 ### Added
 
-- 新增兼容策略文档，记录当前仍支持的 legacy 配置形态、向后兼容的 router 入口，以及仍在生效的 headless `todos` 事件协议。
+- 新增兼容策略文档，记录余下的兼容面（Chord headless `todos` 事件名）以及清理规则。
 - 新增 session pin 回归测试，覆盖写盘失败和并发更新场景。
 
 ### Changed
@@ -18,8 +23,22 @@
 - 在不改变文档化行为的前提下，按主题拆分 router 与 process 实现文件（`router_commands`、`router_format`、`router_feishu_cards`、`router_reminders`、`router_parse`、`process_protocol`、`process_lifecycle`、`process_env`）。
 - session pin 与 dedupe 持久化现在使用原子替换写入；同时修复 session pin 更新逻辑，确保写盘失败不污染内存状态，并避免并发更新丢失 pin。
 - 明确飞书续期行为：用户文档和跨 IM 通知现在说明飞书 access token 会基于已配置的应用凭证自动刷新，`/login feishu` 不受支持，且不应在 IM 会话中发送或修改应用凭证。
+- `/status` 不再轮询 `LastStatusResponseAt`，改为通过带缓冲的 channel 等待下一次 `status_response`，IM 消息消费 goroutine 不再被阻塞最多 10 秒。
+- `truncate` 与 `splitText` 改为按 rune 截断/分块，含中文或 emoji 的通知不会再在多字节字符中间被切断。
+- 通过 `atomic.Pointer` 加固 `ChordManager.cfg` 与 `WechatAdapter.token` 的并发访问，`/bind` 引发的配置更新与 WeChat token 刷新不再与读路径竞争。
+- Feishu 发送/更新接口抽出统一的 `doFeishuJSONRequest`，access token 过期重试逻辑只在一个地方维护。
 - 飞书交互式确认/问题卡片现在会携带更完整的上下文，并在批准或回答后尽力把原卡片更新为最终状态；如果卡片发送或更新失败，仍会回退到现有文本通知。
 - 对飞书待回答问题直接发送普通文本时，gateway 现在会在可能时更新原始问题卡片；同时卡片更新会优先使用发送时记录的消息 ID，而不是回调元数据，避免更新到错误消息。
+
+### Removed
+
+- 删除未被使用的辅助方法和死字段：`MultiAdapter.BroadcastText`、`MultiAdapter.Adapters`、`FeishuAdapter.SendInteractive`、`WechatAdapter.sessionExpired` 标志，以及 `ControlState.StreamText`、`LastThinkingText` 字段。
+- 移除 Chord headless `todos` raw array 负载（`[...]`）支持；gateway 现在只接受当前 wrapper 负载格式（`{"todos":[...]}`）。
+
+### Fixed
+
+- `pins.Set` 失败（如 `/new`、`/resume`、`/bind`）现在以 warn 级别日志输出，不再被静默吞掉。
+- 移除每次普通 `send` 后都附带的调试用 `status` 命令，减少冗余的 stdin 调用。
 
 ## 0.2.0 – 2026-04-30
 

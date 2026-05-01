@@ -59,11 +59,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			if strings.TrimSpace(payload.SessionID) != "" {
 				p.state.SessionID = payload.SessionID
 				if p.mgr != nil && p.mgr.pins != nil {
-					_ = p.mgr.pins.Set(p.key, payload.SessionID)
+					if perr := p.mgr.pins.Set(p.key, payload.SessionID); perr != nil {
+						slog.Warn("persist session pin failed", "key", p.key, "session_id", payload.SessionID, "error", perr)
+					}
 				}
 			}
 		}
-		slog.Info("gateway event", "event", "ready", "raw_type", "ready", "key", p.key, "workspace", p.workspaceID, "channel", func() string { _, imType, _ := parseProcessKey(p.key); return imType }(), "session_id", p.state.SessionID)
+		_, imType, _ := parseProcessKey(p.key)
+		slog.Info("gateway event", "event", "ready", "raw_type", "ready", "key", p.key, "workspace", p.workspaceID, "channel", imType, "session_id", p.state.SessionID)
 		// No notification.
 		eventType = ""
 
@@ -173,6 +176,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			p.state.UpdatedAt = resp.UpdatedAt
 			p.state.LastOutcome = resp.LastOutcome
 			p.state.LastStatusResponseAt = time.Now()
+			// Wake any goroutines blocked in WaitStatus.
+			p.notifyStatusWaiters(p.state)
 		}
 		// No onEvent — solicited response.
 
@@ -226,18 +231,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		var wrapper struct {
 			Todos []TodoItem `json:"todos"`
 		}
-		if json.Unmarshal(env.Payload, &wrapper) == nil && wrapper.Todos != nil {
+		if err := json.Unmarshal(env.Payload, &wrapper); err != nil {
+			slog.Warn("failed to parse todos payload", "key", p.key, "error", err)
+			p.state.Todos = nil
+		} else {
 			p.state.Todos = wrapper.Todos
 			p.lastActivity = time.Now()
-		} else {
-			var todos []TodoItem
-			if json.Unmarshal(env.Payload, &todos) == nil {
-				p.state.Todos = todos
-				p.lastActivity = time.Now()
-			} else {
-				slog.Warn("failed to parse todos payload", "key", p.key)
-				p.state.Todos = nil
-			}
 		}
 		if !p.state.LastPushAt.IsZero() {
 			p.state.InternalEventsSinceLastPush++
@@ -245,9 +244,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "todos"
 
 	case "assistant_rollback":
-		p.state.StreamText = ""
 		p.state.LastAssistantText = ""
-		p.state.LastThinkingText = ""
 		eventType = "assistant_rollback"
 
 	default:

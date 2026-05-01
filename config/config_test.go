@@ -302,7 +302,7 @@ workspaces:
 	}
 }
 
-func TestLoad_AcceptsLegacyListForms(t *testing.T) {
+func TestLoad_RejectsLegacyListForms(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := []byte(`
@@ -317,15 +317,8 @@ workspaces:
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.IMs) != 1 || cfg.IMs[0].Type() != "feishu" {
-		t.Fatalf("loaded IMs = %#v", cfg.IMs)
-	}
-	if len(cfg.Workspaces) != 1 || cfg.Workspaces[0].ID != "ws1" {
-		t.Fatalf("loaded Workspaces = %#v", cfg.Workspaces)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "expected a YAML mapping") {
+		t.Fatalf("Load() error = %v, want a YAML mapping rejection", err)
 	}
 }
 

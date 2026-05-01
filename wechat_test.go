@@ -42,11 +42,11 @@ func TestWechatAdapter_HelperMethods(t *testing.T) {
 			t.Fatalf("baseURL from config = %q", got)
 		}
 		a.imCfg.Wechat.BaseURL = ""
-		a.token = &TokenData{BaseURL: "https://token.example.com/"}
+		a.token.Store(&TokenData{BaseURL: "https://token.example.com/"})
 		if got := a.baseURL(); got != "https://token.example.com" {
 			t.Fatalf("baseURL from token = %q", got)
 		}
-		a.token = nil
+		a.token.Store(nil)
 		if got := a.baseURL(); got != "" {
 			t.Fatalf("baseURL empty = %q", got)
 		}
@@ -60,7 +60,7 @@ func TestWechatAdapter_HelperMethods(t *testing.T) {
 		if got := a.tokenString(); got != "" {
 			t.Fatalf("tokenString nil = %q", got)
 		}
-		a.token = &TokenData{Token: "abc"}
+		a.token.Store(&TokenData{Token: "abc"})
 		if got := a.tokenString(); got != "abc" {
 			t.Fatalf("tokenString = %q", got)
 		}
@@ -68,7 +68,7 @@ func TestWechatAdapter_HelperMethods(t *testing.T) {
 
 	t.Run("buildHeaders includes auth when token exists", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
-		a.token = &TokenData{Token: "abc"}
+		a.token.Store(&TokenData{Token: "abc"})
 		h := a.buildHeaders()
 		if got := h.Get("Content-Type"); got != "application/json" {
 			t.Fatalf("content-type = %q", got)
@@ -126,7 +126,7 @@ func TestWechatAdapter_APIHelpers(t *testing.T) {
 
 		a := newTestWechatAdapter(t)
 		a.imCfg.Wechat.BaseURL = ts.URL
-		a.token = &TokenData{Token: "abc"}
+		a.token.Store(&TokenData{Token: "abc"})
 
 		resp, err := a.apiGet("foo/bar")
 		if err != nil {
@@ -217,7 +217,7 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 func TestWechatAdapter_MessageHandling(t *testing.T) {
 	t.Run("handleIncomingMessage stores context and forwards text", func(t *testing.T) {
 		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-		mgr := &ChordManager{cfg: cfg, procs: make(map[string]*ChordProcess)}
+		mgr := newTestChordManager(cfg)
 		sender := &stubIMAdapter{typ: "wechat"}
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "user-1"}).String()
@@ -271,8 +271,8 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 			t.Fatalf("sendMessage non-JSON error = %v", err)
 		}
 		err := a.sendMessage(ilinkSendMessageRequest{})
-		if err == nil || !strings.Contains(err.Error(), "errcode=-14") || !a.sessionExpired {
-			t.Fatalf("sendMessage session error = %v sessionExpired=%v", err, a.sessionExpired)
+		if err == nil || !strings.Contains(err.Error(), "errcode=-14") {
+			t.Fatalf("sendMessage session error = %v", err)
 		}
 	})
 
@@ -330,7 +330,7 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 	t.Run("token persistence round trip and invalid files", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
-		a.token = &TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"}
+		a.token.Store(&TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"})
 		a.saveToken()
 		loaded := a.loadToken()
 		if loaded == nil || loaded.Token != "tok" || loaded.AccountID != "acc" {
@@ -346,8 +346,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 
 	t.Run("clearToken removes persisted token", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
-		a.token = &TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"}
-		a.sessionExpired = true
+		a.token.Store(&TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"})
 		a.saveToken()
 		if _, err := os.Stat(a.tokenPath()); err != nil {
 			t.Fatalf("token file should exist before clearToken: %v", err)
@@ -356,8 +355,8 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 			t.Fatalf("default token path = %q, want a wechat subdirectory", a.tokenPath())
 		}
 		a.clearToken()
-		if a.token != nil || a.sessionExpired {
-			t.Fatalf("token=%#v sessionExpired=%v", a.token, a.sessionExpired)
+		if a.token.Load() != nil {
+			t.Fatalf("token=%#v after clearToken", a.token.Load())
 		}
 		if _, err := os.Stat(a.tokenPath()); !os.IsNotExist(err) {
 			t.Fatalf("token file should be removed, stat error = %v", err)
@@ -368,7 +367,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		a := newTestWechatAdapter(t)
 		customPath := filepath.Join(t.TempDir(), "secrets", "wechat-token.json")
 		a.tokenFile = customPath
-		a.token = &TokenData{Token: "custom", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"}
+		a.token.Store(&TokenData{Token: "custom", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"})
 		a.saveToken()
 		if _, err := os.Stat(customPath); err != nil {
 			t.Fatalf("custom token file should exist: %v", err)
@@ -408,7 +407,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 
 		a := newTestWechatAdapter(t)
 		a.imCfg.Wechat.BaseURL = ts.URL
-		a.token = &TokenData{Token: "old-tok", BaseURL: ts.URL, AccountID: "old-acc", UserID: "old-user", SavedAt: "old"}
+		a.token.Store(&TokenData{Token: "old-tok", BaseURL: ts.URL, AccountID: "old-acc", UserID: "old-user", SavedAt: "old"})
 		a.saveToken()
 		ctx, ctxCancel := context.WithCancel(context.Background())
 		cancel = ctxCancel
@@ -420,8 +419,9 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		if getUpdates == 0 || getQR != 1 || getStatus != 1 {
 			t.Fatalf("getUpdates=%d getQR=%d getStatus=%d", getUpdates, getQR, getStatus)
 		}
-		if a.token == nil || a.token.Token != "new-tok" || a.token.AccountID != "acc" {
-			t.Fatalf("token after re-login = %#v", a.token)
+		tok := a.token.Load()
+		if tok == nil || tok.Token != "new-tok" || tok.AccountID != "acc" {
+			t.Fatalf("token after re-login = %#v", tok)
 		}
 		loaded := a.loadToken()
 		if loaded == nil || loaded.Token != "new-tok" {
@@ -467,8 +467,9 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewWechatAdapter error = %v", err)
 		}
-		if a.token == nil || a.token.Token != "tok" || a.syncBuf != "sync-1" {
-			t.Fatalf("adapter token=%#v syncBuf=%q", a.token, a.syncBuf)
+		tok := a.token.Load()
+		if tok == nil || tok.Token != "tok" || a.syncBuf != "sync-1" {
+			t.Fatalf("adapter token=%#v syncBuf=%q", tok, a.syncBuf)
 		}
 	})
 

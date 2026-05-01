@@ -24,9 +24,6 @@ import (
 //	workspaces:
 //	  default:
 //	    path: ~/project
-//
-// For backward compatibility, legacy list/sequence forms are still accepted
-// when loading configuration files.
 type Config struct {
 	IMs             []IMAdapterConfig `yaml:"ims"`
 	Workspaces      []Workspace       `yaml:"workspaces"`
@@ -152,90 +149,74 @@ func parseIMsNode(node *yaml.Node) ([]IMAdapterConfig, error) {
 	if node == nil || node.Kind == 0 || node.Tag == "!!null" {
 		return nil, nil
 	}
-
-	switch node.Kind {
-	case yaml.MappingNode:
-		configs := make([]IMAdapterConfig, 0, len(node.Content)/2)
-		seen := make(map[string]bool)
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valueNode := node.Content[i+1]
-			if keyNode == nil || valueNode == nil {
-				continue
-			}
-			typ := normalizeIMType(keyNode.Value)
-			if seen[typ] {
-				return nil, fmt.Errorf("parse ims: duplicate adapter %q", keyNode.Value)
-			}
-			seen[typ] = true
-			switch typ {
-			case "wechat":
-				var wc WechatConfig
-				if err := valueNode.Decode(&wc); err != nil {
-					return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
-				}
-				configs = append(configs, IMAdapterConfig{Wechat: &wc})
-			case "feishu":
-				var fc FeishuConfig
-				if err := valueNode.Decode(&fc); err != nil {
-					return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
-				}
-				configs = append(configs, IMAdapterConfig{Feishu: &fc})
-			default:
-				return nil, fmt.Errorf("parse ims: unsupported adapter %q", keyNode.Value)
-			}
-		}
-		return configs, nil
-	case yaml.SequenceNode:
-		var configs []IMAdapterConfig
-		if err := node.Decode(&configs); err != nil {
-			return nil, fmt.Errorf("parse ims: %w", err)
-		}
-		return configs, nil
-	default:
-		return nil, fmt.Errorf("parse ims: expected mapping or sequence")
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parse ims: expected a YAML mapping (e.g. ims: { wechat: ..., feishu: ... })")
 	}
+
+	configs := make([]IMAdapterConfig, 0, len(node.Content)/2)
+	seen := make(map[string]bool)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+		if keyNode == nil || valueNode == nil {
+			continue
+		}
+		typ := normalizeIMType(keyNode.Value)
+		if seen[typ] {
+			return nil, fmt.Errorf("parse ims: duplicate adapter %q", keyNode.Value)
+		}
+		seen[typ] = true
+		switch typ {
+		case "wechat":
+			var wc WechatConfig
+			if err := valueNode.Decode(&wc); err != nil {
+				return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
+			}
+			configs = append(configs, IMAdapterConfig{Wechat: &wc})
+		case "feishu":
+			var fc FeishuConfig
+			if err := valueNode.Decode(&fc); err != nil {
+				return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
+			}
+			configs = append(configs, IMAdapterConfig{Feishu: &fc})
+		default:
+			return nil, fmt.Errorf("parse ims: unsupported adapter %q", keyNode.Value)
+		}
+	}
+	return configs, nil
 }
 
 func parseWorkspacesNode(node *yaml.Node) ([]Workspace, error) {
 	if node == nil || node.Kind == 0 || node.Tag == "!!null" {
 		return nil, nil
 	}
-
-	switch node.Kind {
-	case yaml.MappingNode:
-		workspaces := make([]Workspace, 0, len(node.Content)/2)
-		seen := make(map[string]bool)
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valueNode := node.Content[i+1]
-			if keyNode == nil || valueNode == nil {
-				continue
-			}
-			id := strings.TrimSpace(keyNode.Value)
-			if seen[id] {
-				return nil, fmt.Errorf("parse workspaces: duplicate workspace %q", id)
-			}
-			seen[id] = true
-			var rawWS rawWorkspace
-			if err := valueNode.Decode(&rawWS); err != nil {
-				return nil, fmt.Errorf("parse workspaces.%s: %w", id, err)
-			}
-			if rawWS.ID != "" && strings.TrimSpace(rawWS.ID) != id {
-				return nil, fmt.Errorf("parse workspaces.%s: nested id %q does not match map key", id, rawWS.ID)
-			}
-			workspaces = append(workspaces, Workspace{ID: id, Path: rawWS.Path})
-		}
-		return workspaces, nil
-	case yaml.SequenceNode:
-		var workspaces []Workspace
-		if err := node.Decode(&workspaces); err != nil {
-			return nil, fmt.Errorf("parse workspaces: %w", err)
-		}
-		return workspaces, nil
-	default:
-		return nil, fmt.Errorf("parse workspaces: expected mapping or sequence")
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parse workspaces: expected a YAML mapping keyed by workspace id")
 	}
+
+	workspaces := make([]Workspace, 0, len(node.Content)/2)
+	seen := make(map[string]bool)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+		if keyNode == nil || valueNode == nil {
+			continue
+		}
+		id := strings.TrimSpace(keyNode.Value)
+		if seen[id] {
+			return nil, fmt.Errorf("parse workspaces: duplicate workspace %q", id)
+		}
+		seen[id] = true
+		var rawWS rawWorkspace
+		if err := valueNode.Decode(&rawWS); err != nil {
+			return nil, fmt.Errorf("parse workspaces.%s: %w", id, err)
+		}
+		if rawWS.ID != "" && strings.TrimSpace(rawWS.ID) != id {
+			return nil, fmt.Errorf("parse workspaces.%s: nested id %q does not match map key", id, rawWS.ID)
+		}
+		workspaces = append(workspaces, Workspace{ID: id, Path: rawWS.Path})
+	}
+	return workspaces, nil
 }
 
 // IdleTimeoutDuration parses and returns the idle timeout duration.

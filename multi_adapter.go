@@ -100,28 +100,12 @@ func (m *MultiAdapter) Disconnect() {
 // Type returns "multi".
 func (m *MultiAdapter) Type() string { return "multi" }
 
-// StartLogin delegates to the wechat adapter if present.
+// StartLogin returns ErrLoginNotSupported.
+// Login routing for the active adapter is handled by NotificationRouter via
+// findAdapterByType. This method exists only to satisfy the IMAdapter interface
+// for the multi adapter wrapper.
 func (m *MultiAdapter) StartLogin() (string, error) {
-	if adapter := m.FindAdapterByType("wechat"); adapter != nil {
-		return adapter.StartLogin()
-	}
 	return "", ErrLoginNotSupported
-}
-
-// BroadcastText sends a text message through all adapters with known chat IDs.
-func (m *MultiAdapter) BroadcastText(text string) {
-	for _, a := range m.adapters {
-		chatID := ""
-		if m.router != nil {
-			chatID = m.router.chatIDForAdapter(a.Type())
-		}
-		if chatID == "" {
-			continue
-		}
-		if err := a.SendText(chatID, text); err != nil {
-			slog.Error("broadcast send failed", "type", a.Type(), "chatID", chatID, "error", err)
-		}
-	}
 }
 
 // FindAdapterByType returns the adapter matching the given type, or nil.
@@ -133,13 +117,6 @@ func (m *MultiAdapter) FindAdapterByType(adapterType string) IMAdapter {
 		}
 	}
 	return nil
-}
-
-// Adapters returns all adapters.
-func (m *MultiAdapter) Adapters() []IMAdapter {
-	result := make([]IMAdapter, len(m.adapters))
-	copy(result, m.adapters)
-	return result
 }
 
 // BroadcastTextExcept sends a text message through all adapters EXCEPT

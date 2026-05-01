@@ -8,9 +8,14 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+### Breaking changes
+
+- Removed the `HandleMessage(imType, chatID, text)` router entrypoint. Use `HandleIncomingMessage` with a structured `IncomingMessage`.
+- Removed YAML `ims` and `workspaces` sequence (list) forms in `config.yaml`. Both must now be mappings keyed by adapter type / workspace id.
+
 ### Added
 
-- Added a compatibility policy document that records the currently supported legacy config forms, backward-compatible router entrypoints, and the active headless `todos` event contract.
+- Added a compatibility policy document that records the remaining compatibility surface (the Chord headless `todos` event name) and the cleanup rule.
 - Added regression tests covering session-pin write failures and concurrent session-pin updates.
 
 ### Changed
@@ -18,8 +23,22 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Refactored the router and process implementation into topic-specific files (`router_commands`, `router_format`, `router_feishu_cards`, `router_reminders`, `router_parse`, `process_protocol`, `process_lifecycle`, `process_env`) without changing documented behavior.
 - Made session-pin and dedupe persistence use atomic file replacement, and fixed session-pin updates so failed writes do not mutate in-memory state while concurrent updates do not lose pins.
 - Clarified Feishu renewal behavior in user docs and cross-IM notifications: Feishu access tokens are refreshed automatically from configured app credentials, `/login feishu` is unsupported, and app credentials must not be sent or changed in IM chats.
+- `/status` now waits for the next `status_response` envelope via a buffered channel instead of polling `LastStatusResponseAt`, so the IM message goroutine is no longer blocked for up to 10 seconds.
+- `truncate` and `splitText` now operate on runes, so notifications containing multi-byte characters (Chinese, emoji) are no longer split mid-character.
+- Hardened concurrency around `ChordManager.cfg` and `WechatAdapter.token` using `atomic.Pointer` so `/bind`-driven config updates and WeChat token refreshes no longer race with reads.
+- Refactored Feishu HTTP send / update helpers to share a single `doFeishuJSONRequest` path that handles access-token retry uniformly.
 - Feishu interactive confirm/question cards now carry richer context, try to update the original card to a resolved state after approval/answer, and fall back to the existing text notifications if card delivery or update fails.
 - Plain-text replies to pending Feishu questions now update the original question card when possible, and card updates prefer the stored sent-message ID over callback metadata to avoid patching the wrong message.
+
+### Removed
+
+- Removed unused helpers and dead state: `MultiAdapter.BroadcastText`, `MultiAdapter.Adapters`, `FeishuAdapter.SendInteractive`, the `WechatAdapter.sessionExpired` flag, and the `ControlState.StreamText` / `LastThinkingText` fields.
+- Removed raw-array Chord headless `todos` payload support; gateway now only accepts the current wrapper payload shape (`{"todos":[...]}`).
+
+### Fixed
+
+- `pins.Set` failures (e.g. `/new`, `/resume`, `/bind`) are now logged at warn level instead of being silently dropped.
+- Removed a debug-time auto `status` command that was being piggy-backed onto every plain `send`, reducing duplicate stdin commands.
 
 ## 0.2.0 – 2026-04-30
 

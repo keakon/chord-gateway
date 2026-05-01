@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
@@ -126,18 +127,17 @@ type TokenData struct {
 
 // WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
-	cfg            *config.Config
-	imCfg          config.IMAdapterConfig
-	router         *NotificationRouter
-	token          *TokenData
-	syncBuf        string // monitorLoop-only: written/read from a single goroutine
-	mu             sync.Mutex
-	sessionExpired bool
-	ctx            context.Context
-	cancel         context.CancelFunc
-	storageDir     string
-	tokenFile      string
-	httpClient     *http.Client
+	cfg        *config.Config
+	imCfg      config.IMAdapterConfig
+	router     *NotificationRouter
+	token      atomic.Pointer[TokenData]
+	syncBuf    string // monitorLoop-only: written/read from a single goroutine
+	mu         sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	storageDir string
+	tokenFile  string
+	httpClient *http.Client
 
 	// contextToken per user — needed to send replies.
 	contextTokens map[string]string
@@ -163,7 +163,7 @@ func NewWechatAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 
 	// Try to load existing token.
 	if token := a.loadToken(); token != nil {
-		a.token = token
+		a.token.Store(token)
 		slog.Info("wechat ilink: loaded saved token", "account_id", token.AccountID)
 	}
 
@@ -211,13 +211,13 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 		}
 		switch resp.Status {
 		case "confirmed":
-			a.token = &TokenData{
+			a.token.Store(&TokenData{
 				Token:     resp.BotToken,
 				BaseURL:   resp.BaseURL,
 				AccountID: resp.ILinkBotID,
 				UserID:    resp.ILinkUserID,
 				SavedAt:   time.Now().Format(time.RFC3339),
-			}
+			})
 			a.saveToken()
 			slog.Info("wechat ilink: re-login successful via QR scan")
 			if a.router != nil {
@@ -254,7 +254,7 @@ func (a *WechatAdapter) Connect() error {
 	baseURL := a.baseURL()
 
 	// Console mode fallback: no base_url configured and no saved token.
-	if baseURL == "" && a.token == nil {
+	if baseURL == "" && a.token.Load() == nil {
 		return a.connectConsole(ctx)
 	}
 
@@ -292,7 +292,7 @@ func (a *WechatAdapter) connectConsole(ctx context.Context) error {
 
 // connectILink performs QR login (if needed) and starts the long-poll monitor loop.
 func (a *WechatAdapter) connectILink(ctx context.Context) error {
-	if a.token == nil {
+	if a.token.Load() == nil {
 		if err := a.login(ctx); err != nil {
 			return fmt.Errorf("wechat ilink login: %w", err)
 		}
@@ -310,7 +310,7 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 		}
 	}
 
-	tok := a.token
+	tok := a.token.Load()
 	slog.Info("wechat ilink: connected, starting monitor loop",
 		"account_id", tok.AccountID,
 		"base_url", tok.BaseURL,
@@ -323,7 +323,7 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 // SendText sends a plain text message to the specified chat (user ID).
 // In console mode it prints to stdout. For iLink, it posts to the sendmessage API.
 func (a *WechatAdapter) SendText(chatID, text string) error {
-	if a.baseURL() == "" && a.token == nil {
+	if a.baseURL() == "" && a.token.Load() == nil {
 		fmt.Printf("[%s] %s\n", chatID, text)
 		return nil
 	}
@@ -343,7 +343,7 @@ func (a *WechatAdapter) baseURL() string {
 	if a.imCfg.Wechat != nil && a.imCfg.Wechat.BaseURL != "" {
 		return strings.TrimRight(a.imCfg.Wechat.BaseURL, "/")
 	}
-	if tok := a.token; tok != nil && tok.BaseURL != "" {
+	if tok := a.token.Load(); tok != nil && tok.BaseURL != "" {
 		return strings.TrimRight(tok.BaseURL, "/")
 	}
 	return ""
@@ -356,7 +356,7 @@ func (a *WechatAdapter) botType() string {
 }
 
 func (a *WechatAdapter) tokenString() string {
-	tok := a.token
+	tok := a.token.Load()
 	if tok == nil {
 		return ""
 	}
@@ -364,13 +364,14 @@ func (a *WechatAdapter) tokenString() string {
 }
 
 // randomWechatUIN generates a random X-WECHAT-UIN header value.
+// Mirrors the iLink fingerprint format used by the official WeChat client:
+// 4 random bytes -> uint32 -> decimal string -> base64. Do not change without
+// confirming compatibility with the iLink server-side validation.
 func randomWechatUIN() string {
 	var buf [4]byte
 	_, _ = rand.Read(buf[:])
-	// Encode the uint32 as base64
 	val := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
-	encoded := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", val)))
-	return encoded
+	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", val)))
 }
 
 func (a *WechatAdapter) buildHeaders() http.Header {
@@ -431,7 +432,7 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 		baseURL = ilinkDefaultBaseURL
 	}
 	// Temporarily set baseURL for API calls during login.
-	a.token = &TokenData{BaseURL: strings.TrimRight(baseURL, "/")}
+	a.token.Store(&TokenData{BaseURL: strings.TrimRight(baseURL, "/")})
 
 	slog.Info("wechat ilink: starting QR login flow")
 
@@ -489,16 +490,16 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 			fmt.Printf("  %s\n", newQR.QRCodeImgContent)
 		case "confirmed":
 			slog.Info("wechat ilink: login successful!")
-			a.sessionExpired = false
-			a.token = &TokenData{
+			tok := &TokenData{
 				Token:     statusResp.BotToken,
 				BaseURL:   statusResp.BaseURL,
 				AccountID: statusResp.ILinkBotID,
 				UserID:    statusResp.ILinkUserID,
 				SavedAt:   time.Now().Format(time.RFC3339),
 			}
+			a.token.Store(tok)
 			a.saveToken()
-			slog.Info("wechat ilink: token saved", "account_id", a.token.AccountID)
+			slog.Info("wechat ilink: token saved", "account_id", tok.AccountID)
 			return nil
 		}
 
@@ -779,7 +780,6 @@ func (a *WechatAdapter) sendMessage(body ilinkSendMessageRequest) error {
 	if result.ErrCode != 0 {
 		if result.ErrCode == ilinkSessionExpired {
 			slog.Warn("wechat ilink: send failed with session expired")
-			a.sessionExpired = true
 		}
 		return fmt.Errorf("send error: errcode=%d errmsg=%s", result.ErrCode, result.ErrMsg)
 	}
@@ -808,19 +808,22 @@ func (a *WechatAdapter) loadToken() *TokenData {
 }
 
 func (a *WechatAdapter) clearToken() {
-	a.sessionExpired = false
-	a.token = nil
+	a.token.Store(nil)
 	if err := os.Remove(a.tokenPath()); err != nil && !os.IsNotExist(err) {
 		slog.Warn("wechat ilink: failed to remove token file", "error", err)
 	}
 }
 
 func (a *WechatAdapter) saveToken() {
+	tok := a.token.Load()
+	if tok == nil {
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(a.tokenPath()), 0700); err != nil {
 		slog.Error("wechat ilink: failed to create token dir", "error", err)
 		return
 	}
-	data, err := json.MarshalIndent(a.token, "", "  ")
+	data, err := json.MarshalIndent(tok, "", "  ")
 	if err != nil {
 		slog.Error("wechat ilink: failed to marshal token", "error", err)
 		return
@@ -873,38 +876,40 @@ func (a *WechatAdapter) saveSyncBuf() {
 
 // sleep waits for the given duration or until the context is cancelled.
 func (a *WechatAdapter) sleep(ctx context.Context, d time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(d):
-	}
+	sleepCtx(ctx, d)
 }
 
-// splitText splits text into segments of at most maxLen characters,
-// preferring to break at newlines.
+// splitText splits text into segments of at most maxLen runes, preferring to
+// break at newlines. Operates on runes so multi-byte UTF-8 sequences (Chinese
+// characters, emoji) are never split mid-character.
 func splitText(text string, maxLen int) []string {
-	if len(text) <= maxLen {
+	runes := []rune(text)
+	if len(runes) <= maxLen {
 		return []string{text}
 	}
 
 	var segments []string
-	remaining := text
-
-	for len(remaining) > 0 {
-		if len(remaining) <= maxLen {
-			segments = append(segments, remaining)
+	start := 0
+	for start < len(runes) {
+		end := start + maxLen
+		if end >= len(runes) {
+			segments = append(segments, string(runes[start:]))
 			break
 		}
-
-		// Try to break at a newline within the limit.
-		breakAt := strings.LastIndex(remaining[:maxLen], "\n")
-		if breakAt <= 0 {
-			breakAt = maxLen
+		// Prefer to break at the last newline within [start, end).
+		breakAt := end
+		for i := end - 1; i > start; i-- {
+			if runes[i] == '\n' {
+				breakAt = i
+				break
+			}
 		}
-
-		segments = append(segments, remaining[:breakAt])
-		remaining = remaining[breakAt:]
+		segments = append(segments, string(runes[start:breakAt]))
+		start = breakAt
 		// Skip the newline we broke at.
-		remaining = strings.TrimPrefix(remaining, "\n")
+		if start < len(runes) && runes[start] == '\n' {
+			start++
+		}
 	}
 
 	return segments
