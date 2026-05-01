@@ -39,6 +39,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - `pins.Set` failures (e.g. `/new`, `/resume`, `/bind`) are now logged at warn level instead of being silently dropped.
 - Removed a debug-time auto `status` command that was being piggy-backed onto every plain `send`, reducing duplicate stdin commands.
+- `truncateLine` now also truncates by rune, so tool-argument summaries no longer split Chinese or emoji mid-character; added regression tests to keep UTF-8 output valid.
+- Corrected the `Config.UnmarshalYAML` comment to match current behavior: only map-based `ims` / `workspaces` forms are supported.
 
 ## 0.2.0 – 2026-04-30
 

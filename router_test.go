@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/keakon/chord-gateway/config"
 )
@@ -1044,7 +1045,19 @@ func TestTruncateLineAndTruncate(t *testing.T) {
 		t.Fatalf("newline replacement = %q", got)
 	}
 	if got := truncateLine("abcdef", 4); got != "abc…" {
-		t.Fatalf("truncateLine = %q", got)
+		t.Fatalf("truncateLine ascii = %q", got)
+	}
+	if got := truncateLine("你好世界", 3); got != "你好…" {
+		t.Fatalf("truncateLine chinese = %q", got)
+	}
+	if got := truncateLine("😀😃😄😁", 3); got != "😀😃…" {
+		t.Fatalf("truncateLine emoji = %q", got)
+	}
+	if got := truncateLine("😀😃😄😁", 2); got != "😀…" {
+		t.Fatalf("truncateLine short emoji = %q", got)
+	}
+	if !utf8.ValidString(truncateLine("😀😃😄😁", 3)) {
+		t.Fatal("truncateLine should return valid UTF-8")
 	}
 	if got := truncate(strings.Repeat("a", maxNotificationRunes+10)); !strings.HasSuffix(got, "...") || len([]rune(got)) != maxNotificationRunes {
 		t.Fatalf("truncate len/suffix failed: len=%d got=%q", len(got), got)

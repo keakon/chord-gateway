@@ -193,14 +193,18 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 	return truncateLine(argsJSON, 200)
 }
 
-// truncateLine truncates a single line to maxRunes, appending "…" if needed.
+// truncateLine truncates a single line to maxRunes runes, appending "…" if needed.
 func truncateLine(s string, maxRunes int) string {
 	// Replace newlines so the summary stays on one line.
 	s = strings.ReplaceAll(s, "\n", "\\n")
-	if len(s) <= maxRunes {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
 		return s
 	}
-	return s[:maxRunes-1] + "…"
+	if maxRunes <= 1 {
+		return "…"
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 func (r *NotificationRouter) formatQuestionNotification(state ControlState) string {

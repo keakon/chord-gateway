@@ -39,6 +39,8 @@
 
 - `pins.Set` 失败（如 `/new`、`/resume`、`/bind`）现在以 warn 级别日志输出，不再被静默吞掉。
 - 移除每次普通 `send` 后都附带的调试用 `status` 命令，减少冗余的 stdin 调用。
+- `truncateLine` 现在也改为按 rune 截断，工具参数摘要不再把中文或 emoji 截断在多字节字符中间；并补充回归测试以确保输出保持有效 UTF-8。
+- 修正 `Config.UnmarshalYAML` 注释，使其与当前行为一致：只支持 mapping 形式的 `ims` / `workspaces`。
 
 ## 0.2.0 – 2026-04-30
 

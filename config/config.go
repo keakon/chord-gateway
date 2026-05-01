@@ -117,8 +117,7 @@ type rawWorkspace struct {
 	Path string `yaml:"path"`
 }
 
-// UnmarshalYAML accepts both the preferred map-based config shape and the
-// legacy list-based shape for ims/workspaces.
+// UnmarshalYAML accepts the preferred map-based config shape for ims/workspaces.
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
