@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"os"
 	"os/exec"
 	"strings"
@@ -23,7 +23,7 @@ var loginShellEnv = sync.OnceValue(func() []string {
 	// /etc/profile + ~/.profile (or ~/.zprofile / ~/.zshenv etc.).
 	out, err := exec.Command(shell, "-l", "-c", "echo $PATH").Output()
 	if err != nil {
-		slog.Warn("failed to get login shell PATH, using current env", "error", err)
+		log.Warnf("failed to get login shell PATH, using current env error=%v", err)
 		return os.Environ()
 	}
 	loginPATH := strings.TrimSpace(string(out))

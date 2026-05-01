@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"github.com/keakon/golog/log"
 	"io"
-	"log/slog"
 	"strings"
 	"time"
 )
@@ -30,7 +30,7 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 
 		var env HeadlessEnvelope
 		if err := json.Unmarshal(line, &env); err != nil {
-			slog.Warn("failed to parse headless envelope", "line", string(line), "error", err)
+			log.Warnf("failed to parse headless envelope line=%v error=%v", string(line), err)
 			continue
 		}
 
@@ -60,13 +60,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.SessionID = payload.SessionID
 				if p.mgr != nil && p.mgr.pins != nil {
 					if perr := p.mgr.pins.Set(p.key, payload.SessionID); perr != nil {
-						slog.Warn("persist session pin failed", "key", p.key, "session_id", payload.SessionID, "error", perr)
+						log.Warnf("persist session pin failed key=%v session_id=%v error=%v", p.key, payload.SessionID, perr)
 					}
 				}
 			}
 		}
 		_, imType, _ := parseProcessKey(p.key)
-		slog.Info("gateway event", "event", "ready", "raw_type", "ready", "key", p.key, "workspace", p.workspaceID, "im", imType, "session_id", p.state.SessionID)
+		log.Infof("gateway event event=%v raw_type=%v key=%v workspace=%v im=%v session_id=%v", "ready", "ready", p.key, p.workspaceID, imType, p.state.SessionID)
 		// No notification.
 		eventType = ""
 
@@ -210,11 +210,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.LastAssistantText = payload.Text
 				eventType = "assistant_message"
 			} else {
-				slog.Debug("gateway assistant_message had empty text; skipping notification",
-					"key", p.key,
-					"workspace", p.workspaceID,
-					"agent_id", payload.AgentID,
-					"tool_calls", payload.ToolCalls,
+				log.Debugf("gateway assistant_message had empty text; skipping notification key=%v workspace=%v agent_id=%v tool_calls=%v", p.key,
+					p.workspaceID,
+					payload.AgentID,
+					payload.ToolCalls,
 				)
 			}
 			p.state.LastAssistantToolCalls = payload.ToolCalls
@@ -227,7 +226,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			Todos []TodoItem `json:"todos"`
 		}
 		if err := json.Unmarshal(env.Payload, &wrapper); err != nil {
-			slog.Warn("failed to parse todos payload", "key", p.key, "error", err)
+			log.Warnf("failed to parse todos payload key=%v error=%v", p.key, err)
 			p.state.Todos = nil
 		} else {
 			p.state.Todos = wrapper.Todos
@@ -243,27 +242,26 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "assistant_rollback"
 
 	default:
-		slog.Debug("unknown headless event type", "type", env.Type)
+		log.Debugf("unknown headless event type type=%v", env.Type)
 	}
 
 	if eventType != "" {
 		_, imType, chatID := parseProcessKey(p.key)
-		slog.Info("gateway event",
-			"event", eventType,
-			"raw_type", env.Type,
-			"key", p.key,
-			"workspace", p.workspaceID,
-			"im", imType,
-			"chat_id", chatID,
-			"session_id", p.state.SessionID,
-			"busy", p.state.Busy,
-			"phase", p.state.Phase,
-			"last_outcome", p.state.LastOutcome,
-			"assistant_text_len", len(p.state.LastAssistantText),
-			"assistant_tool_calls", p.state.LastAssistantToolCalls,
-			"pending_confirm", p.state.PendingConfirm != nil,
-			"pending_question", p.state.PendingQuestion != nil,
-			"last_error", p.state.LastError,
+		log.Infof("gateway event event=%v raw_type=%v key=%v workspace=%v im=%v chat_id=%v session_id=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v", eventType,
+			env.Type,
+			p.key,
+			p.workspaceID,
+			imType,
+			chatID,
+			p.state.SessionID,
+			p.state.Busy,
+			p.state.Phase,
+			p.state.LastOutcome,
+			len(p.state.LastAssistantText),
+			p.state.LastAssistantToolCalls,
+			p.state.PendingConfirm != nil,
+			p.state.PendingQuestion != nil,
+			p.state.LastError,
 		)
 	}
 

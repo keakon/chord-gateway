@@ -6,8 +6,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keakon/golog"
+	"github.com/keakon/golog/log"
 	"github.com/spf13/cobra"
 
 	"github.com/keakon/chord-gateway/config"
@@ -68,24 +67,26 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			return fmt.Errorf("create log dir: %w", err)
 		}
 
-		// Set up logging to file with rotation, also mirror to stderr.
+		// Set up golog to write to stderr and to a rotating log file.
 		logFile, err := golog.NewRotatingFileWriter(paths.LogFile, 10*1024*1024, 3)
 		if err != nil {
 			return fmt.Errorf("create rotating log writer: %w", err)
 		}
-		defer logFile.Close()
-		writer := io.MultiWriter(os.Stderr, logFile)
-		slog.SetDefault(slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{
-			AddSource: true,
-		})))
+		formatter := golog.ParseFormat("[%l %D %T %S] %m")
+		handler := golog.NewHandler(golog.InfoLevel, formatter)
+		handler.AddWriter(golog.NewStderrWriter())
+		handler.AddWriter(logFile)
+		logger := golog.NewLogger(golog.InfoLevel)
+		logger.AddHandler(handler)
+		defer logger.Close()
+		log.SetDefaultLogger(logger)
 
 		activeIMs := cfg.ActiveIMs()
-		slog.Info("chord-gateway starting",
-			"config", *flagConfig,
-			"state_dir", paths.StateDir,
-			"ims", len(activeIMs),
-			"workspaces", len(cfg.Workspaces),
-			"idle_timeout", cfg.IdleTimeoutDuration(),
+		log.Infof("chord-gateway starting config=%v state_dir=%v ims=%v workspaces=%v idle_timeout=%v", *flagConfig,
+			paths.StateDir,
+			len(activeIMs),
+			len(cfg.Workspaces),
+			cfg.IdleTimeoutDuration(),
 		)
 
 		// Create the chord process manager
@@ -112,7 +113,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		// Wire the adapter into the router so notifications can be sent
 		router.SetAdapter(adapter)
 
-		slog.Info("gateway ready", "ims", len(activeIMs))
+		log.Infof("gateway ready ims=%v", len(activeIMs))
 
 		// Start idle timeout checker
 		go mgr.IdleCheckLoop()
@@ -121,7 +122,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		defer stop()
 		go func() {
 			<-ctx.Done()
-			slog.Info("gateway shutting down, terminating chord processes")
+			log.Infof("gateway shutting down, terminating chord processes")
 			mgr.StopAll(2 * time.Second)
 			adapter.Disconnect()
 		}()

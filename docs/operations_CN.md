@@ -57,7 +57,7 @@ gateway 按以下优先级加载配置：
 
 ## 日志
 
-gateway 会把结构化日志写入 stderr，并写入状态目录下的滚动日志文件。
+gateway 会把 golog 格式化的 key-value 日志写入 stderr，并写入状态目录下的滚动日志文件。
 默认日志文件为 `<state_dir>/gateway.log`；可通过 `CHORD_GATEWAY_LOG_FILE` 覆盖。
 日志文件达到 10 MiB 后轮转，并保留 3 个备份。轮转后的日志不会 gzip 压缩。
 

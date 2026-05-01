@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"strings"
 	"time"
 
@@ -19,12 +19,12 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 	procKey := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	proc, err := r.mgr.GetOrSpawnForKey(procKey)
 	if err != nil {
-		slog.Error("failed to get or spawn process", "workspace", ws.ID, "error", err)
+		log.Errorf("failed to get or spawn process workspace=%v error=%v", ws.ID, err)
 		r.sendText(chatID, "❌ Failed to connect to chord process.")
 		return
 	}
 	if proc == nil {
-		slog.Error("no process for workspace", "workspace", ws.ID)
+		log.Errorf("no process for workspace workspace=%v", ws.ID)
 		r.sendText(chatID, "❌ Workspace not configured.")
 		return
 	}
@@ -41,7 +41,7 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 	case "send":
 		r.handleSendCommand(ws, chatID, cmd, msg, procKey, proc)
 	default:
-		slog.Warn("unknown command type", "type", cmd.Type)
+		log.Warnf("unknown command type type=%v", cmd.Type)
 		r.sendText(chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
 	}
 }
@@ -53,7 +53,7 @@ func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, i
 	if err != nil {
 		// Either the send failed or the response did not arrive in time.
 		// Fall back to whatever state we currently have so the user still gets a reply.
-		slog.Warn("status command did not receive a response in time", "workspace", ws.ID, "error", err)
+		log.Warnf("status command did not receive a response in time workspace=%v error=%v", ws.ID, err)
 		state = proc.State()
 	}
 	r.sendText(chatID, formatBindingStatus(ws, imType, chatID, state))
@@ -61,7 +61,7 @@ func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, i
 
 func (r *NotificationRouter) handleCancelCommand(ws *config.Workspace, chatID, procKey string, proc *ChordProcess) {
 	if err := proc.SendCommand(map[string]any{"type": "cancel"}); err != nil {
-		slog.Error("failed to send cancel command", "workspace", ws.ID, "error", err)
+		log.Errorf("failed to send cancel command workspace=%v error=%v", ws.ID, err)
 		r.sendText(chatID, "❌ Failed to cancel.")
 		return
 	}
@@ -76,7 +76,7 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		expired := r.lookupExpiredPending(procKey)
 		content := buildExpiredConfirmFollowup(cmd, expired.Confirm)
 		if err := proc.SendUserMessage(content); err != nil {
-			slog.Error("failed to send expired confirmation follow-up", "workspace", ws.ID, "error", err)
+			log.Errorf("failed to send expired confirmation follow-up workspace=%v error=%v", ws.ID, err)
 			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
 			return
 		}
@@ -103,7 +103,7 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		confirmCmd["deny_reason"] = strings.TrimSpace(cmd.Reason)
 	}
 	if err := proc.SendCommand(confirmCmd); err != nil {
-		slog.Error("failed to send confirm response", "workspace", ws.ID, "error", err)
+		log.Errorf("failed to send confirm response workspace=%v error=%v", ws.ID, err)
 		r.sendText(chatID, "❌ Failed to send confirmation.")
 		return
 	}
@@ -117,12 +117,12 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 			status += ": " + strings.TrimSpace(cmd.Reason)
 		}
 		r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation denied", status, "red"))
-		slog.Info("confirm.responded", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "action", cmd.Action, "tool", pc.ToolName)
+		log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
 		r.sendText(chatID, text)
 		return
 	}
 	r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation approved", "✅ Approved by "+sender, "green"))
-	slog.Info("confirm.responded", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "action", cmd.Action, "tool", pc.ToolName)
+	log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
 	r.sendText(chatID, "✅ allowed")
 }
 
@@ -141,7 +141,7 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		}
 		content := buildExpiredQuestionFollowup(cmd.Answers, q)
 		if err := proc.SendUserMessage(content); err != nil {
-			slog.Error("failed to send expired question follow-up", "workspace", ws.ID, "error", err)
+			log.Errorf("failed to send expired question follow-up workspace=%v error=%v", ws.ID, err)
 			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
 			return
 		}
@@ -162,14 +162,14 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		"answers":    answers,
 	}
 	if err := proc.SendCommand(questionCmd); err != nil {
-		slog.Error("failed to send question response", "workspace", ws.ID, "error", err)
+		log.Errorf("failed to send question response workspace=%v error=%v", ws.ID, err)
 		r.sendText(chatID, "❌ Failed to send answer.")
 		return
 	}
 	r.beginTurn(procKey)
 	answerText := strings.Join(answers, ", ")
 	r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
-	slog.Info("question.answered", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "tool", pq.ToolName)
+	log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
 	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
 }
 
@@ -191,14 +191,14 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 				"answers":    answers,
 			}
 			if err := proc.SendCommand(questionCmd); err != nil {
-				slog.Error("failed to send question response (auto-redirect)", "workspace", ws.ID, "error", err)
+				log.Errorf("failed to send question response (auto-redirect) workspace=%v error=%v", ws.ID, err)
 				r.sendText(chatID, "❌ Failed to send answer.")
 				return
 			}
 			r.beginTurn(procKey)
 			answerText := strings.Join(answers, ", ")
 			r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
-			slog.Info("question.answered", "workspace", ws.ID, "chat_id", chatID, "sender_id", msg.SenderID, "request_id", requestID, "tool", pq.ToolName)
+			log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
 			// Feishu users see the answer reflected on the updated card; avoid duplicating it as a text reply.
 			if normalizeIMType(msg.IMType) != "feishu" {
 				r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
@@ -214,7 +214,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 		return
 	}
 	if err := proc.SendUserMessage(cmd.Content); err != nil {
-		slog.Error("failed to send user message", "workspace", ws.ID, "error", err)
+		log.Errorf("failed to send user message workspace=%v error=%v", ws.ID, err)
 		r.sendText(chatID, "❌ Failed to send message to chord.")
 		return
 	}

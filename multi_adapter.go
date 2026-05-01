@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"sync"
 
 	"github.com/keakon/chord-gateway/config"
@@ -44,9 +44,9 @@ func (m *MultiAdapter) Connect() error {
 		wg.Add(1)
 		go func(a IMAdapter) {
 			defer wg.Done()
-			slog.Info("starting IM adapter", "type", a.Type())
+			log.Infof("starting IM adapter type=%v", a.Type())
 			if err := a.Connect(); err != nil {
-				slog.Error("IM adapter exited with error", "type", a.Type(), "error", err)
+				log.Errorf("IM adapter exited with error type=%v error=%v", a.Type(), err)
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("%s: %w", a.Type(), err))
 				mu.Unlock()
@@ -132,11 +132,11 @@ func (m *MultiAdapter) BroadcastTextExcept(excludeType string, chatIDs map[strin
 			chatID = m.router.chatIDForAdapter(a.Type())
 		}
 		if chatID == "" {
-			slog.Debug("no chatID for adapter, skipping broadcast", "type", a.Type())
+			log.Debugf("no chatID for adapter, skipping broadcast type=%v", a.Type())
 			continue
 		}
 		if err := a.SendText(chatID, text); err != nil {
-			slog.Error("broadcast send failed", "type", a.Type(), "chatID", chatID, "error", err)
+			log.Errorf("broadcast send failed type=%v chatID=%v error=%v", a.Type(), chatID, err)
 		}
 	}
 }

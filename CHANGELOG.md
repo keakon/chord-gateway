@@ -38,7 +38,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Refactored Feishu HTTP send / update helpers to share a single `doFeishuJSONRequest` path that handles access-token retry uniformly.
 - Feishu interactive confirm/question cards now carry richer context, try to update the original card to a resolved state after approval/answer, and fall back to the existing text notifications if card delivery or update fails.
 - Plain-text replies to pending Feishu questions now update the original question card when possible, and card updates prefer the stored sent-message ID over callback metadata to avoid patching the wrong message.
-- Gateway log rotation now uses `github.com/keakon/golog` instead of lumberjack. Rotated logs are no longer gzip-compressed.
+- Gateway logging now uses `github.com/keakon/golog/log` directly for log records and `github.com/keakon/golog` for file rotation. Rotated logs are no longer gzip-compressed.
 - Chord `idle` envelopes are now rendered by the gateway as the user-visible ready notification instead of relying on a separate headless `notification` envelope.
 
 ### Removed

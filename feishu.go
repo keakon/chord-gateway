@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -111,7 +111,7 @@ type FeishuAdapter struct {
 func (a *FeishuAdapter) sendCardOrFallback(chatID string, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
 	handle, err := a.SendInteractiveWithHandle(chatID, card)
 	if err != nil {
-		slog.Warn("feishu: send interactive card failed, falling back to text", "chat_id", chatID, "error", err)
+		log.Warnf("feishu: send interactive card failed, falling back to text chat_id=%v error=%v", chatID, err)
 		if strings.TrimSpace(fallback) != "" {
 			if fallbackErr := a.SendText(chatID, fallback); fallbackErr != nil {
 				return nil, fmt.Errorf("send interactive card: %w; fallback text: %v", err, fallbackErr)
@@ -194,7 +194,7 @@ func (a *FeishuAdapter) Connect() error {
 
 	// Get initial access token to validate credentials.
 	if _, err := a.getAccessToken(); err != nil {
-		slog.Error("feishu: failed to get access token", "error", err)
+		log.Errorf("feishu: failed to get access token error=%v", err)
 		cancel()
 		a.router.HandleSessionExpired("feishu")
 		return fmt.Errorf("feishu: initial access token: %w", err)
@@ -221,7 +221,7 @@ func (a *FeishuAdapter) Connect() error {
 				a.wg.Wait()
 				return fmt.Errorf("feishu long connection: %w", err)
 			}
-			slog.Warn("feishu: long connection dropped, retrying", "error", err, "retry_in", a.currentReconnectInterval())
+			log.Warnf("feishu: long connection dropped, retrying error=%v retry_in=%v", err, a.currentReconnectInterval())
 		}
 		if !sleepCtx(ctx, a.currentReconnectInterval()) {
 			a.wg.Wait()
@@ -257,7 +257,7 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkd
 	a.setConn(conn)
 	defer a.clearConn(conn)
 
-	slog.Info("feishu adapter: long connection established", "url", u.Redacted())
+	log.Infof("feishu adapter: long connection established url=%v", u.Redacted())
 
 	pingErrCh := make(chan error, 1)
 	go a.pingLoop(connCtx, conn, int32(serviceID), pingErrCh)
@@ -278,7 +278,7 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkd
 			return fmt.Errorf("feishu long connection read: %w", err)
 		}
 		if mt != websocket.BinaryMessage {
-			slog.Warn("feishu: ignoring non-binary websocket message", "message_type", mt)
+			log.Warnf("feishu: ignoring non-binary websocket message message_type=%v", mt)
 			continue
 		}
 		if err := a.handleWSFrame(ctx, conn, dispatcher, msg); err != nil {
@@ -445,7 +445,7 @@ func (a *FeishuAdapter) handleControlFrame(frame larkws.Frame) {
 		}
 		var conf larkws.ClientConfig
 		if err := json.Unmarshal(frame.Payload, &conf); err != nil {
-			slog.Warn("feishu: unmarshal client config failed", "error", err)
+			log.Warnf("feishu: unmarshal client config failed error=%v", err)
 			return
 		}
 		a.applyWSClientConfig(&conf)
@@ -477,7 +477,7 @@ func (a *FeishuAdapter) handleDataFrame(ctx context.Context, conn *websocket.Con
 		if err != nil {
 			var notFoundErr *larkdispatcher.NotFoundEventHandlerErr
 			if errors.As(err, &notFoundErr) {
-				slog.Debug("feishu: no handler for subscribed event", "message_id", msgID, "trace_id", traceID, "error", err)
+				log.Debugf("feishu: no handler for subscribed event message_id=%v trace_id=%v error=%v", msgID, traceID, err)
 				err = nil
 			}
 		}
@@ -498,7 +498,7 @@ func (a *FeishuAdapter) handleDataFrame(ctx context.Context, conn *websocket.Con
 	}
 
 	if err != nil {
-		slog.Error("feishu: handle long connection message failed", "message_type", msgType, "message_id", msgID, "trace_id", traceID, "error", err)
+		log.Errorf("feishu: handle long connection message failed message_type=%v message_id=%v trace_id=%v error=%v", msgType, msgID, traceID, err)
 	}
 
 	respPayload, marshalErr := json.Marshal(resp)
@@ -646,10 +646,9 @@ func (a *FeishuAdapter) queueConsumer(ctx context.Context) {
 
 // dispatchMessage routes a queued message through the router.
 func (a *FeishuAdapter) dispatchMessage(msg IncomingMessage) {
-	slog.Debug("feishu: dispatching queued message",
-		"chat_id", msg.ChatID,
-		"sender_id", msg.SenderID,
-		"message_id", msg.MessageID,
+	log.Debugf("feishu: dispatching queued message chat_id=%v sender_id=%v message_id=%v", msg.ChatID,
+		msg.SenderID,
+		msg.MessageID,
 	)
 	if a.msgRouter != nil {
 		a.msgRouter.HandleIncomingMessage(msg)
@@ -666,11 +665,11 @@ func (a *FeishuAdapter) handleMessageEvent(_ context.Context, event *larkim.P2Me
 	contentRaw := derefString(message.Content)
 	contentText, err := parseFeishuMessageText(messageType, contentRaw)
 	if err != nil {
-		slog.Error("feishu: failed to parse message content", "error", err, "msg_type", messageType, "content", contentRaw)
+		log.Errorf("feishu: failed to parse message content error=%v msg_type=%v content=%v", err, messageType, contentRaw)
 		return nil
 	}
 	if strings.TrimSpace(contentText) == "" {
-		slog.Debug("feishu: ignoring empty message", "msg_type", messageType)
+		log.Debugf("feishu: ignoring empty message msg_type=%v", messageType)
 		return nil
 	}
 
@@ -688,17 +687,17 @@ func (a *FeishuAdapter) handleMessageEvent(_ context.Context, event *larkim.P2Me
 	}
 
 	if !fc.IsOpenIDAllowed(senderOpenID) {
-		slog.Debug("feishu: message from non-allowed open_id, ignoring", "open_id", senderOpenID, "chat_id", chatID)
+		log.Debugf("feishu: message from non-allowed open_id, ignoring open_id=%v chat_id=%v", senderOpenID, chatID)
 		return nil
 	}
 
 	dedupeKey := fmt.Sprintf(feishuDedupeKeyFmt, appID, chatID, messageID)
 	if !a.dedupe.TryBegin(dedupeKey) {
-		slog.Debug("feishu: duplicate message, skipping", "message_id", messageID, "chat_id", chatID)
+		log.Debugf("feishu: duplicate message, skipping message_id=%v chat_id=%v", messageID, chatID)
 		return nil
 	}
 
-	slog.Info("feishu: received message", "chat_id", chatID, "open_id", senderOpenID, "message_id", messageID, "content", contentText)
+	log.Infof("feishu: received message chat_id=%v open_id=%v message_id=%v content=%v", chatID, senderOpenID, messageID, contentText)
 	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: messageID, ConversationID: conversationID, Text: contentText, AppID: appID}
 	if a.enqueueIncomingMessage(msg) {
 		a.dedupe.Commit(dedupeKey)
@@ -754,7 +753,7 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 		senderOpenID = event.Event.Operator.OpenID
 	}
 	if !fc.IsOpenIDAllowed(senderOpenID) {
-		slog.Debug("feishu: card action from non-allowed open_id, ignoring", "open_id", senderOpenID, "chat_id", chatID)
+		log.Debugf("feishu: card action from non-allowed open_id, ignoring open_id=%v chat_id=%v", senderOpenID, chatID)
 		return nil, nil
 	}
 
@@ -765,17 +764,17 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 	contextIMType, _ := event.Event.Action.Value["im_type"].(string)
 	contextChatID, _ := event.Event.Action.Value["chat_id"].(string)
 	if requestID == "" || actionType == "" || contextChatID == "" || contextIMType != "feishu" || contextChatID != chatID {
-		slog.Warn("feishu: stale/wrong-context card action ignored", "request_id", requestID, "chat_id", chatID, "context_chat_id", contextChatID, "action_type", actionType)
+		log.Warnf("feishu: stale/wrong-context card action ignored request_id=%v chat_id=%v context_chat_id=%v action_type=%v", requestID, chatID, contextChatID, actionType)
 		return nil, nil
 	}
 	if !isValidFeishuCardAction(actionType, action, value) {
-		slog.Warn("feishu: invalid card action ignored", "request_id", requestID, "chat_id", chatID, "action_type", actionType, "action", action)
+		log.Warnf("feishu: invalid card action ignored request_id=%v chat_id=%v action_type=%v action=%v", requestID, chatID, actionType, action)
 		return nil, nil
 	}
 
 	dedupeKey := fmt.Sprintf(feishuCardActionFmt, fc.AppID, chatID, requestID+"|"+actionType+"|"+action+"|"+value)
 	if !a.dedupe.TryBegin(dedupeKey) {
-		slog.Debug("feishu: duplicate card action, skipping", "request_id", requestID, "action_type", actionType, "chat_id", chatID)
+		log.Debugf("feishu: duplicate card action, skipping request_id=%v action_type=%v chat_id=%v", requestID, actionType, chatID)
 		return nil, nil
 	}
 
@@ -804,7 +803,7 @@ func (a *FeishuAdapter) enqueueIncomingMessage(msg IncomingMessage) bool {
 	case a.messageQueue <- msg:
 		return true
 	default:
-		slog.Error("feishu: message queue full, dropping message", "chat_id", msg.ChatID, "message_id", msg.MessageID)
+		log.Errorf("feishu: message queue full, dropping message chat_id=%v message_id=%v", msg.ChatID, msg.MessageID)
 		return false
 	}
 }
@@ -857,7 +856,7 @@ func (a *FeishuAdapter) getAccessToken() (string, error) {
 	}
 	a.tokenExpireAt = time.Now().Add(time.Duration(expiry) * time.Second)
 
-	slog.Info("feishu: access token refreshed", "expire", result.Expire)
+	log.Infof("feishu: access token refreshed expire=%v", result.Expire)
 	return a.accessToken, nil
 }
 
@@ -901,7 +900,7 @@ func (a *FeishuAdapter) doFeishuJSONRequest(method, url string, reqBody any, res
 
 	if result.Code != 0 {
 		if result.Code == 99991663 && !retry {
-			slog.Warn("feishu: access token expired, refreshing")
+			log.Warnf("feishu: access token expired, refreshing")
 			a.mu.Lock()
 			a.accessToken = ""
 			a.tokenExpireAt = time.Time{}

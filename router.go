@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"os"
 	"strings"
 	"sync"
@@ -211,12 +211,11 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	if msg.InternalAction != nil {
 		cmd = commandFromInternalAction(msg.InternalAction)
 	}
-	slog.Debug("im command parsed",
-		"chatID", chatID,
-		"senderID", msg.SenderID,
-		"messageID", msg.MessageID,
-		"type", cmd.Type,
-		"action", cmd.Action,
+	log.Debugf("im command parsed chatID=%v senderID=%v messageID=%v type=%v action=%v", chatID,
+		msg.SenderID,
+		msg.MessageID,
+		cmd.Type,
+		cmd.Action,
 	)
 
 	if cmd.Type == "bind" {
@@ -231,12 +230,12 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	}
 	ws, err := cfg.ResolveWorkspace(imType, chatID)
 	if err != nil {
-		slog.Warn("resolve workspace failed", "imType", imType, "chatID", chatID, "error", err)
+		log.Warnf("resolve workspace failed imType=%v chatID=%v error=%v", imType, chatID, err)
 		r.sendText(chatID, fmt.Sprintf("⚠️ %v", err))
 		return
 	}
 	if ws == nil {
-		slog.Warn("no workspace for chatID", "chatID", chatID)
+		log.Warnf("no workspace for chatID chatID=%v", chatID)
 		r.sendText(chatID, "⚠️ No workspace configured for this chat.")
 		return
 	}
@@ -281,7 +280,7 @@ func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID, imType stri
 	}
 	if r.mgr.pins != nil {
 		if err := r.mgr.pins.Set(key, ""); err != nil {
-			slog.Warn("clear session pin failed", "key", key, "error", err)
+			log.Warnf("clear session pin failed key=%v error=%v", key, err)
 		}
 	}
 	if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err != nil {
@@ -310,9 +309,9 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 	if r.mgr != nil && r.mgr.pins != nil {
 		if err := r.mgr.pins.Set(key, sessionID); err != nil {
 			if strings.TrimSpace(sessionID) == "" {
-				slog.Warn("clear session pin failed", "key", key, "error", err)
+				log.Warnf("clear session pin failed key=%v error=%v", key, err)
 			} else {
-				slog.Warn("pin resume session failed", "key", key, "session_id", sessionID, "error", err)
+				log.Warnf("pin resume session failed key=%v session_id=%v error=%v", key, sessionID, err)
 			}
 		}
 	}
@@ -327,10 +326,10 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 	}
 	if err != nil {
 		if strings.TrimSpace(sessionID) == "" {
-			slog.Error("failed to spawn new process", "workspace", ws.ID, "error", err)
+			log.Errorf("failed to spawn new process workspace=%v error=%v", ws.ID, err)
 			r.sendText(chatID, "❌ Failed to start new session.")
 		} else {
-			slog.Error("failed to spawn process for resume", "workspace", ws.ID, "error", err)
+			log.Errorf("failed to spawn process for resume workspace=%v error=%v", ws.ID, err)
 			r.sendText(chatID, "❌ Failed to resume session.")
 		}
 		return
@@ -460,7 +459,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	// Permission check: only allowed open_ids can execute /bind.
 	feishuCfg := imCfg.Feishu
 	if feishuCfg != nil && !feishuCfg.IsOpenIDAllowed(msg.SenderID) {
-		slog.Warn("bind: sender not allowed, ignoring", "sender_id", msg.SenderID, "chat_id", chatID)
+		log.Warnf("bind: sender not allowed, ignoring sender_id=%v chat_id=%v", msg.SenderID, chatID)
 		return
 	}
 	// Busy check: cannot rebind while a session is actively running.
@@ -536,7 +535,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		r.mgr.StopProcessKey(oldKey)
 		if r.mgr.pins != nil {
 			if err := r.mgr.pins.Set(oldKey, ""); err != nil {
-				slog.Warn("clear old session pin failed", "key", oldKey, "error", err)
+				log.Warnf("clear old session pin failed key=%v error=%v", oldKey, err)
 			}
 		}
 	}
@@ -597,33 +596,31 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	r.recordExpiredPending(key, state)
 	workspaceID, imType, chatID := parseProcessKey(key)
 	if workspaceID == "" || imType == "" || chatID == "" {
-		slog.Warn("gateway event has invalid process key", "event", eventType, "key", key)
+		log.Warnf("gateway event has invalid process key event=%v key=%v", eventType, key)
 		return
 	}
 
-	slog.Info("gateway routing event",
-		"event", eventType,
-		"key", key,
-		"workspace", workspaceID,
-		"im", imType,
-		"chat_id", chatID,
-		"session_id", state.SessionID,
-		"busy", state.Busy,
-		"phase", state.Phase,
-		"last_outcome", state.LastOutcome,
-		"assistant_text_len", len(state.LastAssistantText),
+	log.Infof("gateway routing event event=%v key=%v workspace=%v im=%v chat_id=%v session_id=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v", eventType,
+		key,
+		workspaceID,
+		imType,
+		chatID,
+		state.SessionID,
+		state.Busy,
+		state.Phase,
+		state.LastOutcome,
+		len(state.LastAssistantText),
 	)
 
 	msg := r.formatNotification(key, workspaceID, eventType, state)
 	willSend := msg != ""
 	msgLen := len(msg)
-	slog.Info("gateway routing decision",
-		"event", eventType,
-		"key", key,
-		"chat_id", chatID,
-		"assistant_text_len", len(state.LastAssistantText),
-		"message_len", msgLen,
-		"will_send", willSend,
+	log.Infof("gateway routing decision event=%v key=%v chat_id=%v assistant_text_len=%v message_len=%v will_send=%v", eventType,
+		key,
+		chatID,
+		len(state.LastAssistantText),
+		msgLen,
+		willSend,
 	)
 	if msg == "" {
 		if eventType == "idle" || eventType == "idle_timeout" || eventType == "exit" {
@@ -708,7 +705,7 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, process
 		return
 	}
 	if err := feishu.UpdateInteractiveCard(handle, card); err != nil {
-		slog.Warn("feishu: failed to update interactive card", "request_id", requestID, "request_type", requestType, "message_id", handle.MessageID, "error", err)
+		log.Warnf("feishu: failed to update interactive card request_id=%v request_type=%v message_id=%v error=%v", requestID, requestType, handle.MessageID, err)
 	}
 }
 
@@ -817,12 +814,12 @@ func (r *NotificationRouter) lookupProcessByKey(key string) (*ChordProcess, bool
 func (r *NotificationRouter) sendText(chatID, text string) {
 	a := r.currentAdapter()
 	if a == nil {
-		slog.Debug("adapter not set, skipping notification", "chatID", chatID)
+		log.Debugf("adapter not set, skipping notification chatID=%v", chatID)
 		return
 	}
-	slog.Info("gateway sending notification", "chatID", chatID, "text_len", len(text))
+	log.Infof("gateway sending notification chatID=%v text_len=%v", chatID, len(text))
 	if err := a.SendText(chatID, text); err != nil {
-		slog.Error("failed to send notification", "chatID", chatID, "text_len", len(text), "error", err)
+		log.Errorf("failed to send notification chatID=%v text_len=%v error=%v", chatID, len(text), err)
 	}
 }
 
@@ -842,7 +839,7 @@ func (r *NotificationRouter) sendTextAll(workspaceID, text string) {
 				continue
 			}
 			if err := adapter.SendText(chatID, text); err != nil {
-				slog.Error("failed to send notification", "type", imType, "chatID", chatID, "error", err)
+				log.Errorf("failed to send notification type=%v chatID=%v error=%v", imType, chatID, err)
 			}
 		}
 		return
@@ -881,13 +878,13 @@ func (r *NotificationRouter) HandleLoginResult(imType string, success bool, errM
 func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
 	a := r.currentAdapter()
 	if a == nil {
-		slog.Warn("no adapter set, cannot broadcast notification")
+		log.Warnf("no adapter set, cannot broadcast notification")
 		return
 	}
 	if multi, ok := a.(*MultiAdapter); ok {
 		cfg := r.getConfig()
 		if cfg == nil {
-			slog.Warn("no config set, cannot broadcast notification")
+			log.Warnf("no config set, cannot broadcast notification")
 			return
 		}
 		for i := range cfg.Workspaces {
@@ -900,7 +897,7 @@ func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
 		return
 	}
 	// Single adapter mode — can't cross-notify.
-	slog.Warn("session issue but no multi-IM for cross-notification", "exclude", excludeType)
+	log.Warnf("session issue but no multi-IM for cross-notification exclude=%v", excludeType)
 }
 
 // imDisplayName returns a human-friendly name for an IM type.

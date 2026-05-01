@@ -5,7 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -184,11 +184,11 @@ func (ds *DedupeStore) saveToFileLocked() error {
 	}
 	data, err := json.Marshal(toSave)
 	if err != nil {
-		slog.Error("dedupe: failed to marshal entries", "error", err)
+		log.Errorf("dedupe: failed to marshal entries error=%v", err)
 		return err
 	}
 	if err := writeFileAtomically(ds.storagePath, data, 0o600); err != nil {
-		slog.Error("dedupe: failed to write file", "error", err)
+		log.Errorf("dedupe: failed to write file error=%v", err)
 		return err
 	}
 	return nil
@@ -202,13 +202,13 @@ func (ds *DedupeStore) loadFromFile() {
 	data, err := os.ReadFile(ds.storagePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Warn("dedupe: failed to read file", "error", err)
+			log.Warnf("dedupe: failed to read file error=%v", err)
 		}
 		return
 	}
 	var entries []dedupeEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		slog.Warn("dedupe: failed to parse file", "error", err)
+		log.Warnf("dedupe: failed to parse file error=%v", err)
 		return
 	}
 	ds.mu.Lock()
@@ -218,5 +218,5 @@ func (ds *DedupeStore) loadFromFile() {
 			ds.entries[e.Key] = e
 		}
 	}
-	slog.Info("dedupe: loaded entries from file", "count", len(ds.entries))
+	log.Infof("dedupe: loaded entries from file count=%v", len(ds.entries))
 }

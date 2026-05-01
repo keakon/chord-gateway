@@ -57,7 +57,7 @@ The gateway loads config in this priority order:
 
 ## Logs
 
-The gateway writes structured logs to stderr and to a rotating log file under the state directory.
+The gateway writes golog-formatted key-value logs to stderr and to a rotating log file under the state directory.
 By default, the log file is `<state_dir>/gateway.log`; set `CHORD_GATEWAY_LOG_FILE` to override it.
 Log files rotate at 10 MiB and keep 3 backups. Rotated logs are not gzip-compressed.
 

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log/slog"
+	"github.com/keakon/golog/log"
 	"strings"
 	"time"
 )
@@ -109,10 +109,10 @@ func (p *ChordProcess) handleExit() {
 		exitCode = cmd.ProcessState.ExitCode()
 	}
 
-	slog.Info("chord process exited", "key", key, "pid", pid, "exit_code", exitCode, "crashed", crashed)
+	log.Infof("chord process exited key=%v pid=%v exit_code=%v crashed=%v", key, pid, exitCode, crashed)
 	if crashed && strings.TrimSpace(stderr) != "" {
 		// Keep stderr short; full details are usually in chord.log.
-		slog.Warn("chord process stderr", "key", key, "pid", pid, "stderr", truncateStderr(stderr, 2000))
+		log.Warnf("chord process stderr key=%v pid=%v stderr=%v", key, pid, truncateStderr(stderr, 2000))
 	}
 
 	if p.onEvent != nil {
@@ -121,14 +121,14 @@ func (p *ChordProcess) handleExit() {
 
 	if autoRestart {
 		go func() {
-			slog.Info("auto-restarting crashed chord process in 5s", "key", key)
+			log.Infof("auto-restarting crashed chord process in 5s key=%v", key)
 			time.Sleep(5 * time.Second)
 			// Use the manager to respawn; it handles the procs map.
 			if p.mgr != nil {
 				if _, err := p.mgr.GetOrSpawnForKey(key); err != nil {
-					slog.Error("auto-restart failed", "key", key, "error", err)
+					log.Errorf("auto-restart failed key=%v error=%v", key, err)
 				} else {
-					slog.Info("auto-restart succeeded", "key", key)
+					log.Infof("auto-restart succeeded key=%v", key)
 				}
 			}
 		}()
@@ -190,7 +190,7 @@ func (m *ChordManager) IdleCheckLoop() {
 			} else {
 				p.mu.Unlock()
 			}
-			slog.Info("idle timeout, stopping chord process", "workspace", p.workspaceID)
+			log.Infof("idle timeout, stopping chord process workspace=%v", p.workspaceID)
 			p.TerminateGroup(2 * time.Second)
 		}
 	}

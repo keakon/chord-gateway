@@ -9,8 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/keakon/golog/log"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -186,7 +186,7 @@ func NewWechatAdapter(_ *config.Config, imCfg config.IMAdapterConfig, paths *con
 	// Try to load existing token.
 	if token := a.loadToken(); token != nil {
 		a.token.Store(token)
-		slog.Info("wechat ilink: loaded saved token", "account_id", token.AccountID)
+		log.Infof("wechat ilink: loaded saved token account_id=%v", token.AccountID)
 	}
 
 	// Try to load saved sync buf.
@@ -241,13 +241,13 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 				SavedAt:   time.Now().Format(time.RFC3339),
 			})
 			a.saveToken()
-			slog.Info("wechat ilink: re-login successful via QR scan")
+			log.Infof("wechat ilink: re-login successful via QR scan")
 			if a.router != nil {
 				a.router.HandleLoginResult("wechat", true, "")
 			}
 			return
 		case "expired":
-			slog.Warn("wechat ilink: QR code expired during re-login")
+			log.Warnf("wechat ilink: QR code expired during re-login")
 			if a.router != nil {
 				a.router.HandleLoginResult("wechat", false, "QR code expired")
 			}
@@ -259,7 +259,7 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 			time.Sleep(ilinkPollInterval)
 		}
 	}
-	slog.Warn("wechat ilink: re-login polling timed out")
+	log.Warnf("wechat ilink: re-login polling timed out")
 	if a.router != nil {
 		a.router.HandleLoginResult("wechat", false, "login timeout")
 	}
@@ -285,7 +285,7 @@ func (a *WechatAdapter) Connect() error {
 
 // connectConsole runs in console mode (stdin/stdout) for testing without WeChat.
 func (a *WechatAdapter) connectConsole(ctx context.Context) error {
-	slog.Info("wechat adapter: console mode (no base_url configured and no saved token), reading from stdin")
+	log.Infof("wechat adapter: console mode (no base_url configured and no saved token), reading from stdin")
 
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
@@ -303,7 +303,7 @@ func (a *WechatAdapter) connectConsole(ctx context.Context) error {
 			})
 		}
 		if err := scanner.Err(); err != nil {
-			slog.Error("wechat: stdin read error", "error", err)
+			log.Errorf("wechat: stdin read error error=%v", err)
 		}
 		a.cancel()
 	}()
@@ -323,9 +323,9 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 	// Startup probe: do one lightweight getUpdates call to detect expired tokens early.
 	resp, err := a.getUpdates()
 	if err != nil {
-		slog.Warn("wechat ilink: startup probe failed", "error", err)
+		log.Warnf("wechat ilink: startup probe failed error=%v", err)
 	} else if resp.ErrCode == ilinkSessionExpired || resp.Ret == ilinkSessionExpired {
-		slog.Warn("wechat ilink: saved token is expired, clearing it and re-login")
+		log.Warnf("wechat ilink: saved token is expired, clearing it and re-login")
 		a.clearToken()
 		if err := a.login(ctx); err != nil {
 			return fmt.Errorf("wechat ilink re-login: %w", err)
@@ -333,9 +333,8 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 	}
 
 	tok := a.token.Load()
-	slog.Info("wechat ilink: connected, starting monitor loop",
-		"account_id", tok.AccountID,
-		"base_url", tok.BaseURL,
+	log.Infof("wechat ilink: connected, starting monitor loop account_id=%v base_url=%v", tok.AccountID,
+		tok.BaseURL,
 	)
 
 	a.monitorLoop(ctx)
@@ -392,7 +391,7 @@ func (a *WechatAdapter) tokenString() string {
 func randomWechatUIN() string {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		slog.Warn("wechat ilink: failed to generate random uin bytes, using time-based fallback", "error", err)
+		log.Warnf("wechat ilink: failed to generate random uin bytes, using time-based fallback error=%v", err)
 		return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
 	}
 	val := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
@@ -459,7 +458,7 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 	// Temporarily set baseURL for API calls during login.
 	a.token.Store(&TokenData{BaseURL: strings.TrimRight(baseURL, "/")})
 
-	slog.Info("wechat ilink: starting QR login flow")
+	log.Infof("wechat ilink: starting QR login flow")
 
 	// Step 1: Get QR code.
 	qrResp, err := a.getBotQRCode()
@@ -490,7 +489,7 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 
 		statusResp, err := a.getQRCodeStatus(currentQRCode)
 		if err != nil {
-			slog.Warn("wechat ilink: polling QR status failed", "error", err)
+			log.Warnf("wechat ilink: polling QR status failed error=%v", err)
 			time.Sleep(ilinkPollInterval)
 			continue
 		}
@@ -499,13 +498,13 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 		case "wait":
 			// Still waiting, poll again.
 		case "scaned":
-			slog.Info("wechat ilink: QR code scanned, please confirm in WeChat...")
+			log.Infof("wechat ilink: QR code scanned, please confirm in WeChat...")
 		case "expired":
 			refreshCount++
 			if refreshCount > 3 {
 				return fmt.Errorf("QR code expired multiple times, please retry")
 			}
-			slog.Warn("wechat ilink: QR expired, refreshing", "attempt", refreshCount)
+			log.Warnf("wechat ilink: QR expired, refreshing attempt=%v", refreshCount)
 			newQR, err := a.getBotQRCode()
 			if err != nil {
 				return fmt.Errorf("refresh QR code: %w", err)
@@ -514,7 +513,7 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 			fmt.Println("New QR code (scan again):")
 			fmt.Printf("  %s\n", newQR.QRCodeImgContent)
 		case "confirmed":
-			slog.Info("wechat ilink: login successful!")
+			log.Infof("wechat ilink: login successful!")
 			tok := &TokenData{
 				Token:     statusResp.BotToken,
 				BaseURL:   statusResp.BaseURL,
@@ -524,7 +523,7 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 			}
 			a.token.Store(tok)
 			a.saveToken()
-			slog.Info("wechat ilink: token saved", "account_id", tok.AccountID)
+			log.Infof("wechat ilink: token saved account_id=%v", tok.AccountID)
 			return nil
 		}
 
@@ -592,13 +591,12 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 				return
 			}
 			consecutiveFailures++
-			slog.Error("wechat ilink: getupdates error",
-				"error", err,
-				"consecutive_failures", consecutiveFailures,
-				"max", ilinkMaxRetries,
+			log.Errorf("wechat ilink: getupdates error error=%v consecutive_failures=%v max=%v", err,
+				consecutiveFailures,
+				ilinkMaxRetries,
 			)
 			if consecutiveFailures >= ilinkMaxRetries {
-				slog.Warn("wechat ilink: backing off after consecutive failures", "delay", ilinkBackoffDelay)
+				log.Warnf("wechat ilink: backing off after consecutive failures delay=%v", ilinkBackoffDelay)
 				consecutiveFailures = 0
 				a.sleep(ctx, ilinkBackoffDelay)
 			} else {
@@ -609,24 +607,23 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 
 		switch resp.statusKind() {
 		case ilinkGetUpdatesStatusSessionExpired:
-			slog.Warn("wechat ilink: session expired (errcode=-14), clearing token and re-login")
+			log.Warnf("wechat ilink: session expired (errcode=-14), clearing token and re-login")
 			a.clearToken()
 			if err := a.login(ctx); err != nil {
-				slog.Error("wechat ilink: re-login failed", "error", err)
+				log.Errorf("wechat ilink: re-login failed error=%v", err)
 				a.notifySessionExpired()
 				a.sleep(ctx, ilinkBackoffDelay)
 			}
 			continue
 		case ilinkGetUpdatesStatusError:
 			consecutiveFailures++
-			slog.Warn("wechat ilink: getupdates API error",
-				"ret", resp.Ret,
-				"errcode", resp.ErrCode,
-				"errmsg", resp.ErrMsg,
-				"consecutive_failures", consecutiveFailures,
+			log.Warnf("wechat ilink: getupdates API error ret=%v errcode=%v errmsg=%v consecutive_failures=%v", resp.Ret,
+				resp.ErrCode,
+				resp.ErrMsg,
+				consecutiveFailures,
 			)
 			if consecutiveFailures >= ilinkMaxRetries {
-				slog.Warn("wechat ilink: backing off after consecutive failures", "delay", ilinkBackoffDelay)
+				log.Warnf("wechat ilink: backing off after consecutive failures delay=%v", ilinkBackoffDelay)
 				consecutiveFailures = 0
 				a.sleep(ctx, ilinkBackoffDelay)
 			} else {
@@ -654,7 +651,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 // other IM adapters can inform the user. The WeChat session is expired so we
 // cannot notify through WeChat itself.
 func (a *WechatAdapter) notifySessionExpired() {
-	slog.Warn("wechat ilink: session expired — notifying via other channels")
+	log.Warnf("wechat ilink: session expired — notifying via other channels")
 	if a.router != nil {
 		a.router.HandleSessionExpired("wechat")
 	}
@@ -711,7 +708,7 @@ func (a *WechatAdapter) handleIncomingMessage(msg ilinkMessage) {
 	}
 
 	text := strings.Join(textParts, "\n")
-	slog.Info("wechat ilink: received message", "from", msg.FromUserID, "text_len", len(text))
+	log.Infof("wechat ilink: received message from=%v text_len=%v", msg.FromUserID, len(text))
 
 	a.router.HandleIncomingMessage(IncomingMessage{
 		IMType:    "wechat",
@@ -733,7 +730,7 @@ func (a *WechatAdapter) sendILinkText(chatID, text string) error {
 		// iLink usually provides context_token on inbound messages, which is used to
 		// thread bot replies. Some message types/clients omit it; in that case, try
 		// sending without a context_token instead of dropping the reply.
-		slog.Warn("wechat ilink: missing context_token, attempting send without it", "chatID", chatID)
+		log.Warnf("wechat ilink: missing context_token, attempting send without it chatID=%v", chatID)
 		ctxToken = ""
 	}
 
@@ -788,7 +785,7 @@ func (a *WechatAdapter) sendMessage(body ilinkSendMessageRequest) error {
 
 	if result.ErrCode != 0 {
 		if result.ErrCode == ilinkSessionExpired {
-			slog.Warn("wechat ilink: send failed with session expired")
+			log.Warnf("wechat ilink: send failed with session expired")
 		}
 		return fmt.Errorf("send error: errcode=%d errmsg=%s", result.ErrCode, result.ErrMsg)
 	}
@@ -805,7 +802,7 @@ func (a *WechatAdapter) loadToken() *TokenData {
 	}
 	var token TokenData
 	if err := json.Unmarshal(data, &token); err != nil {
-		slog.Warn("wechat ilink: failed to parse token file", "path", a.tokenFile, "error", err)
+		log.Warnf("wechat ilink: failed to parse token file path=%v error=%v", a.tokenFile, err)
 		return nil
 	}
 	return &token
@@ -814,7 +811,7 @@ func (a *WechatAdapter) loadToken() *TokenData {
 func (a *WechatAdapter) clearToken() {
 	a.token.Store(nil)
 	if err := os.Remove(a.tokenFile); err != nil && !os.IsNotExist(err) {
-		slog.Warn("wechat ilink: failed to remove token file", "error", err)
+		log.Warnf("wechat ilink: failed to remove token file error=%v", err)
 	}
 }
 
@@ -824,16 +821,16 @@ func (a *WechatAdapter) saveToken() {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(a.tokenFile), 0o700); err != nil {
-		slog.Error("wechat ilink: failed to create token dir", "error", err)
+		log.Errorf("wechat ilink: failed to create token dir error=%v", err)
 		return
 	}
 	data, err := json.MarshalIndent(tok, "", "  ")
 	if err != nil {
-		slog.Error("wechat ilink: failed to marshal token", "error", err)
+		log.Errorf("wechat ilink: failed to marshal token error=%v", err)
 		return
 	}
 	if err := writeFileAtomically(a.tokenFile, data, 0o600); err != nil {
-		slog.Error("wechat ilink: failed to save token", "error", err)
+		log.Errorf("wechat ilink: failed to save token error=%v", err)
 	}
 }
 
@@ -860,7 +857,7 @@ func (a *WechatAdapter) loadSyncBuf() string {
 
 func (a *WechatAdapter) saveSyncBuf() {
 	if err := os.MkdirAll(a.storageDir, 0o700); err != nil {
-		slog.Error("wechat ilink: failed to create storage dir", "error", err)
+		log.Errorf("wechat ilink: failed to create storage dir error=%v", err)
 		return
 	}
 	obj := struct {
@@ -868,11 +865,11 @@ func (a *WechatAdapter) saveSyncBuf() {
 	}{GetUpdatesBuf: a.syncBuf}
 	data, err := json.Marshal(obj)
 	if err != nil {
-		slog.Error("wechat ilink: failed to marshal sync buf", "error", err)
+		log.Errorf("wechat ilink: failed to marshal sync buf error=%v", err)
 		return
 	}
 	if err := writeFileAtomically(a.syncBufPath(), data, 0o600); err != nil {
-		slog.Error("wechat ilink: failed to save sync buf", "error", err)
+		log.Errorf("wechat ilink: failed to save sync buf error=%v", err)
 	}
 }
 

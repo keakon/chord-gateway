@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/keakon/golog/log"
 	"io"
-	"log/slog"
 	"os/exec"
 	"strings"
 	"sync"
@@ -288,10 +288,9 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	}
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 
-	slog.Info("chord process spawned",
-		"workspace", ws.ID,
-		"pid", cmd.Process.Pid,
-		"dir", ws.Path,
+	log.Infof("chord process spawned workspace=%v pid=%v dir=%v", ws.ID,
+		cmd.Process.Pid,
+		ws.Path,
 	)
 
 	go p.readLoop(ctx, stdoutPipe)
@@ -305,7 +304,7 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 		"type":   "subscribe",
 		"events": configuredHeadlessSubscribeEvents(cfg),
 	}); err != nil {
-		slog.Warn("failed to send subscribe command", "workspace", ws.ID, "key", key, "error", err)
+		log.Warnf("failed to send subscribe command workspace=%v key=%v error=%v", ws.ID, key, err)
 	}
 
 	return p, nil
