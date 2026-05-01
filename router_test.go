@@ -891,8 +891,8 @@ func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	if msg := r.formatNotification("test-key", "test", "error", ControlState{LastError: "boom"}); msg != "" {
 		t.Fatalf("error = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "idle", ControlState{LastOutcome: "completed"}); msg != "" {
-		t.Fatalf("idle = %q, want empty", msg)
+	if msg := r.formatNotification("test-key", "test", "idle", ControlState{LastOutcome: "completed"}); msg != "✅ Chord: Ready for input" {
+		t.Fatalf("idle = %q, want %q", msg, "✅ Chord: Ready for input")
 	}
 	if msg := r.formatNotification("test-key", "test", "agent_done", ControlState{}); msg != "" {
 		t.Fatalf("agent_done = %q, want empty", msg)
@@ -1156,9 +1156,9 @@ func TestFormatQuestionNotification(t *testing.T) {
 	})
 }
 
-func TestFormatExpiredPendingNotification(t *testing.T) {
+func TestFormatIdleNotification(t *testing.T) {
 	r := &NotificationRouter{}
-	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{}); got != "" {
+	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{}); got != "✅ Chord: Ready for input" {
 		t.Fatalf("idle without expired pending = %q", got)
 	}
 	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env"}}); !strings.Contains(got, "pending question has expired") {

@@ -22,7 +22,10 @@ func (r *NotificationRouter) formatNotification(key, workspaceID, eventType stri
 	case "question_request":
 		return r.formatQuestionNotification(state)
 
-	case "idle", "idle_timeout":
+	case "idle":
+		return r.formatIdleNotification(state)
+
+	case "idle_timeout":
 		return r.formatExpiredPendingNotification(state)
 
 	case "error":
@@ -72,6 +75,13 @@ func (r *NotificationRouter) formatExpiredPendingNotification(state ControlState
 		return "⌛ The pending confirmation has expired. It was not approved or denied. Please retry the original request if confirmation is still needed."
 	}
 	return ""
+}
+
+func (r *NotificationRouter) formatIdleNotification(state ControlState) string {
+	if msg := r.formatExpiredPendingNotification(state); msg != "" {
+		return msg
+	}
+	return "✅ Chord: Ready for input"
 }
 
 func (r *NotificationRouter) formatHeadlessNotification(state ControlState) string {
@@ -333,6 +343,9 @@ func (r *NotificationRouter) formatTodosNotification(state ControlState) string 
 }
 
 func (r *NotificationRouter) formatLongRunningNotification(state ControlState) string {
+	if state.PendingConfirm != nil || state.PendingQuestion != nil {
+		return ""
+	}
 	msg := "⏳ Still working"
 	if state.InternalEventsSinceLastPush > 0 {
 		msg += fmt.Sprintf(" (%d internal events)", state.InternalEventsSinceLastPush)

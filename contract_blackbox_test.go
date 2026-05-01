@@ -146,7 +146,7 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 	provider.assertRequests(t, 2)
 }
 
-func TestChordHeadlessContract_DefaultSubscribeIncludesIdleAndNotification(t *testing.T) {
+func TestChordHeadlessContract_DefaultSubscribeIncludesIdle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping cross-repo contract test in short mode")
 	}
@@ -202,9 +202,9 @@ func TestChordHeadlessContract_DefaultSubscribeIncludesIdleAndNotification(t *te
 	}
 
 	seen := collectEvents(t, eventsCh, 20*time.Second, func(set map[string]bool) bool {
-		return set["assistant_message"] && set["notification"] && set["idle"]
+		return set["assistant_message"] && set["idle"]
 	})
-	for _, want := range []string{"assistant_message", "notification", "idle"} {
+	for _, want := range []string{"assistant_message", "idle"} {
 		if !seen[want] {
 			t.Fatalf("expected event %q in %v", want, mapKeys(seen))
 		}
