@@ -40,8 +40,11 @@ idle_timeout: 30m
 
 - 日志
 - 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）
+- 微信同步游标（`<state_dir>/wechat/sync-buf.json`）
 - 飞书去重存储
 - session pin 存储
+
+gateway 会通过原子替换写入 WeChat token / sync 状态、飞书去重状态和 session pin 状态，避免在崩溃或异常重启时留下截断的状态文件。
 
 ## 配置文件解析
 

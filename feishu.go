@@ -223,15 +223,11 @@ func (a *FeishuAdapter) Connect() error {
 			}
 			slog.Warn("feishu: long connection dropped, retrying", "error", err, "retry_in", a.currentReconnectInterval())
 		}
-		if !sleepWithContext(ctx, a.currentReconnectInterval()) {
+		if !sleepCtx(ctx, a.currentReconnectInterval()) {
 			a.wg.Wait()
 			return nil
 		}
 	}
-}
-
-func sleepWithContext(ctx context.Context, d time.Duration) bool {
-	return sleepCtx(ctx, d)
 }
 
 func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkdispatcher.EventDispatcher) error {

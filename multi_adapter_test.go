@@ -41,7 +41,7 @@ func TestMultiAdapter_SendText(t *testing.T) {
 	t.Run("routes via router adapter type", func(t *testing.T) {
 		wechat := &stubIMAdapter{typ: "wechat"}
 		feishu := &stubIMAdapter{typ: "feishu"}
-		r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
+		r := &NotificationRouter{mgr: newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}), lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
 		m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}, router: r}
 		if err := m.SendText("feishu-chat", "hello"); err != nil {
 			t.Fatalf("SendText() error = %v", err)
@@ -141,7 +141,7 @@ func TestMultiAdapter_BroadcastTextExcept(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
 	console := &stubIMAdapter{typ: "console"}
-	r := &NotificationRouter{cfg: &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-fallback": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}, lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
+	r := &NotificationRouter{mgr: newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-fallback": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}), lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
 	m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu, console}, router: r}
 
 	m.BroadcastTextExcept("wechat", map[string]string{"feishu": "feishu-direct"}, "cross notify")

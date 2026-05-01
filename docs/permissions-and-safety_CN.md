@@ -43,10 +43,11 @@ ims:
 
 - 飞书 `app_secret`
 - 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）
+- 微信同步游标（`<state_dir>/wechat/sync-buf.json`）
 - gateway 状态目录
 - Chord provider 凭据和 auth 文件
 
-不要把密钥或状态目录提交到版本控制。
+不要把密钥或状态目录提交到版本控制。条件允许时，应把 gateway 状态目录的读取权限限制在 gateway 运行用户内，因为 session pin 和同步状态即使不属于直接凭据，也可能暴露聊天 / 会话标识符。
 
 ## 多工作区安全
 

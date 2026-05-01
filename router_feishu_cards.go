@@ -61,11 +61,7 @@ func shouldSendFeishuQuestionCard(q *QuestionPayload) bool {
 	return true
 }
 
-func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, ctx ...feishuCardContext) map[string]any {
-	cardCtx := feishuCardContext{}
-	if len(ctx) > 0 {
-		cardCtx = ctx[0]
-	}
+func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishuCardContext) map[string]any {
 	risk := riskLevelForTool(c.ToolName)
 	summary := summarizeToolArgs(c.ToolName, c.ArgsJSON)
 	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**🔧 %s**\nTool: `%s`", risk.Title, c.ToolName)}}
@@ -124,11 +120,7 @@ func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, ctx ...feishuCardC
 	}
 }
 
-func buildFeishuQuestionCard(chatID string, q *QuestionPayload, ctx ...feishuCardContext) map[string]any {
-	cardCtx := feishuCardContext{}
-	if len(ctx) > 0 {
-		cardCtx = ctx[0]
-	}
+func buildFeishuQuestionCard(chatID string, q *QuestionPayload, cardCtx feishuCardContext) map[string]any {
 	question := strings.TrimSpace(q.Question)
 	if q.Header != "" {
 		question = strings.TrimSpace(q.Header) + ": " + question

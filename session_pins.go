@@ -56,7 +56,7 @@ func (s *sessionPinStore) savePinsLocked(pins map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("marshal pins: %w", err)
 	}
-	if err := s.writer(s.path, data, 0o644); err != nil {
+	if err := s.writer(s.path, data, 0o600); err != nil {
 		return fmt.Errorf("write pins: %w", err)
 	}
 	return nil

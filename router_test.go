@@ -32,7 +32,7 @@ func testConfig() *config.Config {
 
 func newTestRouter() *NotificationRouter {
 	return &NotificationRouter{
-		cfg:           testConfig(),
+		mgr:           newTestChordManager(testConfig()),
 		lastKeyChatID: make(map[string]string),
 	}
 }
@@ -40,8 +40,8 @@ func newTestRouter() *NotificationRouter {
 func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
 	cfg := testConfig()
 	mgr := newTestChordManager(cfg)
-	r := NewNotificationRouter(mgr, cfg)
-	if r.mgr != mgr || r.cfg != cfg {
+	r := NewNotificationRouter(mgr)
+	if r.mgr != mgr || r.getConfig() != cfg {
 		t.Fatalf("router links not initialized")
 	}
 	if r.lastKeyChatID == nil {
@@ -58,10 +58,33 @@ func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
 	}
 }
 
+func TestHandleIncomingMessageNoConfigLoaded(t *testing.T) {
+	sender := &stubIMAdapter{typ: "console"}
+	r := &NotificationRouter{adapter: sender, lastKeyChatID: make(map[string]string)}
+
+	r.HandleIncomingMessage(IncomingMessage{IMType: "console", ChatID: "chat", SenderID: "user", Text: "/status"})
+
+	if got := sender.lastMessage().text; !strings.Contains(got, "Configuration not loaded") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestRespawnSessionWithoutManager(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{adapter: sender}
+
+	r.respawnSession(&config.Workspace{ID: "ws1", Path: "/tmp/ws1"}, "chat-1", "wechat", "")
+
+	if got := sender.lastMessage().text; !strings.Contains(got, "Process manager not available") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
 func TestHandleIncomingMessageRoutesMissingWorkspaceError(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{WorkspaceID: "missing"}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 	r := &NotificationRouter{
-		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{WorkspaceID: "missing"}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+		mgr:           newTestChordManager(cfg),
 		adapter:       sender,
 		lastKeyChatID: make(map[string]string),
 	}
@@ -74,8 +97,9 @@ func TestHandleIncomingMessageRoutesMissingWorkspaceError(t *testing.T) {
 
 func TestHandleIncomingMessageNoWorkspace(t *testing.T) {
 	sender := &stubIMAdapter{typ: "console"}
+	cfg := &config.Config{Workspaces: nil}
 	r := &NotificationRouter{
-		cfg:           &config.Config{Workspaces: nil},
+		mgr:           newTestChordManager(cfg),
 		adapter:       sender,
 		lastKeyChatID: make(map[string]string),
 	}
@@ -104,7 +128,7 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 			PendingQuestion: &QuestionPayload{RequestID: "req-question", Options: []string{"yes", "no"}},
 		},
 	}
-	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 
 	r.HandleIncomingMessage(IncomingMessage{
 		IMType: "feishu",
@@ -166,7 +190,7 @@ func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
 	}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
 	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr, cfg)
+	r := NewNotificationRouter(mgr)
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 
@@ -179,7 +203,7 @@ func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
 	if got := currentFeishuBinding(r.getConfig(), "oc_new"); got != "project-a" {
 		t.Fatalf("binding = %q, want project-a", got)
 	}
-	ws := workspaceByID(r.cfg, "project-a")
+	ws := r.getConfig().WorkspaceByID("project-a")
 	if ws == nil || ws.Path != projectDir {
 		t.Fatalf("workspace project-a = %#v", ws)
 	}
@@ -211,7 +235,7 @@ func TestHandleBindRejectsInvalidQuotedPath(t *testing.T) {
 	}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
 	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr, cfg)
+	r := NewNotificationRouter(mgr)
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 
@@ -223,7 +247,7 @@ func TestHandleBindRejectsInvalidQuotedPath(t *testing.T) {
 	if got := currentFeishuBinding(r.getConfig(), "oc_new"); got != "" {
 		t.Fatalf("binding = %q, want empty", got)
 	}
-	if ws := workspaceByID(r.getConfig(), "project-a"); ws != nil {
+	if ws := r.getConfig().WorkspaceByID("project-a"); ws != nil {
 		t.Fatalf("workspace should not be created, got %#v", ws)
 	}
 }
@@ -250,7 +274,7 @@ func TestHandleBindFromDefaultWorkspaceStopsOldProcess(t *testing.T) {
 	}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
 	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr, cfg)
+	r := NewNotificationRouter(mgr)
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 	oldKey := (processKey{workspaceID: "default", imType: "feishu", chatID: "oc_chat"}).String()
@@ -290,7 +314,7 @@ func TestHandleBindFromDefaultWorkspaceStopsOldProcess(t *testing.T) {
 	if _, ok := r.reminders[oldKey]; ok {
 		t.Fatalf("old reminder should be removed")
 	}
-	ws := workspaceByID(r.getConfig(), "project-a")
+	ws := r.getConfig().WorkspaceByID("project-a")
 	if ws == nil || ws.Path != projectDir {
 		t.Fatalf("workspace project-a = %#v", ws)
 	}
@@ -318,7 +342,7 @@ func TestHandleBindUpdatesExistingBindingAndStopsOldProcess(t *testing.T) {
 	}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
 	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr, cfg)
+	r := NewNotificationRouter(mgr)
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 	oldKey := (processKey{workspaceID: "ws-old", imType: "feishu", chatID: "oc_chat"}).String()
@@ -388,7 +412,7 @@ func TestHandleBindRejectsPathMismatch(t *testing.T) {
 	}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
 	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr, cfg)
+	r := NewNotificationRouter(mgr)
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 
@@ -413,7 +437,7 @@ func TestHandleBindRejectsUnauthorizedSender(t *testing.T) {
 	}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
 	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr, cfg)
+	r := NewNotificationRouter(mgr)
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 
@@ -512,7 +536,7 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	feishu := &stubIMAdapter{typ: "feishu"}
 	r := &NotificationRouter{
 		adapter: &MultiAdapter{adapters: []IMAdapter{wechat, feishu}},
-		cfg:     &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+		mgr:     newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{
 			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat",
 		},
@@ -541,7 +565,7 @@ func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
 	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
 	sender := &stubIMAdapter{typ: "wechat"}
-	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+	r := &NotificationRouter{mgr: mgr, adapter: sender}
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 	if err := mgr.pins.Set(key, "old-session"); err != nil {
 		t.Fatalf("set old pin: %v", err)
@@ -576,7 +600,7 @@ func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
 	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
 	sender := &stubIMAdapter{typ: "wechat"}
-	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+	r := &NotificationRouter{mgr: mgr, adapter: sender}
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 
 	r.handleResume(ws, "chat-1", "session-123", "wechat")
@@ -601,7 +625,7 @@ func TestHandleNewAndResumeErrorPaths(t *testing.T) {
 	t.Run("new missing workspace", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		cfg := &config.Config{ChordPath: makeFakeChordBinary(t, ""), Workspaces: nil}
-		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), cfg: cfg, adapter: sender}
+		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), adapter: sender}
 
 		r.handleNew(ws, "chat-1", "wechat")
 		if got := sender.lastMessage().text; got != "❌ Failed to start new session." {
@@ -612,7 +636,7 @@ func TestHandleNewAndResumeErrorPaths(t *testing.T) {
 	t.Run("resume spawn failure", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		cfg := &config.Config{ChordPath: filepath.Join(t.TempDir(), "missing-chord"), Workspaces: []config.Workspace{*ws}}
-		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), cfg: cfg, adapter: sender}
+		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), adapter: sender}
 
 		r.handleResume(ws, "chat-1", "session-123", "wechat")
 		if got := sender.lastMessage().text; got != "❌ Failed to resume session." {
@@ -628,7 +652,7 @@ func TestHandleCurrentAndTodosNoActiveSession(t *testing.T) {
 
 	t.Run("current no active session", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+		r := &NotificationRouter{mgr: mgr, adapter: sender}
 		r.handleCurrent(ws, "chat-1", "wechat")
 		msg := sender.lastMessage().text
 		if !strings.Contains(msg, "Workspace: ws1") || !strings.Contains(strings.ToLower(msg), "idle") {
@@ -638,7 +662,7 @@ func TestHandleCurrentAndTodosNoActiveSession(t *testing.T) {
 
 	t.Run("todos no active session", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender}
+		r := &NotificationRouter{mgr: mgr, adapter: sender}
 		r.handleTodos(ws, "chat-1", "wechat")
 		if got := sender.lastMessage().text; got != "⏸️ No active session." {
 			t.Fatalf("todos message = %q", got)
@@ -739,21 +763,21 @@ func TestParseIMCommand(t *testing.T) {
 
 func TestFormatStatus(t *testing.T) {
 	t.Run("busy shows spinner", func(t *testing.T) {
-		s := formatStatus(ControlState{Busy: true})
+		s := formatBindingStatus(nil, "", "", ControlState{Busy: true})
 		if !containsEmoji(s, "🔄") {
 			t.Errorf("expected 🔄 in busy status, got: %s", s)
 		}
 	})
 
 	t.Run("idle shows pause", func(t *testing.T) {
-		s := formatStatus(ControlState{Busy: false})
+		s := formatBindingStatus(nil, "", "", ControlState{Busy: false})
 		if !containsEmoji(s, "⏸️") {
 			t.Errorf("expected ⏸️ in idle status, got: %s", s)
 		}
 	})
 
 	t.Run("pending confirm shows wrench", func(t *testing.T) {
-		s := formatStatus(ControlState{
+		s := formatBindingStatus(nil, "", "", ControlState{
 			Busy:           true,
 			PendingConfirm: &ConfirmPayload{ToolName: "Bash", RequestID: "r1"},
 		})
@@ -763,7 +787,7 @@ func TestFormatStatus(t *testing.T) {
 	})
 
 	t.Run("pending question shows question mark", func(t *testing.T) {
-		s := formatStatus(ControlState{
+		s := formatBindingStatus(nil, "", "", ControlState{
 			Busy:            false,
 			PendingQuestion: &QuestionPayload{Question: "Continue?", RequestID: "r2"},
 		})
@@ -773,7 +797,7 @@ func TestFormatStatus(t *testing.T) {
 	})
 
 	t.Run("last error shows cross", func(t *testing.T) {
-		s := formatStatus(ControlState{
+		s := formatBindingStatus(nil, "", "", ControlState{
 			Busy:      false,
 			LastError: "something broke",
 		})
@@ -1145,7 +1169,7 @@ func TestFormatExpiredPendingNotification(t *testing.T) {
 }
 
 func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T) {
-	r := &NotificationRouter{cfg: &config.Config{}, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	r := &NotificationRouter{mgr: newTestChordManager(&config.Config{}), lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat1"}).String()
 
 	r.HandleChordEvent(key, "idle", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "old-confirm"}})
@@ -1265,7 +1289,7 @@ func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "just info", ToastLevel: "info"}); msg != "" {
 		t.Fatalf("info toast = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "long_running", ControlState{Phase: "thinking", PhaseDetail: "analyzing", InternalEventsSinceLastPush: 2}); !strings.Contains(msg, "Still working") || !strings.Contains(msg, "2 internal events") || strings.Contains(msg, "thinking") {
+	if msg := r.formatLongRunningNotification(ControlState{Phase: "thinking", PhaseDetail: "analyzing", InternalEventsSinceLastPush: 2}); !strings.Contains(msg, "Still working") || !strings.Contains(msg, "2 internal events") || strings.Contains(msg, "thinking") {
 		t.Fatalf("long_running = %q", msg)
 	}
 }
@@ -1315,13 +1339,13 @@ func TestFormatTodosNotification(t *testing.T) {
 
 func TestChatIDLookupHelpers(t *testing.T) {
 	r := &NotificationRouter{
-		cfg: &config.Config{
+		mgr: newTestChordManager(&config.Config{
 			IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}, {Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"feishu-config": "ws1", "feishu-two": "ws2"}}}},
 			Workspaces: []config.Workspace{
 				{ID: "ws1", Path: "/tmp/ws1"},
 				{ID: "ws2", Path: "/tmp/ws2"},
 			},
-		},
+		}),
 		lastKeyChatID: map[string]string{
 			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String():    "wechat-chat",
 			(processKey{workspaceID: "ws1", imType: "feishu", chatID: "feishu-tracked"}).String(): "feishu-tracked",
@@ -1384,12 +1408,10 @@ func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
 }
 
 func TestHandleLogin(t *testing.T) {
-	ws := &config.Workspace{ID: "ws", Path: "/tmp/ws"}
-
 	t.Run("no supported targets", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		r := &NotificationRouter{adapter: sender}
-		r.handleLogin(ws, "chat", "wechat", "")
+		r.handleLogin("chat", "")
 		if got := sender.lastMessage().text; !strings.Contains(got, "No IM adapter supports login renewal") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1398,7 +1420,7 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("show usage when target missing", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: sender}
-		r.handleLogin(ws, "chat", "wechat", "")
+		r.handleLogin("chat", "")
 		if got := sender.lastMessage().text; !strings.Contains(got, "/login <platform>") || !strings.Contains(got, "wechat") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1407,7 +1429,7 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("adapter not found", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: sender}
-		r.handleLogin(ws, "chat", "wechat", "feishu")
+		r.handleLogin("chat", "feishu")
 		if got := sender.lastMessage().text; !strings.Contains(got, "No feishu adapter found") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1417,7 +1439,7 @@ func TestHandleLogin(t *testing.T) {
 		loginless := &stubIMAdapter{typ: "feishu"}
 		sender := &stubIMAdapter{typ: "wechat"}
 		r := &NotificationRouter{adapter: &MultiAdapter{adapters: []IMAdapter{sender, loginless}}}
-		r.handleLogin(ws, "chat", "wechat", "feishu")
+		r.handleLogin("chat", "feishu")
 		if got := sender.lastMessage().text; !strings.Contains(got, "Feishu does not support login renewal") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1427,7 +1449,7 @@ func TestHandleLogin(t *testing.T) {
 		loginErr := errors.New("boom")
 		loginAdapter := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "", loginErr }}
 		r := &NotificationRouter{adapter: loginAdapter}
-		r.handleLogin(ws, "chat", "wechat", "wechat")
+		r.handleLogin("chat", "wechat")
 		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "Failed to get WeChat login link") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1436,7 +1458,7 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("login success", func(t *testing.T) {
 		loginAdapter := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: loginAdapter}
-		r.handleLogin(ws, "chat", "wechat", "wechat")
+		r.handleLogin("chat", "wechat")
 		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "https://wx-login") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1449,7 +1471,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{
 		adapter:       multi,
-		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"},
 	}
 
@@ -1479,7 +1501,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 
 func TestSendTextAndBroadcastHelpers(t *testing.T) {
 	r := &NotificationRouter{
-		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-config": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}},
+		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-config": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"},
 	}
 
@@ -1553,7 +1575,7 @@ func TestBuildFeishuCardsAndButton(t *testing.T) {
 		OptionDetails: []string{"Proceed", "Stop"},
 		DefaultAnswer: "yes",
 		RequestID:     "req-2",
-	})
+	}, feishuCardContext{})
 	qBody := question["body"].(map[string]any)
 	qElements := qBody["elements"].([]any)
 	if len(qElements) < 5 {
@@ -1790,11 +1812,11 @@ func TestNormalizeIMTypeAndNames(t *testing.T) {
 	if got := normalizeIMType("LARK"); got != "lark" {
 		t.Fatalf("normalize lark = %q", got)
 	}
-	if got := loginCommandName("wechat"); got != "wechat" {
-		t.Fatalf("loginCommandName wechat = %q", got)
+	if got := normalizeIMType("wechat"); got != "wechat" {
+		t.Fatalf("normalizeIMType wechat = %q", got)
 	}
-	if got := loginCommandName("feishu"); got != "feishu" {
-		t.Fatalf("loginCommandName feishu = %q", got)
+	if got := normalizeIMType("feishu"); got != "feishu" {
+		t.Fatalf("normalizeIMType feishu = %q", got)
 	}
 	if got := imDisplayName("wechat"); got != "WeChat" {
 		t.Fatalf("imDisplayName wechat = %q", got)
@@ -1813,7 +1835,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: state}
 		mgr.procs[key] = proc
-		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+		r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 		return r, proc, sender, stdin, key, &cfg.Workspaces[0]
 	}
 
@@ -1944,7 +1966,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		oldBaseURL := feishuOpenBaseURL
 		feishuOpenBaseURL = server.URL
 		defer func() { feishuOpenBaseURL = oldBaseURL }()
-		r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
+		r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
 		r.recordCardHandle(key, "question", "req-auto", &InteractiveCardHandle{MessageID: "om_sent_1"})
 		msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
 		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", msg)
@@ -2053,7 +2075,7 @@ func TestFeishuCardRiskLevelsAndQuestionFallbackPolicy(t *testing.T) {
 		{tool: "Write", template: "orange", title: "Medium risk"},
 	} {
 		t.Run(tt.tool, func(t *testing.T) {
-			card := buildFeishuConfirmCard("chat", &ConfirmPayload{ToolName: tt.tool, RequestID: "req"})
+			card := buildFeishuConfirmCard("chat", &ConfirmPayload{ToolName: tt.tool, RequestID: "req"}, feishuCardContext{})
 			header := card["header"].(map[string]any)
 			if header["template"] != tt.template || !strings.Contains(fmt.Sprint(header), tt.title) {
 				t.Fatalf("header = %v", header)
@@ -2109,7 +2131,7 @@ func TestSummarizeToolArgsTruncatesLongPathsAndURLs(t *testing.T) {
 }
 
 func TestBuildFeishuQuestionCardListsPlainOptions(t *testing.T) {
-	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Pick", Options: []string{"yes", "no"}, RequestID: "req"})
+	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Pick", Options: []string{"yes", "no"}, RequestID: "req"}, feishuCardContext{})
 	text := fmt.Sprint(card["body"])
 	for _, want := range []string{"1. yes", "2. no"} {
 		if !strings.Contains(text, want) {
@@ -2119,7 +2141,7 @@ func TestBuildFeishuQuestionCardListsPlainOptions(t *testing.T) {
 }
 
 func TestFeishuCardJSONRoundTrip(t *testing.T) {
-	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Q?", Options: []string{"A"}, RequestID: "req"})
+	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Q?", Options: []string{"A"}, RequestID: "req"}, feishuCardContext{})
 	data, err := json.Marshal(card)
 	if err != nil {
 		t.Fatalf("marshal card: %v", err)

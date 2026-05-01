@@ -63,7 +63,7 @@ func TestRenderUpdatedFeishuBindingConfig_AddsWorkspaceAndBindingPreservingComme
 	if got := imCfg.Feishu.ChatBindings["oc_new"]; got != "project-b" {
 		t.Fatalf("chat binding = %q, want %q", got, "project-b")
 	}
-	if ws := workspaceByID(cfg, "project-b"); ws == nil || ws.Path != config.Expand("~/work/project-b") {
+	if ws := cfg.WorkspaceByID("project-b"); ws == nil || ws.Path != config.Expand("~/work/project-b") {
 		t.Fatalf("workspace project-b = %#v", ws)
 	}
 }
@@ -140,7 +140,7 @@ func TestRenderUpdatedFeishuBindingConfig_EmptyMapsAndQuotedScalars(t *testing.T
 	if got := imCfg.Feishu.ChatBindings["oc: chat #1"]; got != "project one" {
 		t.Fatalf("chat binding = %q", got)
 	}
-	if ws := workspaceByID(cfg, "project one"); ws == nil || ws.Path != config.Expand("~/work/project one") {
+	if ws := cfg.WorkspaceByID("project one"); ws == nil || ws.Path != config.Expand("~/work/project one") {
 		t.Fatalf("workspace = %#v", ws)
 	}
 }

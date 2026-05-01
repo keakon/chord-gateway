@@ -40,8 +40,11 @@ State data includes:
 
 - logs
 - WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`)
+- WeChat sync cursor (`<state_dir>/wechat/sync-buf.json`)
 - Feishu dedupe store
 - session pin store
+
+The gateway writes WeChat token/sync state, Feishu dedupe state, and session-pin state with atomic file replacement so crashes or abrupt restarts do not leave truncated state files behind.
 
 ## Config file resolution
 

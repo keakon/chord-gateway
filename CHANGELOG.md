@@ -17,10 +17,12 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Added a compatibility policy document that records the remaining compatibility surface (the Chord headless `todos` event name) and the cleanup rule.
 - Added regression tests covering session-pin write failures and concurrent session-pin updates.
+- Restored WeChat regression coverage for persisted token / sync state loading, expired-token re-login, custom token paths, `splitText`, and context-aware sleep cancellation.
 
 ### Changed
 
 - Refactored the router and process implementation into topic-specific files (`router_commands`, `router_format`, `router_feishu_cards`, `router_reminders`, `router_parse`, `process_protocol`, `process_lifecycle`, `process_env`) without changing documented behavior.
+- Made `ChordManager` the router's single source of configuration truth, so `/bind` updates no longer need to keep separate router and manager config copies in sync.
 - Made session-pin and dedupe persistence use atomic file replacement, and fixed session-pin updates so failed writes do not mutate in-memory state while concurrent updates do not lose pins.
 - Clarified Feishu renewal behavior in user docs and cross-IM notifications: Feishu access tokens are refreshed automatically from configured app credentials, `/login feishu` is unsupported, and app credentials must not be sent or changed in IM chats.
 - `/status` now waits for the next `status_response` envelope via a buffered channel instead of polling `LastStatusResponseAt`, so the IM message goroutine is no longer blocked for up to 10 seconds.
@@ -38,6 +40,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 ### Fixed
 
 - `pins.Set` failures (e.g. `/new`, `/resume`, `/bind`) are now logged at warn level instead of being silently dropped.
+- Restored nil guards around router config / process-manager access so `HandleIncomingMessage` and session respawn paths now fail with user-visible errors instead of panicking when the router is constructed without a manager or active config.
 - Removed a debug-time auto `status` command that was being piggy-backed onto every plain `send`, reducing duplicate stdin commands.
 - `truncateLine` now also truncates by rune, so tool-argument summaries no longer split Chinese or emoji mid-character; added regression tests to keep UTF-8 output valid.
 - Corrected the `Config.UnmarshalYAML` comment to match current behavior: only map-based `ims` / `workspaces` forms are supported.

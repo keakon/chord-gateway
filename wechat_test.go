@@ -23,7 +23,6 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 	t.Cleanup(cancel)
 	storageDir := filepath.Join(dir, "wechat")
 	return &WechatAdapter{
-		cfg:           &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}},
 		imCfg:         config.IMAdapterConfig{Wechat: &config.WechatConfig{}},
 		storageDir:    storageDir,
 		tokenFile:     filepath.Join(storageDir, "token.json"),
@@ -31,6 +30,27 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 		contextTokens: make(map[string]string),
 		ctx:           ctx,
 		cancel:        cancel,
+	}
+}
+
+func TestIlinkGetUpdatesResponseStatusKind(t *testing.T) {
+	cases := []struct {
+		name string
+		resp *ilinkGetUpdatesResponse
+		want ilinkGetUpdatesStatus
+	}{
+		{name: "ok", resp: &ilinkGetUpdatesResponse{Ret: 0}, want: ilinkGetUpdatesStatusOK},
+		{name: "empty", resp: &ilinkGetUpdatesResponse{Ret: -1, ErrCode: 0, Msgs: nil}, want: ilinkGetUpdatesStatusEmpty},
+		{name: "session expired by errcode", resp: &ilinkGetUpdatesResponse{ErrCode: ilinkSessionExpired}, want: ilinkGetUpdatesStatusSessionExpired},
+		{name: "error", resp: &ilinkGetUpdatesResponse{Ret: 1, ErrCode: 500}, want: ilinkGetUpdatesStatusError},
+		{name: "nil", resp: nil, want: ilinkGetUpdatesStatusError},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.resp.statusKind(); got != tt.want {
+				t.Fatalf("statusKind() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -222,7 +242,7 @@ func TestWechatAdapter_MessageHandling(t *testing.T) {
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "user-1"}).String()
 		mgr.procs[key] = &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, cmd: &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}}
-		router := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: sender, lastKeyChatID: make(map[string]string)}
+		router := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string)}
 		a := newTestWechatAdapter(t)
 		a.router = router
 
@@ -336,7 +356,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		if loaded == nil || loaded.Token != "tok" || loaded.AccountID != "acc" {
 			t.Fatalf("loaded token = %#v", loaded)
 		}
-		if err := os.WriteFile(a.tokenPath(), []byte("not-json"), 0o600); err != nil {
+		if err := os.WriteFile(a.tokenFile, []byte("not-json"), 0o600); err != nil {
 			t.Fatalf("write invalid token file: %v", err)
 		}
 		if got := a.loadToken(); got != nil {
@@ -348,17 +368,17 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		a := newTestWechatAdapter(t)
 		a.token.Store(&TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"})
 		a.saveToken()
-		if _, err := os.Stat(a.tokenPath()); err != nil {
+		if _, err := os.Stat(a.tokenFile); err != nil {
 			t.Fatalf("token file should exist before clearToken: %v", err)
 		}
-		if filepath.Base(filepath.Dir(a.tokenPath())) != "wechat" {
-			t.Fatalf("default token path = %q, want a wechat subdirectory", a.tokenPath())
+		if filepath.Base(filepath.Dir(a.tokenFile)) != "wechat" {
+			t.Fatalf("default token path = %q, want a wechat subdirectory", a.tokenFile)
 		}
 		a.clearToken()
 		if a.token.Load() != nil {
 			t.Fatalf("token=%#v after clearToken", a.token.Load())
 		}
-		if _, err := os.Stat(a.tokenPath()); !os.IsNotExist(err) {
+		if _, err := os.Stat(a.tokenFile); !os.IsNotExist(err) {
 			t.Fatalf("token file should be removed, stat error = %v", err)
 		}
 	})

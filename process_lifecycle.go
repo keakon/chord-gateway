@@ -135,6 +135,20 @@ func (p *ChordProcess) handleExit() {
 	}
 }
 
+func (p *ChordProcess) transitionToIdle(updatedAt string) {
+	p.state.Busy = false
+	p.state.ExpiredConfirm = p.state.PendingConfirm
+	p.state.ExpiredQuestion = p.state.PendingQuestion
+	p.state.PendingConfirm = nil
+	p.state.PendingQuestion = nil
+	p.state.LastError = ""
+	if strings.TrimSpace(updatedAt) == "" {
+		p.state.UpdatedAt = time.Now().Format(time.RFC3339)
+	} else {
+		p.state.UpdatedAt = updatedAt
+	}
+}
+
 // IdleCheckLoop periodically checks all processes and closes idle ones.
 func (m *ChordManager) IdleCheckLoop() {
 	ticker := time.NewTicker(30 * time.Second)
@@ -162,13 +176,7 @@ func (m *ChordManager) IdleCheckLoop() {
 		for _, p := range idle {
 			p.mu.Lock()
 			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil {
-				p.state.ExpiredConfirm = p.state.PendingConfirm
-				p.state.ExpiredQuestion = p.state.PendingQuestion
-				p.state.PendingConfirm = nil
-				p.state.PendingQuestion = nil
-				p.state.Busy = false
-				p.state.LastError = ""
-				p.state.UpdatedAt = time.Now().Format(time.RFC3339)
+				p.transitionToIdle(time.Now().Format(time.RFC3339))
 				state := p.state
 				p.mu.Unlock()
 				if p.onEvent != nil {

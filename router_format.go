@@ -59,9 +59,6 @@ func (r *NotificationRouter) formatNotification(key, workspaceID, eventType stri
 	case "todos":
 		return r.formatTodosNotification(state)
 
-	case "long_running":
-		return r.formatLongRunningNotification(state)
-
 	default:
 		return ""
 	}

@@ -66,7 +66,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			}
 		}
 		_, imType, _ := parseProcessKey(p.key)
-		slog.Info("gateway event", "event", "ready", "raw_type", "ready", "key", p.key, "workspace", p.workspaceID, "channel", imType, "session_id", p.state.SessionID)
+		slog.Info("gateway event", "event", "ready", "raw_type", "ready", "key", p.key, "workspace", p.workspaceID, "im", imType, "session_id", p.state.SessionID)
 		// No notification.
 		eventType = ""
 
@@ -88,18 +88,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "activity"
 
 	case "idle":
-		p.state.Busy = false
+		p.transitionToIdle("")
 		var payload struct {
 			LastOutcome string `json:"last_outcome"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastOutcome = payload.LastOutcome
 		}
-		p.state.ExpiredConfirm = p.state.PendingConfirm
-		p.state.ExpiredQuestion = p.state.PendingQuestion
-		p.state.PendingConfirm = nil
-		p.state.PendingQuestion = nil
-		p.state.LastError = ""
 		eventType = "idle"
 
 	case "confirm_request":
@@ -259,7 +254,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			"key", p.key,
 			"workspace", p.workspaceID,
 			"im", imType,
-			"channel", imType,
 			"chat_id", chatID,
 			"session_id", p.state.SessionID,
 			"busy", p.state.Busy,

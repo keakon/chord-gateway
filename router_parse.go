@@ -144,11 +144,6 @@ func nextCommandArg(s string) (arg, rest string, ok bool) {
 	return "", "", false
 }
 
-// formatStatus formats a ControlState as a human-readable status message.
-func formatStatus(state ControlState) string {
-	return formatBindingStatus(nil, "", "", state)
-}
-
 // truncate shortens a string to maxNotificationRunes runes, appending an ellipsis
 // when truncation occurs. Operates on runes so multi-byte UTF-8 sequences
 // (e.g. Chinese characters or emoji) are never split.

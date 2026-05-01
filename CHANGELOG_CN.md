@@ -17,10 +17,12 @@
 
 - 新增兼容策略文档，记录余下的兼容面（Chord headless `todos` 事件名）以及清理规则。
 - 新增 session pin 回归测试，覆盖写盘失败和并发更新场景。
+- 恢复 WeChat 关键回归测试覆盖，包括持久化 token / sync 状态加载、过期 token 自动重新登录、自定义 token 路径、`splitText` 以及响应 context 取消的 sleep 行为。
 
 ### Changed
 
 - 在不改变文档化行为的前提下，按主题拆分 router 与 process 实现文件（`router_commands`、`router_format`、`router_feishu_cards`、`router_reminders`、`router_parse`、`process_protocol`、`process_lifecycle`、`process_env`）。
+- 将 router 的配置读取统一到 `ChordManager`，作为单一配置真理源，避免 `/bind` 更新时还要手动保持 router 与 manager 两份配置副本同步。
 - session pin 与 dedupe 持久化现在使用原子替换写入；同时修复 session pin 更新逻辑，确保写盘失败不污染内存状态，并避免并发更新丢失 pin。
 - 明确飞书续期行为：用户文档和跨 IM 通知现在说明飞书 access token 会基于已配置的应用凭证自动刷新，`/login feishu` 不受支持，且不应在 IM 会话中发送或修改应用凭证。
 - `/status` 不再轮询 `LastStatusResponseAt`，改为通过带缓冲的 channel 等待下一次 `status_response`，IM 消息消费 goroutine 不再被阻塞最多 10 秒。
@@ -38,6 +40,7 @@
 ### Fixed
 
 - `pins.Set` 失败（如 `/new`、`/resume`、`/bind`）现在以 warn 级别日志输出，不再被静默吞掉。
+- 补回 router 配置与进程管理器访问路径上的 nil 防护：当 router 在没有 manager 或没有活动配置的情况下被构造时，`HandleIncomingMessage` 和 session 重启路径现在会返回用户可见错误，而不是 panic。
 - 移除每次普通 `send` 后都附带的调试用 `status` 命令，减少冗余的 stdin 调用。
 - `truncateLine` 现在也改为按 rune 截断，工具参数摘要不再把中文或 emoji 截断在多字节字符中间；并补充回归测试以确保输出保持有效 UTF-8。
 - 修正 `Config.UnmarshalYAML` 注释，使其与当前行为一致：只支持 mapping 形式的 `ims` / `workspaces`。

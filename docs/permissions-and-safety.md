@@ -43,10 +43,11 @@ Treat these as sensitive:
 
 - Feishu `app_secret`
 - WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`)
+- WeChat sync cursor (`<state_dir>/wechat/sync-buf.json`)
 - Gateway state directory
 - Chord provider credentials and auth files
 
-Do not commit secrets or state directories to version control.
+Do not commit secrets or state directories to version control. Keep the gateway state directory readable only by the gateway user when possible, because session pins and sync state may reveal chat/session identifiers even when they are not direct credentials.
 
 ## Multi-workspace safety
 

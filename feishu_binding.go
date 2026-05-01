@@ -22,13 +22,6 @@ func currentFeishuBinding(cfg *config.Config, chatID string) string {
 	return strings.TrimSpace(imCfg.Feishu.ChatBindings[chatID])
 }
 
-func workspaceByID(cfg *config.Config, workspaceID string) *config.Workspace {
-	if cfg == nil {
-		return nil
-	}
-	return cfg.WorkspaceByID(workspaceID)
-}
-
 func upsertFeishuBindingConfigFile(configFile, chatID, workspaceID, workspacePath string) (*config.Config, error) {
 	chatID = strings.TrimSpace(chatID)
 	workspaceID = strings.TrimSpace(workspaceID)

@@ -35,6 +35,7 @@ type DedupeStore struct {
 	storagePath string
 	stopCleanup chan struct{}
 	closeOnce   sync.Once
+	dirty       bool
 }
 
 // NewDedupeStore creates a new DedupeStore with file persistence.
@@ -53,7 +54,9 @@ func NewDedupeStore(storageDir string) (*DedupeStore, error) {
 	// Load persisted entries.
 	ds.loadFromFile()
 	// Clean expired entries on startup.
-	ds.cleanExpired()
+	ds.mu.Lock()
+	_ = ds.cleanExpiredLocked()
+	ds.mu.Unlock()
 
 	go ds.cleanupLoop()
 
@@ -71,6 +74,7 @@ func (ds *DedupeStore) TryBegin(key string) bool {
 		// Check if expired.
 		if time.Now().After(e.ExpiresAt) {
 			delete(ds.entries, key)
+			ds.dirty = true
 			// Treat as new — fall through to add.
 		} else {
 			// Duplicate: either in-flight or committed.
@@ -97,6 +101,7 @@ func (ds *DedupeStore) Commit(key string) {
 		Committed: true,
 		ExpiresAt: time.Now().Add(ds.ttl),
 	}
+	ds.dirty = true
 	ds.saveToFileLocked()
 }
 
@@ -107,6 +112,7 @@ func (ds *DedupeStore) Release(key string) {
 	defer ds.mu.Unlock()
 
 	delete(ds.entries, key)
+	ds.dirty = true
 }
 
 // Contains returns true if the key is already known (in-flight or committed).
@@ -141,21 +147,28 @@ func (ds *DedupeStore) cleanupLoop() {
 			return
 		case <-ticker.C:
 			ds.mu.Lock()
-			ds.cleanExpired()
-			ds.saveToFileLocked()
+			dirty := ds.cleanExpiredLocked()
+			if dirty || ds.dirty {
+				ds.saveToFileLocked()
+				ds.dirty = false
+			}
 			ds.mu.Unlock()
 		}
 	}
 }
 
-// cleanExpired removes expired entries. Caller must hold ds.mu.
-func (ds *DedupeStore) cleanExpired() {
+// cleanExpiredLocked removes expired entries and reports whether anything changed.
+// Caller must hold ds.mu.
+func (ds *DedupeStore) cleanExpiredLocked() bool {
 	now := time.Now()
+	dirty := false
 	for k, e := range ds.entries {
 		if now.After(e.ExpiresAt) {
 			delete(ds.entries, k)
+			dirty = true
 		}
 	}
+	return dirty
 }
 
 // saveToFileLocked persists committed entries to disk. Caller must hold ds.mu.

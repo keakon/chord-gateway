@@ -148,40 +148,18 @@ func (m *ChordManager) GetProcessForKey(key string) *ChordProcess {
 }
 
 func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
-	m.mu.Lock()
-	if p, ok := m.procs[key]; ok {
-		m.mu.Unlock()
+	if p := m.GetProcessForKey(key); p != nil {
 		return p, nil
 	}
-
 	workspaceID, _, _ := parseProcessKey(key)
 	if workspaceID == "" {
-		m.mu.Unlock()
 		return nil, fmt.Errorf("invalid process key %q", key)
 	}
-
 	cfg := m.cfg.Load()
-	ws := cfg.WorkspaceByID(workspaceID)
-	if ws == nil {
-		m.mu.Unlock()
+	if cfg == nil || cfg.WorkspaceByID(workspaceID) == nil {
 		return nil, nil
 	}
-
-	onEvent := m.onEvent
-	m.mu.Unlock()
-
-	args := m.spawnArgsForKey(key)
-	p, err := m.spawn(ws, key, onEvent, args...)
-	if err != nil {
-		return nil, err
-	}
-	p.workspaceID = workspaceID
-
-	m.mu.Lock()
-	m.procs[key] = p
-	m.mu.Unlock()
-
-	return p, nil
+	return m.SpawnWithArgsForKey(key, m.spawnArgsForKey(key)...)
 }
 
 func (m *ChordManager) spawnArgsForKey(key string) []string {
@@ -239,6 +217,9 @@ func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*Ch
 	}
 
 	cfg := m.cfg.Load()
+	if cfg == nil {
+		return nil, fmt.Errorf("workspace %s not found", workspaceID)
+	}
 	ws := cfg.WorkspaceByID(workspaceID)
 	if ws == nil {
 		return nil, fmt.Errorf("workspace %s not found", workspaceID)
@@ -320,10 +301,12 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	// confirm_request / question_request / idle. Optional visibility is configured
 	// in gateway.
 	// If chord headless is too old, it may emit an error; ignore.
-	_ = p.SendCommand(map[string]any{
+	if err := p.SendCommand(map[string]any{
 		"type":   "subscribe",
 		"events": configuredHeadlessSubscribeEvents(cfg),
-	})
+	}); err != nil {
+		slog.Warn("failed to send subscribe command", "workspace", ws.ID, "key", key, "error", err)
+	}
 
 	return p, nil
 }
@@ -390,24 +373,20 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	if cfg == nil {
 		return events
 	}
-	// Optional visibility events (configured via event_visibility).
-	if cfg.EventVisibility.Activity {
-		events = append(events, "activity")
-	}
-	if cfg.EventVisibility.AgentDone {
-		events = append(events, "agent_done")
-	}
-	if cfg.EventVisibility.Info {
-		events = append(events, "info")
-	}
-	if cfg.EventVisibility.Toast {
-		events = append(events, "toast")
-	}
-	if cfg.EventVisibility.ToolResult {
-		events = append(events, "tool_result")
-	}
-	if cfg.EventVisibility.Todos {
-		events = append(events, "todos")
+	for _, optional := range []struct {
+		enabled bool
+		event   string
+	}{
+		{cfg.EventVisibility.Activity, "activity"},
+		{cfg.EventVisibility.AgentDone, "agent_done"},
+		{cfg.EventVisibility.Info, "info"},
+		{cfg.EventVisibility.Toast, "toast"},
+		{cfg.EventVisibility.ToolResult, "tool_result"},
+		{cfg.EventVisibility.Todos, "todos"},
+	} {
+		if optional.enabled {
+			events = append(events, optional.event)
+		}
 	}
 	return events
 }

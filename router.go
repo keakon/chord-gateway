@@ -22,8 +22,6 @@ const (
 // and routes chord events back to IM users as notifications.
 type NotificationRouter struct {
 	mgr        *ChordManager
-	cfg        *config.Config // protected by cfgMu
-	cfgMu      sync.RWMutex
 	adapter    IMAdapter // protected by adapterMu
 	adapterMu  sync.RWMutex
 	configFile string
@@ -45,7 +43,8 @@ type expiredPendingState struct {
 }
 
 // NewNotificationRouter creates a new NotificationRouter.
-func NewNotificationRouter(mgr *ChordManager, cfg *config.Config) *NotificationRouter {
+// The router reads the active config from mgr (single source of truth).
+func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 	r := &NotificationRouter{
 		mgr:            mgr,
 		lastKeyChatID:  make(map[string]string),
@@ -53,8 +52,9 @@ func NewNotificationRouter(mgr *ChordManager, cfg *config.Config) *NotificationR
 		expiredPending: make(map[string]expiredPendingState),
 		cardHandles:    make(map[string]InteractiveCardHandle),
 	}
-	r.cfg = cfg
-	mgr.SetOnEvent(r.HandleChordEvent)
+	if mgr != nil {
+		mgr.SetOnEvent(r.HandleChordEvent)
+	}
 	return r
 }
 
@@ -77,18 +77,12 @@ func (r *NotificationRouter) currentAdapter() IMAdapter {
 	return r.adapter
 }
 
-// getConfig returns the current config snapshot.
+// getConfig returns the current config snapshot from the chord manager.
 func (r *NotificationRouter) getConfig() *config.Config {
-	r.cfgMu.RLock()
-	defer r.cfgMu.RUnlock()
-	return r.cfg
-}
-
-// setConfig replaces the active config under write lock.
-func (r *NotificationRouter) setConfig(cfg *config.Config) {
-	r.cfgMu.Lock()
-	r.cfg = cfg
-	r.cfgMu.Unlock()
+	if r.mgr == nil {
+		return nil
+	}
+	return r.mgr.Config()
 }
 
 func (r *NotificationRouter) recordChatID(key, chatID string) {
@@ -231,6 +225,10 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	}
 
 	cfg := r.getConfig()
+	if cfg == nil {
+		r.sendText(chatID, "❌ Configuration not loaded.")
+		return
+	}
 	ws, err := cfg.ResolveWorkspace(imType, chatID)
 	if err != nil {
 		slog.Warn("resolve workspace failed", "imType", imType, "chatID", chatID, "error", err)
@@ -258,7 +256,7 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	case "todos":
 		r.handleTodos(ws, chatID, imType)
 	case "login":
-		r.handleLogin(ws, chatID, imType, cmd.Content)
+		r.handleLogin(chatID, cmd.Content)
 	default:
 		r.handleChordCommand(ws, chatID, cmd, imType, msg)
 	}
@@ -266,45 +264,55 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 
 // handleNew stops the current process and spawns a fresh one (new session, clears pinned resume).
 func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID string, imType string) {
-	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	r.mgr.StopProcessKey(key)
-	if r.mgr != nil && r.mgr.pins != nil {
-		if err := r.mgr.pins.Set(key, ""); err != nil {
-			slog.Warn("clear session pin failed", "key", key, "error", err)
-		}
-	}
-	// SpawnWithArgsForKey without --resume creates a fresh session.
-	proc, err := r.mgr.SpawnWithArgsForKey(key)
-	if err != nil {
-		slog.Error("failed to spawn new process", "workspace", ws.ID, "error", err)
-		r.sendText(chatID, "❌ Failed to start new session.")
-		return
-	}
-	if proc == nil {
-		r.sendText(chatID, "❌ Workspace not configured.")
-		return
-	}
-	r.sendText(chatID, "🆕 New session started.")
+	r.respawnSession(ws, chatID, imType, "")
 }
 
 // handleResume stops the current process and spawns one with --resume.
 func (r *NotificationRouter) handleResume(ws *config.Workspace, chatID, sessionID string, imType string) {
+	r.respawnSession(ws, chatID, imType, sessionID)
+}
+
+func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType, sessionID string) {
+	if r.mgr == nil {
+		r.sendText(chatID, "❌ Process manager not available.")
+		return
+	}
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	r.mgr.StopProcessKey(key)
 	if r.mgr != nil && r.mgr.pins != nil {
 		if err := r.mgr.pins.Set(key, sessionID); err != nil {
-			slog.Warn("pin resume session failed", "key", key, "session_id", sessionID, "error", err)
+			if strings.TrimSpace(sessionID) == "" {
+				slog.Warn("clear session pin failed", "key", key, "error", err)
+			} else {
+				slog.Warn("pin resume session failed", "key", key, "session_id", sessionID, "error", err)
+			}
 		}
 	}
-	// Spawn directly with --resume flag.
-	proc, err := r.mgr.SpawnWithArgsForKey(key, "--resume", sessionID)
+	var (
+		proc *ChordProcess
+		err  error
+	)
+	if strings.TrimSpace(sessionID) == "" {
+		proc, err = r.mgr.SpawnWithArgsForKey(key)
+	} else {
+		proc, err = r.mgr.SpawnWithArgsForKey(key, "--resume", sessionID)
+	}
 	if err != nil {
-		slog.Error("failed to spawn process for resume", "workspace", ws.ID, "error", err)
-		r.sendText(chatID, "❌ Failed to resume session.")
+		if strings.TrimSpace(sessionID) == "" {
+			slog.Error("failed to spawn new process", "workspace", ws.ID, "error", err)
+			r.sendText(chatID, "❌ Failed to start new session.")
+		} else {
+			slog.Error("failed to spawn process for resume", "workspace", ws.ID, "error", err)
+			r.sendText(chatID, "❌ Failed to resume session.")
+		}
 		return
 	}
 	if proc == nil {
 		r.sendText(chatID, "❌ Workspace not configured.")
+		return
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		r.sendText(chatID, "🆕 New session started.")
 		return
 	}
 	r.sendText(chatID, fmt.Sprintf("🔄 Resuming session %s", sessionID))
@@ -375,9 +383,7 @@ func (r *NotificationRouter) handleTodos(ws *config.Workspace, chatID string, im
 
 // handleLogin initiates a login flow for the specified IM adapter.
 // If no target is specified, lists the adapters that support login.
-func (r *NotificationRouter) handleLogin(ws *config.Workspace, chatID string, imType string, target string) {
-	_ = ws
-	_ = imType
+func (r *NotificationRouter) handleLogin(chatID, target string) {
 	target = normalizeIMType(target)
 	if target == "" {
 		options := r.availableLoginTargets()
@@ -391,7 +397,7 @@ func (r *NotificationRouter) handleLogin(ws *config.Workspace, chatID string, im
 
 	adapter := r.findAdapterByType(target)
 	if adapter == nil {
-		r.sendText(chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", loginCommandName(target)))
+		r.sendText(chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", normalizeIMType(target)))
 		return
 	}
 
@@ -449,14 +455,13 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	r.bindMu.Lock()
 	updatedCfg, err := upsertFeishuBindingConfigFile(r.configFile, chatID, cmd.WorkspaceID, cmd.Path)
 	if err == nil {
-		r.setConfig(updatedCfg)
+		if r.mgr != nil {
+			r.mgr.setConfig(updatedCfg)
+		}
 		if feishu := r.findFeishuAdapter(); feishu != nil {
 			if updatedIMCfg := updatedCfg.IMConfigByType("feishu"); updatedIMCfg != nil {
 				feishu.updateIMConfig(*updatedIMCfg)
 			}
-		}
-		if r.mgr != nil {
-			r.mgr.setConfig(updatedCfg)
 		}
 	}
 	r.bindMu.Unlock()
@@ -506,7 +511,7 @@ func (r *NotificationRouter) availableLoginTargets() []string {
 		if _, err := adapter.StartLogin(); errors.Is(err, ErrLoginNotSupported) {
 			continue
 		}
-		cmdName := loginCommandName(name)
+		cmdName := normalizeIMType(name)
 		if !seen[cmdName] {
 			seen[cmdName] = true
 			targets = append(targets, cmdName)
@@ -535,10 +540,6 @@ func normalizeIMType(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 
-func loginCommandName(name string) string {
-	return normalizeIMType(name)
-}
-
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
@@ -558,7 +559,6 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		"workspace", workspaceID,
 		"im", imType,
 		"chat_id", chatID,
-		"channel", imType,
 		"session_id", state.SessionID,
 		"busy", state.Busy,
 		"phase", state.Phase,
@@ -761,10 +761,8 @@ func (r *NotificationRouter) lookupProcessByKey(key string) (*ChordProcess, bool
 	if r.mgr == nil {
 		return nil, false
 	}
-	r.mgr.mu.Lock()
-	defer r.mgr.mu.Unlock()
-	p, ok := r.mgr.procs[key]
-	return p, ok
+	p := r.mgr.GetProcessForKey(key)
+	return p, p != nil
 }
 
 // sendText sends a text message via the IM adapter, logging errors.
@@ -812,7 +810,7 @@ func (r *NotificationRouter) sendTextAll(workspaceID, text string) {
 // expired (e.g. WeChat iLink errcode=-14). It broadcasts a notification to
 // all OTHER adapters so the user can take action.
 func (r *NotificationRouter) HandleSessionExpired(imType string) {
-	msg := fmt.Sprintf("⚠️ %s session expired: send /login %s to renew", imDisplayName(imType), loginCommandName(imType))
+	msg := fmt.Sprintf("⚠️ %s session expired: send /login %s to renew", imDisplayName(imType), normalizeIMType(imType))
 	if normalizeIMType(imType) == "feishu" {
 		msg = "⚠️ Feishu connection invalid: Feishu tokens are refreshed automatically from configured app credentials; check deployment configuration and Feishu app event settings. /login feishu is not supported."
 	}

@@ -45,7 +45,7 @@ func testFeishuAdapter(t *testing.T, fc *config.FeishuConfig) *FeishuAdapter {
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
 		router: &NotificationRouter{
-			cfg:           cfg,
+			mgr:           newTestChordManager(cfg),
 			lastKeyChatID: make(map[string]string),
 		},
 	}
@@ -595,7 +595,7 @@ func TestUpdateFeishuCardStatusPrefersStoredMessageID(t *testing.T) {
 	oldBaseURL := feishuOpenBaseURL
 	feishuOpenBaseURL = server.URL
 	defer func() { feishuOpenBaseURL = oldBaseURL }()
-	r := &NotificationRouter{mgr: mgr, cfg: cfg, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
+	r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
 	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
 	r.recordCardHandle(key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "om_sent_1"})
 	msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", InternalAction: &InternalAction{Handle: InteractiveCardHandle{MessageID: "om_callback_1", Token: "token_1"}}}
