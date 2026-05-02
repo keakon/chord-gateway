@@ -60,13 +60,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.SessionID = payload.SessionID
 				if p.mgr != nil && p.mgr.pins != nil {
 					if perr := p.mgr.pins.Set(p.key, payload.SessionID); perr != nil {
-						log.Warnf("persist session pin failed key=%v session_id=%v error=%v", p.key, payload.SessionID, perr)
+						log.Warnf("[%v] persist session pin failed error=%v", processLogContext(p.key, p.state), perr)
 					}
 				}
 			}
 		}
-		_, imType, _ := parseProcessKey(p.key)
-		log.Infof("gateway event event=%v raw_type=%v key=%v workspace=%v im=%v session_id=%v", "ready", "ready", p.key, p.workspaceID, imType, p.state.SessionID)
+		log.Infof("[%v] gateway event event=%v raw_type=%v", processLogContext(p.key, p.state), "ready", "ready")
 		// No notification.
 		eventType = ""
 
@@ -210,8 +209,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.LastAssistantText = payload.Text
 				eventType = "assistant_message"
 			} else {
-				log.Debugf("gateway assistant_message had empty text; skipping notification key=%v workspace=%v agent_id=%v tool_calls=%v", p.key,
-					p.workspaceID,
+				log.Debugf("[%v] gateway assistant_message had empty text; skipping notification agent_id=%v tool_calls=%v", processLogContext(p.key, p.state),
 					payload.AgentID,
 					payload.ToolCalls,
 				)
@@ -226,7 +224,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			Todos []TodoItem `json:"todos"`
 		}
 		if err := json.Unmarshal(env.Payload, &wrapper); err != nil {
-			log.Warnf("failed to parse todos payload key=%v error=%v", p.key, err)
+			log.Warnf("[%v] failed to parse todos payload error=%v", processLogContext(p.key, p.state), err)
 			p.state.Todos = nil
 		} else {
 			p.state.Todos = wrapper.Todos
@@ -246,14 +244,9 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	}
 
 	if eventType != "" {
-		_, imType, chatID := parseProcessKey(p.key)
-		log.Infof("gateway event event=%v raw_type=%v key=%v workspace=%v im=%v chat_id=%v session_id=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v", eventType,
+		log.Infof("[%v] gateway event event=%v raw_type=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v", processLogContext(p.key, p.state),
+			eventType,
 			env.Type,
-			p.key,
-			p.workspaceID,
-			imType,
-			chatID,
-			p.state.SessionID,
 			p.state.Busy,
 			p.state.Phase,
 			p.state.LastOutcome,

@@ -600,12 +600,8 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		return
 	}
 
-	log.Infof("gateway routing event event=%v key=%v workspace=%v im=%v chat_id=%v session_id=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v", eventType,
-		key,
-		workspaceID,
-		imType,
-		chatID,
-		state.SessionID,
+	log.Infof("[%v] gateway routing event event=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v", processLogContext(key, state),
+		eventType,
 		state.Busy,
 		state.Phase,
 		state.LastOutcome,
@@ -615,9 +611,8 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	msg := r.formatNotification(key, workspaceID, eventType, state)
 	willSend := msg != ""
 	msgLen := len(msg)
-	log.Infof("gateway routing decision event=%v key=%v chat_id=%v assistant_text_len=%v message_len=%v will_send=%v", eventType,
-		key,
-		chatID,
+	log.Infof("[%v] gateway routing decision event=%v assistant_text_len=%v message_len=%v will_send=%v", processLogContext(key, state),
+		eventType,
 		len(state.LastAssistantText),
 		msgLen,
 		willSend,

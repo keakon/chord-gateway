@@ -27,3 +27,11 @@ func parseProcessKey(s string) (workspaceID, imType, chatID string) {
 	}
 	return parts[0], parts[1], parts[2]
 }
+
+func processLogContext(key string, state ControlState) string {
+	workspaceID, imType, chatID := parseProcessKey(key)
+	if workspaceID == "" && imType == "" && chatID == "" {
+		return "key=" + key + " sid=" + state.SessionID
+	}
+	return "wid=" + workspaceID + " im=" + imType + " chat_id=" + chatID + " sid=" + state.SessionID
+}

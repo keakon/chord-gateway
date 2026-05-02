@@ -109,10 +109,10 @@ func (p *ChordProcess) handleExit() {
 		exitCode = cmd.ProcessState.ExitCode()
 	}
 
-	log.Infof("chord process exited key=%v pid=%v exit_code=%v crashed=%v", key, pid, exitCode, crashed)
+	log.Infof("[%v] chord process exited pid=%v exit_code=%v crashed=%v", processLogContext(key, state), pid, exitCode, crashed)
 	if crashed && strings.TrimSpace(stderr) != "" {
 		// Keep stderr short; full details are usually in chord.log.
-		log.Warnf("chord process stderr key=%v pid=%v stderr=%v", key, pid, truncateStderr(stderr, 2000))
+		log.Warnf("[%v] chord process stderr pid=%v stderr=%v", processLogContext(key, state), pid, truncateStderr(stderr, 2000))
 	}
 
 	if p.onEvent != nil {
@@ -121,14 +121,14 @@ func (p *ChordProcess) handleExit() {
 
 	if autoRestart {
 		go func() {
-			log.Infof("auto-restarting crashed chord process in 5s key=%v", key)
+			log.Infof("[%v] auto-restarting crashed chord process in 5s", processLogContext(key, state))
 			time.Sleep(5 * time.Second)
 			// Use the manager to respawn; it handles the procs map.
 			if p.mgr != nil {
 				if _, err := p.mgr.GetOrSpawnForKey(key); err != nil {
-					log.Errorf("auto-restart failed key=%v error=%v", key, err)
+					log.Errorf("[%v] auto-restart failed error=%v", processLogContext(key, state), err)
 				} else {
-					log.Infof("auto-restart succeeded key=%v", key)
+					log.Infof("[%v] auto-restart succeeded", processLogContext(key, state))
 				}
 			}
 		}()
@@ -190,7 +190,7 @@ func (m *ChordManager) IdleCheckLoop() {
 			} else {
 				p.mu.Unlock()
 			}
-			log.Infof("idle timeout, stopping chord process workspace=%v", p.workspaceID)
+			log.Infof("[%v] idle timeout, stopping chord process", processLogContext(p.key, p.State()))
 			p.TerminateGroup(2 * time.Second)
 		}
 	}

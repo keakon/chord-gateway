@@ -72,7 +72,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		if err != nil {
 			return fmt.Errorf("create rotating log writer: %w", err)
 		}
-		formatter := golog.ParseFormat("[%l %D %T %S] %m")
+		formatter := golog.ParseFormat("[%l %D %T %s] %m")
 		handler := golog.NewHandler(golog.InfoLevel, formatter)
 		handler.AddWriter(golog.NewStderrWriter())
 		handler.AddWriter(logFile)

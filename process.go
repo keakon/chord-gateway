@@ -288,7 +288,7 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	}
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 
-	log.Infof("chord process spawned workspace=%v pid=%v dir=%v", ws.ID,
+	log.Infof("[%v] chord process spawned pid=%v dir=%v", processLogContext(key, p.state),
 		cmd.Process.Pid,
 		ws.Path,
 	)
