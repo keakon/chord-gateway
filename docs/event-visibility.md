@@ -2,7 +2,7 @@
 
 `chord-gateway` reads JSONL events from `chord headless`. Required control-plane events are always subscribed and routed; optional events are controlled by `event_visibility`.
 
-- 中文版: [event-visibility_CN.md](./event-visibility_CN.md)
+- Chinese version: [event-visibility_CN.md](./event-visibility_CN.md)
 
 ## Required events
 

@@ -68,7 +68,7 @@ type WechatConfig struct {
 	TokenPath   string `yaml:"token_path,omitempty"`
 }
 
-// FeishuConfig holds Feishu (飞书) application configuration.
+// FeishuConfig holds Feishu application configuration.
 type FeishuConfig struct {
 	AppID          string            `yaml:"app_id"`
 	AppSecret      string            `yaml:"app_secret"`

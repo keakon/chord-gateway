@@ -302,7 +302,7 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 	}
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	if proc := r.mgr.GetProcessForKey(key); proc != nil && proc.Alive() && proc.State().Busy {
-		r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
+		r.sendText(chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
 		return
 	}
 	r.mgr.StopProcessKey(key)
@@ -462,17 +462,6 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		log.Warnf("bind: sender not allowed, ignoring sender_id=%v chat_id=%v", msg.SenderID, chatID)
 		return
 	}
-	// Busy check: cannot rebind while a session is actively running.
-	if r.mgr != nil {
-		oldWorkspaceID := currentFeishuBinding(cfg, chatID)
-		if oldWorkspaceID != "" {
-			oldKey := (processKey{workspaceID: oldWorkspaceID, imType: "feishu", chatID: chatID}).String()
-			if proc := r.mgr.GetProcessForKey(oldKey); proc != nil && proc.Alive() && proc.State().Busy {
-				r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
-				return
-			}
-		}
-	}
 	if cmd.Invalid || strings.TrimSpace(cmd.WorkspaceID) == "" || strings.TrimSpace(cmd.Path) == "" {
 		r.sendText(chatID, "⚠️ Usage: /bind <workspace_id> <path>")
 		return
@@ -494,7 +483,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	if r.mgr != nil && oldWorkspaceID != "" {
 		oldKey := (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
 		if proc := r.mgr.GetProcessForKey(oldKey); proc != nil && proc.Alive() && proc.State().Busy {
-			r.sendText(chatID, "⚠️ 进程正在执行中，请先 /cancel 取消当前任务。")
+			r.sendText(chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
 			return
 		}
 	}
@@ -544,7 +533,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 	if hadOldBinding {
 		action = "Binding updated"
 	}
-	r.sendText(chatID, fmt.Sprintf("✅ %s：feishu/%s → workspace %s (%s)", action, chatID, cmd.WorkspaceID, cmd.Path))
+	r.sendText(chatID, fmt.Sprintf("✅ %s: feishu/%s → workspace %s (%s)", action, chatID, cmd.WorkspaceID, cmd.Path))
 }
 
 func (r *NotificationRouter) availableLoginTargets() []string {

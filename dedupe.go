@@ -146,12 +146,19 @@ func (ds *DedupeStore) cleanupLoop() {
 			return
 		case <-ticker.C:
 			ds.mu.Lock()
-			dirty := ds.cleanExpiredLocked()
-			if dirty || ds.dirty {
-				ds.saveToFileLocked()
-				ds.dirty = false
-			}
+			ds.cleanupExpiredAndSaveLocked()
 			ds.mu.Unlock()
+		}
+	}
+}
+
+// cleanupExpiredAndSaveLocked removes expired entries and persists the updated state.
+// Caller must hold ds.mu.
+func (ds *DedupeStore) cleanupExpiredAndSaveLocked() {
+	dirty := ds.cleanExpiredLocked()
+	if dirty || ds.dirty {
+		if err := ds.saveToFileLocked(); err == nil {
+			ds.dirty = false
 		}
 	}
 }

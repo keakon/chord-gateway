@@ -4,7 +4,7 @@ All notable changes to `chord-gateway` are documented here.
 
 This project follows a simple human-readable changelog format. Dates use `YYYY-MM-DD`.
 
-- 中文版: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
+- Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
 ## Unreleased
 
@@ -40,6 +40,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Plain-text replies to pending Feishu questions now update the original question card when possible, and card updates prefer the stored sent-message ID over callback metadata to avoid patching the wrong message.
 - Gateway logging now uses `github.com/keakon/golog/log` directly for log records and `github.com/keakon/golog` for file rotation. Rotated logs are no longer gzip-compressed.
 - Chord `idle` envelopes are now rendered by the gateway as the user-visible ready notification instead of relying on a separate headless `notification` envelope.
+- Updated `github.com/keakon/golog` to v0.2.0.
+- Standardized remaining runtime/user-facing messages in non-Chinese docs and IM responses to English.
 
 ### Removed
 
@@ -57,6 +59,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Suppressed long-running `⏳ Still working` reminders while Chord is waiting for a pending confirmation or question.
 - Fixed normal Chord `idle` handling so stale pending confirmations are cleared without being reported as expired; expiry notifications are now reserved for gateway idle-timeout shutdowns.
 - Fixed `/bind` and `/resume` busy checks so they inspect existing processes without accidentally spawning new Chord processes.
+- Fixed dedupe cleanup persistence so failed writes keep the store dirty and can be retried by the next cleanup tick.
 
 ## 0.2.0 – 2026-04-30
 

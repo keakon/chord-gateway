@@ -7,7 +7,7 @@
 
 `chord-gateway` connects IM platforms such as WeChat and Feishu to local `chord headless` processes. It lets you control Chord from chat while keeping the agent process, workspace access, credentials, and state on your own machine or server.
 
-- 中文版: [README_CN.md](./README_CN.md)
+- Chinese version: [README_CN.md](./README_CN.md)
 - Full documentation: [docs/index.md](./docs/index.md)
 - Requires: Go 1.26+ and a working `chord` binary
 
@@ -108,7 +108,7 @@ See [docs/usage.md](./docs/usage.md) for full command behavior and session seman
 - [Permissions & safety](./docs/permissions-and-safety.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 - [Changelog](./CHANGELOG.md)
-- 中文文档入口: [docs/index_CN.md](./docs/index_CN.md)
+- Chinese docs: [docs/index_CN.md](./docs/index_CN.md)
 
 ## Security notes
 

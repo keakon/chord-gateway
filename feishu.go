@@ -1,4 +1,4 @@
-// Package main implements the Feishu (飞书) IM adapter for chord-gateway.
+// Package main implements the Feishu IM adapter for chord-gateway.
 package main
 
 import (
@@ -74,7 +74,7 @@ type feishuFragmentBuffer struct {
 
 // --- Adapter ---
 
-// FeishuAdapter implements IMAdapter for Feishu (飞书).
+// FeishuAdapter implements IMAdapter for Feishu.
 type FeishuAdapter struct {
 	imCfg     config.IMAdapterConfig
 	imCfgMu   sync.RWMutex
@@ -784,7 +784,7 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 	} else {
 		a.dedupe.Release(dedupeKey)
 	}
-	return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "已收到，正在处理..."}, Card: &larkcallback.Card{Type: "raw", Data: buildFeishuResolvedCard("Processing", "⌛ Your response was received and is being processed.", "blue")}}, nil
+	return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "Received. Processing..."}, Card: &larkcallback.Card{Type: "raw", Data: buildFeishuResolvedCard("Processing", "⌛ Your response was received and is being processed.", "blue")}}, nil
 }
 
 func isValidFeishuCardAction(actionType, action, value string) bool {

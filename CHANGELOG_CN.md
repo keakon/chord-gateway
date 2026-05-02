@@ -40,6 +40,8 @@
 - 对飞书待回答问题直接发送普通文本时，gateway 现在会在可能时更新原始问题卡片；同时卡片更新会优先使用发送时记录的消息 ID，而不是回调元数据，避免更新到错误消息。
 - gateway 现在直接使用 `github.com/keakon/golog/log` 记录日志，并使用 `github.com/keakon/golog` 进行文件轮转；轮转后的日志不再 gzip 压缩。
 - Chord `idle` envelope 现在由 gateway 渲染为用户可见的 ready 通知，不再依赖额外的 headless `notification` envelope。
+- 将 `github.com/keakon/golog` 更新到 v0.2.0。
+- 将非中文文档和 IM 响应中剩余的运行时/用户可见文案统一为英文。
 
 ### Removed
 
@@ -57,6 +59,7 @@
 - 当 Chord 正在等待确认或问题回答时，不再发送长时间运行的 `⏳ Still working` 提醒。
 - 修复普通 Chord `idle` 处理：陈旧的待确认状态会被清空，但不会被报告为已过期；过期提示现在只用于 gateway idle timeout 终止进程的场景。
 - 修复 `/bind` 和 `/resume` 的 busy 检查：现在只检查已有进程，不会意外启动新的 Chord 进程。
+- 修复 dedupe cleanup 持久化：写盘失败时会保留 dirty 状态，下一次 cleanup tick 可以继续重试。
 
 ## 0.2.0 – 2026-04-30
 

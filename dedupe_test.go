@@ -216,6 +216,35 @@ func TestDedupeStore_ContainsExpiryMarksDirtyForPersistence(t *testing.T) {
 	}
 }
 
+func TestDedupeStore_CleanupKeepsDirtyWhenSaveFails(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ds.Close()
+
+	ds.mu.Lock()
+	ds.entries["expired"] = dedupeEntry{
+		Key:       "expired",
+		Committed: true,
+		ExpiresAt: time.Now().Add(-time.Second),
+	}
+	ds.dirty = true
+	badPath := filepath.Join(dir, "dedupe.json")
+	if err := os.Mkdir(badPath, 0o700); err != nil {
+		ds.mu.Unlock()
+		t.Fatalf("create directory at dedupe file path: %v", err)
+	}
+	ds.storagePath = badPath
+	ds.cleanupExpiredAndSaveLocked()
+	if !ds.dirty {
+		ds.mu.Unlock()
+		t.Fatal("dirty should remain true after failed cleanup save")
+	}
+	ds.mu.Unlock()
+}
+
 func TestDedupeStore_EmptyStorageDirErrors(t *testing.T) {
 	// Empty storageDir is not valid; NewDedupeStore should return an error.
 	ds, err := NewDedupeStore("")

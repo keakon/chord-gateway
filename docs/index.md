@@ -2,7 +2,7 @@
 
 This documentation is for users who want to run `chord-gateway`, connect IM platforms to `chord headless`, and operate it safely.
 
-- 中文版入口: [index_CN.md](./index_CN.md)
+- Chinese version: [index_CN.md](./index_CN.md)
 
 ## Getting started
 

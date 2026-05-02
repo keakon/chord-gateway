@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/keakon/golog v0.0.0-20230330091222-cac71197c18d
+	github.com/keakon/golog v0.2.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.6.1
 	github.com/spf13/cobra v1.9.1
 	gopkg.in/yaml.v3 v3.0.1
