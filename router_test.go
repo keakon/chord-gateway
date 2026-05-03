@@ -1146,7 +1146,7 @@ func TestTruncateLineAndTruncate(t *testing.T) {
 		t.Fatalf("truncateLine ascii = %q", got)
 	}
 	if got := truncateLine("こんにちは", 3); got != "こん…" {
-		t.Fatalf("truncateLine chinese = %q", got)
+		t.Fatalf("truncateLine japanese = %q", got)
 	}
 	if got := truncateLine("😀😃😄😁", 3); got != "😀😃…" {
 		t.Fatalf("truncateLine emoji = %q", got)

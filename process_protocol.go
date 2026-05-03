@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"github.com/keakon/golog/log"
 	"io"
 	"strings"
 	"time"
+
+	"github.com/keakon/golog/log"
 )
 
 // readLoop reads stdout from the chord process, parses JSON envelopes,

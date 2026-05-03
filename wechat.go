@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/keakon/golog/log"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
 )

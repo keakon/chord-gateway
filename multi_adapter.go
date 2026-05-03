@@ -3,8 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/keakon/golog/log"
 	"sync"
+
+	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
 )

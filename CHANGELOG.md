@@ -22,13 +22,13 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
-- Refactored the router and process implementation into topic-specific files (`router_commands`, `router_format`, `router_feishu_cards`, `router_reminders`, `router_parse`, `process_protocol`, `process_lifecycle`, `process_env`)
+- Refactored the router and process implementation into topic-specific files (`router_commands`, `router_format`, `router_feishu_cards`, `router_reminders`, `router_parse`, `process_protocol`, `process_lifecycle`, `process_env`) without changing documented behavior.
 - `todos` events now forward the full current todo list on every event when enabled, instead of only surfacing the current in-progress item.
 - `/deny` now takes an optional human-readable reason text instead of a platform-internal request ID; the gateway resolves the pending confirmation automatically.
 - `/new` now sends the command to chord via stdin rather than killing the process, letting chord manage session lifecycle gracefully.
 - `/bind` now rejects rebinds while a session is actively running; cancel the current turn first.
 - Feishu cards no longer embed user-facing commands for confirm/question buttons; they dispatch structured internal actions so the IM protocol stays clean.
-- Feishu post-format messages are now accepted alongside plain text, enabling rich-text input for all commands. without changing documented behavior.
+- Feishu post-format messages are now accepted alongside plain text, enabling rich-text input for all commands.
 - Made `ChordManager` the router's single source of configuration truth, so `/bind` updates no longer need to keep separate router and manager config copies in sync.
 - Made session-pin and dedupe persistence use atomic file replacement, and fixed session-pin updates so failed writes do not mutate in-memory state while concurrent updates do not lose pins.
 - Clarified Feishu renewal behavior in user docs and cross-IM notifications: Feishu access tokens are refreshed automatically from configured app credentials, `/login feishu` is unsupported, and app credentials must not be sent or changed in IM chats.

@@ -3,11 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/keakon/golog/log"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
 )

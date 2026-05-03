@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/keakon/golog/log"
 	"strings"
 	"time"
+
+	"github.com/keakon/golog/log"
 )
 
 // TerminateGroup attempts to gracefully stop the chord process and, if needed,

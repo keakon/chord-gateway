@@ -17,6 +17,21 @@ if ! command -v staticcheck >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v goimports >/dev/null 2>&1; then
+  echo "goimports not found in PATH" >&2
+  echo "install with: go install golang.org/x/tools/cmd/goimports@latest" >&2
+  exit 1
+fi
+
+echo "==> goimports -l -local github.com/keakon/chord-gateway ."
+goimports_diff="$(goimports -l -local github.com/keakon/chord-gateway . 2>/dev/null)"
+if [[ -n "$goimports_diff" ]]; then
+  echo "goimports check failed: the following files need formatting:" >&2
+  printf '%s\n' "$goimports_diff" >&2
+  echo "run: goimports -w -local github.com/keakon/chord-gateway ." >&2
+  exit 1
+fi
+
 echo "==> go test -coverprofile=${coverage_file} ./..."
 go test -coverprofile="$coverage_file" ./...
 

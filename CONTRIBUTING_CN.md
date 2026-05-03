@@ -6,6 +6,12 @@
 
 - Go 版本以 `go.mod` 为准
 - 本机可用 `chord` 可执行文件（或在配置中设置 `chord_path`）
+- Go 质量检查工具：
+
+```bash
+go install golang.org/x/tools/cmd/goimports@latest
+go install honnef.co/go/tools/cmd/staticcheck@latest
+```
 
 ## 本地开发
 
@@ -20,7 +26,7 @@ go build ./...
 ./scripts/setup-git-hooks.sh
 ```
 
-该脚本会安装 `.githooks/pre-commit`，在每次提交前先对已暂存的 `.go` 文件执行 `gofmt`，再运行共享的 Go 质量检查。
+该脚本会安装 `.githooks/pre-commit`，在每次提交前先对已暂存的 `.go` 文件执行 `goimports` 和 `gofmt`，再运行共享的 Go 质量检查。
 
 当前本地 / CI 质量门禁：
 
@@ -31,6 +37,7 @@ MIN_COVERAGE=60.0 ./scripts/check-go-quality.sh
 该脚本会执行：
 
 ```bash
+goimports -l -local github.com/keakon/chord-gateway .
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 # CI 要求总覆盖率 >= 60.0%。

@@ -6,6 +6,12 @@ Thanks for your interest in contributing.
 
 - Go: use the version declared in `go.mod`
 - `chord` binary available in your `PATH` (or set `chord_path` in config)
+- Go quality tools:
+
+```bash
+go install golang.org/x/tools/cmd/goimports@latest
+go install honnef.co/go/tools/cmd/staticcheck@latest
+```
 
 ## Local Setup
 
@@ -20,7 +26,7 @@ Enable commit hooks once:
 ./scripts/setup-git-hooks.sh
 ```
 
-This installs `.githooks/pre-commit`, which runs `gofmt` on staged `.go` files and then executes the shared Go quality checks before each commit.
+This installs `.githooks/pre-commit`, which runs `goimports` and `gofmt` on staged `.go` files and then executes the shared Go quality checks before each commit.
 
 Current local/CI quality gate:
 
@@ -31,6 +37,7 @@ MIN_COVERAGE=60.0 ./scripts/check-go-quality.sh
 This runs:
 
 ```bash
+goimports -l -local github.com/keakon/chord-gateway .
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 # CI requires total coverage >= 60.0%.

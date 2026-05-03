@@ -6,6 +6,12 @@ if ! command -v gofmt >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v goimports >/dev/null 2>&1; then
+  echo "pre-commit: goimports not found in PATH"
+  echo "install with: go install golang.org/x/tools/cmd/goimports@latest"
+  exit 1
+fi
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
@@ -14,11 +20,12 @@ if [[ -n "${files}" ]]; then
   count=0
   while IFS= read -r f; do
     [[ -z "${f}" ]] && continue
+    goimports -w -local github.com/keakon/chord-gateway "${f}"
     gofmt -w "${f}"
     git add "${f}"
     count=$((count + 1))
   done <<< "${files}"
-  echo "pre-commit: gofmt applied to ${count} staged Go file(s)"
+  echo "pre-commit: goimports + gofmt applied to ${count} staged Go file(s)"
 fi
 
 MIN_COVERAGE="${MIN_COVERAGE:-60.0}" ./scripts/check-go-quality.sh

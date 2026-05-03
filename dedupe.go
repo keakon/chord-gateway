@@ -5,11 +5,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/keakon/golog/log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/keakon/golog/log"
 )
 
 const (

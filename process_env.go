@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"github.com/keakon/golog/log"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keakon/golog/log"
 )
 
 // loginShellEnv returns os.Environ() with PATH replaced by the user's login

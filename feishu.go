@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/keakon/golog/log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keakon/golog/log"
 
 	"github.com/gorilla/websocket"
 	larkdispatcher "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
