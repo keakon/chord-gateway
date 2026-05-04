@@ -11,7 +11,7 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-func (r *NotificationRouter) formatNotification(key, workspaceID, eventType string, state ControlState) string {
+func (r *NotificationRouter) formatNotification(eventType string, state ControlState) string {
 	switch eventType {
 	case "notification":
 		return r.formatHeadlessNotification(state)
@@ -54,7 +54,7 @@ func (r *NotificationRouter) formatNotification(key, workspaceID, eventType stri
 		return ""
 
 	case "exit":
-		return r.formatExitNotification(workspaceID, state)
+		return r.formatExitNotification(state)
 
 	case "tool_result":
 		return r.formatToolResultNotification(state)
@@ -282,7 +282,7 @@ func (r *NotificationRouter) formatToastNotification(state ControlState) string 
 	}
 }
 
-func (r *NotificationRouter) formatExitNotification(workspaceID string, state ControlState) string {
+func (r *NotificationRouter) formatExitNotification(state ControlState) string {
 	if state.Busy {
 		return "🔌 Chord process exited unexpectedly."
 	}
@@ -416,7 +416,7 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 				completed++
 			}
 		}
-		sb.WriteString(fmt.Sprintf("\n📋 Todos: %d/%d completed", completed, len(state.Todos)))
+		fmt.Fprintf(&sb, "\n📋 Todos: %d/%d completed", completed, len(state.Todos))
 	}
 	return truncate(sb.String())
 }

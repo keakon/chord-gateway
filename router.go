@@ -588,7 +588,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		len(state.LastAssistantText),
 	)
 
-	msg := r.formatNotification(key, workspaceID, eventType, state)
+	msg := r.formatNotification(eventType, state)
 	willSend := msg != ""
 	msgLen := len(msg)
 	log.Infof("[%v] gateway routing decision event=%v assistant_text_len=%v message_len=%v will_send=%v", processLogContext(key, state),

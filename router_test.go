@@ -928,7 +928,7 @@ func TestFormatNotification_NotificationEvent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newTestRouter()
-			msg := r.formatNotification("test-key", "test", "notification", ControlState{
+			msg := r.formatNotification("notification", ControlState{
 				LastNotification: &NotificationPayload{Reason: tt.reason, Message: tt.msg},
 			})
 			if msg == "" {
@@ -956,25 +956,25 @@ func TestReminderDelayUsesLastVisiblePush(t *testing.T) {
 
 func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	r := newTestRouter()
-	if msg := r.formatNotification("test-key", "test", "confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Bash"}}); msg == "" {
+	if msg := r.formatNotification("confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Bash"}}); msg == "" {
 		t.Fatal("confirm_request should push")
 	}
-	if msg := r.formatNotification("test-key", "test", "question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
+	if msg := r.formatNotification("question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
 		t.Fatal("question_request should push")
 	}
-	if msg := r.formatNotification("test-key", "test", "error", ControlState{LastError: "boom"}); msg != "" {
+	if msg := r.formatNotification("error", ControlState{LastError: "boom"}); msg != "" {
 		t.Fatalf("error = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "idle", ControlState{LastOutcome: "completed"}); msg != "✅ Chord: Ready for input" {
+	if msg := r.formatNotification("idle", ControlState{LastOutcome: "completed"}); msg != "✅ Chord: Ready for input" {
 		t.Fatalf("idle = %q, want %q", msg, "✅ Chord: Ready for input")
 	}
-	if msg := r.formatNotification("test-key", "test", "agent_done", ControlState{}); msg != "" {
+	if msg := r.formatNotification("agent_done", ControlState{}); msg != "" {
 		t.Fatalf("agent_done = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "todos", ControlState{}); msg != "📋 No todos." {
+	if msg := r.formatNotification("todos", ControlState{}); msg != "📋 No todos." {
 		t.Fatalf("todos = %q, want %q", msg, "📋 No todos.")
 	}
-	if msg := r.formatNotification("test-key", "test", "unknown", ControlState{}); msg != "" {
+	if msg := r.formatNotification("unknown", ControlState{}); msg != "" {
 		t.Fatalf("unknown = %q, want empty", msg)
 	}
 }
@@ -1232,13 +1232,13 @@ func TestFormatQuestionNotification(t *testing.T) {
 
 func TestFormatIdleNotification(t *testing.T) {
 	r := &NotificationRouter{}
-	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{}); got != "✅ Chord: Ready for input" {
+	if got := r.formatNotification("idle", ControlState{}); got != "✅ Chord: Ready for input" {
 		t.Fatalf("idle without expired pending = %q", got)
 	}
-	if got := r.formatNotification("test-key", "ws1", "idle", ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env"}}); !strings.Contains(got, "pending question has expired") {
+	if got := r.formatNotification("idle", ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env"}}); !strings.Contains(got, "pending question has expired") {
 		t.Fatalf("expired question notification = %q", got)
 	}
-	if got := r.formatNotification("test-key", "ws1", "idle_timeout", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
+	if got := r.formatNotification("idle_timeout", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
 		t.Fatalf("expired confirm notification = %q", got)
 	}
 }
@@ -1340,28 +1340,28 @@ func TestResolveQuestionAnswers(t *testing.T) {
 
 func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	r := newTestRouter()
-	if msg := r.formatNotification("test-key", "test", "assistant_message", ControlState{LastAssistantText: "final answer"}); msg != "final answer" {
+	if msg := r.formatNotification("assistant_message", ControlState{LastAssistantText: "final answer"}); msg != "final answer" {
 		t.Fatalf("assistant_message = %q, want final answer", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "assistant_message", ControlState{}); msg != "" {
+	if msg := r.formatNotification("assistant_message", ControlState{}); msg != "" {
 		t.Fatalf("assistant_message empty = %q, want empty", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "activity", ControlState{Busy: true}); msg != "" {
+	if msg := r.formatNotification("activity", ControlState{Busy: true}); msg != "" {
 		t.Fatalf("activity should not push: %q", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "info", ControlState{InfoMessage: "something happened"}); !strings.Contains(msg, "ℹ️") {
+	if msg := r.formatNotification("info", ControlState{InfoMessage: "something happened"}); !strings.Contains(msg, "ℹ️") {
 		t.Fatalf("info notification = %q", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "info", ControlState{}); msg != "" {
+	if msg := r.formatNotification("info", ControlState{}); msg != "" {
 		t.Fatalf("empty info = %q", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "careful", ToastLevel: "warn"}); !strings.Contains(msg, "🔔") {
+	if msg := r.formatNotification("toast", ControlState{ToastMessage: "careful", ToastLevel: "warn"}); !strings.Contains(msg, "🔔") {
 		t.Fatalf("warn toast = %q", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "broken", ToastLevel: "error"}); !strings.Contains(msg, "🔔") {
+	if msg := r.formatNotification("toast", ControlState{ToastMessage: "broken", ToastLevel: "error"}); !strings.Contains(msg, "🔔") {
 		t.Fatalf("error toast = %q", msg)
 	}
-	if msg := r.formatNotification("test-key", "test", "toast", ControlState{ToastMessage: "just info", ToastLevel: "info"}); msg != "" {
+	if msg := r.formatNotification("toast", ControlState{ToastMessage: "just info", ToastLevel: "info"}); msg != "" {
 		t.Fatalf("info toast = %q, want empty", msg)
 	}
 	if msg := r.formatLongRunningNotification(ControlState{Phase: "thinking", PhaseDetail: "analyzing", InternalEventsSinceLastPush: 2}); !strings.Contains(msg, "Still working") || !strings.Contains(msg, "2 internal events") || strings.Contains(msg, "thinking") {
@@ -1377,10 +1377,10 @@ func TestFormatOtherNotifications(t *testing.T) {
 	if got := r.formatToastNotification(ControlState{}); got != "" {
 		t.Fatalf("empty toast = %q", got)
 	}
-	if got := r.formatExitNotification("ws", ControlState{Busy: true}); got == "" {
+	if got := r.formatExitNotification(ControlState{Busy: true}); got == "" {
 		t.Fatal("busy exit should notify")
 	}
-	if got := r.formatExitNotification("ws", ControlState{Busy: false}); got != "" {
+	if got := r.formatExitNotification(ControlState{Busy: false}); got != "" {
 		t.Fatalf("idle exit = %q", got)
 	}
 	if got := r.formatToolResultNotification(ControlState{}); got != "" {
@@ -1861,8 +1861,21 @@ func TestWaitStatus_DeliversResponse(t *testing.T) {
 		done <- state
 	}()
 
-	// Give WaitStatus a moment to register its waiter.
-	time.Sleep(10 * time.Millisecond)
+	// Wait until the goroutine has registered its waiter, rather than
+	// relying on a fixed sleep that may be too short under load.
+	deadline := time.Now().Add(time.Second)
+	for {
+		p.mu.Lock()
+		registered := len(p.statusWaiters) > 0
+		p.mu.Unlock()
+		if registered {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("WaitStatus did not register a waiter")
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	payload := []byte(`{"session_id":"s1","busy":false,"phase":"","phase_detail":"","last_error":"","last_outcome":"completed","updated_at":"2025-01-01T00:00:00Z"}`)
 	p.processEnvelope(&HeadlessEnvelope{Type: "status_response", Payload: payload})
