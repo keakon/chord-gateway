@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+## 0.3.0 – 2026-05-05
+
 ### Breaking changes
 
 - 移除 `HandleMessage(imType, chatID, text)` router 入口；改用 `HandleIncomingMessage` 配合结构化的 `IncomingMessage`。
@@ -30,7 +32,7 @@
 - 在不改变文档化行为的前提下，按主题拆分 router 与 process 实现文件（`router_commands`、`router_format`、`router_feishu_cards`、`router_reminders`、`router_parse`、`process_protocol`、`process_lifecycle`、`process_env`）。
 - 将所有 rune 截断辅助函数（`truncate`、`truncateLine`、`truncateButtonLabel`、`shortID`、`truncateStderrTail`）合并到统一的 `text.go`，所有 IM 输出共享一份实现。
 - 将飞书相关辅助（`buildFeishuResolvedCard`、`displaySender`、`updateFeishuCardStatus`、`buildExpired*Followup`）集中到 `router_feishu_helpers.go`，并新增 `resolveFeishuCard(...)` 包装方法，消除 router 命令路径中 7 处重复的 `updateFeishuCardStatus + buildFeishuResolvedCard` 写法。
-- 抽出 `submitQuestionAnswer` 共用方法，让 `/answer` 与"普通文本回退到回答"两条路径共享同一份分发实现。
+- 抽出 `submitQuestionAnswer` 共用方法，让 `/answer` 与“普通文本回退到回答”两条路径共享同一份分发实现。
 - 抽出 `compositeKey` 工具，process key、Feishu 去重 key 与 Feishu 卡片 handle key 共用同一种字符串拼接形式。
 - 启用 `todos` 事件可见性后，现在每次事件都会直接转发完整的当前任务列表，而不再只提示当前进行中的单项任务。
 - `/deny` 现在接受可选的人类可读拒绝理由文本，而非平台内部的 request_id；gateway 会自动匹配当前待确认请求。
@@ -49,9 +51,9 @@
 - 对飞书待回答问题直接发送普通文本时，gateway 现在会在可能时更新原始问题卡片；同时卡片更新会优先使用发送时记录的消息 ID，而不是回调元数据，避免更新到错误消息。
 - gateway 现在直接使用 `github.com/keakon/golog/log` 记录日志，并使用 `github.com/keakon/golog` 进行文件轮转；轮转后的日志不再 gzip 压缩。
 - Chord `idle` envelope 现在由 gateway 渲染为用户可见的 ready 通知，不再依赖额外的 headless `notification` envelope。
-- 将 `github.com/keakon/golog` 更新到 v0.2.0。
+- 将 `github.com/keakon/golog` 更新到 v0.3.0。
 - 将非中文文档和 IM 响应中剩余的运行时/用户可见文案统一为英文。
-- `handleChordCommand` 改为接收显式的 `*IncomingMessage` 参数，取代原先用 variadic 模拟的"可选 1 个"，让"是否携带原始消息"语义清晰可见。
+- `handleChordCommand` 改为接收显式的 `*IncomingMessage` 参数，取代原先用 variadic 模拟的“可选 1 个”，让“是否携带原始消息”语义清晰可见。
 
 ### Removed
 

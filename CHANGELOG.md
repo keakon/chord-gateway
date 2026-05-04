@@ -8,6 +8,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+## 0.3.0 – 2026-05-05
+
 ### Breaking changes
 
 - Removed the `HandleMessage(imType, chatID, text)` router entrypoint. Use `HandleIncomingMessage` with a structured `IncomingMessage`.
@@ -49,7 +51,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Plain-text replies to pending Feishu questions now update the original question card when possible, and card updates prefer the stored sent-message ID over callback metadata to avoid patching the wrong message.
 - Gateway logging now uses `github.com/keakon/golog/log` directly for log records and `github.com/keakon/golog` for file rotation. Rotated logs are no longer gzip-compressed.
 - Chord `idle` envelopes are now rendered by the gateway as the user-visible ready notification instead of relying on a separate headless `notification` envelope.
-- Updated `github.com/keakon/golog` to v0.2.0.
+- Updated `github.com/keakon/golog` to v0.3.0.
 - Standardized remaining runtime/user-facing messages in non-Chinese docs and IM responses to English.
 - `handleChordCommand` now takes an explicit `*IncomingMessage` instead of a variadic, making the "optional message context" behaviour explicit.
 

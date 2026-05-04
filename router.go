@@ -623,8 +623,6 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	r.markVisibleOutput(key)
 }
 
-// formatNotification returns the notification text for the given event,
-// or empty string if the event should not trigger a notification.
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a
 // known chatID for this workspace. Used for multi-IM notification routing.
 func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]string {
