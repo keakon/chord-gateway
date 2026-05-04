@@ -38,25 +38,16 @@ func (r *NotificationRouter) scheduleReminder(key string, lastPush time.Time) {
 
 func (r *NotificationRouter) beginTurn(key string) {
 	now := time.Now()
-
 	if proc, ok := r.lookupProcessByKey(key); ok {
-		proc.mu.Lock()
-		proc.state.Busy = true
-		proc.state.LastPushAt = now
-		proc.state.InternalEventsSinceLastPush = 0
-		proc.mu.Unlock()
+		proc.BeginTurn(now)
 	}
-
 	r.scheduleReminder(key, now)
 }
 
 func (r *NotificationRouter) markVisibleOutput(key string) {
 	now := time.Now()
 	if proc, ok := r.lookupProcessByKey(key); ok {
-		proc.mu.Lock()
-		proc.state.LastPushAt = now
-		proc.state.InternalEventsSinceLastPush = 0
-		proc.mu.Unlock()
+		proc.MarkVisibleOutput(now)
 	}
 
 	r.mu.Lock()

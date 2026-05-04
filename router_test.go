@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1810,23 +1811,25 @@ func TestTransitionToIdleTimeoutExpiresPending(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// processEnvelope: status_response reads last_outcome and updates LastStatusResponseAt
+// processEnvelope: status_response reads last_outcome
 // ---------------------------------------------------------------------------
 
 func TestProcessEnvelopeStatusResponse(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
 	payload := []byte(`{"session_id":"s1","busy":true,"phase":"tool","phase_detail":"running","last_error":"","last_outcome":"","updated_at":"2025-01-01T00:00:00Z"}`)
-	prevTime := p.State().LastStatusResponseAt
-	if !prevTime.IsZero() {
-		t.Fatalf("expected zero LastStatusResponseAt initially")
-	}
 	p.processEnvelope(&HeadlessEnvelope{Type: "status_response", Payload: payload})
 	state := p.State()
+	if state.SessionID != "s1" {
+		t.Errorf("SessionID = %q, want s1", state.SessionID)
+	}
+	if !state.Busy {
+		t.Error("Busy should be true")
+	}
+	if state.Phase != "tool" {
+		t.Errorf("Phase = %q, want tool", state.Phase)
+	}
 	if state.LastOutcome != "" {
 		t.Errorf("LastOutcome = %q, want empty", state.LastOutcome)
-	}
-	if state.LastStatusResponseAt.IsZero() {
-		t.Error("LastStatusResponseAt should be set after status_response")
 	}
 }
 
@@ -1841,87 +1844,61 @@ func TestProcessEnvelopeStatusResponseWithOutcome(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// /status freshness: LastStatusResponseAt changes signal real response
+// /status freshness: WaitStatus delivers each response on its own channel
 // ---------------------------------------------------------------------------
 
-func TestStatusFreshness_LastStatusResponseAtAdvances(t *testing.T) {
-	p := &ChordProcess{
-		key:         "ws|wechat|chat",
-		workspaceID: "ws",
-	}
-	p.state.UpdatedAt = "2025-01-01T00:00:00Z"
-	p.state.LastStatusResponseAt = time.Time{}
+func TestWaitStatus_DeliversResponse(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-	prev := p.State().LastStatusResponseAt
-	if !prev.IsZero() {
-		t.Fatalf("expected zero LastStatusResponseAt")
-	}
-
-	p.mu.Lock()
-	p.state.LastOutcome = "completed"
-	p.state.LastStatusResponseAt = time.Now()
-	p.mu.Unlock()
-
-	cur := p.State().LastStatusResponseAt
-	if cur.IsZero() {
-		t.Fatal("LastStatusResponseAt should not be zero after status_response")
-	}
-	if cur.Equal(prev) {
-		t.Error("LastStatusResponseAt did not advance")
-	}
-}
-
-func waitForStatusResponse(proc *ChordProcess, prev time.Time, waitFn func()) bool {
-	for i := 0; i < 5; i++ {
-		waitFn()
-		cur := proc.State().LastStatusResponseAt
-		if !cur.IsZero() && (prev.IsZero() || !cur.Equal(prev)) {
-			return true
+	done := make(chan ControlState, 1)
+	go func() {
+		state, err := p.WaitStatus(ctx)
+		if err != nil {
+			t.Errorf("WaitStatus: %v", err)
 		}
-	}
-	return false
-}
+		done <- state
+	}()
 
-func TestWaitForStatusResponse_AdvancesAfterSimulatedResponse(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	prev := p.State().LastStatusResponseAt
+	// Give WaitStatus a moment to register its waiter.
+	time.Sleep(10 * time.Millisecond)
 
-	step := 0
-	waitFn := func() {
-		step++
-		if step == 3 {
-			p.mu.Lock()
-			p.state.LastStatusResponseAt = time.Now()
-			p.mu.Unlock()
+	payload := []byte(`{"session_id":"s1","busy":false,"phase":"","phase_detail":"","last_error":"","last_outcome":"completed","updated_at":"2025-01-01T00:00:00Z"}`)
+	p.processEnvelope(&HeadlessEnvelope{Type: "status_response", Payload: payload})
+
+	select {
+	case state := <-done:
+		if state.LastOutcome != "completed" {
+			t.Errorf("LastOutcome = %q, want completed", state.LastOutcome)
 		}
-	}
-	got := waitForStatusResponse(p, prev, waitFn)
-	if !got {
-		t.Error("expected status response to be detected")
+	case <-time.After(time.Second):
+		t.Fatal("WaitStatus did not return after status_response")
 	}
 }
 
-func TestWaitForStatusResponse_StaysZero_Timeout(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	prev := p.State().LastStatusResponseAt
-	got := waitForStatusResponse(p, prev, func() {})
-	if got {
-		t.Error("should timeout when no status_response arrives")
+func TestWaitStatus_TimesOutWithoutResponse(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	if _, err := p.WaitStatus(ctx); err == nil {
+		t.Fatal("expected error on context expiry, got nil")
 	}
 }
 
 func TestNormalizeIMTypeAndNames(t *testing.T) {
-	if got := normalizeIMType(" wx "); got != "wx" {
+	if got := config.NormalizeIMType(" wx "); got != "wx" {
 		t.Fatalf("normalize wx = %q", got)
 	}
-	if got := normalizeIMType("LARK"); got != "lark" {
+	if got := config.NormalizeIMType("LARK"); got != "lark" {
 		t.Fatalf("normalize lark = %q", got)
 	}
-	if got := normalizeIMType("wechat"); got != "wechat" {
-		t.Fatalf("normalizeIMType wechat = %q", got)
+	if got := config.NormalizeIMType("wechat"); got != "wechat" {
+		t.Fatalf("NormalizeIMType wechat = %q", got)
 	}
-	if got := normalizeIMType("feishu"); got != "feishu" {
-		t.Fatalf("normalizeIMType feishu = %q", got)
+	if got := config.NormalizeIMType("feishu"); got != "feishu" {
+		t.Fatalf("NormalizeIMType feishu = %q", got)
 	}
 	if got := imDisplayName("wechat"); got != "WeChat" {
 		t.Fatalf("imDisplayName wechat = %q", got)
@@ -1946,7 +1923,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("cancel sends command and ack", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "cancel"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "cancel"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "🛑 Cancel requested." {
 			t.Fatalf("message = %q", got)
 		}
@@ -1957,7 +1934,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm uses matching internal request id", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-1"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-1"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-1"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "✅ allowed" {
 			t.Fatalf("message = %q", got)
 		}
@@ -1968,7 +1945,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm rejects mismatched internal request id", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-current"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-stale"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-stale"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "No matching pending confirmation") {
 			t.Fatalf("message = %q", got)
 		}
@@ -1979,7 +1956,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm uses current pending request id and deny reason", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-pending"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny", Reason: "not safe"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny", Reason: "not safe"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "✅ denied: not safe" {
 			t.Fatalf("message = %q", got)
 		}
@@ -1993,7 +1970,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm without pending sends follow-up instead of approval", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "sent as a follow-up message") || strings.Contains(got, "No pending confirmation") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2005,7 +1982,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("question maps numeric answers", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingQuestion: &QuestionPayload{RequestID: "req-q", Options: []string{"yes", "no"}}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"1"}}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"1"}}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "💬 Answered: yes" {
 			t.Fatalf("message = %q", got)
 		}
@@ -2016,7 +1993,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("question without pending sends follow-up", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env", Options: []string{"dev", "prod"}}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "sent as a follow-up message") || strings.Contains(got, "No pending question") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2033,7 +2010,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("plain send with pending question auto-redirects to answer", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingQuestion: &QuestionPayload{RequestID: "req-auto"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "💬 Answered: free text answer" {
 			t.Fatalf("message = %q", got)
 		}
@@ -2074,7 +2051,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
 		r.recordCardHandle(key, "question", "req-auto", &InteractiveCardHandle{MessageID: "om_sent_1"})
 		msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
-		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", msg)
+		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", &msg)
 		if patchedPath != "/open-apis/im/v1/messages/om_sent_1" {
 			t.Fatalf("patched path = %q", patchedPath)
 		}
@@ -2085,7 +2062,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("send blocks local-only slash commands", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "/model"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "/model"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "only available in local TUI") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2096,7 +2073,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("send writes user message without auxiliary status request", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "hello"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "hello"}, "wechat", nil)
 		if len(sender.sentMessages()) != 0 {
 			t.Fatalf("unexpected notification messages: %#v", sender.sentMessages())
 		}
@@ -2111,7 +2088,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("unknown command type warns", func(t *testing.T) {
 		r, _, sender, _, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "mystery"}, "wechat")
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "mystery"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "Unknown command") {
 			t.Fatalf("message = %q", got)
 		}

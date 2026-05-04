@@ -12,6 +12,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Removed the `HandleMessage(imType, chatID, text)` router entrypoint. Use `HandleIncomingMessage` with a structured `IncomingMessage`.
 - Removed YAML `ims` and `workspaces` sequence (list) forms in `config.yaml`. Both must now be mappings keyed by adapter type / workspace id.
+- Removed unused fields from the protocol/state model: `ConfirmPayload.TimeoutMS`, `ConfirmPayload.AlreadyAllowed`, `QuestionPayload.TimeoutMS`, `IncomingMessage.ConversationID`, and `ControlState.LastStatusResponseAt`. The fields were never consumed; downstream consumers that relied on them must migrate to the equivalents (e.g. use `WaitStatus` to observe `status_response` arrival rather than polling `LastStatusResponseAt`).
+- Renamed the package-private `normalizeIMType` helper to `config.NormalizeIMType` and made it the single source of truth across packages. The duplicate copies in `main` and `config` are gone; downstream code must use `config.NormalizeIMType`.
 
 ### Added
 
@@ -19,10 +21,17 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Added regression tests covering session-pin write failures and concurrent session-pin updates.
 - Added regression tests for idle event rendering and normal-idle pending-confirm cleanup.
 - Restored WeChat regression coverage for persisted token / sync state loading, expired-token re-login, custom token paths, `splitText`, and context-aware sleep cancellation.
+- Added `SessionLoginNotifier` interface so IM adapters depend on a narrow contract for cross-channel session/login notices instead of the full `*NotificationRouter`.
+- Added `ChordProcess.BeginTurn` / `MarkVisibleOutput` methods so the router no longer reaches into `ChordProcess.state` directly when stamping reminder counters.
+- Added `ControlState.applyPendingConfirm` / `applyPendingQuestion` / `applyStatusResponse` helpers to keep "incoming pending interaction" handling consistent.
 
 ### Changed
 
 - Refactored the router and process implementation into topic-specific files (`router_commands`, `router_format`, `router_feishu_cards`, `router_reminders`, `router_parse`, `process_protocol`, `process_lifecycle`, `process_env`) without changing documented behavior.
+- Centralized rune-aware truncation helpers in a single `text.go` (`truncate`, `truncateLine`, `truncateButtonLabel`, `shortID`, `truncateStderrTail`) so all IM-facing string trimming uses one consistent implementation.
+- Centralized Feishu helpers (`buildFeishuResolvedCard`, `displaySender`, `updateFeishuCardStatus`, `buildExpired*Followup`) in `router_feishu_helpers.go` and the new `resolveFeishuCard(...)` wrapper, removing seven duplicated `updateFeishuCardStatus + buildFeishuResolvedCard` call sites in router commands.
+- Extracted `submitQuestionAnswer` so `/answer` and plain-text auto-redirect share a single answer-dispatch path.
+- Extracted `compositeKey` so process keys, Feishu dedupe keys, and Feishu card-handle keys all share one canonical join helper.
 - `todos` events now forward the full current todo list on every event when enabled, instead of only surfacing the current in-progress item.
 - `/deny` now takes an optional human-readable reason text instead of a platform-internal request ID; the gateway resolves the pending confirmation automatically.
 - `/new` now sends the command to chord via stdin rather than killing the process, letting chord manage session lifecycle gracefully.
@@ -42,11 +51,13 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Chord `idle` envelopes are now rendered by the gateway as the user-visible ready notification instead of relying on a separate headless `notification` envelope.
 - Updated `github.com/keakon/golog` to v0.2.0.
 - Standardized remaining runtime/user-facing messages in non-Chinese docs and IM responses to English.
+- `handleChordCommand` now takes an explicit `*IncomingMessage` instead of a variadic, making the "optional message context" behaviour explicit.
 
 ### Removed
 
 - Removed unused helpers and dead state: `MultiAdapter.BroadcastText`, `MultiAdapter.Adapters`, `FeishuAdapter.SendInteractive`, the `WechatAdapter.sessionExpired` flag, and the `ControlState.StreamText` / `LastThinkingText` fields.
 - Removed raw-array Chord headless `todos` payload support; gateway now only accepts the current wrapper payload shape (`{"todos":[...]}`).
+- Removed the `WechatAdapter.sleep` thin wrapper, the `runLongConn`-self-assignment dance in `NewFeishuAdapter`, the `cloneStringMap` helper (replaced with `maps.Clone`), and the now-unused `feishuDedupeKeyFmt`/`feishuCardActionFmt` Sprintf format strings.
 
 ### Fixed
 

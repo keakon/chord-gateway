@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,7 +77,10 @@ func (s *sessionPinStore) Set(key, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	updated := cloneStringMap(s.pins)
+	updated := maps.Clone(s.pins)
+	if updated == nil {
+		updated = make(map[string]string)
+	}
 	if strings.TrimSpace(sessionID) == "" {
 		delete(updated, key)
 	} else {
@@ -87,12 +91,4 @@ func (s *sessionPinStore) Set(key, sessionID string) error {
 	}
 	s.pins = updated
 	return nil
-}
-
-func cloneStringMap(src map[string]string) map[string]string {
-	clone := make(map[string]string, len(src))
-	for k, v := range src {
-		clone[k] = v
-	}
-	return clone
 }

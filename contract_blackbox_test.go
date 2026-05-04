@@ -84,9 +84,6 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 	if statusBefore.SessionID == "" {
 		t.Fatal("status_response missing session_id")
 	}
-	if statusBefore.LastStatusResponseAt.IsZero() {
-		t.Fatal("expected LastStatusResponseAt after status request")
-	}
 	if statusBefore.LastOutcome != "" {
 		t.Fatalf("initial last_outcome = %q, want empty", statusBefore.LastOutcome)
 	}
@@ -138,9 +135,6 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 	}
 	if strings.TrimSpace(statusAfter.LastAssistantText) != "Done." {
 		t.Fatalf("last assistant text = %q, want Done.", statusAfter.LastAssistantText)
-	}
-	if statusAfter.LastStatusResponseAt.IsZero() {
-		t.Fatal("expected LastStatusResponseAt after second status request")
 	}
 
 	provider.assertRequests(t, 2)
@@ -215,14 +209,13 @@ func TestChordHeadlessContract_DefaultSubscribeIncludesIdle(t *testing.T) {
 
 func requestStatusSnapshot(t *testing.T, proc *ChordProcess) ControlState {
 	t.Helper()
-	before := proc.State().LastStatusResponseAt
-	if err := proc.SendCommand(map[string]any{"type": "status"}); err != nil {
-		t.Fatalf("send status command: %v", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	state, err := proc.WaitStatus(ctx)
+	if err != nil {
+		t.Fatalf("wait status: %v", err)
 	}
-	waitForCondition(t, 10*time.Second, func() bool {
-		return proc.State().LastStatusResponseAt.After(before)
-	}, "status_response")
-	return proc.State()
+	return state
 }
 
 func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool, label string) {

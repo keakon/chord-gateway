@@ -113,7 +113,7 @@ func (p *ChordProcess) handleExit() {
 	log.Infof("[%v] chord process exited pid=%v exit_code=%v crashed=%v", processLogContext(key, state), pid, exitCode, crashed)
 	if crashed && strings.TrimSpace(stderr) != "" {
 		// Keep stderr short; full details are usually in chord.log.
-		log.Warnf("[%v] chord process stderr pid=%v stderr=%v", processLogContext(key, state), pid, truncateStderr(stderr, 2000))
+		log.Warnf("[%v] chord process stderr pid=%v stderr=%v", processLogContext(key, state), pid, truncateStderrTail(stderr, 2000))
 	}
 
 	if p.onEvent != nil {

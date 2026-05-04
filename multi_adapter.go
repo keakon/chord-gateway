@@ -111,7 +111,7 @@ func (m *MultiAdapter) StartLogin() (string, error) {
 
 // FindAdapterByType returns the adapter matching the given type, or nil.
 func (m *MultiAdapter) FindAdapterByType(adapterType string) IMAdapter {
-	adapterType = normalizeIMType(adapterType)
+	adapterType = config.NormalizeIMType(adapterType)
 	for _, a := range m.adapters {
 		if a.Type() == adapterType {
 			return a
@@ -123,7 +123,7 @@ func (m *MultiAdapter) FindAdapterByType(adapterType string) IMAdapter {
 // BroadcastTextExcept sends a text message through all adapters EXCEPT
 // the one of the given type. Used for cross-IM notifications.
 func (m *MultiAdapter) BroadcastTextExcept(excludeType string, chatIDs map[string]string, text string) {
-	excludeType = normalizeIMType(excludeType)
+	excludeType = config.NormalizeIMType(excludeType)
 	for _, a := range m.adapters {
 		if a.Type() == excludeType {
 			continue

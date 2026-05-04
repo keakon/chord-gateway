@@ -12,10 +12,13 @@ import (
 )
 
 // handleChordCommand dispatches a command to the chord process.
-func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd IMCommand, imType string, messages ...IncomingMessage) {
-	msg := IncomingMessage{IMType: imType, ChatID: chatID, SenderID: chatID}
-	if len(messages) > 0 {
-		msg = messages[0]
+// msg may be nil; in that case a synthetic IncomingMessage is built from the
+// command's IM type and chat ID (used for command paths like /cancel that
+// don't carry the original message context).
+func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd IMCommand, imType string, msg *IncomingMessage) {
+	incoming := IncomingMessage{IMType: imType, ChatID: chatID, SenderID: chatID}
+	if msg != nil {
+		incoming = *msg
 	}
 	procKey := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	proc, err := r.mgr.GetOrSpawnForKey(procKey)
@@ -36,11 +39,11 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 	case "cancel":
 		r.handleCancelCommand(ws, chatID, procKey, proc)
 	case "confirm":
-		r.handleConfirmCommand(ws, chatID, cmd, msg, procKey, proc)
+		r.handleConfirmCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "question":
-		r.handleQuestionCommand(ws, chatID, cmd, msg, procKey, proc)
+		r.handleQuestionCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "send":
-		r.handleSendCommand(ws, chatID, cmd, msg, procKey, proc)
+		r.handleSendCommand(ws, chatID, cmd, incoming, procKey, proc)
 	default:
 		log.Warnf("unknown command type type=%v", cmd.Type)
 		r.sendText(chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
@@ -82,14 +85,14 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 			return
 		}
 		r.beginTurn(procKey)
-		r.updateFeishuCardStatus(msg, procKey, "confirm", cmd.RequestID, buildFeishuResolvedCard("Confirmation expired", "⌛ The pending confirmation has expired.", "grey"))
+		r.resolveFeishuCard(msg, procKey, "confirm", cmd.RequestID, "Confirmation expired", "⌛ The pending confirmation has expired.", "grey")
 		r.sendText(chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
 		return
 	}
 	requestID := pc.RequestID
 	if cmd.RequestID != "" {
 		if cmd.RequestID != pc.RequestID {
-			r.updateFeishuCardStatus(msg, procKey, "confirm", cmd.RequestID, buildFeishuResolvedCard("No matching confirmation", "⚠️ This confirmation has already been handled or no longer matches the current request.", "grey"))
+			r.resolveFeishuCard(msg, procKey, "confirm", cmd.RequestID, "No matching confirmation", "⚠️ This confirmation has already been handled or no longer matches the current request.", "grey")
 			r.sendText(chatID, "⚠️ No matching pending confirmation to respond to.")
 			return
 		}
@@ -100,8 +103,9 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		"request_id": requestID,
 		"action":     cmd.Action,
 	}
-	if cmd.Action == "deny" && strings.TrimSpace(cmd.Reason) != "" {
-		confirmCmd["deny_reason"] = strings.TrimSpace(cmd.Reason)
+	reason := strings.TrimSpace(cmd.Reason)
+	if cmd.Action == "deny" && reason != "" {
+		confirmCmd["deny_reason"] = reason
 	}
 	if err := proc.SendCommand(confirmCmd); err != nil {
 		log.Errorf("failed to send confirm response workspace=%v error=%v", ws.ID, err)
@@ -113,16 +117,16 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 	if cmd.Action == "deny" {
 		text := "✅ denied"
 		status := "❌ Denied by " + sender
-		if strings.TrimSpace(cmd.Reason) != "" {
-			text += ": " + strings.TrimSpace(cmd.Reason)
-			status += ": " + strings.TrimSpace(cmd.Reason)
+		if reason != "" {
+			text += ": " + reason
+			status += ": " + reason
 		}
-		r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation denied", status, "red"))
+		r.resolveFeishuCard(msg, procKey, "confirm", requestID, "Confirmation denied", status, "red")
 		log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
 		r.sendText(chatID, text)
 		return
 	}
-	r.updateFeishuCardStatus(msg, procKey, "confirm", requestID, buildFeishuResolvedCard("Confirmation approved", "✅ Approved by "+sender, "green"))
+	r.resolveFeishuCard(msg, procKey, "confirm", requestID, "Confirmation approved", "✅ Approved by "+sender, "green")
 	log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
 	r.sendText(chatID, "✅ allowed")
 }
@@ -147,31 +151,20 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 			return
 		}
 		r.beginTurn(procKey)
-		r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question expired", "⌛ The pending question has expired.", "grey"))
+		r.resolveFeishuCard(msg, procKey, "question", requestID, "Question expired", "⌛ The pending question has expired.", "grey")
 		r.sendText(chatID, "⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.")
 		return
 	}
 	if requestID != pq.RequestID {
-		r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("No matching question", "⚠️ This question has already been handled or no longer matches the current request.", "grey"))
+		r.resolveFeishuCard(msg, procKey, "question", requestID, "No matching question", "⚠️ This question has already been handled or no longer matches the current request.", "grey")
 		r.sendText(chatID, "⚠️ No matching pending question to answer.")
 		return
 	}
 	answers := resolveQuestionAnswers(strings.Join(cmd.Answers, " "), pq)
-	questionCmd := map[string]any{
-		"type":       "question",
-		"request_id": requestID,
-		"answers":    answers,
-	}
-	if err := proc.SendCommand(questionCmd); err != nil {
-		log.Errorf("failed to send question response workspace=%v error=%v", ws.ID, err)
-		r.sendText(chatID, "❌ Failed to send answer.")
+	if !r.submitQuestionAnswer(ws, chatID, msg, procKey, proc, pq, requestID, answers, false) {
 		return
 	}
-	r.beginTurn(procKey)
-	answerText := strings.Join(answers, ", ")
-	r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
-	log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
-	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
+	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
 }
 
 func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
@@ -181,31 +174,18 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	// Unlike /answer which supports numeric shortcuts, direct
 	// replies are always sent as custom text — no comma splitting
 	// or index mapping, because natural language may contain commas.
-	if proc.State().PendingQuestion != nil && proc.State().PendingConfirm == nil {
-		if !strings.HasPrefix(cmd.Content, "/") {
-			pq := proc.State().PendingQuestion
-			answers := []string{cmd.Content}
-			requestID := pq.RequestID
-			questionCmd := map[string]any{
-				"type":       "question",
-				"request_id": requestID,
-				"answers":    answers,
-			}
-			if err := proc.SendCommand(questionCmd); err != nil {
-				log.Errorf("failed to send question response (auto-redirect) workspace=%v error=%v", ws.ID, err)
-				r.sendText(chatID, "❌ Failed to send answer.")
-				return
-			}
-			r.beginTurn(procKey)
-			answerText := strings.Join(answers, ", ")
-			r.updateFeishuCardStatus(msg, procKey, "question", requestID, buildFeishuResolvedCard("Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green"))
-			log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
-			// Feishu users see the answer reflected on the updated card; avoid duplicating it as a text reply.
-			if normalizeIMType(msg.IMType) != "feishu" {
-				r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", answerText))
-			}
+	state := proc.State()
+	if state.PendingQuestion != nil && state.PendingConfirm == nil && !strings.HasPrefix(cmd.Content, "/") {
+		pq := state.PendingQuestion
+		answers := []string{cmd.Content}
+		if !r.submitQuestionAnswer(ws, chatID, msg, procKey, proc, pq, pq.RequestID, answers, true) {
 			return
 		}
+		// Feishu users see the answer reflected on the updated card; avoid duplicating it as a text reply.
+		if config.NormalizeIMType(msg.IMType) != "feishu" {
+			r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
+		}
+		return
 	}
 	// Filter slash commands that are only supported in local TUI.
 	// Remote control plane must not forward them.
@@ -220,4 +200,29 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 		return
 	}
 	r.beginTurn(procKey)
+}
+
+// submitQuestionAnswer forwards an answer to chord, resolves the Feishu card,
+// and logs the event. Returns true on success. autoRedirect tags the log line
+// to distinguish /answer vs plain-text auto-redirect paths.
+func (r *NotificationRouter) submitQuestionAnswer(ws *config.Workspace, chatID string, msg IncomingMessage, procKey string, proc *ChordProcess, pq *QuestionPayload, requestID string, answers []string, autoRedirect bool) bool {
+	cmd := map[string]any{
+		"type":       "question",
+		"request_id": requestID,
+		"answers":    answers,
+	}
+	logSuffix := ""
+	if autoRedirect {
+		logSuffix = " (auto-redirect)"
+	}
+	if err := proc.SendCommand(cmd); err != nil {
+		log.Errorf("failed to send question response%s workspace=%v error=%v", logSuffix, ws.ID, err)
+		r.sendText(chatID, "❌ Failed to send answer.")
+		return false
+	}
+	r.beginTurn(procKey)
+	answerText := strings.Join(answers, ", ")
+	r.resolveFeishuCard(msg, procKey, "question", requestID, "Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green")
+	log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
+	return true
 }

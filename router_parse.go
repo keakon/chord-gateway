@@ -143,18 +143,3 @@ func nextCommandArg(s string) (arg, rest string, ok bool) {
 	}
 	return "", "", false
 }
-
-// truncate shortens a string to maxNotificationRunes runes, appending an ellipsis
-// when truncation occurs. Operates on runes so multi-byte UTF-8 sequences
-// (e.g. Chinese characters or emoji) are never split.
-func truncate(s string) string {
-	const ellipsis = "..."
-	if len(s) <= maxNotificationRunes {
-		return s
-	}
-	runes := []rune(s)
-	if len(runes) <= maxNotificationRunes {
-		return s
-	}
-	return string(runes[:maxNotificationRunes-len(ellipsis)]) + ellipsis
-}

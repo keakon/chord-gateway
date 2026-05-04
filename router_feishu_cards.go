@@ -196,15 +196,6 @@ func riskLevelForTool(tool string) feishuRiskLevel {
 	}
 }
 
-func shortID(s string) string {
-	s = strings.TrimSpace(s)
-	if len([]rune(s)) <= 12 {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:8]) + "…" + string(r[len(r)-4:])
-}
-
 func cloneCardValue(value map[string]any) map[string]any {
 	out := make(map[string]any, len(value)+2)
 	for k, v := range value {
@@ -214,15 +205,6 @@ func cloneCardValue(value map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
-}
-
-func truncateButtonLabel(label string) string {
-	label = strings.TrimSpace(label)
-	r := []rune(label)
-	if len(r) <= 24 {
-		return label
-	}
-	return string(r[:23]) + "…"
 }
 
 func feishuCardButton(label, style string, value map[string]any) map[string]any {

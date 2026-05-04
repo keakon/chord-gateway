@@ -100,16 +100,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	case "confirm_request":
 		var payload ConfirmPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.PendingConfirm = &payload
-			p.state.ExpiredConfirm = nil
+			p.state.applyPendingConfirm(&payload)
 		}
 		eventType = "confirm_request"
 
 	case "question_request":
 		var payload QuestionPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.PendingQuestion = &payload
-			p.state.ExpiredQuestion = nil
+			p.state.applyPendingQuestion(&payload)
 		}
 		eventType = "question_request"
 
@@ -157,20 +155,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	case "status_response":
 		var resp StatusResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
-			p.state.SessionID = resp.SessionID
-			p.state.Busy = resp.Busy
-			p.state.Phase = resp.Phase
-			p.state.PhaseDetail = resp.PhaseDetail
-			p.state.PendingConfirm = resp.PendingConfirm
-			p.state.PendingQuestion = resp.PendingQuestion
-			if resp.PendingConfirm != nil || resp.PendingQuestion != nil {
-				p.state.ExpiredConfirm = nil
-				p.state.ExpiredQuestion = nil
-			}
-			p.state.LastError = resp.LastError
-			p.state.UpdatedAt = resp.UpdatedAt
-			p.state.LastOutcome = resp.LastOutcome
-			p.state.LastStatusResponseAt = time.Now()
+			p.state.applyStatusResponse(&resp)
 			// Wake any goroutines blocked in WaitStatus.
 			p.notifyStatusWaiters(p.state)
 		}

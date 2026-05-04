@@ -153,7 +153,8 @@ type TokenData struct {
 // WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
 	imCfg      config.IMAdapterConfig
-	router     *NotificationRouter
+	msgRouter  MessageRouter
+	notifier   SessionLoginNotifier
 	token      atomic.Pointer[TokenData]
 	syncBuf    string // monitorLoop-only: written/read from a single goroutine
 	mu         sync.Mutex
@@ -177,7 +178,8 @@ func NewWechatAdapter(_ *config.Config, imCfg config.IMAdapterConfig, paths *con
 
 	a := &WechatAdapter{
 		imCfg:         imCfg,
-		router:        router,
+		msgRouter:     router,
+		notifier:      router,
 		storageDir:    storageDir,
 		tokenFile:     tokenFile,
 		httpClient:    &http.Client{Timeout: 40 * time.Second},
@@ -226,7 +228,7 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 		resp, err := a.getQRCodeStatus(qrcodeID)
 		if err != nil {
 			if ctx != nil {
-				a.sleep(ctx, ilinkPollInterval)
+				sleepCtx(ctx, ilinkPollInterval)
 			} else {
 				time.Sleep(ilinkPollInterval)
 			}
@@ -243,26 +245,26 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 			})
 			a.saveToken()
 			log.Infof("wechat ilink: re-login successful via QR scan")
-			if a.router != nil {
-				a.router.HandleLoginResult("wechat", true, "")
+			if a.notifier != nil {
+				a.notifier.HandleLoginResult("wechat", true, "")
 			}
 			return
 		case "expired":
 			log.Warnf("wechat ilink: QR code expired during re-login")
-			if a.router != nil {
-				a.router.HandleLoginResult("wechat", false, "QR code expired")
+			if a.notifier != nil {
+				a.notifier.HandleLoginResult("wechat", false, "QR code expired")
 			}
 			return
 		}
 		if ctx != nil {
-			a.sleep(ctx, ilinkPollInterval)
+			sleepCtx(ctx, ilinkPollInterval)
 		} else {
 			time.Sleep(ilinkPollInterval)
 		}
 	}
 	log.Warnf("wechat ilink: re-login polling timed out")
-	if a.router != nil {
-		a.router.HandleLoginResult("wechat", false, "login timeout")
+	if a.notifier != nil {
+		a.notifier.HandleLoginResult("wechat", false, "login timeout")
 	}
 }
 
@@ -295,7 +297,7 @@ func (a *WechatAdapter) connectConsole(ctx context.Context) error {
 			if line == "" {
 				continue
 			}
-			a.router.HandleIncomingMessage(IncomingMessage{
+			a.msgRouter.HandleIncomingMessage(IncomingMessage{
 				IMType:     "console",
 				ChatID:     "console",
 				SenderID:   "console",
@@ -599,9 +601,9 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 			if consecutiveFailures >= ilinkMaxRetries {
 				log.Warnf("wechat ilink: backing off after consecutive failures delay=%v", ilinkBackoffDelay)
 				consecutiveFailures = 0
-				a.sleep(ctx, ilinkBackoffDelay)
+				sleepCtx(ctx, ilinkBackoffDelay)
 			} else {
-				a.sleep(ctx, ilinkRetryDelay)
+				sleepCtx(ctx, ilinkRetryDelay)
 			}
 			continue
 		}
@@ -613,7 +615,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 			if err := a.login(ctx); err != nil {
 				log.Errorf("wechat ilink: re-login failed error=%v", err)
 				a.notifySessionExpired()
-				a.sleep(ctx, ilinkBackoffDelay)
+				sleepCtx(ctx, ilinkBackoffDelay)
 			}
 			continue
 		case ilinkGetUpdatesStatusError:
@@ -626,9 +628,9 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 			if consecutiveFailures >= ilinkMaxRetries {
 				log.Warnf("wechat ilink: backing off after consecutive failures delay=%v", ilinkBackoffDelay)
 				consecutiveFailures = 0
-				a.sleep(ctx, ilinkBackoffDelay)
+				sleepCtx(ctx, ilinkBackoffDelay)
 			} else {
-				a.sleep(ctx, ilinkRetryDelay)
+				sleepCtx(ctx, ilinkRetryDelay)
 			}
 			continue
 		case ilinkGetUpdatesStatusOK, ilinkGetUpdatesStatusEmpty:
@@ -653,8 +655,8 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 // cannot notify through WeChat itself.
 func (a *WechatAdapter) notifySessionExpired() {
 	log.Warnf("wechat ilink: session expired — notifying via other channels")
-	if a.router != nil {
-		a.router.HandleSessionExpired("wechat")
+	if a.notifier != nil {
+		a.notifier.HandleSessionExpired("wechat")
 	}
 }
 
@@ -711,7 +713,7 @@ func (a *WechatAdapter) handleIncomingMessage(msg ilinkMessage) {
 	text := strings.Join(textParts, "\n")
 	log.Infof("wechat ilink: received message from=%v text_len=%v", msg.FromUserID, len(text))
 
-	a.router.HandleIncomingMessage(IncomingMessage{
+	a.msgRouter.HandleIncomingMessage(IncomingMessage{
 		IMType:    "wechat",
 		ChatID:    msg.FromUserID,
 		SenderID:  msg.FromUserID,
@@ -875,11 +877,6 @@ func (a *WechatAdapter) saveSyncBuf() {
 }
 
 // --- Utilities ---
-
-// sleep waits for the given duration or until the context is cancelled.
-func (a *WechatAdapter) sleep(ctx context.Context, d time.Duration) {
-	sleepCtx(ctx, d)
-}
 
 // splitText splits text into segments of at most maxLen runes, preferring to
 // break at newlines. Operates on runes so multi-byte UTF-8 sequences (Chinese

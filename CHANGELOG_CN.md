@@ -12,6 +12,8 @@
 
 - 移除 `HandleMessage(imType, chatID, text)` router 入口；改用 `HandleIncomingMessage` 配合结构化的 `IncomingMessage`。
 - 移除 `config.yaml` 中 `ims` 与 `workspaces` 的 sequence（列表）写法，两者必须为按 adapter 类型 / workspace id 索引的 mapping。
+- 移除协议/状态模型中未被消费的字段：`ConfirmPayload.TimeoutMS`、`ConfirmPayload.AlreadyAllowed`、`QuestionPayload.TimeoutMS`、`IncomingMessage.ConversationID`、`ControlState.LastStatusResponseAt`。下游若依赖这些字段，请改用等价方式（例如使用 `WaitStatus` 等待 `status_response`，而非轮询 `LastStatusResponseAt`）。
+- 将原本在 `main` 包中私有的 `normalizeIMType` 统一到 `config.NormalizeIMType`，作为跨包唯一入口；旧的 `main.normalizeIMType` 已删除，下游代码请改用 `config.NormalizeIMType`。
 
 ### Added
 
@@ -19,10 +21,17 @@
 - 新增 session pin 回归测试，覆盖写盘失败和并发更新场景。
 - 新增 idle 事件渲染和普通 idle 清理待确认状态的回归测试。
 - 恢复 WeChat 关键回归测试覆盖，包括持久化 token / sync 状态加载、过期 token 自动重新登录、自定义 token 路径、`splitText` 以及响应 context 取消的 sleep 行为。
+- 新增 `SessionLoginNotifier` 接口，IM adapter 现在仅依赖该窄接口完成跨 IM 通知，不再持有完整的 `*NotificationRouter`。
+- 新增 `ChordProcess.BeginTurn` / `MarkVisibleOutput` 方法，router 不再越过封装直接修改 `ChordProcess.state`。
+- 新增 `ControlState.applyPendingConfirm` / `applyPendingQuestion` / `applyStatusResponse` 辅助方法，"接收到的待交互"处理在一个地方完成，避免分支遗漏。
 
 ### Changed
 
 - 在不改变文档化行为的前提下，按主题拆分 router 与 process 实现文件（`router_commands`、`router_format`、`router_feishu_cards`、`router_reminders`、`router_parse`、`process_protocol`、`process_lifecycle`、`process_env`）。
+- 将所有 rune 截断辅助函数（`truncate`、`truncateLine`、`truncateButtonLabel`、`shortID`、`truncateStderrTail`）合并到统一的 `text.go`，所有 IM 输出共享一份实现。
+- 将飞书相关辅助（`buildFeishuResolvedCard`、`displaySender`、`updateFeishuCardStatus`、`buildExpired*Followup`）集中到 `router_feishu_helpers.go`，并新增 `resolveFeishuCard(...)` 包装方法，消除 router 命令路径中 7 处重复的 `updateFeishuCardStatus + buildFeishuResolvedCard` 写法。
+- 抽出 `submitQuestionAnswer` 共用方法，让 `/answer` 与"普通文本回退到回答"两条路径共享同一份分发实现。
+- 抽出 `compositeKey` 工具，process key、Feishu 去重 key 与 Feishu 卡片 handle key 共用同一种字符串拼接形式。
 - 启用 `todos` 事件可见性后，现在每次事件都会直接转发完整的当前任务列表，而不再只提示当前进行中的单项任务。
 - `/deny` 现在接受可选的人类可读拒绝理由文本，而非平台内部的 request_id；gateway 会自动匹配当前待确认请求。
 - `/new` 现在通过 stdin 发送命令给 chord，不再直接杀死进程，让 chord 优雅地管理会话生命周期。
@@ -42,11 +51,13 @@
 - Chord `idle` envelope 现在由 gateway 渲染为用户可见的 ready 通知，不再依赖额外的 headless `notification` envelope。
 - 将 `github.com/keakon/golog` 更新到 v0.2.0。
 - 将非中文文档和 IM 响应中剩余的运行时/用户可见文案统一为英文。
+- `handleChordCommand` 改为接收显式的 `*IncomingMessage` 参数，取代原先用 variadic 模拟的"可选 1 个"，让"是否携带原始消息"语义清晰可见。
 
 ### Removed
 
 - 删除未被使用的辅助方法和死字段：`MultiAdapter.BroadcastText`、`MultiAdapter.Adapters`、`FeishuAdapter.SendInteractive`、`WechatAdapter.sessionExpired` 标志，以及 `ControlState.StreamText`、`LastThinkingText` 字段。
 - 移除 Chord headless `todos` raw array 负载（`[...]`）支持；gateway 现在只接受当前 wrapper 负载格式（`{"todos":[...]}`）。
+- 删除冗余的 `WechatAdapter.sleep` 包装、`NewFeishuAdapter` 中的 `runLongConn` 自赋值、`cloneStringMap` 工具（用 `maps.Clone` 替代），以及不再被使用的 `feishuDedupeKeyFmt` / `feishuCardActionFmt` 格式常量。
 
 ### Fixed
 

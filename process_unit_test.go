@@ -31,13 +31,13 @@ func TestTailBufferKeepsOnlyTail(t *testing.T) {
 }
 
 func TestTruncateStderr(t *testing.T) {
-	if got := truncateStderr("abcdef", 3); got != "def" {
+	if got := truncateStderrTail("abcdef", 3); got != "def" {
 		t.Fatalf("truncateStderr = %q, want def", got)
 	}
-	if got := truncateStderr("short", 10); got != "short" {
+	if got := truncateStderrTail("short", 10); got != "short" {
 		t.Fatalf("truncateStderr short = %q", got)
 	}
-	if got := truncateStderr(strings.Repeat("x", 2100), 0); len(got) != 2000 {
+	if got := truncateStderrTail(strings.Repeat("x", 2100), 0); len(got) != 2000 {
 		t.Fatalf("default truncate len = %d, want 2000", len(got))
 	}
 }

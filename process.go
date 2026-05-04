@@ -83,16 +83,6 @@ func (t *tailBuffer) String() string {
 	return string(t.buf)
 }
 
-func truncateStderr(s string, max int) string {
-	if max <= 0 {
-		max = 2000
-	}
-	if len(s) <= max {
-		return s
-	}
-	return s[len(s)-max:]
-}
-
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
 	mu      sync.Mutex
@@ -426,4 +416,25 @@ func (p *ChordProcess) SendUserMessage(content string) error {
 		"type":    "send",
 		"content": content,
 	})
+}
+
+// BeginTurn marks the start of a new "user-initiated turn" against the chord
+// process: sets Busy=true, resets the reminder counters, and stamps LastPushAt.
+// Used by the router whenever it dispatches a user command to chord.
+func (p *ChordProcess) BeginTurn(now time.Time) {
+	p.mu.Lock()
+	p.state.Busy = true
+	p.state.LastPushAt = now
+	p.state.InternalEventsSinceLastPush = 0
+	p.mu.Unlock()
+}
+
+// MarkVisibleOutput records that the user just received an IM-visible message
+// from the gateway: resets the long-running reminder counters and stamps
+// LastPushAt so reminders fire only after a fresh quiet period.
+func (p *ChordProcess) MarkVisibleOutput(now time.Time) {
+	p.mu.Lock()
+	p.state.LastPushAt = now
+	p.state.InternalEventsSinceLastPush = 0
+	p.mu.Unlock()
 }

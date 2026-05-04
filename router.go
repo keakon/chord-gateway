@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -117,9 +118,6 @@ func (r *NotificationRouter) clearExpiredPending(key string) {
 func (r *NotificationRouter) lookupExpiredPending(key string) expiredPendingState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.expiredPending == nil {
-		return expiredPendingState{}
-	}
 	expired := r.expiredPending[key]
 	if !expired.ExpiresAt.IsZero() && time.Now().After(expired.ExpiresAt) {
 		delete(r.expiredPending, key)
@@ -129,7 +127,7 @@ func (r *NotificationRouter) lookupExpiredPending(key string) expiredPendingStat
 }
 
 func cardHandleKey(processKey, requestType, requestID string) string {
-	return processKey + "|" + requestType + "|" + requestID
+	return compositeKey(processKey, requestType, requestID)
 }
 
 func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID string, handle *InteractiveCardHandle) {
@@ -150,9 +148,6 @@ func (r *NotificationRouter) takeCardHandle(processKey, requestType, requestID s
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.cardHandles == nil {
-		return InteractiveCardHandle{}, false
-	}
 	key := cardHandleKey(processKey, requestType, requestID)
 	handle, ok := r.cardHandles[key]
 	if ok {
@@ -182,9 +177,9 @@ func (r *NotificationRouter) expiredPendingTTL() time.Duration {
 func (r *NotificationRouter) snapshotLastKeyChatID() map[string]string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cp := make(map[string]string, len(r.lastKeyChatID))
-	for k, v := range r.lastKeyChatID {
-		cp[k] = v
+	cp := maps.Clone(r.lastKeyChatID)
+	if cp == nil {
+		cp = make(map[string]string)
 	}
 	return cp
 }
@@ -258,7 +253,7 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	case "login":
 		r.handleLogin(chatID, cmd.Content)
 	default:
-		r.handleChordCommand(ws, chatID, cmd, imType, msg)
+		r.handleChordCommand(ws, chatID, cmd, imType, &msg)
 	}
 }
 
@@ -301,37 +296,36 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		r.sendText(chatID, "❌ Process manager not available.")
 		return
 	}
+	sessionID = strings.TrimSpace(sessionID)
+	isResume := sessionID != ""
+
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	if proc := r.mgr.GetProcessForKey(key); proc != nil && proc.Alive() && proc.State().Busy {
 		r.sendText(chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
 		return
 	}
 	r.mgr.StopProcessKey(key)
-	if r.mgr != nil && r.mgr.pins != nil {
+	if r.mgr.pins != nil {
 		if err := r.mgr.pins.Set(key, sessionID); err != nil {
-			if strings.TrimSpace(sessionID) == "" {
-				log.Warnf("clear session pin failed key=%v error=%v", key, err)
-			} else {
+			if isResume {
 				log.Warnf("pin resume session failed key=%v session_id=%v error=%v", key, sessionID, err)
+			} else {
+				log.Warnf("clear session pin failed key=%v error=%v", key, err)
 			}
 		}
 	}
-	var (
-		proc *ChordProcess
-		err  error
-	)
-	if strings.TrimSpace(sessionID) == "" {
-		proc, err = r.mgr.SpawnWithArgsForKey(key)
-	} else {
-		proc, err = r.mgr.SpawnWithArgsForKey(key, "--resume", sessionID)
+	var spawnArgs []string
+	if isResume {
+		spawnArgs = []string{"--resume", sessionID}
 	}
+	proc, err := r.mgr.SpawnWithArgsForKey(key, spawnArgs...)
 	if err != nil {
-		if strings.TrimSpace(sessionID) == "" {
-			log.Errorf("failed to spawn new process workspace=%v error=%v", ws.ID, err)
-			r.sendText(chatID, "❌ Failed to start new session.")
-		} else {
+		if isResume {
 			log.Errorf("failed to spawn process for resume workspace=%v error=%v", ws.ID, err)
 			r.sendText(chatID, "❌ Failed to resume session.")
+		} else {
+			log.Errorf("failed to spawn new process workspace=%v error=%v", ws.ID, err)
+			r.sendText(chatID, "❌ Failed to start new session.")
 		}
 		return
 	}
@@ -339,11 +333,11 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		r.sendText(chatID, "❌ Workspace not configured.")
 		return
 	}
-	if strings.TrimSpace(sessionID) == "" {
+	if isResume {
+		r.sendText(chatID, fmt.Sprintf("🔄 Resuming session %s", sessionID))
+	} else {
 		r.sendText(chatID, "🆕 New session started.")
-		return
 	}
-	r.sendText(chatID, fmt.Sprintf("🔄 Resuming session %s", sessionID))
 }
 
 // handleSessions lists recent sessions by reading the .chord/sessions directory.
@@ -412,7 +406,7 @@ func (r *NotificationRouter) handleTodos(ws *config.Workspace, chatID string, im
 // handleLogin initiates a login flow for the specified IM adapter.
 // If no target is specified, lists the adapters that support login.
 func (r *NotificationRouter) handleLogin(chatID, target string) {
-	target = normalizeIMType(target)
+	target = config.NormalizeIMType(target)
 	if target == "" {
 		options := r.availableLoginTargets()
 		if len(options) == 0 {
@@ -425,7 +419,7 @@ func (r *NotificationRouter) handleLogin(chatID, target string) {
 
 	adapter := r.findAdapterByType(target)
 	if adapter == nil {
-		r.sendText(chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", normalizeIMType(target)))
+		r.sendText(chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", config.NormalizeIMType(target)))
 		return
 	}
 
@@ -443,7 +437,7 @@ func (r *NotificationRouter) handleLogin(chatID, target string) {
 }
 
 func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd IMCommand) {
-	if normalizeIMType(msg.IMType) != "feishu" {
+	if config.NormalizeIMType(msg.IMType) != "feishu" {
 		r.sendText(chatID, "⚠️ /bind is only supported in Feishu chats.")
 		return
 	}
@@ -548,7 +542,7 @@ func (r *NotificationRouter) availableLoginTargets() []string {
 		if _, err := adapter.StartLogin(); errors.Is(err, ErrLoginNotSupported) {
 			continue
 		}
-		cmdName := normalizeIMType(name)
+		cmdName := config.NormalizeIMType(name)
 		if !seen[cmdName] {
 			seen[cmdName] = true
 			targets = append(targets, cmdName)
@@ -563,7 +557,7 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 	if a == nil {
 		return nil
 	}
-	normalizedName := normalizeIMType(name)
+	normalizedName := config.NormalizeIMType(name)
 	if multi, ok := a.(*MultiAdapter); ok {
 		return multi.FindAdapterByType(normalizedName)
 	}
@@ -571,10 +565,6 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 		return a
 	}
 	return nil
-}
-
-func normalizeIMType(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
 }
 
 // HandleChordEvent is the entry point for chord events.
@@ -633,91 +623,6 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	r.markVisibleOutput(key)
 }
 
-func buildExpiredQuestionFollowup(answers []string, q *QuestionPayload) string {
-	answer := strings.TrimSpace(strings.Join(answers, " "))
-	var sb strings.Builder
-	sb.WriteString("The previous pending question has expired, so this cannot be submitted as a structured answer. Treat the user's response below as a follow-up message and continue from the existing context if applicable.")
-	if q != nil && strings.TrimSpace(q.Question) != "" {
-		sb.WriteString("\n\nExpired question:\n")
-		sb.WriteString(strings.TrimSpace(q.Question))
-		if len(q.Options) > 0 {
-			sb.WriteString("\nOptions: ")
-			sb.WriteString(strings.Join(q.Options, ", "))
-		}
-	}
-	if answer != "" {
-		sb.WriteString("\n\nUser response:\n")
-		sb.WriteString(answer)
-	}
-	return sb.String()
-}
-
-func buildFeishuResolvedCard(title, message, template string) map[string]any {
-	return map[string]any{
-		"schema": "2.0",
-		"config": map[string]any{"update_multi": true},
-		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": title}, "template": template},
-		"body": map[string]any{"elements": []any{
-			map[string]any{"tag": "markdown", "content": message},
-		}},
-	}
-}
-
-func displaySender(msg IncomingMessage) string {
-	if strings.TrimSpace(msg.SenderName) != "" {
-		return strings.TrimSpace(msg.SenderName)
-	}
-	if strings.TrimSpace(msg.SenderID) != "" {
-		return shortID(msg.SenderID)
-	}
-	return "user"
-}
-
-func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, processKey, requestType, requestID string, card map[string]any) {
-	if msg.IMType != "feishu" {
-		return
-	}
-	feishu := r.findFeishuAdapter()
-	if feishu == nil {
-		return
-	}
-	stored, ok := r.takeCardHandle(processKey, requestType, requestID)
-	handle := stored
-	if msg.InternalAction != nil {
-		handle = mergeCardHandles(stored, msg.InternalAction.Handle)
-	}
-	if !ok && (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
-		return
-	}
-	if err := feishu.UpdateInteractiveCard(handle, card); err != nil {
-		log.Warnf("feishu: failed to update interactive card request_id=%v request_type=%v message_id=%v error=%v", requestID, requestType, handle.MessageID, err)
-	}
-}
-
-func buildExpiredConfirmFollowup(cmd IMCommand, c *ConfirmPayload) string {
-	var sb strings.Builder
-	sb.WriteString("The previous pending confirmation has expired, so this must not be treated as an approval or denial. Treat this only as follow-up context and ask the user to retry the original request if confirmation is still required.")
-	if c != nil {
-		if strings.TrimSpace(c.ToolName) != "" {
-			sb.WriteString("\n\nExpired confirmation tool: ")
-			sb.WriteString(strings.TrimSpace(c.ToolName))
-		}
-		if strings.TrimSpace(c.ArgsJSON) != "" {
-			sb.WriteString("\nExpired confirmation arguments: ")
-			sb.WriteString(strings.TrimSpace(c.ArgsJSON))
-		}
-	}
-	if strings.TrimSpace(cmd.Action) != "" {
-		sb.WriteString("\n\nExpired confirmation response: ")
-		sb.WriteString(strings.TrimSpace(cmd.Action))
-	}
-	if strings.TrimSpace(cmd.Reason) != "" {
-		sb.WriteString("\nReason: ")
-		sb.WriteString(strings.TrimSpace(cmd.Reason))
-	}
-	return sb.String()
-}
-
 // formatNotification returns the notification text for the given event,
 // or empty string if the event should not trigger a notification.
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a
@@ -751,7 +656,7 @@ func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]
 
 // chatIDForAdapter returns the most suitable chatID for a specific adapter type.
 func (r *NotificationRouter) chatIDForAdapter(adapterType string) string {
-	adapterType = normalizeIMType(adapterType)
+	adapterType = config.NormalizeIMType(adapterType)
 	cfg := r.getConfig()
 	if cfg == nil {
 		return ""
@@ -840,8 +745,8 @@ func (r *NotificationRouter) sendTextAll(workspaceID, text string) {
 // expired (e.g. WeChat iLink errcode=-14). It broadcasts a notification to
 // all OTHER adapters so the user can take action.
 func (r *NotificationRouter) HandleSessionExpired(imType string) {
-	msg := fmt.Sprintf("⚠️ %s session expired: send /login %s to renew", imDisplayName(imType), normalizeIMType(imType))
-	if normalizeIMType(imType) == "feishu" {
+	msg := fmt.Sprintf("⚠️ %s session expired: send /login %s to renew", imDisplayName(imType), config.NormalizeIMType(imType))
+	if config.NormalizeIMType(imType) == "feishu" {
 		msg = "⚠️ Feishu connection invalid: Feishu tokens are refreshed automatically from configured app credentials; check deployment configuration and Feishu app event settings. /login feishu is not supported."
 	}
 	r.broadcastExcept(imType, msg)
@@ -887,7 +792,7 @@ func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
 
 // imDisplayName returns a human-friendly name for an IM type.
 func imDisplayName(imType string) string {
-	switch normalizeIMType(imType) {
+	switch config.NormalizeIMType(imType) {
 	case "wechat":
 		return "WeChat"
 	case "feishu":

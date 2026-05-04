@@ -21,3 +21,12 @@ type IMAdapter interface {
 	// Returns ("", ErrLoginNotSupported) for adapters that don't need login.
 	StartLogin() (qrURL string, err error)
 }
+
+// SessionLoginNotifier receives async session/login state changes from an
+// adapter so the gateway can fan them out across other channels. It's the
+// narrow contract an adapter needs from the router — adapters must not depend
+// on the full NotificationRouter type.
+type SessionLoginNotifier interface {
+	HandleSessionExpired(imType string)
+	HandleLoginResult(imType string, success bool, errMsg string)
+}

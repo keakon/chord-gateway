@@ -244,7 +244,8 @@ func TestWechatAdapter_MessageHandling(t *testing.T) {
 		mgr.procs[key] = &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, cmd: &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}}
 		router := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string)}
 		a := newTestWechatAdapter(t)
-		a.router = router
+		a.msgRouter = router
+		a.notifier = router
 
 		a.handleIncomingMessage(ilinkMessage{
 			FromUserID:   "user-1",
@@ -509,11 +510,10 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 	})
 
 	t.Run("sleep returns when context is cancelled", func(t *testing.T) {
-		a := newTestWechatAdapter(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		start := time.Now()
-		a.sleep(ctx, time.Second)
+		sleepCtx(ctx, time.Second)
 		if time.Since(start) > 100*time.Millisecond {
 			t.Fatalf("sleep took too long after cancel")
 		}

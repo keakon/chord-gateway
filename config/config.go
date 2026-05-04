@@ -160,7 +160,7 @@ func parseIMsNode(node *yaml.Node) ([]IMAdapterConfig, error) {
 		if keyNode == nil || valueNode == nil {
 			continue
 		}
-		typ := normalizeIMType(keyNode.Value)
+		typ := NormalizeIMType(keyNode.Value)
 		if seen[typ] {
 			return nil, fmt.Errorf("parse ims: duplicate adapter %q", keyNode.Value)
 		}
@@ -258,7 +258,7 @@ func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
 	if len(c.Workspaces) == 0 {
 		return nil, fmt.Errorf("no workspace configured")
 	}
-	imType = normalizeIMType(imType)
+	imType = NormalizeIMType(imType)
 
 	if imType == "console" {
 		if len(c.Workspaces) == 1 {
@@ -309,7 +309,7 @@ func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
 
 // IMConfigByType returns the first configured adapter matching imType.
 func (c *Config) IMConfigByType(imType string) *IMAdapterConfig {
-	imType = normalizeIMType(imType)
+	imType = NormalizeIMType(imType)
 	for i := range c.IMs {
 		if c.IMs[i].Type() == imType {
 			return &c.IMs[i]
@@ -336,8 +336,10 @@ func (c *Config) workspaceByID(id string) (*Workspace, error) {
 	return ws, nil
 }
 
-// normalizeIMType normalizes an IM type name.
-func normalizeIMType(name string) string {
+// NormalizeIMType normalizes an IM type name (lowercase + trimmed). Use this
+// helper everywhere a user-supplied or config-supplied IM identifier is
+// compared so the gateway has one canonical form.
+func NormalizeIMType(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 

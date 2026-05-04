@@ -44,11 +44,13 @@ func testFeishuAdapter(t *testing.T, fc *config.FeishuConfig) *FeishuAdapter {
 		fragments:         make(map[string]feishuFragmentBuffer),
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
-		router: &NotificationRouter{
-			mgr:           newTestChordManager(cfg),
-			lastKeyChatID: make(map[string]string),
-		},
 	}
+	router := &NotificationRouter{
+		mgr:           newTestChordManager(cfg),
+		lastKeyChatID: make(map[string]string),
+	}
+	a.msgRouter = router
+	a.notifier = router
 	a.runLongConn = a.runLongConnection
 	return a
 }
@@ -384,35 +386,6 @@ func TestFeishuMessageEvent_InvalidJSONIgnored(t *testing.T) {
 		t.Fatal("invalid JSON content should not be dispatched")
 	}
 }
-
-func TestFeishuMessageEvent_ThreadIDBecomesConversationID(t *testing.T) {
-	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
-	a := testFeishuAdapter(t, fc)
-	defer a.dedupe.Close()
-
-	var got IncomingMessage
-	a.msgRouter = messageRouterFunc(func(msg IncomingMessage) { got = msg })
-	a.dispatchMessage(IncomingMessage{})
-
-	event := makeFeishuMessageEvent("ou_user", "oc_chat1", "msg_001", "hello")
-	event.Event.Message.ThreadId = stringPtr("omt_thread_1")
-	if err := a.handleMessageEvent(context.Background(), event); err != nil {
-		t.Fatalf("handleMessageEvent() error = %v", err)
-	}
-	select {
-	case msg := <-a.messageQueue:
-		got = msg
-	default:
-		t.Fatal("expected message to be enqueued")
-	}
-	if got.ConversationID != "omt_thread_1" {
-		t.Fatalf("ConversationID = %q, want %q", got.ConversationID, "omt_thread_1")
-	}
-}
-
-type messageRouterFunc func(IncomingMessage)
-
-func (f messageRouterFunc) HandleIncomingMessage(msg IncomingMessage) { f(msg) }
 
 func TestFeishuCardActionEvent_UsesRequestIDAndInternalActionAsMessageID(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}

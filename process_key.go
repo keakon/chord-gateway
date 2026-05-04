@@ -17,7 +17,7 @@ type processKey struct {
 }
 
 func (k processKey) String() string {
-	return k.workspaceID + "|" + k.imType + "|" + k.chatID
+	return compositeKey(k.workspaceID, k.imType, k.chatID)
 }
 
 func parseProcessKey(s string) (workspaceID, imType, chatID string) {
@@ -34,4 +34,12 @@ func processLogContext(key string, state ControlState) string {
 		return "key=" + key + " sid=" + state.SessionID
 	}
 	return "wid=" + workspaceID + " im=" + imType + " chat_id=" + chatID + " sid=" + state.SessionID
+}
+
+// compositeKey joins parts with the canonical "|" separator used across the
+// gateway for cache keys (process keys, card handle keys, dedupe keys, …).
+// Inputs are expected to be opaque IDs that don't contain "|"; the joined form
+// is intended only as an in-memory map key, not for round-tripping.
+func compositeKey(parts ...string) string {
+	return strings.Join(parts, "|")
 }

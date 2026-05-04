@@ -38,9 +38,6 @@ type ControlState struct {
 	InfoMessage                 string    `json:"-"` // from info event
 	ToastMessage                string    `json:"-"` // from toast event
 	ToastLevel                  string    `json:"-"` // from toast event
-	// LastStatusResponseAt is set only when a status_response envelope is received.
-	// Surfaced for diagnostics in tests; not used in production runtime decisions.
-	LastStatusResponseAt time.Time `json:"-"`
 	// Last notification emitted by chord headless for guaranteed user-facing alerts.
 	LastNotification *NotificationPayload `json:"-"`
 }
@@ -52,12 +49,10 @@ type InteractiveCardHandle struct {
 
 // ConfirmPayload is the confirm_request event payload.
 type ConfirmPayload struct {
-	ToolName       string   `json:"tool_name"`
-	ArgsJSON       string   `json:"args_json"`
-	RequestID      string   `json:"request_id"`
-	TimeoutMS      int64    `json:"timeout_ms"`
-	NeedsApproval  []string `json:"needs_approval,omitempty"`
-	AlreadyAllowed []string `json:"already_allowed,omitempty"`
+	ToolName      string   `json:"tool_name"`
+	ArgsJSON      string   `json:"args_json"`
+	RequestID     string   `json:"request_id"`
+	NeedsApproval []string `json:"needs_approval,omitempty"`
 }
 
 // QuestionPayload is the question_request event payload.
@@ -70,7 +65,6 @@ type QuestionPayload struct {
 	DefaultAnswer string   `json:"default_answer"`
 	Multiple      bool     `json:"multiple"`
 	RequestID     string   `json:"request_id"`
-	TimeoutMS     int64    `json:"timeout_ms"`
 }
 
 // NotificationPayload is the notification event payload.
@@ -133,14 +127,13 @@ type ToolResultInfo struct {
 // It replaces the raw (imType, chatID, text) tuple as the primary
 // entry point for the router.
 type IncomingMessage struct {
-	IMType         string `json:"im_type"`                   // e.g. "wechat", "feishu", "console"
-	ChatID         string `json:"chat_id"`                   // chat/group identifier for routing & replies
-	SenderID       string `json:"sender_id"`                 // user identifier (open_id, from_user_id, "console")
-	SenderName     string `json:"sender_name,omitempty"`     // display name (optional)
-	MessageID      string `json:"message_id,omitempty"`      // platform message ID for deduplication
-	ConversationID string `json:"conversation_id,omitempty"` // optional conversation thread ID
-	Text           string `json:"text"`                      // message text content
-	AppID          string `json:"app_id,omitempty"`          // feishu app_id for multi-account dedupe
+	IMType     string `json:"im_type"`               // e.g. "wechat", "feishu", "console"
+	ChatID     string `json:"chat_id"`               // chat/group identifier for routing & replies
+	SenderID   string `json:"sender_id"`             // user identifier (open_id, from_user_id, "console")
+	SenderName string `json:"sender_name,omitempty"` // display name (optional)
+	MessageID  string `json:"message_id,omitempty"`  // platform message ID for deduplication
+	Text       string `json:"text"`                  // message text content
+	AppID      string `json:"app_id,omitempty"`      // feishu app_id for multi-account dedupe
 
 	// InternalAction carries trusted structured commands from platform callbacks.
 	// User-authored text must not set this field; parseIMCommand handles that path.
@@ -160,4 +153,40 @@ type InternalAction struct {
 // Defined so that tests can use a stub router.
 type MessageRouter interface {
 	HandleIncomingMessage(msg IncomingMessage)
+}
+
+// applyPendingConfirm records a freshly-received confirm_request payload and
+// clears any prior expired-confirm marker so the new request supersedes it.
+func (s *ControlState) applyPendingConfirm(c *ConfirmPayload) {
+	s.PendingConfirm = c
+	s.ExpiredConfirm = nil
+}
+
+// applyPendingQuestion records a freshly-received question_request payload and
+// clears any prior expired-question marker.
+func (s *ControlState) applyPendingQuestion(q *QuestionPayload) {
+	s.PendingQuestion = q
+	s.ExpiredQuestion = nil
+}
+
+// applyStatusResponse merges a chord-headless status_response envelope into
+// the aggregated state, clearing expired-pending markers when the response
+// reports any active pending interaction.
+func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
+	if resp == nil {
+		return
+	}
+	s.SessionID = resp.SessionID
+	s.Busy = resp.Busy
+	s.Phase = resp.Phase
+	s.PhaseDetail = resp.PhaseDetail
+	s.PendingConfirm = resp.PendingConfirm
+	s.PendingQuestion = resp.PendingQuestion
+	if resp.PendingConfirm != nil || resp.PendingQuestion != nil {
+		s.ExpiredConfirm = nil
+		s.ExpiredQuestion = nil
+	}
+	s.LastError = resp.LastError
+	s.UpdatedAt = resp.UpdatedAt
+	s.LastOutcome = resp.LastOutcome
 }
