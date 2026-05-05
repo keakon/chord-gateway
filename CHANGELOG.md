@@ -8,6 +8,14 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+### Changed
+
+- Raised the shared local/CI Go coverage gate from 60.0% to 70.0%.
+
+### Added
+
+- Added compact gateway build identity output to `chord-gateway --version` (version, short commit, and dirty marker when applicable). Startup logs now include `gateway_version`, `gateway_commit`, `gateway_build_time`, `gateway_vcs_time`, `gateway_dirty`, and `go_version`. Child `chord headless` spawn logs now include the configured `chord_binary` path and mtime for provenance checks.
+
 ## 0.3.0 – 2026-05-05
 
 ### Breaking changes

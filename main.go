@@ -17,10 +17,42 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/buildinfo"
 )
 
-// version is set at build time via -ldflags.
+// version is the bare gateway version string injected via ldflags.
+//
+// The CLI prints the richer build identity from buildinfo.Current().Short(),
+// but we still keep this historical variable as the compatibility point for
+// existing `-X main.version=...` build pipelines. init() mirrors whichever side
+// was set so the CLI version output, startup logs, and diagnostics all agree.
+//
+// Historical path:
+//
+//	-ldflags "-X main.version=<version>"
+//
+// Newer builds may also (or instead) override internal/buildinfo.Version
+// directly, together with Commit, BuildTime, and Dirty for richer diagnostics:
+//
+//	-ldflags "-X github.com/keakon/chord-gateway/internal/buildinfo.Version=<version> ..."
 var version = "dev"
+
+func init() {
+	// init() runs after package-level var initialization for both this file
+	// and internal/buildinfo, but before main() — and before anything calls
+	// buildinfo.Current() (which is sync.OnceValue-cached). This is the
+	// correct time to bridge the two ldflags paths.
+	switch {
+	case version != "dev" && buildinfo.Version == "dev":
+		// Only the historical -X main.version=... path was used.
+		buildinfo.Version = version
+	case version == "dev" && buildinfo.Version != "dev":
+		// Only the new -X .../buildinfo.Version=... path was used.
+		version = buildinfo.Version
+	}
+	// If both are set, we trust each — CI may set them deliberately and the
+	// values are expected to match.
+}
 
 func main() {
 	// Resolve paths first to get the default config file location.
@@ -32,22 +64,26 @@ func main() {
 	}
 
 	flagConfig := paths.ConfigFile
-
-	rootCmd := &cobra.Command{
-		Use:           "chord-gateway",
-		Short:         "Chord remote control plane gateway",
-		Version:       version,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE:          runGateway(paths, &flagConfig),
-	}
-
-	rootCmd.Flags().StringVarP(&flagConfig, "config", "f", paths.ConfigFile, "Gateway config file path")
+	rootCmd := newRootCmd(paths, &flagConfig)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func newRootCmd(paths *config.Paths, flagConfig *string) *cobra.Command {
+	rootCmd := &cobra.Command{
+		Use:           "chord-gateway",
+		Short:         "Chord remote control plane gateway",
+		Version:       buildinfo.Current().Short(),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runGateway(paths, flagConfig),
+	}
+
+	rootCmd.Flags().StringVarP(flagConfig, "config", "f", paths.ConfigFile, "Gateway config file path")
+	return rootCmd
 }
 
 func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []string) error {
@@ -82,7 +118,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		log.SetDefaultLogger(logger)
 
 		activeIMs := cfg.ActiveIMs()
-		log.Infof("chord-gateway starting config=%v state_dir=%v ims=%v workspaces=%v idle_timeout=%v", *flagConfig,
+		log.Infof("chord-gateway starting %s config=%v state_dir=%v ims=%v workspaces=%v idle_timeout=%v", buildinfo.Current().LogString(), *flagConfig,
 			paths.StateDir,
 			len(activeIMs),
 			len(cfg.Workspaces),

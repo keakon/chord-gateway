@@ -44,6 +44,30 @@ Verify the installation:
 chord-gateway --version
 ```
 
+## Build identity
+
+`chord-gateway --version` prints a compact build identity. A normal local `go build` includes Go VCS fallback data when buildvcs is enabled, for example:
+
+```text
+chord-gateway version dev 8da87da152e2 dirty
+```
+
+Startup logs include the gateway build fields emitted on every launch (`gateway_version`, `gateway_commit`, `gateway_build_time`, `gateway_vcs_time`, `gateway_dirty`, and `go_version`). When a `chord headless` child process is spawned, the gateway logs the configured `chord_binary` path and its `chord_binary_mtime` to help distinguish gateway-version issues from child Chord binary issues.
+
+For release builds, inject exact build metadata with ldflags:
+
+```bash
+go build -o chord-gateway \
+  -ldflags "\
+    -X github.com/keakon/chord-gateway/internal/buildinfo.Version=v0.1.0 \
+    -X github.com/keakon/chord-gateway/internal/buildinfo.Commit=$(git rev-parse HEAD) \
+    -X github.com/keakon/chord-gateway/internal/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+    -X github.com/keakon/chord-gateway/internal/buildinfo.Dirty=false" \
+  .
+```
+
+Plain `go build -o chord-gateway .` remains supported; `gateway_build_time` will be `unknown` unless injected, while `gateway_commit`, `gateway_vcs_time`, and `gateway_dirty` come from Go build info when available.
+
 ## Quickstart
 
 Create a minimal config and point `workspaces.default.path` at the project you want Chord to operate on. Workspace paths must start with `/`, `~`, a Windows drive prefix, or a UNC prefix. Here is a WeChat example:

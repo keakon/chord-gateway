@@ -31,7 +31,7 @@ This installs `.githooks/pre-commit`, which runs `goimports` and `gofmt` on stag
 Current local/CI quality gate:
 
 ```bash
-MIN_COVERAGE=60.0 ./scripts/check-go-quality.sh
+MIN_COVERAGE=70.0 ./scripts/check-go-quality.sh
 ```
 
 This runs:
@@ -40,7 +40,7 @@ This runs:
 goimports -l -local github.com/keakon/chord-gateway .
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-# CI requires total coverage >= 60.0%.
+# CI requires total coverage >= 70.0%.
 go vet ./...
 staticcheck -checks 'all,-ST*' ./...
 ```

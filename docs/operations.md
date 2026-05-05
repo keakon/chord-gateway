@@ -63,6 +63,8 @@ Log files rotate at 10 MiB and keep 3 backups. Rotated logs are not gzip-compres
 
 The gateway logs important routing stages:
 
+- `chord-gateway starting` – startup metadata including `gateway_version`, `gateway_commit`, `gateway_build_time`, `gateway_vcs_time`, `gateway_dirty`, and `go_version`
+- `chord process spawned` – child Chord process metadata including `chord_binary` and `chord_binary_mtime`
 - `gateway event` – raw event parsed from `chord headless` stdout
 - `gateway routing event` – router-side handling decision for a binding
 - `gateway sending notification` – outbound IM send attempt

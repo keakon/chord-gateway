@@ -31,7 +31,7 @@ go build ./...
 当前本地 / CI 质量门禁：
 
 ```bash
-MIN_COVERAGE=60.0 ./scripts/check-go-quality.sh
+MIN_COVERAGE=70.0 ./scripts/check-go-quality.sh
 ```
 
 该脚本会执行：
@@ -40,7 +40,7 @@ MIN_COVERAGE=60.0 ./scripts/check-go-quality.sh
 goimports -l -local github.com/keakon/chord-gateway .
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-# CI 要求总覆盖率 >= 60.0%。
+# CI 要求总覆盖率 >= 70.0%。
 go vet ./...
 staticcheck -checks 'all,-ST*' ./...
 ```

@@ -28,4 +28,4 @@ if [[ -n "${files}" ]]; then
   echo "pre-commit: goimports + gofmt applied to ${count} staged Go file(s)"
 fi
 
-MIN_COVERAGE="${MIN_COVERAGE:-60.0}" ./scripts/check-go-quality.sh
+MIN_COVERAGE="${MIN_COVERAGE:-70.0}" ./scripts/check-go-quality.sh

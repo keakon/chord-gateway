@@ -14,6 +14,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/buildinfo"
 )
 
 // ChordProcess manages a single chord headless child process.
@@ -234,7 +235,9 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	args = append(args, extraArgs...)
 
 	cfg := m.cfg.Load()
-	cmd := exec.Command(cfg.ChordBinary(), args...)
+	chordBinary := cfg.ChordBinary()
+	chordBinaryMeta := buildinfo.MetadataForPath(chordBinary)
+	cmd := exec.Command(chordBinary, args...)
 	cmd.Env = loginShellEnv()
 
 	stdinPipe, err := cmd.StdinPipe()
@@ -279,9 +282,11 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	}
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 
-	log.Infof("[%v] chord process spawned pid=%v dir=%v", processLogContext(key, p.state),
+	log.Infof("[%v] chord process spawned pid=%v dir=%v chord_binary=%v chord_binary_mtime=%v", processLogContext(key, p.state),
 		cmd.Process.Pid,
 		ws.Path,
+		chordBinaryMeta.Path,
+		chordBinaryMeta.MTime,
 	)
 
 	go p.readLoop(ctx, stdoutPipe)

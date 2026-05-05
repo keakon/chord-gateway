@@ -8,6 +8,14 @@
 
 ## Unreleased
 
+### Changed
+
+- 将本地 / CI 共享 Go 覆盖率门禁从 60.0% 提升到 70.0%。
+
+### Added
+
+- 在 `chord-gateway --version` 中加入紧凑的 gateway 构建身份输出（版本号、短 commit，以及在适用时显示 dirty 标记）。启动日志现在会记录 `gateway_version`、`gateway_commit`、`gateway_build_time`、`gateway_vcs_time`、`gateway_dirty` 和 `go_version`。启动子 `chord headless` 的日志现在也会记录配置的 `chord_binary` 路径和 mtime，便于排查版本来源。
+
 ## 0.3.0 – 2026-05-05
 
 ### Breaking changes

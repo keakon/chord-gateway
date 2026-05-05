@@ -2,6 +2,8 @@ name: ci
 
 on:
   push:
+    branches:
+      - "**"
     paths-ignore:
       - "**/*.md"
       - "docs/**"
@@ -35,7 +37,7 @@ jobs:
 
       - name: Test
         env:
-          MIN_COVERAGE: "60.0"
+          MIN_COVERAGE: "70.0"
         shell: bash
         run: |
           set -euo pipefail

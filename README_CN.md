@@ -38,11 +38,29 @@ go build -o chord-gateway .
 
 请单独安装 Chord，并确保 `chord` 在 `PATH` 中可执行；也可以在 gateway 配置中设置 `chord_path`。由于 gateway 直接执行二进制文件，`chord_path` 不支持 shell alias。
 
-验证安装：
+## Build identity
+
+`chord-gateway --version` 会输出紧凑的构建身份信息。启用 buildvcs 时，普通本地 `go build` 也会带上 Go 的 VCS 回退信息，例如：
+
+```text
+chord-gateway version dev 8da87da152e2 dirty
+```
+
+每次启动时，gateway 日志都会输出一组构建字段（`gateway_version`、`gateway_commit`、`gateway_build_time`、`gateway_vcs_time`、`gateway_dirty`、`go_version`）。当启动 `chord headless` 子进程时，gateway 还会记录配置的 `chord_binary` 路径及其 `chord_binary_mtime`，方便区分是 gateway 版本问题还是子 Chord 二进制问题。
+
+对于发布构建，可通过 ldflags 注入精确构建信息：
 
 ```bash
-chord-gateway --version
+go build -o chord-gateway \
+  -ldflags "\
+    -X github.com/keakon/chord-gateway/internal/buildinfo.Version=v0.1.0 \
+    -X github.com/keakon/chord-gateway/internal/buildinfo.Commit=$(git rev-parse HEAD) \
+    -X github.com/keakon/chord-gateway/internal/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+    -X github.com/keakon/chord-gateway/internal/buildinfo.Dirty=false" \
+  .
 ```
+
+仍然支持 `go build -o chord-gateway .`；只是如果没有显式注入，`gateway_build_time` 会是 `unknown`，而 `gateway_commit`、`gateway_vcs_time`、`gateway_dirty` 会在可用时从 Go build info 中回退获取。
 
 ## 快速开始
 
