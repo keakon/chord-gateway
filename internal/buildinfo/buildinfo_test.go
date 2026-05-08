@@ -83,7 +83,7 @@ func TestFieldsReturnsNamedType(t *testing.T) {
 	// Compile-time guarantee that callers can declare variables of the
 	// returned slice element type — i.e. the type is exported as Field,
 	// not an anonymous struct.
-	var f Field = Field{Key: "k", Value: "v"}
+	f := Field{Key: "k", Value: "v"}
 	if f.Key != "k" || f.Value != "v" {
 		t.Fatalf("Field literal mismatch: %+v", f)
 	}
@@ -94,8 +94,7 @@ func TestFieldsReturnsNamedType(t *testing.T) {
 		t.Fatal("Fields() returned empty slice")
 	}
 	// Assigning to []Field also documents the contract.
-	var typed []Field = fields
-	_ = typed
+	var _ []Field = fields
 }
 
 func TestFieldsSubstitutesUnknownForEmpty(t *testing.T) {

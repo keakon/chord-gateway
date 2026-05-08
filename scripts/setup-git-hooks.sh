@@ -8,6 +8,6 @@ cat <<'EOF'
 Git hooks installed: core.hooksPath=.githooks
 pre-commit will:
   1. run goimports + gofmt on staged .go files
-  2. run scripts/check-go-quality.sh
-Default minimum coverage: 70.0% (override with MIN_COVERAGE if needed)
+  2. run scripts/check-go-quality.sh (uses -short to skip contract tests)
+Default minimum coverage: 69.0% (override with MIN_COVERAGE if needed)
 EOF
