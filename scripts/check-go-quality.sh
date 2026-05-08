@@ -5,7 +5,7 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$repo_root"
 
 coverage_file="${COVERAGE_FILE:-coverage.out}"
-min_coverage="${MIN_COVERAGE:-69.0}"
+min_coverage="${MIN_COVERAGE:-70.0}"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "go not found in PATH" >&2
