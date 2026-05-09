@@ -854,7 +854,7 @@ func TestFormatStatus(t *testing.T) {
 	t.Run("pending confirm shows wrench", func(t *testing.T) {
 		s := formatBindingStatus(nil, "", "", ControlState{
 			Busy:           true,
-			PendingConfirm: &ConfirmPayload{ToolName: "Bash", RequestID: "r1"},
+			PendingConfirm: &ConfirmPayload{ToolName: "Shell", RequestID: "r1"},
 		})
 		if !containsEmoji(s, "🔧") {
 			t.Errorf("expected 🔧 with pending confirm, got: %s", s)
@@ -956,7 +956,7 @@ func TestReminderDelayUsesLastVisiblePush(t *testing.T) {
 
 func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	r := newTestRouter()
-	if msg := r.formatNotification("confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Bash"}}); msg == "" {
+	if msg := r.formatNotification("confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Shell"}}); msg == "" {
 		t.Fatal("confirm_request should push")
 	}
 	if msg := r.formatNotification("question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
@@ -987,7 +987,7 @@ func TestFormatBindingStatus(t *testing.T) {
 		Phase:           "planning",
 		PhaseDetail:     "writing plan",
 		LastOutcome:     "completed",
-		PendingConfirm:  &ConfirmPayload{ToolName: "Bash"},
+		PendingConfirm:  &ConfirmPayload{ToolName: "Shell"},
 		PendingQuestion: &QuestionPayload{Question: "Continue?"},
 		LastToolResult:  &ToolResultInfo{Name: "Read", Status: "success"},
 		Todos: []TodoItem{
@@ -1017,10 +1017,10 @@ func TestWorkspaceDisplayName(t *testing.T) {
 func TestFormatConfirmNotification(t *testing.T) {
 	r := newTestRouter()
 
-	t.Run("includes tool args summary for Bash", func(t *testing.T) {
+	t.Run("includes tool args summary for Shell", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{
 			PendingConfirm: &ConfirmPayload{
-				ToolName:  "Bash",
+				ToolName:  "Shell",
 				ArgsJSON:  `{"command":"ls -la"}`,
 				RequestID: "abc123",
 			},
@@ -1046,7 +1046,7 @@ func TestFormatConfirmNotification(t *testing.T) {
 	t.Run("includes approval bullets", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{
 			PendingConfirm: &ConfirmPayload{
-				ToolName:      "Bash",
+				ToolName:      "Shell",
 				ArgsJSON:      `{"command":"echo hi"}`,
 				NeedsApproval: []string{"filesystem", "network"},
 			},
@@ -1061,7 +1061,7 @@ func TestFormatConfirmNotification(t *testing.T) {
 	t.Run("does not include request ID", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{
 			PendingConfirm: &ConfirmPayload{
-				ToolName:  "Bash",
+				ToolName:  "Shell",
 				ArgsJSON:  `{"command":"echo hi"}`,
 				RequestID: "hex123abc",
 			},
@@ -1074,7 +1074,7 @@ func TestFormatConfirmNotification(t *testing.T) {
 	t.Run("reply prompt is simple", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{
 			PendingConfirm: &ConfirmPayload{
-				ToolName: "Bash",
+				ToolName: "Shell",
 				ArgsJSON: `{"command":"echo hi"}`,
 			},
 		})
@@ -1085,9 +1085,9 @@ func TestFormatConfirmNotification(t *testing.T) {
 
 	t.Run("empty ArgsJSON does not crash", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{
-			PendingConfirm: &ConfirmPayload{ToolName: "Bash"},
+			PendingConfirm: &ConfirmPayload{ToolName: "Shell"},
 		})
-		if !strings.Contains(msg, "Bash") {
+		if !strings.Contains(msg, "Shell") {
 			t.Errorf("expected tool name, got: %s", msg)
 		}
 	})
@@ -1108,8 +1108,8 @@ func TestSummarizeToolArgs(t *testing.T) {
 		argsJSON string
 		contains []string
 	}{
-		{name: "empty", toolName: "Bash", argsJSON: "", contains: []string{""}},
-		{name: "invalid json", toolName: "Bash", argsJSON: "{not-json", contains: []string{"{not-json"}},
+		{name: "empty", toolName: "Shell", argsJSON: "", contains: []string{""}},
+		{name: "invalid json", toolName: "Shell", argsJSON: "{not-json", contains: []string{"{not-json"}},
 		{name: "spawn command", toolName: "Spawn", argsJSON: `{"command":"echo hi"}`, contains: []string{"$ echo hi"}},
 		{name: "edit path", toolName: "Edit", argsJSON: `{"path":"a.go"}`, contains: []string{"📝 a.go"}},
 		{name: "delete paths", toolName: "Delete", argsJSON: `{"paths":["a.go","b.go"]}`, contains: []string{"🗑️ a.go"}},
@@ -1118,7 +1118,7 @@ func TestSummarizeToolArgs(t *testing.T) {
 		{name: "webfetch url", toolName: "WebFetch", argsJSON: `{"url":"https://example.com"}`, contains: []string{"🌐 https://example.com"}},
 		{name: "lsp summary", toolName: "Lsp", argsJSON: `{"operation":"definition","path":"main.go"}`, contains: []string{"🔎 definition main.go"}},
 		{name: "generic fallback", toolName: "Other", argsJSON: `{"description":"desc","path":"x","content":"y"}`, contains: []string{"path=x", "content=y"}},
-		{name: "truncate command", toolName: "Bash", argsJSON: fmt.Sprintf(`{"command":%q}`, long), contains: []string{"$ ", "…"}},
+		{name: "truncate command", toolName: "Shell", argsJSON: fmt.Sprintf(`{"command":%q}`, long), contains: []string{"$ ", "…"}},
 	}
 
 	for _, tt := range tests {
@@ -1386,10 +1386,10 @@ func TestFormatOtherNotifications(t *testing.T) {
 	if got := r.formatToolResultNotification(ControlState{}); got != "" {
 		t.Fatalf("nil tool result = %q", got)
 	}
-	if got := r.formatToolResultNotification(ControlState{LastToolResult: &ToolResultInfo{Name: "Bash", Status: "success"}}); got != "" {
+	if got := r.formatToolResultNotification(ControlState{LastToolResult: &ToolResultInfo{Name: "Shell", Status: "success"}}); got != "" {
 		t.Fatalf("successful tool result = %q", got)
 	}
-	if got := r.formatToolResultNotification(ControlState{LastToolResult: &ToolResultInfo{Name: "Bash", Status: "error"}}); !strings.Contains(got, "Tool Bash failed") {
+	if got := r.formatToolResultNotification(ControlState{LastToolResult: &ToolResultInfo{Name: "Shell", Status: "error"}}); !strings.Contains(got, "Tool Shell failed") {
 		t.Fatalf("error tool result = %q", got)
 	}
 }
@@ -1608,7 +1608,7 @@ func TestSendTextAndBroadcastHelpers(t *testing.T) {
 
 func TestBuildFeishuCardsAndButton(t *testing.T) {
 	confirm := buildFeishuConfirmCard("chat-1", &ConfirmPayload{
-		ToolName:      "Bash",
+		ToolName:      "Shell",
 		ArgsJSON:      `{"command":"pwd"}`,
 		RequestID:     "req-1",
 		NeedsApproval: []string{"Run shell command"},
@@ -1734,7 +1734,7 @@ func TestProcessEnvelopeToolResult(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
 	p.state.InternalEventsSinceLastPush = 3
 
-	payload := []byte(`{"call_id":"call-123","name":"Bash","status":"success","agent_id":"a1"}`)
+	payload := []byte(`{"call_id":"call-123","name":"Shell","status":"success","agent_id":"a1"}`)
 	p.processEnvelope(&HeadlessEnvelope{Type: "tool_result", Payload: payload})
 	state := p.State()
 
@@ -1744,7 +1744,7 @@ func TestProcessEnvelopeToolResult(t *testing.T) {
 	if state.LastToolResult.CallID != "call-123" {
 		t.Errorf("CallID = %q", state.LastToolResult.CallID)
 	}
-	if state.LastToolResult.Name != "Bash" {
+	if state.LastToolResult.Name != "Shell" {
 		t.Errorf("Name = %q", state.LastToolResult.Name)
 	}
 	if state.LastToolResult.Status != "success" {

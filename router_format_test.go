@@ -12,7 +12,7 @@ func TestFormatLongRunningNotificationSuppressesPendingInput(t *testing.T) {
 			name: "pending confirm",
 			state: ControlState{
 				Busy:           true,
-				PendingConfirm: &ConfirmPayload{ToolName: "Bash"},
+				PendingConfirm: &ConfirmPayload{ToolName: "Shell"},
 			},
 		},
 		{

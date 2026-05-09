@@ -10,7 +10,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
-- Raised the shared local/CI Go coverage gate from 60.0% to 70.0%.
+- Updated Chord integration references from the old `Bash` tool name to the breaking `Shell` tool name and aligned command-execution confirmation risk/summary rendering with current Chord events.
+- Improved cross-repo headless contract tests for current Chord config requirements and ready-timeout diagnostics.
 
 ### Added
 

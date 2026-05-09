@@ -185,7 +185,7 @@ func riskLevelForTool(tool string) feishuRiskLevel {
 	switch strings.TrimSpace(tool) {
 	case "Read", "Glob", "Grep", "Lsp":
 		return feishuRiskLevel{Header: "Low risk confirmation required", Title: "Low risk · read-only operation", Template: "blue"}
-	case "Delete", "Bash", "Spawn":
+	case "Delete", "Shell", "Spawn":
 		return feishuRiskLevel{Header: "High risk confirmation required", Title: "High risk · destructive or command execution", Template: "red"}
 	case "Edit", "Write":
 		return feishuRiskLevel{Header: "Medium risk confirmation required", Title: "Medium risk · file modification", Template: "orange"}

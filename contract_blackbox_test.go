@@ -74,7 +74,7 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 
 	waitForCondition(t, 20*time.Second, func() bool {
 		return proc.State().SessionID != ""
-	}, "ready/session_id")
+	}, "ready/session_id", procDiagnostics(proc))
 
 	if got := proc.State().SessionID; got == "" {
 		t.Fatal("expected ready/session_id to be populated")
@@ -189,7 +189,7 @@ func TestChordHeadlessContract_DefaultSubscribeIncludesIdle(t *testing.T) {
 
 	waitForCondition(t, 20*time.Second, func() bool {
 		return proc.State().SessionID != ""
-	}, "ready/session_id")
+	}, "ready/session_id", procDiagnostics(proc))
 
 	if err := proc.SendUserMessage("say done"); err != nil {
 		t.Fatalf("send user message: %v", err)
@@ -218,7 +218,7 @@ func requestStatusSnapshot(t *testing.T, proc *ChordProcess) ControlState {
 	return state
 }
 
-func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool, label string) {
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool, label string, diagnostics ...func() string) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -227,7 +227,42 @@ func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool, lab
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	var details []string
+	for _, diagnostic := range diagnostics {
+		if diagnostic == nil {
+			continue
+		}
+		if detail := strings.TrimSpace(diagnostic()); detail != "" {
+			details = append(details, detail)
+		}
+	}
+	if len(details) > 0 {
+		t.Fatalf("timed out waiting for %s\n%s", label, strings.Join(details, "\n"))
+	}
 	t.Fatalf("timed out waiting for %s", label)
+}
+
+func procDiagnostics(proc *ChordProcess) func() string {
+	return func() string {
+		if proc == nil {
+			return "process: <nil>"
+		}
+		state := proc.State()
+		parts := []string{
+			fmt.Sprintf("state: session_id=%q busy=%v last_error=%q updated_at=%q", state.SessionID, state.Busy, state.LastError, state.UpdatedAt),
+		}
+		if proc.cmd != nil && proc.cmd.ProcessState != nil {
+			parts = append(parts, fmt.Sprintf("exit_code: %d", proc.cmd.ProcessState.ExitCode()))
+		} else if proc.cmd != nil && proc.cmd.Process != nil {
+			parts = append(parts, fmt.Sprintf("pid: %d", proc.cmd.Process.Pid))
+		}
+		if proc.stderr != nil {
+			if stderr := strings.TrimSpace(proc.stderr.String()); stderr != "" {
+				parts = append(parts, "stderr_tail:\n"+truncateStderrTail(stderr, 4000))
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
 }
 
 func collectEvents(t *testing.T, ch <-chan string, timeout time.Duration, done func(map[string]bool) bool) map[string]bool {
@@ -351,6 +386,9 @@ func mustWriteChordTestConfig(t *testing.T, chordHome string) {
         limit:
           context: 32000
           output: 1024
+model_pools:
+  default:
+    - test-provider/test-model
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
 		t.Fatalf("write chord config: %v", err)

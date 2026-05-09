@@ -116,7 +116,7 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState) strin
 	sb.WriteString(c.ToolName)
 
 	// Show a human-readable summary of the tool args so the user knows
-	// what the tool will actually do (e.g. which command Bash will run,
+	// what the tool will actually do (e.g. which command Shell will run,
 	// which file Write will modify).
 	if summary := summarizeToolArgs(c.ToolName, c.ArgsJSON); summary != "" {
 		sb.WriteString("\n")
@@ -146,7 +146,7 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 	}
 
 	switch toolName {
-	case "Bash", "Spawn":
+	case "Shell", "Spawn":
 		if cmd, _ := args["command"].(string); cmd != "" {
 			return "$ " + truncateLine(cmd, 300)
 		}
