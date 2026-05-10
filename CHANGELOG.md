@@ -6,12 +6,13 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
-## Unreleased
+## 0.3.1 – 2026-05-11
 
 ### Changed
 
 - Updated Chord integration references from the old `Bash` tool name to the breaking `Shell` tool name and aligned command-execution confirmation risk/summary rendering with current Chord events.
 - Improved cross-repo headless contract tests for current Chord config requirements and ready-timeout diagnostics.
+- Tightened CI quality checks by keeping the coverage gate at 70.0%, aligning staticcheck execution, and adding a gopls validation job.
 
 ### Added
 

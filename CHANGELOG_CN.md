@@ -6,12 +6,13 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
-## Unreleased
+## 0.3.1 – 2026-05-11
 
 ### Changed
 
 - 将 Chord 集成中旧的 `Bash` 工具名更新为不兼容变更后的 `Shell` 工具名，并让命令执行确认的风险分级与摘要渲染匹配当前 Chord 事件。
 - 改进跨仓库 headless 契约测试，使其符合当前 Chord 配置要求，并在 ready 超时时输出更有用的诊断。
+- 收紧 CI 质量检查：保持覆盖率门槛为 70.0%，对齐 staticcheck 执行方式，并新增 gopls 校验任务。
 
 ### Added
 
