@@ -170,6 +170,7 @@ chord-gateway -f config.yaml
 ## 6. 下一步文档
 
 - [配置参考](./docs/configuration_CN.md)
+- [IM 接入总览](./docs/im_CN.md)
 - [使用指南](./docs/usage_CN.md)
 - [运维说明](./docs/operations_CN.md)
 - [故障排查](./docs/troubleshooting_CN.md)

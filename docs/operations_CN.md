@@ -36,6 +36,12 @@ idle_timeout: 30m
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
+对新手来说，这意味着：
+
+- 如果你没有额外设置，状态通常会落在 `~/.local/state/chord-gateway`
+- 如果你找不到日志或微信 token 文件，优先检查这个目录
+- 如果你运行多个 gateway 实例，除非你明确需要共享状态，否则请给它们分别使用独立状态目录
+
 状态数据包括：
 
 - 日志

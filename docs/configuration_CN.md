@@ -48,6 +48,8 @@ workspaces:
 
 ### 微信配置（`ims.wechat`）
 
+任务型指南：[微信 iLink 接入指南](./wechat_CN.md)
+
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
 | `base_url` | string | 否 | `https://ilinkai.weixin.qq.com` | 微信 iLink API 地址 |
@@ -62,6 +64,8 @@ workspaces:
 - 微信扫码 token 属于运行时状态，不是静态配置。默认以 JSON 保存到 `<state_dir>/wechat/token.json`；只有在需要自定义密钥存储位置时才设置 `token_path`。
 
 ### 飞书配置（`ims.feishu`）
+
+任务型指南：[飞书接入指南](./feishu_CN.md)
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|

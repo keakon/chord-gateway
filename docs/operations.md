@@ -36,6 +36,12 @@ Runtime state is stored in this priority order:
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
+For beginners, this means:
+
+- if you do not set anything, state usually lands under `~/.local/state/chord-gateway`
+- if you cannot find logs or WeChat token files, check this directory first
+- if you run multiple gateway instances, give them separate state directories unless you intentionally want shared state
+
 State data includes:
 
 - logs

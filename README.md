@@ -125,6 +125,7 @@ See [docs/usage.md](./docs/usage.md) for full command behavior and session seman
 ## Documentation
 
 - [Quickstart](./QUICKSTART.md)
+- [IM integration overview](./docs/im.md)
 - [Usage](./docs/usage.md)
 - [Configuration reference](./docs/configuration.md)
 - [Operations](./docs/operations.md)

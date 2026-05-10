@@ -48,6 +48,8 @@ At most one config per adapter type is allowed.
 
 ### WeChat Config (`ims.wechat`)
 
+Task guide: [WeChat iLink guide](./wechat.md)
+
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `base_url` | string | no | `https://ilinkai.weixin.qq.com` | WeChat iLink API base URL |
@@ -62,6 +64,8 @@ Notes:
 - WeChat QR-login token is runtime state, not static config. By default it is saved as JSON at `<state_dir>/wechat/token.json`; set `token_path` only if you want to manage that secret in a custom location.
 
 ### Feishu Config (`ims.feishu`)
+
+Task guide: [Feishu guide](./feishu.md)
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|

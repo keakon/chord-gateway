@@ -46,6 +46,8 @@ Common causes:
 
 ## WeChat issues
 
+If you have not completed the WeChat setup workflow yet, start with: [WeChat iLink guide](./wechat.md)
+
 ### No QR login appears
 
 Check:
@@ -70,6 +72,8 @@ Then open the returned login link and scan the QR code. When the gateway itself 
 Feishu does not need in-chat login or manual renewal; the gateway automatically obtains and refreshes Feishu access tokens from the configured app credentials. If the Feishu connection becomes invalid, check the deployment configuration and Feishu developer console for app credentials, permissions, event subscriptions, and long-connection settings. Do not send or change `app_id` / `app_secret` in an IM chat.
 
 ## Feishu issues
+
+If you have not completed the Feishu console setup yet, start with: [Feishu guide](./feishu.md)
 
 ### Feishu long connection is not established or no events arrive
 

@@ -14,6 +14,12 @@ This documentation is for users who want to run `chord-gateway`, connect IM plat
 - [Usage](./usage.md) – IM commands, session pinning, questions, confirmations, and multi-IM login
 - [Event visibility](./event-visibility.md) – required control-plane events and optional event subscriptions
 
+## IM integration
+
+- [IM integration overview](./im.md) – choose WeChat vs Feishu, minimal setup paths, and routing model
+- [WeChat iLink](./wechat.md) – QR login, token/sync state, renewal, and limitations
+- [Feishu](./feishu.md) – app setup, long connection events, interactive cards, and multi-workspace routing
+
 ## Operations and safety
 
 - [Operations](./operations.md) – process lifecycle, state files, logs, dedupe, and cleanup behavior

@@ -119,6 +119,7 @@ chord-gateway -f config.yaml
 ## 文档
 
 - [快速开始](./QUICKSTART_CN.md)
+- [IM 接入总览](./docs/im_CN.md)
 - [使用指南](./docs/usage_CN.md)
 - [配置参考](./docs/configuration_CN.md)
 - [运维说明](./docs/operations_CN.md)

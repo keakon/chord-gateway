@@ -171,6 +171,7 @@ State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by defa
 ## 6. Next docs
 
 - [Configuration reference](./docs/configuration.md)
+- [IM integration overview](./docs/im.md)
 - [Usage guide](./docs/usage.md)
 - [Operations](./docs/operations.md)
 - [Troubleshooting](./docs/troubleshooting.md)
