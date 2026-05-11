@@ -35,7 +35,7 @@ workspaces:
     path: ~/work/project-b
 ```
 
-For backward compatibility, legacy list forms are still accepted on load, but the documented and persisted format is the map form above.
+`ims` and `workspaces` must now use the map form shown above; the old list / sequence forms are no longer supported, and `/bind` only reads and writes this map form.
 
 ## `ims`
 
@@ -92,7 +92,7 @@ Feishu access control behavior:
 How to discover your `open_id`:
 
 1. Start the gateway without `owner_open_id` or `allowed_open_ids` (all users allowed by default).
-2. Send a plain-text message from the Feishu chat.
+2. Send a text message (`text` or `post`) from the Feishu chat.
 3. Check the gateway log for a line like:
 
 ```text
@@ -216,7 +216,7 @@ Recommended workflow:
 
 1. Start the gateway with a single workspace and do not set `chat_bindings` yet.
 2. Create the target group in Feishu and add the app bot to that group.
-3. Send a plain-text message in the group.
+3. Send a text message (`text` or `post`) in the group.
 4. In that same chat, run `/bind <workspace_id> <path>`.
 5. The gateway updates only Feishu `chat_bindings` and `workspaces` in memory, then writes the same binding/workspace change back to the YAML config file.
 
@@ -236,7 +236,7 @@ When you prefer to fill `chat_bindings` manually, the recommended workflow is:
 
 1. Start the gateway with a single workspace and do not set `chat_bindings` yet.
 2. Create the target group in Feishu and add the app bot to that group.
-3. Send a plain-text message in the group. If your enterprise permissions only allow `@`-bot group messages, send `@bot your message`.
+3. Send a text message (`text` or `post`) in the group. If your enterprise permissions only allow `@`-bot group messages, send `@bot your message`.
 4. In the gateway log, look for a record like:
 
 ```text

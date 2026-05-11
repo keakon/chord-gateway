@@ -60,7 +60,7 @@ Detailed steps: [WeChat iLink guide](./wechat.md)
 
 1. Create a Feishu app and obtain `app_id` / `app_secret`.
 2. Enable **long connection** event delivery and subscribe to `im.message.receive_v1`.
-3. Start the gateway and send a plain-text message to the bot.
+3. Start the gateway and send a text message (`text` or `post`) to the bot.
 
 Minimal config:
 

@@ -95,7 +95,7 @@ chord_path: ~/go/bin/chord
 检查：
 
 - 如果配置了 allowlist，发送者是否被 `owner_open_id` / `allowed_open_ids` 允许
-- 飞书入站消息是否为纯文本；非文本消息会被忽略
+- 飞书入站消息是否为文本消息（`text` 或 `post`）；图片/文件/表情等非文本消息会被忽略
 - 目标聊天是否路由到了预期 workspace
 
 可以从飞书开发者后台或事件 payload 中获取发送者 `open_id`，并加入 allowlist。
@@ -106,7 +106,7 @@ chord_path: ~/go/bin/chord
 
 1. 先用单 workspace 配置启动 gateway，不填写 `chat_bindings`
 2. 在飞书中创建目标群聊并把机器人加入该群
-3. 在群里发送一条纯文本消息
+3. 在群里发送一条文本消息
 4. 直接在该聊天中执行：
 
 ```text
@@ -131,7 +131,7 @@ chord_path: ~/go/bin/chord
 
 1. 先用单 workspace 配置启动 gateway，不填写 `chat_bindings`
 2. 在飞书中创建目标群聊并把机器人加入该群
-3. 在群里发送一条纯文本消息
+3. 在群里发送一条文本消息
 4. 在 gateway 日志中查找：
 
 ```text

@@ -148,7 +148,7 @@ What to expect on startup:
 
 ## Step 5: Verify inbound events and obtain `open_id`
 
-1. Send a **plain-text** message to the bot (DM or group).
+1. Send a **text message** (`text` or `post`) to the bot (DM or group).
 2. Check gateway logs for a line like:
 
 ```text
@@ -174,7 +174,7 @@ If you do **not** see the log line, check in this order:
 2. Did you subscribe to `im.message.receive_v1`?
 3. Did you **publish** after the last console change?
 4. Is the bot actually in the DM / group where you sent the message?
-5. Did you send **plain text**, not an image/file/sticker?
+5. Did you send a **text message** (`text` or `post`), not an image/file/sticker?
 
 ## Multi-workspace routing with `/bind`
 
@@ -183,7 +183,7 @@ If you have multiple workspaces, configure per-chat routing via `chat_bindings`.
 Recommended workflow:
 
 1. Start with one workspace and no `chat_bindings`.
-2. Create the target Feishu group chat, add the bot, and send a plain-text message.
+2. Create the target Feishu group chat, add the bot, and send a text message.
 3. In that same chat, run:
 
 ```text
@@ -206,7 +206,7 @@ Important boundaries:
 
 ## Known limitations
 
-- Inbound handling is **text-only**. Non-text messages are ignored.
+- Inbound handling currently accepts only **text messages** (`text` and `post`). Non-text messages are ignored.
 
 ## Troubleshooting
 

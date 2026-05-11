@@ -68,7 +68,7 @@ When Chord sends a `question_request`, the gateway sends a numbered question to 
 
 After a Feishu button click is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
 
-When a Feishu question is still pending, users can also send a plain-text reply instead of clicking a button. The gateway submits that text as a free-text answer and, if the card update succeeds, relies on the updated card state instead of sending an extra duplicate `💬 Answered` text confirmation.
+When a Feishu question is still pending, users can also send a text reply instead of clicking a button. The gateway submits that text as a free-text answer and, if the card update succeeds, relies on the updated card state instead of sending an extra duplicate `💬 Answered` text confirmation.
 
 ```text
 ❓ Continue?
@@ -81,7 +81,7 @@ You can answer in these ways:
 
 - Click a Feishu option button when an interactive question card is shown.
 - Use `/answer`, for example `/answer 1` or `/answer 1,3` for a multi-select question.
-- Send a plain text message while a question is pending. The gateway treats it as a free-text answer.
+- Send a text message while a question is pending. The gateway treats it as a free-text answer.
 
 Invalid numeric shortcuts are sent as custom text instead of being silently accepted.
 

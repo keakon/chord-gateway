@@ -74,11 +74,11 @@ Feishu setup notes:
 - Subscribe to `im.message.receive_v1` in event subscriptions for inbound messages.
 - Add `card.action.trigger` in callback configuration for interactive confirm/question cards.
 - If you want different Feishu groups to route to different workspaces, start with a single workspace and no `chat_bindings`.
-- Then create the target group, add the bot to it, send a plain-text message, and run `/bind <workspace_id> <path>` in that same chat. If the path contains spaces, wrap it in double quotes, for example `/bind project-a "~/work/project a"`.
+- Then create the target group, add the bot to it, send a text message (`text` or `post`), and run `/bind <workspace_id> <path>` in that same chat. If the path contains spaces, wrap it in double quotes, for example `/bind project-a "~/work/project a"`.
 - `/bind` updates only Feishu `chat_bindings` and `workspaces` in the running gateway state, then persists the same two sections back to the YAML config file. It is not a general config reload path. Manual edits to the config file still require a gateway restart to take effect.
 - If you prefer editing YAML yourself, you can also read the real group `chat_id` from the gateway log and fill in `chat_bindings` manually.
 - For public deployments, also configure `owner_open_id` and/or `allowed_open_ids`. When neither is set, all users are allowed; when set, only listed `open_id`s can send messages and commands. To discover your `open_id`, send a message and check the gateway log for `open_id=ou_xxx` in the `feishu: received message` line.
-- Inbound Feishu messages must be plain text. Non-text messages are ignored.
+- Inbound Feishu messages must be text messages (`text` or `post`). Non-text messages are ignored.
 - No public callback URL, `verification_token`, `encrypt_key`, `listen`, or `webhook_path` is required.
 
 Feishu checklist before you send the first message:
@@ -87,9 +87,9 @@ Feishu checklist before you send the first message:
 2. The app is configured for long connection mode in the Feishu developer console.
 3. Event subscription is enabled and includes `im.message.receive_v1`.
 4. Callback configuration includes `card.action.trigger` for interactive cards.
-5. If you need a specific group to route to a specific workspace, create that group first, add the bot, send a plain-text message, and run `/bind <workspace_id> <path>` in that same chat.
+5. If you need a specific group to route to a specific workspace, create that group first, add the bot, send a text message (`text` or `post`), and run `/bind <workspace_id> <path>` in that same chat.
 6. If you use `owner_open_id` or `allowed_open_ids`, your sender `open_id` is present in the effective allowlist. (To discover your `open_id`, send a message and check the gateway log for `open_id=ou_xxx`.)
-7. Send a plain text message and then `/status` from the target Feishu chat.
+7. Send a text message (`text` or `post`) and then `/status` from the target Feishu chat.
 
 ### 3.3 WeChat + Feishu with multiple workspaces
 
@@ -132,7 +132,7 @@ Recommended workflow to bind a Feishu group to a workspace:
 1. Temporarily keep only one workspace and remove `chat_bindings`
 2. Start the gateway
 3. Create the target Feishu group and add the bot
-4. Send a plain-text message in the group
+4. Send a text message (`text` or `post`) in the group
 5. In that same chat, send `/bind <workspace_id> <path>`
 6. The gateway updates only Feishu `chat_bindings` and `workspaces` in memory, then writes the same two sections back to `config.yaml`.
 
@@ -162,8 +162,7 @@ After startup:
 
 By default the gateway stores runtime state under:
 
-- macOS: `~/Library/Application Support/chord-gateway`
-- Linux: `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`
+- macOS / Linux: `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`
 - Config file: `${XDG_CONFIG_HOME:-~/.config}/chord-gateway/config.yaml`
 
 State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by default), Feishu dedupe data, and session pins. Feishu `app_id`/`app_secret` remain configuration credentials; its short-lived access token is kept in memory and refreshed as needed.

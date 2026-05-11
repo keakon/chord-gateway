@@ -73,11 +73,11 @@ idle_timeout: 30m
 - 在事件订阅里至少订阅 `im.message.receive_v1`（接收入站消息）。
 - 在回调配置里添加 `card.action.trigger`（处理确认/提问卡片交互）。
 - 如果你要让不同飞书群路由到不同 workspace，推荐先只配置一个 workspace 启动 gateway，不填写 `chat_bindings`。
-- 然后在飞书中创建目标群聊、把机器人加入该群，发送一条纯文本消息，并在该聊天中执行 `/bind <workspace_id> <path>`。如果路径包含空格，请用英文双引号包裹，例如 `/bind project-a "~/work/project a"`。
+- 然后在飞书中创建目标群聊、把机器人加入该群，发送一条文本消息（`text` 或 `post`），并在该聊天中执行 `/bind <workspace_id> <path>`。如果路径包含空格，请用英文双引号包裹，例如 `/bind project-a "~/work/project a"`。
 - `/bind` 只会立即更新运行中 gateway 的飞书 `chat_bindings` 和 `workspaces`，并把这两个部分的相同变更写回 YAML 配置文件；它不是通用配置重载入口。手工修改配置文件仍需要重启 gateway 才会生效。
 - 如果你更希望自己编辑 YAML，也可以从 gateway 日志里的 `chat_id=...` 提取真实群聊 `chat_id` 后，再回填到 `chat_bindings`。
 - 长期使用建议配置 `owner_open_id` 和/或 `allowed_open_ids`。未设置时允许所有用户；设置后只处理 allowlist 中用户的消息和命令。要获取你的 `open_id`，先发一条消息，然后在 gateway 日志的 `feishu: received message` 行中找到 `open_id=ou_xxx`。
-- 飞书入站消息必须是纯文本；非文本消息会被忽略。
+- 飞书入站消息必须是文本消息（`text` 或 `post`）；非文本消息会被忽略。
 - 不需要公网回调地址，也不需要配置 `verification_token`、`encrypt_key`、`listen` 或 `webhook_path`。
 
 首次发消息前的飞书检查清单：
@@ -86,9 +86,9 @@ idle_timeout: 30m
 2. 飞书开发者后台已将事件订阅方式切换为“使用长连接接收事件”。
 3. 已启用事件订阅，并包含 `im.message.receive_v1`。
 4. 已在回调配置中添加 `card.action.trigger`。
-5. 如果需要把某个群路由到特定 workspace，请先创建目标群、添加机器人、发送一条纯文本消息，然后直接在该聊天中执行 `/bind <workspace_id> <path>`。
+5. 如果需要把某个群路由到特定 workspace，请先创建目标群、添加机器人、发送一条文本消息（`text` 或 `post`），然后直接在该聊天中执行 `/bind <workspace_id> <path>`。
 6. 如果使用了 `owner_open_id` 或 `allowed_open_ids`，发送者的 `open_id` 已在最终 allowlist 中。（要获取 `open_id`，先发一条消息，然后在 gateway 日志的 `feishu: received message` 行中找到 `open_id=ou_xxx`。）
-7. 在目标飞书聊天中先发送一条纯文本消息，再发送 `/status`。
+7. 在目标飞书聊天中先发送一条文本消息（`text` 或 `post`），再发送 `/status`。
 
 ### 3.3 微信 + 飞书 + 多工作区
 
@@ -131,7 +131,7 @@ idle_timeout: 30m
 1. 暂时只保留一个 workspace，并移除 `chat_bindings`
 2. 启动 gateway
 3. 在飞书中创建目标群并添加机器人
-4. 在群里发送一条纯文本消息
+4. 在群里发送一条文本消息（`text` 或 `post`）
 5. 在该聊天中执行 `/bind <workspace_id> <path>`
 6. gateway 只会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`，并把这两个部分的相同变更写回 `config.yaml`
 
@@ -161,8 +161,7 @@ chord-gateway -f config.yaml
 
 默认情况下，gateway 会把运行时状态存储到：
 
-- macOS: `~/Library/Application Support/chord-gateway`
-- Linux: `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`
+- macOS / Linux: `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`
 - 配置文件: `${XDG_CONFIG_HOME:-~/.config}/chord-gateway/config.yaml`
 
 状态内容包括日志、微信 token 文件（默认 `<state_dir>/wechat/token.json`）、飞书去重数据和 session pin。飞书 `app_id`/`app_secret` 仍属于配置凭据；短期 access token 只保存在内存中并按需刷新。

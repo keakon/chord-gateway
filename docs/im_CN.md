@@ -60,7 +60,7 @@ workspaces:
 
 1. 在飞书开放平台创建应用并获取 `app_id` / `app_secret`。
 2. 设置为 **长连接接收事件**，并订阅 `im.message.receive_v1`。
-3. 启动 gateway，然后给机器人发送一条纯文本消息。
+3. 启动 gateway，然后给机器人发送一条文本消息（`text` 或 `post`）。
 
 最小配置示例：
 

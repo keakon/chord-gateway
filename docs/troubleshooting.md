@@ -95,7 +95,7 @@ Check that the Feishu app is configured to use “Receive events via long connec
 Check:
 
 - the sender is allowed by `owner_open_id` / `allowed_open_ids` when an allowlist is configured
-- the inbound Feishu message is plain text; non-text messages are ignored
+- the inbound Feishu message is a text message (`text` or `post`); non-text messages are ignored
 - the target chat is routed to the expected workspace
 
 You can obtain the sender `open_id` from the Feishu developer console or event payload and add it to the allowlist.
@@ -106,7 +106,7 @@ Recommended steps:
 
 1. Start the gateway with a single workspace and no `chat_bindings`
 2. Create the target Feishu group and add the bot to that group
-3. Send a plain-text message in the group
+3. Send a text message in the group
 4. In that same chat, run:
 
 ```text
@@ -131,7 +131,7 @@ Recommended steps:
 
 1. Start the gateway with a single workspace and no `chat_bindings`
 2. Create the target Feishu group and add the bot to that group
-3. Send a plain-text message in the group
+3. Send a text message in the group
 4. Look for a log line like:
 
 ```text

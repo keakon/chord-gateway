@@ -35,7 +35,7 @@ workspaces:
     path: ~/work/project-b
 ```
 
-为了兼容已有配置，加载时仍接受旧的 list 形式；但文档推荐格式和 `/bind` 写回格式都已改为上面的 map 结构。
+配置文件中的 `ims` 和 `workspaces` 现在都必须使用上面的 map 结构；旧的 list / sequence 形式已不再支持，`/bind` 也只会读写这种 map 结构。
 
 ## `ims`
 
@@ -92,7 +92,7 @@ workspaces:
 如何获取 `open_id`：
 
 1. 先不设置 `owner_open_id` 和 `allowed_open_ids` 启动 gateway（默认允许所有用户）。
-2. 从飞书聊天中发送一条纯文本消息。
+2. 从飞书聊天中发送一条文本消息（`text` 或 `post`）。
 3. 在 gateway 日志中查找类似下面的记录：
 
 ```text
@@ -214,7 +214,7 @@ workspaceID | imType | chatID
 
 1. 先用单 workspace 配置启动 gateway，不要填写 `chat_bindings`。
 2. 在飞书中创建目标群聊，并把应用机器人添加到该群。
-3. 在这个群里发送一条纯文本消息。
+3. 在这个群里发送一条文本消息（`text` 或 `post`）。
 4. 直接在该聊天中执行 `/bind <workspace_id> <path>`。
 5. gateway 只会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`，并把对应的绑定/workspace 变更写回 YAML 配置文件。
 
@@ -234,7 +234,7 @@ workspaceID | imType | chatID
 
 1. 先用单 workspace 配置启动 gateway，不要填写 `chat_bindings`。
 2. 在飞书中创建目标群聊，并把应用机器人添加到该群。
-3. 在这个群里发送一条纯文本消息（如果企业权限只允许群里 `@` 机器人消息，请使用 `@机器人 你的消息`）。
+3. 在这个群里发送一条文本消息（`text` 或 `post`）。如果企业权限只允许群里 `@` 机器人消息，请使用 `@机器人 你的消息`。
 4. 在 gateway 日志中查找类似下面的记录：
 
 ```text
