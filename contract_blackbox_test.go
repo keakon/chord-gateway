@@ -59,8 +59,7 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 		ChordPath:       chordBin,
 		SessionPinsFile: filepath.Join(t.TempDir(), "session-pins.json"),
 		EventVisibility: config.EventVisibility{
-			ToolResult: true,
-			Todos:      true,
+			Todos: true,
 		},
 	}
 
@@ -90,22 +89,6 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 
 	if err := proc.SendUserMessage("please update todos and then finish"); err != nil {
 		t.Fatalf("send user message: %v", err)
-	}
-
-	waitForCondition(t, 20*time.Second, func() bool {
-		state := proc.State()
-		return state.LastToolResult != nil && state.LastToolResult.Name == "TodoWrite"
-	}, "tool_result TodoWrite")
-
-	stateAfterTool := proc.State()
-	if stateAfterTool.LastToolResult == nil {
-		t.Fatal("expected last tool result")
-	}
-	if stateAfterTool.LastToolResult.Name != "TodoWrite" {
-		t.Fatalf("tool_result name = %q, want TodoWrite", stateAfterTool.LastToolResult.Name)
-	}
-	if stateAfterTool.LastToolResult.Status != "success" {
-		t.Fatalf("tool_result status = %q, want success", stateAfterTool.LastToolResult.Status)
 	}
 
 	waitForCondition(t, 20*time.Second, func() bool {

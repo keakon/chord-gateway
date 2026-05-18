@@ -14,6 +14,7 @@ gateway 始终订阅以下事件：
 - `idle`
 - `error`
 - `notification`
+- `done_completion`
 
 这些事件提供 IM 控制所需的最小行为：
 
@@ -23,6 +24,7 @@ gateway 始终订阅以下事件：
 - busy/idle 状态聚合
 - 错误报告
 - 面向用户的标准通知
+- Done 工具完成状态，以及 gateway 使用的其他工具结果状态
 
 ## 可选可见事件
 
@@ -34,7 +36,6 @@ event_visibility:
   agent_done: false
   info: false
   toast: false
-  tool_result: false
   todos: false
 ```
 
@@ -44,7 +45,6 @@ event_visibility:
 | `agent_done` | `agent_done` | 子 agent 完成通知 |
 | `info` | `info` | 信息类消息 |
 | `toast` | `toast` | 短暂提示消息 |
-| `tool_result` | `tool_result` | 工具结果摘要；会计入长时间提醒的内部事件数 |
 | `todos` | `todos` | 完整 Todo 列表更新；每个事件都会完整转发且不去重，并会计入长时间提醒的内部事件数 |
 
 ## 长时间提醒
@@ -55,7 +55,7 @@ event_visibility:
 ⏳ Still working (4 internal events)
 ```
 
-内部事件数目前基于 gateway 已跟踪的进展事件，例如 `tool_result` 和 `todos`。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重，即使列表未变化或为空也会推送。
+内部事件数目前基于 gateway 已跟踪的进展事件，例如 `todos`。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重，即使列表未变化或为空也会推送。
 
 ## 完成通知
 

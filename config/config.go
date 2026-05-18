@@ -35,12 +35,11 @@ type Config struct {
 
 // EventVisibility controls optional control-plane event subscriptions.
 type EventVisibility struct {
-	Activity   bool `yaml:"activity,omitempty"`
-	AgentDone  bool `yaml:"agent_done,omitempty"`
-	Info       bool `yaml:"info,omitempty"`
-	Toast      bool `yaml:"toast,omitempty"`
-	ToolResult bool `yaml:"tool_result,omitempty"`
-	Todos      bool `yaml:"todos,omitempty"`
+	Activity  bool `yaml:"activity,omitempty"`
+	AgentDone bool `yaml:"agent_done,omitempty"`
+	Info      bool `yaml:"info,omitempty"`
+	Toast     bool `yaml:"toast,omitempty"`
+	Todos     bool `yaml:"todos,omitempty"`
 }
 
 // IMAdapterConfig describes one IM adapter in the gateway config.

@@ -126,6 +126,15 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "notification"
 
+	case "done_completion":
+		var payload DoneCompletionPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastNotification = &NotificationPayload{Message: payload.Report, Reason: "done_completion", AgentID: payload.AgentID}
+			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
+			p.lastActivity = time.Now()
+		}
+		eventType = "done_completion"
+
 	case "agent_done":
 		p.lastActivity = time.Now()
 		eventType = "agent_done"
@@ -163,26 +172,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "subscribe_response":
 		// No onEvent — ack response.
-
-	case "tool_result":
-		var payload struct {
-			CallID  string `json:"call_id"`
-			Name    string `json:"name"`
-			Status  string `json:"status"`
-			AgentID string `json:"agent_id"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.LastToolResult = &ToolResultInfo{
-				CallID:  payload.CallID,
-				Name:    payload.Name,
-				Status:  payload.Status,
-				AgentID: payload.AgentID,
-			}
-			p.state.InternalEventsSinceLastPush++
-			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-			p.lastActivity = time.Now()
-		}
-		eventType = "tool_result"
 
 	case "assistant_message":
 		var payload struct {

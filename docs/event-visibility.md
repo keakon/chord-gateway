@@ -14,6 +14,7 @@ The gateway always subscribes to these events:
 - `idle`
 - `error`
 - `notification`
+- `done_completion`
 
 These events provide the minimum behavior required for IM control:
 
@@ -23,6 +24,7 @@ These events provide the minimum behavior required for IM control:
 - busy/idle state aggregation
 - error reporting
 - canonical user-facing notifications
+- non-loop Done completion reports
 
 ## Optional visible events
 
@@ -34,7 +36,6 @@ event_visibility:
   agent_done: false
   info: false
   toast: false
-  tool_result: false
   todos: false
 ```
 
@@ -44,7 +45,6 @@ event_visibility:
 | `agent_done` | `agent_done` | Sub-agent completion notifications |
 | `info` | `info` | Informational messages |
 | `toast` | `toast` | Short transient messages |
-| `tool_result` | `tool_result` | Tool result summaries; counts as an internal event for long-running reminders |
 | `todos` | `todos` | Full todo list updates; every event is forwarded without deduplication and counts as an internal event for long-running reminders |
 
 ## Long-running reminders
@@ -55,7 +55,7 @@ While a turn remains busy, the gateway sends a compact reminder every 5 minutes.
 ⏳ Still working (4 internal events)
 ```
 
-Internal-event counts are currently based on gateway-tracked progress events such as `tool_result` and `todos`. When `event_visibility.todos` is enabled, each `todos` event is pushed as the full current todo list without deduplication, even if it is unchanged or empty.
+Internal-event counts are currently based on gateway-tracked progress events such as `todos`. When `event_visibility.todos` is enabled, each `todos` event is pushed as the full current todo list without deduplication, even if it is unchanged or empty.
 
 ## Completion notifications
 

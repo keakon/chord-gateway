@@ -159,12 +159,11 @@ Optional flags (boolean):
 - `agent_done`
 - `info`
 - `toast`
-- `tool_result`
 - `todos`
 
 Essential events are always subscribed and cannot be disabled.
 
-`tool_result` and `todos` are also used as tracked internal progress for 5-minute long-running reminders when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases.
+`done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases.
 
 ## Path and State Resolution
 
@@ -294,7 +293,6 @@ event_visibility:
   agent_done: false
   info: false
   toast: false
-  tool_result: false
   todos: false
 ```
 
@@ -328,7 +326,6 @@ event_visibility:
   agent_done: false
   info: false
   toast: false
-  tool_result: false
   todos: true
 ```
 

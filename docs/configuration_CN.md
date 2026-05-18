@@ -159,12 +159,11 @@ gateway 使用“IM 自带路由”模型：
 - `agent_done`
 - `info`
 - `toast`
-- `tool_result`
 - `todos`
 
 核心事件始终订阅，无法关闭。
 
-启用 `tool_result` 和 `todos` 后，它们也会作为 5 分钟长时间提醒中的内部进展事件计数来源。`activity` 会更新状态/调试用 phase，但长时间提醒不会直接暴露这些低层 phase。
+`done_completion` 始终订阅，用于非 loop Done 完成报告。`todos` 仅在启用后订阅、计数和转发。`activity` 会更新状态/调试用 phase，但长时间提醒不会直接暴露这些低层 phase。
 
 ## 配置与状态目录解析
 
@@ -292,7 +291,6 @@ event_visibility:
   agent_done: false
   info: false
   toast: false
-  tool_result: false
   todos: false
 ```
 
@@ -326,7 +324,6 @@ event_visibility:
   agent_done: false
   info: false
   toast: false
-  tool_result: false
   todos: true
 ```
 

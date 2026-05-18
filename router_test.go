@@ -888,20 +888,19 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "idle", "error", "notification"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "idle", "error", "notification", "done_completion"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
 
 	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{
-		Activity:   true,
-		AgentDone:  true,
-		Info:       true,
-		Toast:      true,
-		ToolResult: true,
-		Todos:      true,
+		Activity:  true,
+		AgentDone: true,
+		Info:      true,
+		Toast:     true,
+		Todos:     true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "idle", "error", "notification", "activity", "agent_done", "info", "toast", "tool_result", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "idle", "error", "notification", "done_completion", "activity", "agent_done", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -989,13 +988,12 @@ func TestFormatBindingStatus(t *testing.T) {
 		LastOutcome:     "completed",
 		PendingConfirm:  &ConfirmPayload{ToolName: "Shell"},
 		PendingQuestion: &QuestionPayload{Question: "Continue?"},
-		LastToolResult:  &ToolResultInfo{Name: "Read", Status: "success"},
 		Todos: []TodoItem{
 			{ID: "1", Content: "A", Status: "completed"},
 			{ID: "2", Content: "B", Status: "pending"},
 		},
 	})
-	for _, want := range []string{"project-a", "oc_chat_a", "sess-1", "planning", "completed", "Pending confirm", "Pending question", "Last tool", "1/2 completed"} {
+	for _, want := range []string{"project-a", "oc_chat_a", "sess-1", "planning", "completed", "Pending confirm", "Pending question", "1/2 completed"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected %q in %q", want, msg)
 		}
@@ -1092,6 +1090,20 @@ func TestFormatConfirmNotification(t *testing.T) {
 		}
 	})
 
+	t.Run("includes Done report", func(t *testing.T) {
+		msg := r.formatConfirmNotification(ControlState{
+			PendingConfirm: &ConfirmPayload{
+				ToolName: "Done",
+				ArgsJSON: `{"reason":"loop target is complete","report":"## Completion status\nAll requested work is finished."}`,
+			},
+		})
+		for _, want := range []string{"Done requests completion", "loop target is complete", "## Completion status", "Reply /allow to finish", "/deny <reason>"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("Done confirm missing %q in %q", want, msg)
+			}
+		}
+	})
+
 	t.Run("nil PendingConfirm returns empty", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{})
 		if msg != "" {
@@ -1117,6 +1129,7 @@ func TestSummarizeToolArgs(t *testing.T) {
 		{name: "glob pattern", toolName: "Glob", argsJSON: `{"pattern":"**/*.go"}`, contains: []string{"🔍 **/*.go"}},
 		{name: "webfetch url", toolName: "WebFetch", argsJSON: `{"url":"https://example.com"}`, contains: []string{"🌐 https://example.com"}},
 		{name: "lsp summary", toolName: "Lsp", argsJSON: `{"operation":"definition","path":"main.go"}`, contains: []string{"🔎 definition main.go"}},
+		{name: "done report", toolName: "Done", argsJSON: `{"reason":"ready to finish","report":"## Summary\n- shipped"}`, contains: []string{"## Summary", "shipped"}},
 		{name: "generic fallback", toolName: "Other", argsJSON: `{"description":"desc","path":"x","content":"y"}`, contains: []string{"path=x", "content=y"}},
 		{name: "truncate command", toolName: "Shell", argsJSON: fmt.Sprintf(`{"command":%q}`, long), contains: []string{"$ ", "…"}},
 	}
@@ -1383,15 +1396,6 @@ func TestFormatOtherNotifications(t *testing.T) {
 	if got := r.formatExitNotification(ControlState{Busy: false}); got != "" {
 		t.Fatalf("idle exit = %q", got)
 	}
-	if got := r.formatToolResultNotification(ControlState{}); got != "" {
-		t.Fatalf("nil tool result = %q", got)
-	}
-	if got := r.formatToolResultNotification(ControlState{LastToolResult: &ToolResultInfo{Name: "Shell", Status: "success"}}); got != "" {
-		t.Fatalf("successful tool result = %q", got)
-	}
-	if got := r.formatToolResultNotification(ControlState{LastToolResult: &ToolResultInfo{Name: "Shell", Status: "error"}}); !strings.Contains(got, "Tool Shell failed") {
-		t.Fatalf("error tool result = %q", got)
-	}
 }
 
 func TestFormatTodosNotification(t *testing.T) {
@@ -1643,6 +1647,30 @@ func TestBuildFeishuCardsAndButton(t *testing.T) {
 		t.Fatalf("confirm card should not use legacy action tag: %v", elements)
 	}
 
+	doneConfirm := buildFeishuConfirmCard("chat-1", &ConfirmPayload{
+		ToolName:  "Done",
+		ArgsJSON:  `{"reason":"loop target complete","report":"## Completion status\nAll done."}`,
+		RequestID: "req-done",
+	}, feishuCardContext{WorkspaceID: "ws-1", SessionID: "session-1234567890", ProcessKey: "ws-1|feishu|chat-1"})
+	doneHeader := doneConfirm["header"].(map[string]any)
+	if doneHeader["template"] != "green" || !strings.Contains(fmt.Sprint(doneHeader), "Done completion") {
+		t.Fatalf("Done confirm header = %v", doneHeader)
+	}
+	doneElements := doneConfirm["body"].(map[string]any)["elements"].([]any)
+	doneText := fmt.Sprint(doneElements)
+	for _, want := range []string{"Done requests completion", "loop target complete", "## Completion status", "`/deny <reason>`"} {
+		if !strings.Contains(doneText, want) {
+			t.Fatalf("Done confirm card missing %q: %v", want, doneElements)
+		}
+	}
+	if strings.Contains(doneText, "Deny") {
+		t.Fatalf("Done confirm card should not include a no-reason Deny button: %v", doneElements)
+	}
+	doneButton := doneElements[len(doneElements)-1].(map[string]any)
+	if fmt.Sprint(doneButton["text"]) != "map[content:Finish tag:plain_text]" {
+		t.Fatalf("Done confirm button = %v", doneButton["text"])
+	}
+
 	question := buildFeishuQuestionCard("chat-2", &QuestionPayload{
 		Header:        "Choose",
 		Question:      "Continue?",
@@ -1727,125 +1755,24 @@ func TestProcessEnvelopeTodosEmptyWrapper(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// processEnvelope: tool_result updates LastToolResult and increments counter
+// processEnvelope: done_completion updates user-visible notification state
 // ---------------------------------------------------------------------------
 
-func TestProcessEnvelopeToolResult(t *testing.T) {
+func TestProcessEnvelopeDoneCompletion(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	p.state.InternalEventsSinceLastPush = 3
+	p.processEnvelope(&HeadlessEnvelope{Type: "done_completion", Payload: []byte(`{"call_id":"call-done","report":"All done","reason":"ready","status":"success","mode":"normal"}`)})
 
-	payload := []byte(`{"call_id":"call-123","name":"Shell","status":"success","agent_id":"a1"}`)
-	p.processEnvelope(&HeadlessEnvelope{Type: "tool_result", Payload: payload})
 	state := p.State()
-
-	if state.LastToolResult == nil {
-		t.Fatal("LastToolResult is nil")
+	if state.LastNotification == nil {
+		t.Fatal("LastNotification is nil")
 	}
-	if state.LastToolResult.CallID != "call-123" {
-		t.Errorf("CallID = %q", state.LastToolResult.CallID)
+	if state.LastNotification.Message != "All done" {
+		t.Fatalf("message = %q", state.LastNotification.Message)
 	}
-	if state.LastToolResult.Name != "Shell" {
-		t.Errorf("Name = %q", state.LastToolResult.Name)
-	}
-	if state.LastToolResult.Status != "success" {
-		t.Errorf("Status = %q", state.LastToolResult.Status)
-	}
-	if state.InternalEventsSinceLastPush != 4 {
-		t.Errorf("InternalEventsSinceLastPush = %d, want 4", state.InternalEventsSinceLastPush)
+	if state.LastNotification.Reason != "done_completion" {
+		t.Fatalf("reason = %q", state.LastNotification.Reason)
 	}
 }
-
-func TestProcessEnvelopeToolResultError(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	payload := []byte(`{"call_id":"c2","name":"Write","status":"error","agent_id":"a1"}`)
-	p.processEnvelope(&HeadlessEnvelope{Type: "tool_result", Payload: payload})
-	state := p.State()
-	if state.LastToolResult == nil || state.LastToolResult.Status != "error" {
-		t.Fatalf("expected error tool result, got %+v", state.LastToolResult)
-	}
-	if state.InternalEventsSinceLastPush != 1 {
-		t.Errorf("InternalEventsSinceLastPush = %d, want 1", state.InternalEventsSinceLastPush)
-	}
-}
-
-func TestProcessEnvelopeAssistantMessageResetsInternalEventCounter(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	p.state.InternalEventsSinceLastPush = 3
-	payload := []byte(`{"text":"done","agent_id":"a1","tool_calls":0}`)
-	p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: payload})
-	state := p.State()
-	if state.InternalEventsSinceLastPush != 0 {
-		t.Errorf("InternalEventsSinceLastPush = %d, want 0", state.InternalEventsSinceLastPush)
-	}
-}
-
-func TestProcessEnvelopeIdleClearsPendingWithoutExpiring(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	p.state.Busy = true
-	p.state.PendingConfirm = &ConfirmPayload{RequestID: "req-1"}
-	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: []byte(`{"last_outcome":"completed"}`)})
-	state := p.State()
-	if state.PendingConfirm != nil {
-		t.Fatalf("PendingConfirm = %#v, want nil", state.PendingConfirm)
-	}
-	if state.ExpiredConfirm != nil {
-		t.Fatalf("ExpiredConfirm = %#v, want nil for normal idle", state.ExpiredConfirm)
-	}
-	if state.LastOutcome != "completed" {
-		t.Fatalf("LastOutcome = %q, want completed", state.LastOutcome)
-	}
-}
-
-func TestTransitionToIdleTimeoutExpiresPending(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	p.state.Busy = true
-	p.state.PendingConfirm = &ConfirmPayload{RequestID: "req-1"}
-	p.transitionToIdle("2025-01-01T00:00:00Z", true)
-	state := p.State()
-	if state.PendingConfirm != nil {
-		t.Fatalf("PendingConfirm = %#v, want nil", state.PendingConfirm)
-	}
-	if state.ExpiredConfirm == nil || state.ExpiredConfirm.RequestID != "req-1" {
-		t.Fatalf("ExpiredConfirm = %#v, want req-1", state.ExpiredConfirm)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// processEnvelope: status_response reads last_outcome
-// ---------------------------------------------------------------------------
-
-func TestProcessEnvelopeStatusResponse(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	payload := []byte(`{"session_id":"s1","busy":true,"phase":"tool","phase_detail":"running","last_error":"","last_outcome":"","updated_at":"2025-01-01T00:00:00Z"}`)
-	p.processEnvelope(&HeadlessEnvelope{Type: "status_response", Payload: payload})
-	state := p.State()
-	if state.SessionID != "s1" {
-		t.Errorf("SessionID = %q, want s1", state.SessionID)
-	}
-	if !state.Busy {
-		t.Error("Busy should be true")
-	}
-	if state.Phase != "tool" {
-		t.Errorf("Phase = %q, want tool", state.Phase)
-	}
-	if state.LastOutcome != "" {
-		t.Errorf("LastOutcome = %q, want empty", state.LastOutcome)
-	}
-}
-
-func TestProcessEnvelopeStatusResponseWithOutcome(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
-	payload := []byte(`{"session_id":"s1","busy":false,"phase":"","phase_detail":"","last_error":"","last_outcome":"completed","updated_at":"2025-01-01T00:00:00Z"}`)
-	p.processEnvelope(&HeadlessEnvelope{Type: "status_response", Payload: payload})
-	state := p.State()
-	if state.LastOutcome != "completed" {
-		t.Errorf("LastOutcome = %q, want completed", state.LastOutcome)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// /status freshness: WaitStatus delivers each response on its own channel
-// ---------------------------------------------------------------------------
 
 func TestWaitStatus_DeliversResponse(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
@@ -1978,6 +1905,28 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 			if !strings.Contains(out, want) {
 				t.Fatalf("stdin missing %s in %q", want, out)
 			}
+		}
+	})
+
+	t.Run("plain text during Done confirm becomes deny reason", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-done", ToolName: "Done", ArgsJSON: `{"report":"done"}`}})
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "Need to update docs first"}, "wechat", nil)
+		if got := stdin.String(); !strings.Contains(got, `"request_id":"req-done"`) || !strings.Contains(got, `"action":"deny"`) || !strings.Contains(got, `"deny_reason":"Need to update docs first"`) {
+			t.Fatalf("stdin = %q", got)
+		}
+		if got := sender.lastMessage().text; !strings.Contains(got, "✅ denied: Need to update docs first") {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("Done deny requires reason", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-done", ToolName: "Done", ArgsJSON: `{"report":"done"}`}})
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny"}, "wechat", nil)
+		if got := sender.lastMessage().text; !strings.Contains(got, "Rejecting Done requires a reason") {
+			t.Fatalf("message = %q", got)
+		}
+		if got := stdin.String(); got != "" {
+			t.Fatalf("stdin should be empty, got %q", got)
 		}
 	})
 

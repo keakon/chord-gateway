@@ -26,9 +26,6 @@ type ControlState struct {
 	// Todos from chord process
 	Todos []TodoItem `json:"todos,omitempty"`
 
-	// Last tool result (not persisted)
-	LastToolResult *ToolResultInfo `json:"-"` // from tool_result event
-
 	LastAssistantText      string `json:"-"` // last completed assistant message
 	LastAssistantToolCalls int    `json:"-"` // tool calls executed in the last turn
 
@@ -53,6 +50,8 @@ type ConfirmPayload struct {
 	ArgsJSON      string   `json:"args_json"`
 	RequestID     string   `json:"request_id"`
 	NeedsApproval []string `json:"needs_approval,omitempty"`
+	DoneReport    string   `json:"done_report,omitempty"`
+	DoneReason    string   `json:"done_reason,omitempty"`
 }
 
 // QuestionPayload is the question_request event payload.
@@ -72,6 +71,16 @@ type NotificationPayload struct {
 	Message string `json:"message"`
 	Reason  string `json:"reason,omitempty"`
 	AgentID string `json:"agent_id,omitempty"`
+}
+
+// DoneCompletionPayload is the done_completion event payload.
+type DoneCompletionPayload struct {
+	CallID  string `json:"call_id,omitempty"`
+	Report  string `json:"report"`
+	Reason  string `json:"reason,omitempty"`
+	Status  string `json:"status,omitempty"`
+	AgentID string `json:"agent_id,omitempty"`
+	Mode    string `json:"mode,omitempty"`
 }
 
 // HeadlessEnvelope is the JSON envelope from chord headless stdout.
@@ -113,14 +122,6 @@ type TodoItem struct {
 	Content    string `json:"content"`
 	Status     string `json:"status"`
 	ActiveForm string `json:"active_form,omitempty"`
-}
-
-// ToolResultInfo represents the result of a tool execution.
-type ToolResultInfo struct {
-	CallID  string `json:"call_id"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	AgentID string `json:"agent_id"`
 }
 
 // IncomingMessage is the structured inbound message model.

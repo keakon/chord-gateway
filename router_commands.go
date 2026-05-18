@@ -98,12 +98,16 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		}
 		requestID = cmd.RequestID
 	}
+	reason := strings.TrimSpace(cmd.Reason)
+	if cmd.Action == "deny" && isDoneTool(pc.ToolName) && reason == "" {
+		r.sendText(chatID, "⚠️ Rejecting Done requires a reason. Reply /deny <what remains to do>.")
+		return
+	}
 	confirmCmd := map[string]any{
 		"type":       "confirm",
 		"request_id": requestID,
 		"action":     cmd.Action,
 	}
-	reason := strings.TrimSpace(cmd.Reason)
 	if cmd.Action == "deny" && reason != "" {
 		confirmCmd["deny_reason"] = reason
 	}
@@ -175,6 +179,10 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	// replies are always sent as custom text — no comma splitting
 	// or index mapping, because natural language may contain commas.
 	state := proc.State()
+	if state.PendingConfirm != nil && isDoneTool(state.PendingConfirm.ToolName) && !strings.HasPrefix(strings.TrimSpace(cmd.Content), "/") {
+		r.handleConfirmCommand(ws, chatID, IMCommand{Type: "confirm", Action: "deny", Reason: cmd.Content}, msg, procKey, proc)
+		return
+	}
 	if state.PendingQuestion != nil && state.PendingConfirm == nil && !strings.HasPrefix(cmd.Content, "/") {
 		pq := state.PendingQuestion
 		answers := []string{cmd.Content}

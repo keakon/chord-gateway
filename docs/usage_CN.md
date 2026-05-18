@@ -168,6 +168,6 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 ⏳ Still working (4 internal events)
 ```
 
-内部事件数目前来自 gateway 已跟踪的进展事件，例如 `tool_result` 和 `todos`；每次用户可见输出或提醒后会重置。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重。
+内部事件数目前来自 gateway 已跟踪的进展事件，例如 `todos`；每次用户可见输出或提醒后会重置。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重。
 
 可选的低层事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。

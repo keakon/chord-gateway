@@ -187,6 +187,6 @@ Long-running reminders intentionally do not expose low-level phases such as `con
 ⏳ Still working (4 internal events)
 ```
 
-The internal-event count currently comes from gateway-tracked progress events such as `tool_result` and `todos`; it is reset after each user-visible output or reminder. If `event_visibility.todos` is enabled, every `todos` event is sent as the full current todo list without deduplication.
+The internal-event count currently comes from gateway-tracked progress events such as `todos`; it is reset after each user-visible output or reminder. If `event_visibility.todos` is enabled, every `todos` event is sent as the full current todo list without deduplication.
 
 Optional lower-level events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).

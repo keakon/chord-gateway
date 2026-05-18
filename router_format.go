@@ -13,7 +13,7 @@ import (
 
 func (r *NotificationRouter) formatNotification(eventType string, state ControlState) string {
 	switch eventType {
-	case "notification":
+	case "notification", "done_completion":
 		return r.formatHeadlessNotification(state)
 
 	case "confirm_request":
@@ -55,9 +55,6 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 
 	case "exit":
 		return r.formatExitNotification(state)
-
-	case "tool_result":
-		return r.formatToolResultNotification(state)
 
 	case "todos":
 		return r.formatTodosNotification(state)
@@ -111,6 +108,9 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState) strin
 		return ""
 	}
 	c := state.PendingConfirm
+	if isDoneTool(c.ToolName) {
+		return r.formatDoneConfirmNotification(c)
+	}
 	var sb strings.Builder
 	sb.WriteString("🔧 Confirm required: ")
 	sb.WriteString(c.ToolName)
@@ -134,6 +134,58 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState) strin
 	return truncate(sb.String())
 }
 
+func doneConfirmReportReason(c *ConfirmPayload) (report, reason string) {
+	if c == nil {
+		return "", ""
+	}
+	report = strings.TrimSpace(c.DoneReport)
+	reason = strings.TrimSpace(c.DoneReason)
+	argReport, argReason := parseDoneArgs(c.ArgsJSON)
+	if report == "" {
+		report = argReport
+	}
+	if reason == "" {
+		reason = argReason
+	}
+	return report, reason
+}
+
+func (r *NotificationRouter) formatDoneConfirmNotification(c *ConfirmPayload) string {
+	if c == nil {
+		return ""
+	}
+	report, reason := doneConfirmReportReason(c)
+	var sb strings.Builder
+	sb.WriteString("✅ Done requests completion")
+	if reason != "" {
+		sb.WriteString("\nReason: ")
+		sb.WriteString(reason)
+	}
+	if report != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(report)
+	}
+	sb.WriteString("\n\nReply /allow to finish, or /deny <reason> to continue.")
+	return truncate(sb.String())
+}
+
+func parseDoneArgs(argsJSON string) (report, reason string) {
+	if strings.TrimSpace(argsJSON) == "" {
+		return "", ""
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", ""
+	}
+	report, _ = args["report"].(string)
+	reason, _ = args["reason"].(string)
+	return strings.TrimSpace(report), strings.TrimSpace(reason)
+}
+
+func isDoneTool(toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(toolName), "Done")
+}
+
 // summarizeToolArgs extracts a human-readable summary from the tool's JSON args.
 func summarizeToolArgs(toolName, argsJSON string) string {
 	if strings.TrimSpace(argsJSON) == "" {
@@ -146,6 +198,14 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 	}
 
 	switch toolName {
+	case "Done":
+		report, reason := parseDoneArgs(argsJSON)
+		if report != "" {
+			return report
+		}
+		if reason != "" {
+			return reason
+		}
 	case "Shell", "Spawn":
 		if cmd, _ := args["command"].(string); cmd != "" {
 			return "$ " + truncateLine(cmd, 300)
@@ -289,16 +349,6 @@ func (r *NotificationRouter) formatExitNotification(state ControlState) string {
 	return ""
 }
 
-func (r *NotificationRouter) formatToolResultNotification(state ControlState) string {
-	if state.LastToolResult == nil {
-		return ""
-	}
-	if state.LastToolResult.Status == "error" {
-		return truncate(fmt.Sprintf("⚠️ Tool %s failed", state.LastToolResult.Name))
-	}
-	return ""
-}
-
 func formatTodoList(todos []TodoItem) string {
 	if len(todos) == 0 {
 		return "📋 No todos."
@@ -401,13 +451,6 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 	if state.LastError != "" {
 		sb.WriteString("\n❌ Last error: ")
 		sb.WriteString(state.LastError)
-	}
-	if state.LastToolResult != nil {
-		sb.WriteString("\n🔧 Last tool: ")
-		sb.WriteString(state.LastToolResult.Name)
-		sb.WriteString(" (")
-		sb.WriteString(state.LastToolResult.Status)
-		sb.WriteString(")")
 	}
 	if len(state.Todos) > 0 {
 		completed := 0

@@ -6,6 +6,16 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
+## Unreleased
+
+### Breaking changes
+
+- Removed Chord headless `tool_result` support from gateway configuration, subscription, state, and IM rendering. Gateway now consumes non-loop Done reports via Chord's `done_completion` event; loop-mode Done exit requests remain `confirm_request` events with `done_report` / `done_reason` fields.
+
+### Changed
+
+- Done confirmation rendering now prefers explicit `done_report` / `done_reason` fields and treats plain text during a pending Done confirmation as the deny reason.
+
 ## 0.3.1 – 2026-05-11
 
 ### Changed

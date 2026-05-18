@@ -62,6 +62,9 @@ func shouldSendFeishuQuestionCard(q *QuestionPayload) bool {
 }
 
 func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishuCardContext) map[string]any {
+	if isDoneTool(c.ToolName) {
+		return buildFeishuDoneConfirmCard(chatID, c, cardCtx)
+	}
 	risk := riskLevelForTool(c.ToolName)
 	summary := summarizeToolArgs(c.ToolName, c.ArgsJSON)
 	elements := []any{map[string]any{"tag": "markdown", "content": fmt.Sprintf("**🔧 %s**\nTool: `%s`", risk.Title, c.ToolName)}}
@@ -116,6 +119,45 @@ func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishuCard
 		"schema": "2.0",
 		"config": map[string]any{"update_multi": true},
 		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": risk.Header}, "template": risk.Template},
+		"body":   map[string]any{"elements": elements},
+	}
+}
+
+func buildFeishuDoneConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishuCardContext) map[string]any {
+	report, reason := doneConfirmReportReason(c)
+	elements := []any{map[string]any{"tag": "markdown", "content": "**✅ Done requests completion**"}}
+	var contextLines []string
+	if strings.TrimSpace(cardCtx.WorkspaceID) != "" {
+		contextLines = append(contextLines, "Workspace: `"+cardCtx.WorkspaceID+"`")
+	}
+	if strings.TrimSpace(cardCtx.SessionID) != "" {
+		contextLines = append(contextLines, "Session: `"+shortID(cardCtx.SessionID)+"`")
+	}
+	if strings.TrimSpace(c.RequestID) != "" {
+		contextLines = append(contextLines, "Request: `"+shortID(c.RequestID)+"`")
+	}
+	if strings.TrimSpace(cardCtx.RequestedAt) != "" {
+		contextLines = append(contextLines, "Requested: `"+cardCtx.RequestedAt+"`")
+	}
+	if len(contextLines) > 0 {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": strings.Join(contextLines, "\n")})
+	}
+	if reason != "" {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "**Reason**\n" + reason})
+	}
+	if report != "" {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "**Completion report**\n" + report})
+	}
+	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click Finish to end the loop, or reply `/deny <reason>` to continue. Done rejection requires a reason."})
+	baseValue := map[string]any{"request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
+	allowValue := cloneCardValue(baseValue)
+	allowValue["type"] = "confirm"
+	allowValue["action"] = "allow"
+	elements = append(elements, feishuCardButton("Finish", "primary", allowValue))
+	return map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
+		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Done completion confirmation"}, "template": "green"},
 		"body":   map[string]any{"elements": elements},
 	}
 }

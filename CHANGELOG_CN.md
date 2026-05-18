@@ -6,6 +6,16 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
+## 未发布
+
+### 不兼容变更
+
+- 移除 gateway 对 Chord headless `tool_result` 的配置、订阅、状态和 IM 渲染支持。gateway 现在通过 Chord 的 `done_completion` 事件接收非 loop Done 报告；loop 模式的 Done 退出申请仍使用 `confirm_request`，并携带 `done_report` / `done_reason` 字段。
+
+### Changed
+
+- Done 确认渲染现在优先使用显式的 `done_report` / `done_reason` 字段；当存在待处理 Done 确认时，普通文本会作为拒绝理由处理。
+
 ## 0.3.1 – 2026-05-11
 
 ### Changed
