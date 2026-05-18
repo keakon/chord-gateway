@@ -7,6 +7,7 @@ This documentation is for users who want to run `chord-gateway`, connect IM plat
 ## Getting started
 
 - [Quickstart](../QUICKSTART.md) – build, configure, and run a minimal gateway
+- [Cookbook](./cookbook.md) – release installs, common config recipes, systemd, and launchd
 - [Configuration reference](./configuration.md) – all config fields, routing rules, paths, and examples
 
 ## Daily usage
@@ -24,7 +25,7 @@ This documentation is for users who want to run `chord-gateway`, connect IM plat
 
 - [Operations](./operations.md) – process lifecycle, state files, logs, dedupe, and cleanup behavior
 - [Permissions & Safety](./permissions-and-safety.md) – security boundaries, credential handling, and deployment precautions
-- [Compatibility policy](./compatibility.md) – supported legacy config forms and current compatibility boundaries
+- [Compatibility policy](./compatibility.md) – kept and removed compatibility paths and cleanup rules
 - [Troubleshooting](./troubleshooting.md) – common startup, WeChat, Feishu, routing, and runtime issues
 
 ## Project documents

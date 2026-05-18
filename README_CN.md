@@ -8,6 +8,7 @@
 `chord-gateway` 用于把微信、飞书等 IM 平台连接到本地 `chord headless` 进程。你可以在聊天窗口里远程控制 Chord，同时让 agent 进程、工作区访问、凭据和状态继续保留在自己的机器或服务器上。
 
 - English: [README.md](./README.md)
+- 文档站: <https://keakon.github.io/chord-gateway/zh/>
 - 完整文档: [docs/index_CN.md](./docs/index_CN.md)
 - 运行要求: Go 1.26+，并且本机可用 `chord` 可执行文件
 
@@ -119,6 +120,7 @@ chord-gateway -f config.yaml
 ## 文档
 
 - [快速开始](./QUICKSTART_CN.md)
+- [Cookbook](./docs/cookbook_CN.md)
 - [IM 接入总览](./docs/im_CN.md)
 - [使用指南](./docs/usage_CN.md)
 - [配置参考](./docs/configuration_CN.md)

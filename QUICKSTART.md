@@ -24,6 +24,8 @@ Or build from a local checkout:
 go build -o chord-gateway .
 ```
 
+For prebuilt release binaries and service setup examples, see [Cookbook](./docs/cookbook.md).
+
 ## 3. Create a minimal config
 
 Point `workspaces.default.path` at the project you want Chord to operate on.
@@ -170,6 +172,7 @@ State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by defa
 ## 6. Next docs
 
 - [Configuration reference](./docs/configuration.md)
+- [Cookbook](./docs/cookbook.md)
 - [IM integration overview](./docs/im.md)
 - [Usage guide](./docs/usage.md)
 - [Operations](./docs/operations.md)

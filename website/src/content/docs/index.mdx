@@ -1,0 +1,80 @@
+---
+title: chord-gateway
+description: Connect WeChat and Feishu chats to local chord headless processes while keeping workspace access and credentials under your control.
+template: splash
+hero:
+  tagline: Operate Chord from IM chats without moving the agent, credentials, or workspace access out of your own machine or server.
+  actions:
+    - text: Quickstart
+      link: /chord-gateway/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: GitHub
+      link: https://github.com/keakon/chord-gateway
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Why chord-gateway
+
+<CardGrid>
+  <Card title="Chat control plane" icon="external">
+    Connect WeChat iLink or Feishu to `chord headless` and control Chord from an IM chat, including mobile devices.
+  </Card>
+  <Card title="Local-first boundary" icon="seti:lock">
+    Chord processes, workspace files, runtime state, and credentials stay on your machine or server.
+  </Card>
+  <Card title="Per-chat isolation" icon="document">
+    Gateway routes by workspace, IM type, and chat ID so different chats keep separate pinned Chord sessions.
+  </Card>
+  <Card title="Interactive approvals" icon="rocket">
+    Confirmations, questions, todo updates, and session commands are surfaced back into the chat workflow.
+  </Card>
+</CardGrid>
+
+## Get started
+
+<CardGrid>
+  <Card title="1. Install" icon="seti:go">
+    ```bash
+    go install github.com/keakon/chord-gateway@latest
+    ```
+    Install Chord separately and make sure `chord` is on `PATH`, or set `chord_path` in the gateway config.
+  </Card>
+  <Card title="2. Choose an IM platform" icon="random">
+    Start with [WeChat iLink](/chord-gateway/wechat/) or [Feishu](/chord-gateway/feishu/), then keep only the adapter you need in `config.yaml`.
+  </Card>
+  <Card title="3. Run the gateway" icon="seti:powershell">
+    ```bash
+    chord-gateway -f config.yaml
+    ```
+    Send `/status` from the connected chat to verify routing and the `chord headless` child process.
+  </Card>
+</CardGrid>
+
+## Where to next
+
+<CardGrid>
+  <Card title="Quickstart" icon="right-arrow">
+    Build the smallest working config and verify the first chat command.
+    [Open →](/chord-gateway/quickstart/)
+  </Card>
+  <Card title="Deployment cookbook" icon="seti:config">
+    Install from releases, pick a config recipe, and run with systemd or launchd.
+    [Open →](/chord-gateway/cookbook/)
+  </Card>
+  <Card title="IM integration overview" icon="document">
+    Decide between WeChat and Feishu, understand route ownership, and avoid common setup traps.
+    [Open →](/chord-gateway/im/)
+  </Card>
+  <Card title="Configuration reference" icon="setting">
+    Every config field, routing rule, path, and example in one place.
+    [Open →](/chord-gateway/configuration/)
+  </Card>
+  <Card title="Troubleshooting" icon="rocket">
+    Startup, WeChat, Feishu, routing, and runtime issue checklists.
+    [Open →](/chord-gateway/troubleshooting/)
+  </Card>
+</CardGrid>

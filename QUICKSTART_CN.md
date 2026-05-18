@@ -24,6 +24,8 @@ go install github.com/keakon/chord-gateway@latest
 go build -o chord-gateway .
 ```
 
+如果需要预构建 release 二进制或后台服务配置示例，见 [Cookbook](./docs/cookbook_CN.md)。
+
 ## 3. 创建最小配置
 
 把 `workspaces.default.path` 指向你希望 Chord 操作的项目目录。
@@ -169,6 +171,7 @@ chord-gateway -f config.yaml
 ## 6. 下一步文档
 
 - [配置参考](./docs/configuration_CN.md)
+- [Cookbook](./docs/cookbook_CN.md)
 - [IM 接入总览](./docs/im_CN.md)
 - [使用指南](./docs/usage_CN.md)
 - [运维说明](./docs/operations_CN.md)

@@ -1,0 +1,13 @@
+/* chord-gateway docs site — light theme tweaks. */
+
+:root {
+  --sl-color-accent-low: #172d31;
+  --sl-color-accent: #22c55e;
+  --sl-color-accent-high: #bbf7d0;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #dcfce7;
+  --sl-color-accent: #15803d;
+  --sl-color-accent-high: #14532d;
+}

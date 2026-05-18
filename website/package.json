@@ -1,0 +1,19 @@
+{
+  "name": "chord-gateway-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "description": "chord-gateway user documentation site (Starlight + Astro).",
+  "scripts": {
+    "sync": "node ../scripts/sync-docs.mjs",
+    "dev": "npm run sync && astro dev",
+    "build": "npm run sync && astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.39.2",
+    "astro": "^6.3.1",
+    "typescript": "^5.6.0"
+  }
+}

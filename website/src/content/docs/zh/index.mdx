@@ -1,0 +1,80 @@
+---
+title: chord-gateway
+description: 将微信、飞书聊天连接到本地 chord headless 进程，同时把工作区访问、凭据和状态留在自己的机器或服务器上。
+template: splash
+hero:
+  tagline: 从 IM 聊天里操控 Chord，同时不把 agent、凭据或工作区访问移出自己的机器或服务器。
+  actions:
+    - text: 快速开始
+      link: /chord-gateway/zh/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: GitHub
+      link: https://github.com/keakon/chord-gateway
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## 为什么需要 chord-gateway
+
+<CardGrid>
+  <Card title="聊天控制面" icon="external">
+    把微信 iLink 或飞书连接到 `chord headless`，即可从 IM 聊天甚至手机上控制 Chord。
+  </Card>
+  <Card title="本地优先边界" icon="seti:lock">
+    Chord 进程、工作区文件、运行时状态和凭据都继续保留在你自己的机器或服务器上。
+  </Card>
+  <Card title="按聊天隔离" icon="document">
+    gateway 按 workspace、IM 类型和 chat ID 路由，让不同聊天保留独立的 Chord session pin。
+  </Card>
+  <Card title="交互式确认" icon="rocket">
+    确认、问题、todo 更新和 session 命令都会回到聊天工作流里。
+  </Card>
+</CardGrid>
+
+## 三步上手
+
+<CardGrid>
+  <Card title="1. 安装" icon="seti:go">
+    ```bash
+    go install github.com/keakon/chord-gateway@latest
+    ```
+    请单独安装 Chord，并确保 `chord` 在 `PATH` 中；也可以在 gateway 配置里设置 `chord_path`。
+  </Card>
+  <Card title="2. 选择 IM 平台" icon="random">
+    从 [微信 iLink](/chord-gateway/zh/wechat/) 或 [飞书](/chord-gateway/zh/feishu/) 开始，然后在 `config.yaml` 中只保留需要的 adapter。
+  </Card>
+  <Card title="3. 启动 gateway" icon="seti:powershell">
+    ```bash
+    chord-gateway -f config.yaml
+    ```
+    在已连接的聊天中发送 `/status`，确认路由与 `chord headless` 子进程正常。
+  </Card>
+</CardGrid>
+
+## 接下来
+
+<CardGrid>
+  <Card title="快速开始" icon="right-arrow">
+    构建最小可用配置，并验证第一条聊天命令。
+    [前往 →](/chord-gateway/zh/quickstart/)
+  </Card>
+  <Card title="部署 Cookbook" icon="seti:config">
+    从 release 安装，选择配置模板，并用 systemd 或 launchd 后台运行。
+    [前往 →](/chord-gateway/zh/cookbook/)
+  </Card>
+  <Card title="IM 接入总览" icon="document">
+    选择微信或飞书，理解路由归属，并避开常见接入陷阱。
+    [前往 →](/chord-gateway/zh/im/)
+  </Card>
+  <Card title="配置参考" icon="setting">
+    所有配置字段、路由规则、路径和示例集中说明。
+    [前往 →](/chord-gateway/zh/configuration/)
+  </Card>
+  <Card title="故障排查" icon="rocket">
+    启动、微信、飞书、路由和运行时问题检查清单。
+    [前往 →](/chord-gateway/zh/troubleshooting/)
+  </Card>
+</CardGrid>

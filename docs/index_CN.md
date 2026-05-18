@@ -7,6 +7,7 @@
 ## 快速上手
 
 - [快速开始](../QUICKSTART_CN.md) – 构建、配置并运行最小 gateway
+- [Cookbook](./cookbook_CN.md) – release 安装、常见配置模板、systemd 和 launchd
 - [配置参考](./configuration_CN.md) – 所有配置字段、路由规则、路径和示例
 
 ## 日常使用
