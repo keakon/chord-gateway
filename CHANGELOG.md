@@ -6,7 +6,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
-## Unreleased
+## v0.3.2
 
 ### Breaking changes
 
@@ -14,9 +14,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- Updated the Go toolchain requirement to 1.26.3 and refreshed third-party Go dependencies.
 - Done confirmation rendering now prefers explicit `done_report` / `done_reason` fields and treats plain text during a pending Done confirmation as the deny reason.
 
-## 0.3.1 – 2026-05-11
+## v0.3.1 – 2026-05-11
 
 ### Changed
 
@@ -28,7 +29,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Added compact gateway build identity output to `chord-gateway --version` (version, short commit, and dirty marker when applicable). Startup logs now include `gateway_version`, `gateway_commit`, `gateway_build_time`, `gateway_vcs_time`, `gateway_dirty`, and `go_version`. Child `chord headless` spawn logs now include the configured `chord_binary` path and mtime for provenance checks.
 
-## 0.3.0 – 2026-05-05
+## v0.3.0 – 2026-05-05
 
 ### Breaking changes
 
@@ -94,7 +95,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Fixed `/bind` and `/resume` busy checks so they inspect existing processes without accidentally spawning new Chord processes.
 - Fixed dedupe cleanup persistence so failed writes keep the store dirty and can be retried by the next cleanup tick.
 
-## 0.2.0 – 2026-04-30
+## v0.2.0 – 2026-04-30
 
 ### Added
 
@@ -113,7 +114,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Feishu webhook mode and its related config fields (`verification_token`, `encrypt_key`, `listen`, `webhook_path`).
 
-## 0.1.0 – 2026-04-29
+## v0.1.0 – 2026-04-29
 
 ### Added
 

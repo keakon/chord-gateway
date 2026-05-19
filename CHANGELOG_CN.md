@@ -6,7 +6,7 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
-## 未发布
+## v0.3.2
 
 ### 不兼容变更
 
@@ -14,9 +14,10 @@
 
 ### Changed
 
+- 将 Go toolchain 要求更新到 1.26.3，并刷新第三方 Go 依赖。
 - Done 确认渲染现在优先使用显式的 `done_report` / `done_reason` 字段；当存在待处理 Done 确认时，普通文本会作为拒绝理由处理。
 
-## 0.3.1 – 2026-05-11
+## v0.3.1 – 2026-05-11
 
 ### Changed
 
@@ -28,7 +29,7 @@
 
 - 在 `chord-gateway --version` 中加入紧凑的 gateway 构建身份输出（版本号、短 commit，以及在适用时显示 dirty 标记）。启动日志现在会记录 `gateway_version`、`gateway_commit`、`gateway_build_time`、`gateway_vcs_time`、`gateway_dirty` 和 `go_version`。启动子 `chord headless` 的日志现在也会记录配置的 `chord_binary` 路径和 mtime，便于排查版本来源。
 
-## 0.3.0 – 2026-05-05
+## v0.3.0 – 2026-05-05
 
 ### Breaking changes
 
@@ -94,7 +95,7 @@
 - 修复 `/bind` 和 `/resume` 的 busy 检查：现在只检查已有进程，不会意外启动新的 Chord 进程。
 - 修复 dedupe cleanup 持久化：写盘失败时会保留 dirty 状态，下一次 cleanup tick 可以继续重试。
 
-## 0.2.0 – 2026-04-30
+## v0.2.0 – 2026-04-30
 
 ### Added
 
@@ -113,7 +114,7 @@
 
 - 移除飞书 webhook 模式及其相关配置字段（`verification_token`、`encrypt_key`、`listen`、`webhook_path`）。
 
-## 0.1.0 – 2026-04-29
+## v0.1.0 – 2026-04-29
 
 ### Added
 
