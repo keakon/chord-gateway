@@ -33,7 +33,7 @@ import (
 // when the build is performed inside a Git checkout with buildvcs enabled, so
 // Commit and Dirty remain populated even without ldflags.
 var (
-	Version   = "dev"
+	Version   = DefaultDevVersion
 	Commit    = ""
 	BuildTime = ""
 	Dirty     = ""
@@ -70,7 +70,11 @@ type BinaryMetadata struct {
 	MTime string
 }
 
-const unknown = "unknown"
+const (
+	unknown               = "unknown"
+	DefaultDevVersion     = "v0.3.2-dev"
+	historicalMainVersion = "dev"
+)
 
 // current is the cached result of [computeCurrent]. The build identity does
 // not change during a process's lifetime, so we read os.Stat / debug.ReadBuildInfo
@@ -196,6 +200,18 @@ func (i Info) LogString() string {
 		parts = append(parts, fmt.Sprintf("%s=%q", field.Key, field.Value))
 	}
 	return strings.Join(parts, " ")
+}
+
+// IsDefaultDevVersion reports whether version is the source default used by
+// plain local development builds.
+func IsDefaultDevVersion(version string) bool {
+	return strings.TrimSpace(version) == DefaultDevVersion
+}
+
+// IsHistoricalMainVersion reports whether version is the legacy main.version
+// placeholder value used before buildinfo became the source of truth.
+func IsHistoricalMainVersion(version string) bool {
+	return strings.TrimSpace(version) == historicalMainVersion
 }
 
 func readBuildSettings() map[string]string {

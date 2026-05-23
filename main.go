@@ -35,7 +35,7 @@ import (
 // directly, together with Commit, BuildTime, and Dirty for richer diagnostics:
 //
 //	-ldflags "-X github.com/keakon/chord-gateway/internal/buildinfo.Version=<version> ..."
-var version = "dev"
+var version = buildinfo.DefaultDevVersion
 
 func init() {
 	// init() runs after package-level var initialization for both this file
@@ -43,10 +43,10 @@ func init() {
 	// buildinfo.Current() (which is sync.OnceValue-cached). This is the
 	// correct time to bridge the two ldflags paths.
 	switch {
-	case version != "dev" && buildinfo.Version == "dev":
+	case !buildinfo.IsHistoricalMainVersion(version) && buildinfo.IsDefaultDevVersion(buildinfo.Version):
 		// Only the historical -X main.version=... path was used.
 		buildinfo.Version = version
-	case version == "dev" && buildinfo.Version != "dev":
+	case buildinfo.IsHistoricalMainVersion(version) && !buildinfo.IsDefaultDevVersion(buildinfo.Version):
 		// Only the new -X .../buildinfo.Version=... path was used.
 		version = buildinfo.Version
 	}

@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+func TestDefaultVersionIsDevelopmentSemver(t *testing.T) {
+	if Version != DefaultDevVersion {
+		t.Fatalf("Version = %q, want %q", Version, DefaultDevVersion)
+	}
+	if DefaultDevVersion != "v0.3.2-dev" {
+		t.Fatalf("DefaultDevVersion = %q, want %q", DefaultDevVersion, "v0.3.2-dev")
+	}
+}
+
+func TestVersionClassifiers(t *testing.T) {
+	if !IsDefaultDevVersion(" \t" + DefaultDevVersion + "\n") {
+		t.Fatalf("IsDefaultDevVersion(%q) = false, want true", DefaultDevVersion)
+	}
+	if IsDefaultDevVersion("dev") {
+		t.Fatal("IsDefaultDevVersion(\"dev\") = true, want false")
+	}
+	if !IsHistoricalMainVersion(" dev\n") {
+		t.Fatal("IsHistoricalMainVersion(\" dev\\n\") = false, want true")
+	}
+	if IsHistoricalMainVersion(DefaultDevVersion) {
+		t.Fatalf("IsHistoricalMainVersion(%q) = true, want false", DefaultDevVersion)
+	}
+}
+
 func TestCurrentIncludesFallbackMetadata(t *testing.T) {
 	info := Current()
 	if info.Version == "" {
