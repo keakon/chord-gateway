@@ -8,6 +8,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## v0.3.2
 
+### Added
+
+- Added Chord headless `handoff_request` support: gateway now subscribes by default, displays the full handoff plan with available agents/model pools, and accepts `/handoff <agent> [model_pool]` or `/handoff-deny <reason>` responses.
+
 ### Breaking changes
 
 - Removed Chord headless `tool_result` support from gateway configuration, subscription, state, and IM rendering. Gateway now consumes non-loop Done reports via Chord's `done_completion` event; loop-mode Done exit requests remain `confirm_request` events with `done_report` / `done_reason` fields.

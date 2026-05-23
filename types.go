@@ -20,8 +20,10 @@ type ControlState struct {
 	// Pending interactions
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
 	PendingQuestion *QuestionPayload `json:"pending_question,omitempty"`
+	PendingHandoff  *HandoffPayload  `json:"pending_handoff,omitempty"`
 	ExpiredConfirm  *ConfirmPayload  `json:"-"`
 	ExpiredQuestion *QuestionPayload `json:"-"`
+	ExpiredHandoff  *HandoffPayload  `json:"-"`
 
 	// Todos from chord process
 	Todos []TodoItem `json:"todos,omitempty"`
@@ -66,6 +68,23 @@ type QuestionPayload struct {
 	RequestID     string   `json:"request_id"`
 }
 
+// HandoffPayload is the handoff_request event payload.
+type HandoffPayload struct {
+	RequestID string               `json:"request_id"`
+	PlanPath  string               `json:"plan_path"`
+	PlanText  string               `json:"plan_text,omitempty"`
+	PlanError string               `json:"plan_error,omitempty"`
+	Agents    []HandoffAgentOption `json:"agents"`
+}
+
+// HandoffAgentOption describes one selectable execution agent and its model pools.
+type HandoffAgentOption struct {
+	Name             string   `json:"name"`
+	Default          bool     `json:"default"`
+	ModelPools       []string `json:"model_pools,omitempty"`
+	CurrentModelPool string   `json:"current_model_pool,omitempty"`
+}
+
 // NotificationPayload is the notification event payload.
 type NotificationPayload struct {
 	Message string `json:"message"`
@@ -97,6 +116,7 @@ type StatusResponse struct {
 	PhaseDetail     string           `json:"phase_detail"`
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
 	PendingQuestion *QuestionPayload `json:"pending_question,omitempty"`
+	PendingHandoff  *HandoffPayload  `json:"pending_handoff,omitempty"`
 	LastError       string           `json:"last_error"`
 	LastOutcome     string           `json:"last_outcome"`
 	UpdatedAt       string           `json:"updated_at"`
@@ -104,11 +124,13 @@ type StatusResponse struct {
 
 // IMCommand is a parsed command from IM user.
 type IMCommand struct {
-	Type        string   // "status", "send", "confirm", "question", "cancel", "new", "resume", "sessions", "current", "todos", "login", "bind"
+	Type        string   // "status", "send", "confirm", "question", "handoff", "handoff-deny", "cancel", "new", "resume", "sessions", "current", "todos", "login", "bind"
 	Content     string   // for send/login target
-	RequestID   string   // for confirm/question
-	Action      string   // for confirm: "allow" or "deny"
+	RequestID   string   // for confirm/question/handoff
+	Action      string   // for confirm/handoff: "allow"/"deny"/"accept"
 	Reason      string   // for deny: human-readable reason text
+	Agent       string   // for handoff
+	Pool        string   // for handoff model pool
 	Answers     []string // for question
 	SessionID   string   // for resume
 	WorkspaceID string   // for bind
@@ -170,6 +192,11 @@ func (s *ControlState) applyPendingQuestion(q *QuestionPayload) {
 	s.ExpiredQuestion = nil
 }
 
+func (s *ControlState) applyPendingHandoff(h *HandoffPayload) {
+	s.PendingHandoff = h
+	s.ExpiredHandoff = nil
+}
+
 // applyStatusResponse merges a chord-headless status_response envelope into
 // the aggregated state, clearing expired-pending markers when the response
 // reports any active pending interaction.
@@ -183,9 +210,11 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 	s.PhaseDetail = resp.PhaseDetail
 	s.PendingConfirm = resp.PendingConfirm
 	s.PendingQuestion = resp.PendingQuestion
-	if resp.PendingConfirm != nil || resp.PendingQuestion != nil {
+	s.PendingHandoff = resp.PendingHandoff
+	if resp.PendingConfirm != nil || resp.PendingQuestion != nil || resp.PendingHandoff != nil {
 		s.ExpiredConfirm = nil
 		s.ExpiredQuestion = nil
+		s.ExpiredHandoff = nil
 	}
 	s.LastError = resp.LastError
 	s.UpdatedAt = resp.UpdatedAt

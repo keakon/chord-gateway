@@ -213,6 +213,111 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 	}
 }
 
+func TestHandleHandoffCommand(t *testing.T) {
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+
+	t.Run("accept with agent and pool", func(t *testing.T) {
+		mgr := newTestChordManager(&config.Config{Workspaces: []config.Workspace{*ws}})
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := NewNotificationRouter(mgr)
+		r.SetAdapter(sender)
+		stdin := &captureWriteCloser{}
+		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
+		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-1", Agents: []HandoffAgentOption{{Name: "builder", Default: true}}}
+		mgr.procs[key] = proc
+		defer r.stopReminder(key)
+
+		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept", Agent: "reviewer", Pool: "fast"}, key, proc)
+
+		var sent map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
+			t.Fatalf("handoff command JSON = %q: %v", stdin.String(), err)
+		}
+		if sent["type"] != "handoff" || sent["request_id"] != "handoff-1" || sent["action"] != "accept" || sent["agent"] != "reviewer" || sent["pool"] != "fast" {
+			t.Fatalf("handoff command = %#v", sent)
+		}
+		if got := sender.lastMessage().text; got != "✅ handoff accepted: reviewer (fast)" {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("accept default agent", func(t *testing.T) {
+		mgr := newTestChordManager(&config.Config{Workspaces: []config.Workspace{*ws}})
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := NewNotificationRouter(mgr)
+		r.SetAdapter(sender)
+		stdin := &captureWriteCloser{}
+		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
+		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-2", Agents: []HandoffAgentOption{{Name: "reviewer"}, {Name: "builder", Default: true}}}
+		mgr.procs[key] = proc
+		defer r.stopReminder(key)
+
+		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept"}, key, proc)
+
+		var sent map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
+			t.Fatalf("handoff command JSON = %q: %v", stdin.String(), err)
+		}
+		if _, ok := sent["agent"]; ok {
+			t.Fatalf("default handoff command should omit agent, got %#v", sent)
+		}
+		if got := sender.lastMessage().text; got != "✅ handoff accepted: builder" {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("deny with reason", func(t *testing.T) {
+		mgr := newTestChordManager(&config.Config{Workspaces: []config.Workspace{*ws}})
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := NewNotificationRouter(mgr)
+		r.SetAdapter(sender)
+		stdin := &captureWriteCloser{}
+		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
+		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-3"}
+		mgr.procs[key] = proc
+		defer r.stopReminder(key)
+
+		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "deny", Reason: "revise plan"}, key, proc)
+
+		var sent map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
+			t.Fatalf("handoff command JSON = %q: %v", stdin.String(), err)
+		}
+		if sent["action"] != "deny" || sent["deny_reason"] != "revise plan" {
+			t.Fatalf("handoff deny command = %#v", sent)
+		}
+		if got := sender.lastMessage().text; got != "✅ handoff denied: revise plan" {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("no pending handoff", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender}
+		proc := &ChordProcess{}
+
+		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept"}, key, proc)
+
+		if got := sender.lastMessage().text; got != "⚠️ No pending handoff to respond to." {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("send failure", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender}
+		proc := &ChordProcess{stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
+		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-4"}
+
+		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept"}, key, proc)
+
+		if got := sender.lastMessage().text; got != "❌ Failed to send handoff response." {
+			t.Fatalf("message = %q", got)
+		}
+	})
+}
+
 func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args.txt")
@@ -921,6 +1026,8 @@ func TestParseIMCommand(t *testing.T) {
 		wantWorkspaceID string
 		wantPath        string
 		wantReason      string
+		wantAgent       string
+		wantPool        string
 		wantInvalid     bool
 	}{
 		{name: "status", input: "/status", wantType: "status"},
@@ -929,6 +1036,12 @@ func TestParseIMCommand(t *testing.T) {
 		{name: "allow with request_id", input: "/allow req-1", wantType: "confirm", wantAction: "allow", wantRequestID: "req-1"},
 		{name: "deny with reason", input: "/deny not good", wantType: "confirm", wantAction: "deny", wantReason: "not good"},
 		{name: "answer", input: "/answer yes", wantType: "question", wantAnswers: []string{"yes"}},
+		{name: "handoff default", input: "/handoff", wantType: "handoff", wantAction: "accept"},
+		{name: "handoff agent", input: "/handoff builder", wantType: "handoff", wantAction: "accept", wantAgent: "builder"},
+		{name: "handoff agent and pool", input: "/handoff builder fast", wantType: "handoff", wantAction: "accept", wantAgent: "builder", wantPool: "fast"},
+		{name: "handoff quoted pool", input: "/handoff builder \"fast pool\"", wantType: "handoff", wantAction: "accept", wantAgent: "builder", wantPool: "fast pool"},
+		{name: "handoff extra argument", input: "/handoff builder fast extra", wantType: "handoff", wantAction: "accept", wantInvalid: true},
+		{name: "handoff deny", input: "/handoff-deny revise plan", wantType: "handoff", wantAction: "deny", wantReason: "revise plan"},
 		{name: "new", input: "/new", wantType: "new"},
 		{name: "resume with session_id", input: "/resume 123", wantType: "resume", wantSessionID: "123"},
 		{name: "sessions", input: "/sessions", wantType: "sessions"},
@@ -986,6 +1099,12 @@ func TestParseIMCommand(t *testing.T) {
 			}
 			if got.Reason != tt.wantReason {
 				t.Errorf("Reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if got.Agent != tt.wantAgent {
+				t.Errorf("Agent = %q, want %q", got.Agent, tt.wantAgent)
+			}
+			if got.Pool != tt.wantPool {
+				t.Errorf("Pool = %q, want %q", got.Pool, tt.wantPool)
 			}
 		})
 	}
@@ -1047,7 +1166,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "idle", "error", "notification", "done_completion"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1059,7 +1178,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:     true,
 		Todos:     true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "idle", "error", "notification", "done_completion", "activity", "agent_done", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "activity", "agent_done", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1119,6 +1238,9 @@ func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	}
 	if msg := r.formatNotification("question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
 		t.Fatal("question_request should push")
+	}
+	if msg := r.formatNotification("handoff_request", ControlState{PendingHandoff: &HandoffPayload{PlanPath: ".chord/plans/plan-001.md", PlanText: "# Plan", Agents: []HandoffAgentOption{{Name: "builder", Default: true, ModelPools: []string{"fast"}, CurrentModelPool: "fast"}}}}); !strings.Contains(msg, "# Plan") || !strings.Contains(msg, "/handoff") || !strings.Contains(msg, "builder") {
+		t.Fatalf("handoff_request notification missing plan or instructions: %q", msg)
 	}
 	if msg := r.formatNotification("error", ControlState{LastError: "boom"}); msg != "" {
 		t.Fatalf("error = %q, want empty", msg)
@@ -1413,6 +1535,9 @@ func TestFormatIdleNotification(t *testing.T) {
 	if got := r.formatNotification("idle_timeout", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
 		t.Fatalf("expired confirm notification = %q", got)
 	}
+	if got := r.formatNotification("idle_timeout", ControlState{ExpiredHandoff: &HandoffPayload{RequestID: "req-h"}}); !strings.Contains(got, "pending handoff request has expired") {
+		t.Fatalf("expired handoff notification = %q", got)
+	}
 }
 
 func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T) {
@@ -1437,6 +1562,16 @@ func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T)
 	r.HandleChordEvent(key, "question_request", ControlState{PendingQuestion: &QuestionPayload{RequestID: "new-question", Question: "Continue?"}})
 	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil {
 		t.Fatalf("expired pending was not cleared by new question: %#v", got)
+	}
+
+	r.HandleChordEvent(key, "idle", ControlState{ExpiredHandoff: &HandoffPayload{RequestID: "old-handoff"}})
+	if got := r.lookupExpiredPending(key).Handoff; got == nil || got.RequestID != "old-handoff" {
+		t.Fatalf("expired handoff was not recorded: %#v", got)
+	}
+
+	r.HandleChordEvent(key, "handoff_request", ControlState{PendingHandoff: &HandoffPayload{RequestID: "new-handoff"}})
+	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil || got.Handoff != nil {
+		t.Fatalf("expired pending was not cleared by new handoff: %#v", got)
 	}
 }
 

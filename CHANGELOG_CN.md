@@ -8,6 +8,10 @@
 
 ## v0.3.2
 
+### Added
+
+- 新增 Chord headless `handoff_request` 支持：gateway 现在默认订阅该事件，会展示完整 handoff plan 以及可选 agent / model pool，并支持 `/handoff <agent> [model_pool]` 或 `/handoff-deny <reason>` 响应。
+
 ### 不兼容变更
 
 - 移除 gateway 对 Chord headless `tool_result` 的配置、订阅、状态和 IM 渲染支持。gateway 现在通过 Chord 的 `done_completion` 事件接收非 loop Done 报告；loop 模式的 Done 退出申请仍使用 `confirm_request`，并携带 `done_report` / `done_reason` 字段。

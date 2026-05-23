@@ -36,6 +36,15 @@ func parseIMCommand(text string) IMCommand {
 			answer = strings.Join(parts[1:], " ")
 		}
 		return IMCommand{Type: "question", Answers: []string{answer}}
+	case "/handoff":
+		agent, pool, ok := parseHandoffArgs(strings.TrimSpace(strings.TrimPrefix(text, parts[0])))
+		return IMCommand{Type: "handoff", Action: "accept", Agent: agent, Pool: pool, Invalid: !ok}
+	case "/handoff-deny":
+		reason := ""
+		if len(parts) > 1 {
+			reason = strings.TrimSpace(text[len(parts[0]):])
+		}
+		return IMCommand{Type: "handoff", Action: "deny", Reason: reason}
 	case "/new":
 		return IMCommand{Type: "new"}
 	case "/resume":
@@ -98,6 +107,28 @@ func parseBindArgs(rest string) (workspaceID, path string, ok bool) {
 		return "", "", false
 	}
 	return workspaceID, path, true
+}
+
+func parseHandoffArgs(rest string) (agentName, pool string, ok bool) {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "", "", true
+	}
+	agentName, remaining, ok := nextCommandArg(rest)
+	if !ok {
+		return "", "", false
+	}
+	if strings.TrimSpace(remaining) == "" {
+		return agentName, "", true
+	}
+	pool, remaining, ok = nextCommandArg(remaining)
+	if !ok {
+		return "", "", false
+	}
+	if strings.TrimSpace(remaining) != "" {
+		return "", "", false
+	}
+	return agentName, pool, true
 }
 
 func nextCommandArg(s string) (arg, rest string, ok bool) {

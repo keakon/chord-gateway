@@ -41,6 +41,7 @@ type NotificationRouter struct {
 type expiredPendingState struct {
 	Question  *QuestionPayload
 	Confirm   *ConfirmPayload
+	Handoff   *HandoffPayload
 	ExpiresAt time.Time
 }
 
@@ -94,7 +95,7 @@ func (r *NotificationRouter) recordChatID(key, chatID string) {
 }
 
 func (r *NotificationRouter) recordExpiredPending(key string, state ControlState) {
-	if state.ExpiredQuestion == nil && state.ExpiredConfirm == nil {
+	if state.ExpiredQuestion == nil && state.ExpiredConfirm == nil && state.ExpiredHandoff == nil {
 		return
 	}
 	r.mu.Lock()
@@ -104,6 +105,7 @@ func (r *NotificationRouter) recordExpiredPending(key string, state ControlState
 	r.expiredPending[key] = expiredPendingState{
 		Question:  state.ExpiredQuestion,
 		Confirm:   state.ExpiredConfirm,
+		Handoff:   state.ExpiredHandoff,
 		ExpiresAt: time.Now().Add(r.expiredPendingTTL()),
 	}
 	r.mu.Unlock()
@@ -595,7 +597,7 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
-	if state.PendingQuestion != nil || state.PendingConfirm != nil {
+	if state.PendingQuestion != nil || state.PendingConfirm != nil || state.PendingHandoff != nil {
 		r.clearExpiredPending(key)
 	}
 	r.recordExpiredPending(key, state)

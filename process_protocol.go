@@ -111,6 +111,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "question_request"
 
+	case "handoff_request":
+		var payload HandoffPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.applyPendingHandoff(&payload)
+		}
+		eventType = "handoff_request"
+
 	case "error":
 		var payload struct {
 			Message string `json:"message"`

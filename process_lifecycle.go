@@ -130,12 +130,15 @@ func (p *ChordProcess) transitionToIdle(updatedAt string, expirePending bool) {
 	if expirePending {
 		p.state.ExpiredConfirm = p.state.PendingConfirm
 		p.state.ExpiredQuestion = p.state.PendingQuestion
+		p.state.ExpiredHandoff = p.state.PendingHandoff
 	} else {
 		p.state.ExpiredConfirm = nil
 		p.state.ExpiredQuestion = nil
+		p.state.ExpiredHandoff = nil
 	}
 	p.state.PendingConfirm = nil
 	p.state.PendingQuestion = nil
+	p.state.PendingHandoff = nil
 	p.state.LastError = ""
 	if strings.TrimSpace(updatedAt) == "" {
 		p.state.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -170,7 +173,7 @@ func (m *ChordManager) IdleCheckLoop() {
 		// Then, if they don't exit quickly, terminate the whole process group.
 		for _, p := range idle {
 			p.mu.Lock()
-			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil {
+			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil || p.state.PendingHandoff != nil {
 				p.transitionToIdle(time.Now().Format(time.RFC3339), true)
 				state := p.state
 				p.mu.Unlock()

@@ -22,6 +22,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "question_request":
 		return r.formatQuestionNotification(state)
 
+	case "handoff_request":
+		return r.formatHandoffNotification(state)
+
 	case "idle":
 		return r.formatIdleNotification(state)
 
@@ -70,6 +73,9 @@ func (r *NotificationRouter) formatExpiredPendingNotification(state ControlState
 	}
 	if state.ExpiredConfirm != nil {
 		return "⌛ The pending confirmation has expired. It was not approved or denied. Please retry the original request if confirmation is still needed."
+	}
+	if state.ExpiredHandoff != nil {
+		return "⌛ The pending handoff request has expired. It was not accepted or denied. Please retry the original request if handoff is still needed."
 	}
 	return ""
 }
@@ -258,6 +264,50 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 	}
 	// Last resort: raw JSON (truncated).
 	return truncateLine(argsJSON, 200)
+}
+
+func (r *NotificationRouter) formatHandoffNotification(state ControlState) string {
+	if state.PendingHandoff == nil {
+		return ""
+	}
+	h := state.PendingHandoff
+	var sb strings.Builder
+	sb.WriteString("🤝 Handoff requested")
+	if strings.TrimSpace(h.PlanPath) != "" {
+		sb.WriteString("\n📄 Plan: ")
+		sb.WriteString(h.PlanPath)
+	}
+	if strings.TrimSpace(h.PlanError) != "" {
+		sb.WriteString("\n⚠️ Failed to read full plan: ")
+		sb.WriteString(h.PlanError)
+	}
+	if strings.TrimSpace(h.PlanText) != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(h.PlanText)
+	}
+	if len(h.Agents) > 0 {
+		sb.WriteString("\n\nAgents / model pools:")
+		for _, agent := range h.Agents {
+			if strings.TrimSpace(agent.Name) == "" {
+				continue
+			}
+			sb.WriteString("\n- ")
+			sb.WriteString(agent.Name)
+			if agent.Default {
+				sb.WriteString(" (default)")
+			}
+			if strings.TrimSpace(agent.CurrentModelPool) != "" {
+				sb.WriteString(" current=")
+				sb.WriteString(agent.CurrentModelPool)
+			}
+			if len(agent.ModelPools) > 0 {
+				sb.WriteString(" pools=")
+				sb.WriteString(strings.Join(agent.ModelPools, ", "))
+			}
+		}
+	}
+	sb.WriteString("\n\nReply /handoff <agent> [model_pool] to execute, /handoff to use the default, or /handoff-deny <reason> to reject.")
+	return sb.String()
 }
 
 func (r *NotificationRouter) formatQuestionNotification(state ControlState) string {

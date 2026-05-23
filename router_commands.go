@@ -42,6 +42,8 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleConfirmCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "question":
 		r.handleQuestionCommand(ws, chatID, cmd, incoming, procKey, proc)
+	case "handoff":
+		r.handleHandoffCommand(ws, chatID, cmd, procKey, proc)
 	case "send":
 		r.handleSendCommand(ws, chatID, cmd, incoming, procKey, proc)
 	default:
@@ -169,6 +171,70 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		return
 	}
 	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
+}
+
+func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
+	if cmd.Invalid {
+		r.sendText(chatID, "⚠️ Usage: /handoff <agent> [model_pool] or /handoff-deny <reason>.")
+		return
+	}
+	state := proc.State()
+	h := state.PendingHandoff
+	if h == nil || strings.TrimSpace(h.RequestID) == "" {
+		r.sendText(chatID, "⚠️ No pending handoff to respond to.")
+		return
+	}
+	handoffCmd := map[string]any{
+		"type":       "handoff",
+		"request_id": h.RequestID,
+		"action":     cmd.Action,
+	}
+	if strings.TrimSpace(cmd.Agent) != "" {
+		handoffCmd["agent"] = strings.TrimSpace(cmd.Agent)
+	}
+	if strings.TrimSpace(cmd.Pool) != "" {
+		handoffCmd["pool"] = strings.TrimSpace(cmd.Pool)
+	}
+	if cmd.Action == "deny" && strings.TrimSpace(cmd.Reason) != "" {
+		handoffCmd["deny_reason"] = strings.TrimSpace(cmd.Reason)
+	}
+	if err := proc.SendCommand(handoffCmd); err != nil {
+		log.Errorf("failed to send handoff response workspace=%v error=%v", ws.ID, err)
+		r.sendText(chatID, "❌ Failed to send handoff response.")
+		return
+	}
+	r.beginTurn(procKey)
+	if cmd.Action == "deny" {
+		if strings.TrimSpace(cmd.Reason) != "" {
+			r.sendText(chatID, "✅ handoff denied: "+strings.TrimSpace(cmd.Reason))
+			return
+		}
+		r.sendText(chatID, "✅ handoff denied")
+		return
+	}
+	agentName := strings.TrimSpace(cmd.Agent)
+	if agentName == "" {
+		agentName = defaultHandoffAgentName(h.Agents)
+	}
+	if strings.TrimSpace(cmd.Pool) != "" {
+		r.sendText(chatID, fmt.Sprintf("✅ handoff accepted: %s (%s)", agentName, strings.TrimSpace(cmd.Pool)))
+		return
+	}
+	r.sendText(chatID, "✅ handoff accepted: "+agentName)
+}
+
+func defaultHandoffAgentName(options []HandoffAgentOption) string {
+	for _, opt := range options {
+		if opt.Default && strings.TrimSpace(opt.Name) != "" {
+			return strings.TrimSpace(opt.Name)
+		}
+	}
+	for _, opt := range options {
+		if strings.TrimSpace(opt.Name) != "" {
+			return strings.TrimSpace(opt.Name)
+		}
+	}
+	return "builder"
 }
 
 func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
