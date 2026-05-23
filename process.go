@@ -160,6 +160,12 @@ func (m *ChordManager) spawnArgsForKey(key string) []string {
 	}
 	sid := strings.TrimSpace(m.pins.Get(key))
 	if sid == "" {
+		workspaceID, imType, chatID := parseProcessKey(key)
+		if workspaceID != "" || imType != "" || chatID != "" {
+			sid = strings.TrimSpace(m.pins.Get(legacyProcessKeyString(workspaceID, imType, chatID)))
+		}
+	}
+	if sid == "" {
 		return nil
 	}
 	return []string{"--resume", sid}
