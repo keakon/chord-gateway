@@ -11,20 +11,24 @@ gateway 始终订阅以下事件：
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `handoff_request`
 - `idle`
 - `error`
 - `notification`
 - `done_completion`
+- `local_shell_result`
 
 这些事件提供 IM 控制所需的最小行为：
 
 - 最终 assistant 回复
 - 权限确认
 - 用户问题
+- handoff 请求和响应
 - busy/idle 状态聚合
 - 错误报告
 - 面向用户的标准通知
-- Done 工具完成状态，以及 gateway 使用的其他工具结果状态
+- 非 loop Done 完成报告
+- 本地 shell 命令结果
 
 ## 可选可见事件
 
@@ -63,7 +67,7 @@ event_visibility:
 
 `notification` 是用户提醒的标准事件，包括权限请求、问题请求、blocked 错误和完全停止后的完成通知。
 
-`idle` 事件通常不会触发兜底完成消息。如果某个 `idle` 事件清理了待回答问题或待确认请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题或待确认请求的空闲进程前，也会发送同样的失效提示。
+`idle` 事件通常不会触发兜底完成消息。如果某个 `idle` 事件清理了待回答问题、待确认请求或待处理 handoff 请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题、待确认请求或待处理 handoff 请求的空闲进程前，也会发送同样的失效提示。
 
 ## 日志
 

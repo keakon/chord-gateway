@@ -49,6 +49,9 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/allow` | Approve the pending confirmation |
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
+| `/handoff <agent> [model_pool]` | Forward an acceptance for a pending Chord handoff request; omit arguments to let Chord use its default agent |
+| `/handoff-deny <reason>` | Forward a rejection for a pending Chord handoff request with a reason |
+| `!<command>` / `！<command>` | Send a Chord `local_shell` command through the bound workspace and return Chord's stdout/stderr result |
 | `/todos` | Show the current todo list |
 | `/new` | Ask the current Chord process to start a new session; if no process is available, clear the current session pin and start a fresh Chord process |
 | `/resume <id>` | Resume and pin a specific session; if the session cannot be resumed, the pin is cleared and the user is notified |
@@ -60,6 +63,7 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 Notes:
 
 - `/login wechat` is the documented command name for WeChat login renewal.
+- `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
 - Unrecognized slash commands are forwarded to Chord as normal text.
 - `/summary` is not part of the documented gateway command set.
 
@@ -114,6 +118,29 @@ The user-facing notice is in English, for example:
 ```text
 ⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.
 ```
+
+## Handoff request routing
+
+When Chord sends a `handoff_request`, the gateway posts the handoff plan, available agents, and model pools to the IM chat. The gateway does not implement handoff itself; it only routes the user's response back to the pending Chord request:
+
+- `/handoff` to let Chord accept with its default agent.
+- `/handoff <agent>` to choose one of the agents shown by Chord.
+- `/handoff <agent> [model_pool]` to choose both an agent and a model pool.
+- `/handoff-deny <reason>` to reject the handoff request.
+
+Use the agent and model pool names exactly as shown in the gateway message. If no Chord handoff request is pending, these commands only return a warning and do not start a new Chord action.
+
+## Chord local shell shortcut
+
+Messages that start with `!` or the full-width `！` are sent to Chord as `local_shell` headless commands instead of normal chat text:
+
+```text
+You: !pwd
+Gateway: ✅ Local shell: pwd
+/path/to/workspace
+```
+
+The gateway only forwards the command and displays Chord's result. Execution semantics and availability belong to Chord headless. Treat this as local command execution in the bound workspace environment: use it only in trusted IM chats and avoid sending secrets in command text or output.
 
 ## Session examples
 

@@ -18,9 +18,9 @@ gateway 会按需为每个活跃绑定启动 `chord headless` 子进程。
 
 ## 空闲超时
 
-`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题或待确认请求，也使用同一个 timeout。
+`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。
 
-如果 gateway 清理空闲进程时仍存在待回答问题或待确认请求，会先记录该已过期交互，向 IM 聊天发送英文失效提示，然后再终止进程。之后的 `/answer`、`/allow` 或 `/deny` 不能继续使用旧的结构化 request ID；router 会把它作为后续上下文转发。
+如果 gateway 清理空闲进程时仍存在待回答问题、待确认请求或待处理 handoff 请求，会先记录该已过期交互，向 IM 聊天发送英文失效提示，然后再终止进程。之后的 `/answer`、`/allow`、`/deny`、`/handoff` 或 `/handoff-deny` 不能继续使用旧的结构化 request ID；router 会把问题和确认回复作为后续上下文转发。
 
 使用 Go duration 语法，例如：
 
@@ -124,7 +124,10 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `handoff_request`
 - `error`
 - `notification`
+- `done_completion`
+- `local_shell_result`
 
 可选事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。

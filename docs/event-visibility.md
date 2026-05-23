@@ -11,20 +11,24 @@ The gateway always subscribes to these events:
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `handoff_request`
 - `idle`
 - `error`
 - `notification`
 - `done_completion`
+- `local_shell_result`
 
 These events provide the minimum behavior required for IM control:
 
 - final assistant responses
 - permission confirmations
 - user questions
+- handoff requests and responses
 - busy/idle state aggregation
 - error reporting
 - canonical user-facing notifications
 - non-loop Done completion reports
+- local shell command results
 
 ## Optional visible events
 
@@ -63,7 +67,7 @@ Internal-event counts are currently based on gateway-tracked progress events suc
 
 `notification` is the canonical event for user alerts, including permission requests, question requests, blocked errors, and fully stopped completion.
 
-`idle` events normally do not emit fallback completion messages. If an `idle` event clears a pending question or confirmation, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question or confirmation.
+`idle` events normally do not emit fallback completion messages. If an `idle` event clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request.
 
 ## Logs
 

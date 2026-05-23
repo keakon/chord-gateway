@@ -18,9 +18,9 @@ If the gateway itself is killed with `SIGKILL` (`kill -9`), it cannot run cleanu
 
 ## Idle timeout
 
-`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question or confirmation.
+`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request.
 
-If the gateway removes an idle process while a question or confirmation is still pending, it first records the expired interaction, sends an expiry notification to the IM chat, and then terminates the process. A later `/answer`, `/allow`, or `/deny` cannot use the old structured request ID; the router forwards it as follow-up context instead.
+If the gateway removes an idle process while a question, confirmation, or handoff request is still pending, it first records the expired interaction, sends an expiry notification to the IM chat, and then terminates the process. A later `/answer`, `/allow`, `/deny`, `/handoff`, or `/handoff-deny` cannot use the old structured request ID; the router forwards question and confirmation responses as follow-up context instead.
 
 Use Go duration syntax, for example:
 
@@ -124,7 +124,10 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `handoff_request`
 - `error`
 - `notification`
+- `done_completion`
+- `local_shell_result`
 
 Optional events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).

@@ -40,6 +40,9 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/allow` | 批准待确认请求 |
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
+| `/handoff <agent> [model_pool]` | 将待处理 Chord handoff 请求的接受结果转发给 Chord；不带参数时由 Chord 使用默认 agent |
+| `/handoff-deny <reason>` | 将待处理 Chord handoff 请求的拒绝结果和原因转发给 Chord |
+| `!<command>` / `！<command>` | 通过绑定工作区向 Chord 发送 `local_shell` 命令，并回传 Chord 返回的 stdout/stderr 结果 |
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 优先交给当前 Chord 进程启动新 session；如果没有可用进程，则清除当前 session pin 并启动新的 Chord 进程 |
 | `/resume <id>` | 恢复并 pin 指定 session；如果恢复失败，会清除该 pin 并提示用户 |
@@ -99,6 +102,29 @@ Reply /answer 1 / 1,2 / or type your answer
 ```text
 ⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.
 ```
+
+## Handoff 请求路由
+
+当 Chord 发送 `handoff_request` 时，gateway 会把 handoff plan、可用 agent 和 model pool 发送到 IM 聊天。gateway 不实现 handoff 本身，只把用户回复路由回 Chord 当前待处理的请求：
+
+- `/handoff`：让 Chord 使用默认 agent 接受。
+- `/handoff <agent>`：选择 Chord 展示的某个 agent。
+- `/handoff <agent> [model_pool]`：同时选择 agent 和 model pool。
+- `/handoff-deny <reason>`：拒绝 handoff 请求，并附带原因。
+
+请按 gateway 消息中展示的名称填写 agent 和 model pool。如果当前没有待处理的 Chord handoff 请求，这些命令只会返回提示，不会启动新的 Chord 动作。
+
+## Chord local shell 快捷入口
+
+以 `!` 或全角 `！` 开头的消息会作为 Chord `local_shell` headless 命令发送，而不是作为普通聊天文本：
+
+```text
+You: !pwd
+Gateway: ✅ Local shell: pwd
+/path/to/workspace
+```
+
+gateway 只负责转发命令并展示 Chord 返回的结果；执行语义和可用性属于 Chord headless。请把它视为绑定工作区中的本地命令执行能力：只在可信 IM 聊天中使用，避免在命令文本或输出中暴露敏感信息。
 
 ## Session 示例
 
