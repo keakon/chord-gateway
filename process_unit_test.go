@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"path/filepath"
 	"strings"
@@ -179,6 +180,38 @@ func TestChordProcessSendCommandClosedPipe(t *testing.T) {
 	p := &ChordProcess{}
 	if err := p.SendCommand(map[string]any{"type": "status"}); err != io.ErrClosedPipe {
 		t.Fatalf("SendCommand closed pipe err = %v, want %v", err, io.ErrClosedPipe)
+	}
+}
+
+func TestChordProcessLocalShellResultEndsTurn(t *testing.T) {
+	payload, err := json.Marshal(LocalShellPayload{Command: "pwd", Output: "/tmp", Failed: false})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	p := &ChordProcess{
+		state: ControlState{
+			Busy:           true,
+			Phase:          "local_shell",
+			PhaseDetail:    "pwd",
+			PendingConfirm: &ConfirmPayload{RequestID: "confirm-1"},
+			LastError:      "previous error",
+		},
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "local_shell_result", Payload: payload})
+	state := p.State()
+
+	if state.Busy {
+		t.Fatal("local_shell_result should mark process idle")
+	}
+	if state.LastLocalShell == nil || state.LastLocalShell.Command != "pwd" || state.LastLocalShell.Output != "/tmp" {
+		t.Fatalf("LastLocalShell = %#v", state.LastLocalShell)
+	}
+	if state.PendingConfirm == nil || state.PendingConfirm.RequestID != "confirm-1" {
+		t.Fatalf("PendingConfirm = %#v, want preserved", state.PendingConfirm)
+	}
+	if state.LastError != "previous error" {
+		t.Fatalf("LastError = %q, want preserved", state.LastError)
 	}
 }
 

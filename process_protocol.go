@@ -146,6 +146,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		var payload LocalShellPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastLocalShell = &payload
+			p.state.Busy = false
 			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 			p.lastActivity = time.Now()
 		}
