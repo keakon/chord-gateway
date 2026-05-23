@@ -4,6 +4,12 @@ import "strings"
 
 func parseIMCommand(text string) IMCommand {
 	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "!") {
+		return IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "!"))}
+	}
+	if strings.HasPrefix(text, "！") {
+		return IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "！"))}
+	}
 	if !strings.HasPrefix(text, "/") {
 		return IMCommand{Type: "send", Content: text}
 	}

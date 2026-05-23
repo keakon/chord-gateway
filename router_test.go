@@ -318,6 +318,58 @@ func TestHandleHandoffCommand(t *testing.T) {
 	})
 }
 
+func TestHandleLocalShellCommand(t *testing.T) {
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+
+	t.Run("sends local shell command", func(t *testing.T) {
+		mgr := newTestChordManager(&config.Config{Workspaces: []config.Workspace{*ws}})
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := NewNotificationRouter(mgr)
+		r.SetAdapter(sender)
+		stdin := &captureWriteCloser{}
+		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
+		mgr.procs[key] = proc
+		defer r.stopReminder(key)
+
+		r.handleLocalShellCommand(ws, "chat-1", IMCommand{Type: "local_shell", Content: " pwd "}, key, proc)
+
+		var sent map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
+			t.Fatalf("local_shell command JSON = %q: %v", stdin.String(), err)
+		}
+		if sent["type"] != "local_shell" || sent["command"] != "pwd" {
+			t.Fatalf("local_shell command = %#v", sent)
+		}
+		if got := sender.sentMessages(); len(got) != 0 {
+			t.Fatalf("successful local shell should not send immediate message, got %#v", got)
+		}
+	})
+
+	t.Run("empty command", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender}
+
+		r.handleLocalShellCommand(ws, "chat-1", IMCommand{Type: "local_shell", Content: "   "}, key, &ChordProcess{})
+
+		if got := sender.lastMessage().text; got != "⚠️ Empty command after !" {
+			t.Fatalf("message = %q", got)
+		}
+	})
+
+	t.Run("send failure", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender}
+		proc := &ChordProcess{stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
+
+		r.handleLocalShellCommand(ws, "chat-1", IMCommand{Type: "local_shell", Content: "pwd"}, key, proc)
+
+		if got := sender.lastMessage().text; got != "❌ Failed to run local shell command." {
+			t.Fatalf("message = %q", got)
+		}
+	})
+}
+
 func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args.txt")
@@ -1052,6 +1104,9 @@ func TestParseIMCommand(t *testing.T) {
 		{name: "bind with unterminated quoted path", input: "/bind project-a \"~/work/project a", wantType: "bind", wantInvalid: true},
 		{name: "bind with extra argument", input: "/bind project-a ~/work/project-a extra", wantType: "bind", wantInvalid: true},
 		{name: "plain text becomes send", input: "hello world", wantType: "send", wantContent: "hello world"},
+		{name: "bang local shell", input: "!pwd", wantType: "local_shell", wantContent: "pwd"},
+		{name: "fullwidth bang local shell", input: "！go test ./...", wantType: "local_shell", wantContent: "go test ./..."},
+		{name: "empty bang local shell", input: "!   ", wantType: "local_shell", wantContent: ""},
 		{name: "unknown slash command becomes send", input: "/unknown", wantType: "send", wantContent: "/unknown"},
 		{name: "allow without request_id", input: "/allow", wantType: "confirm", wantAction: "allow", wantRequestID: ""},
 		{name: "login without target", input: "/login", wantType: "login", wantContent: ""},
@@ -1166,7 +1221,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1178,7 +1233,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:     true,
 		Todos:     true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "activity", "agent_done", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "activity", "agent_done", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1652,6 +1707,12 @@ func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	}
 	if msg := r.formatNotification("assistant_message", ControlState{}); msg != "" {
 		t.Fatalf("assistant_message empty = %q, want empty", msg)
+	}
+	if msg := r.formatNotification("local_shell_result", ControlState{LastLocalShell: &LocalShellPayload{Command: "pwd", Output: "/tmp/ws\n"}}); !strings.Contains(msg, "✅ Local shell: pwd") || !strings.Contains(msg, "/tmp/ws") {
+		t.Fatalf("local_shell_result = %q", msg)
+	}
+	if msg := r.formatNotification("local_shell_result", ControlState{LastLocalShell: &LocalShellPayload{Command: "false", Failed: true, Error: "exit status 1"}}); !strings.Contains(msg, "❌ Local shell: false") || !strings.Contains(msg, "exit status 1") {
+		t.Fatalf("failed local_shell_result = %q", msg)
 	}
 	if msg := r.formatNotification("activity", ControlState{Busy: true}); msg != "" {
 		t.Fatalf("activity should not push: %q", msg)

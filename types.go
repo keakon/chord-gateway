@@ -28,8 +28,9 @@ type ControlState struct {
 	// Todos from chord process
 	Todos []TodoItem `json:"todos,omitempty"`
 
-	LastAssistantText      string `json:"-"` // last completed assistant message
-	LastAssistantToolCalls int    `json:"-"` // tool calls executed in the last turn
+	LastAssistantText      string             `json:"-"` // last completed assistant message
+	LastAssistantToolCalls int                `json:"-"` // tool calls executed in the last turn
+	LastLocalShell         *LocalShellPayload `json:"-"`
 
 	// For long-running reminders.
 	InternalEventsSinceLastPush int       `json:"-"`
@@ -100,6 +101,14 @@ type DoneCompletionPayload struct {
 	Status  string `json:"status,omitempty"`
 	AgentID string `json:"agent_id,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+}
+
+// LocalShellPayload is the local_shell_result event payload.
+type LocalShellPayload struct {
+	Command string `json:"command"`
+	Output  string `json:"output"`
+	Failed  bool   `json:"failed"`
+	Error   string `json:"error,omitempty"`
 }
 
 // HeadlessEnvelope is the JSON envelope from chord headless stdout.

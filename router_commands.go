@@ -46,6 +46,8 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleHandoffCommand(ws, chatID, cmd, procKey, proc)
 	case "send":
 		r.handleSendCommand(ws, chatID, cmd, incoming, procKey, proc)
+	case "local_shell":
+		r.handleLocalShellCommand(ws, chatID, cmd, procKey, proc)
 	default:
 		log.Warnf("unknown command type type=%v", cmd.Type)
 		r.sendText(chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
@@ -274,6 +276,20 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 			return
 		}
 		r.sendText(chatID, "❌ Failed to send message to chord.")
+		return
+	}
+	r.beginTurn(procKey)
+}
+
+func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
+	command := strings.TrimSpace(cmd.Content)
+	if command == "" {
+		r.sendText(chatID, "⚠️ Empty command after !")
+		return
+	}
+	if err := proc.SendCommand(map[string]any{"type": "local_shell", "command": command}); err != nil {
+		log.Errorf("failed to send local shell command workspace=%v error=%v", ws.ID, err)
+		r.sendText(chatID, "❌ Failed to run local shell command.")
 		return
 	}
 	r.beginTurn(procKey)

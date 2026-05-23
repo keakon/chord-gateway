@@ -11,6 +11,7 @@
 ### Added
 
 - 新增 Chord headless `handoff_request` 支持：gateway 现在默认订阅该事件，会展示完整 handoff plan 以及可选 agent / model pool，并支持 `/handoff <agent> [model_pool]` 或 `/handoff-deny <reason>` 响应。
+- 新增 IM `!` / `！` 本地 shell 快捷入口，由 Chord headless `local_shell` 命令执行。Gateway 现在默认订阅 `local_shell_result`，并把 stdout/stderr 结果回显到 IM 会话。
 
 ### 不兼容变更
 

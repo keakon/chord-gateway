@@ -46,6 +46,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 		}
 		return state.LastAssistantText
 
+	case "local_shell_result":
+		return r.formatLocalShellNotification(state)
+
 	case "info":
 		return r.formatInfoNotification(state)
 
@@ -65,6 +68,26 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	default:
 		return ""
 	}
+}
+
+func (r *NotificationRouter) formatLocalShellNotification(state ControlState) string {
+	if state.LastLocalShell == nil {
+		return ""
+	}
+	payload := state.LastLocalShell
+	status := "✅"
+	if payload.Failed {
+		status = "❌"
+	}
+	output := strings.TrimSpace(payload.Output)
+	if output == "" {
+		output = "(no output)"
+	}
+	msg := fmt.Sprintf("%s Local shell: %s\n%s", status, payload.Command, output)
+	if payload.Failed && strings.TrimSpace(payload.Error) != "" {
+		msg += "\nError: " + strings.TrimSpace(payload.Error)
+	}
+	return truncate(msg)
 }
 
 func (r *NotificationRouter) formatExpiredPendingNotification(state ControlState) string {

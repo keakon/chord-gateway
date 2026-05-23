@@ -142,6 +142,15 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "done_completion"
 
+	case "local_shell_result":
+		var payload LocalShellPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastLocalShell = &payload
+			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
+			p.lastActivity = time.Now()
+		}
+		eventType = "local_shell_result"
+
 	case "agent_done":
 		p.lastActivity = time.Now()
 		eventType = "agent_done"

@@ -408,8 +408,8 @@ func (p *ChordProcess) notifyStatusWaiters(state ControlState) {
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, handoff_request,
-	// idle, error, notification, and done_completion.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion"}
+	// idle, error, notification, done_completion, and local_shell_result.
+	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result"}
 	if cfg == nil {
 		return events
 	}
