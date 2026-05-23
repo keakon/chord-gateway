@@ -33,6 +33,7 @@ Different chats keep different session context. Different workspaces also keep d
 The gateway does not use `chord headless --continue`. Instead, it stores a pinned Chord session ID for each binding.
 
 - If a binding has a pinned session ID, the gateway starts Chord with `--resume <sid>`.
+- If resume fails because the pinned session was removed or is busy, a normal text message is retried in a fresh session and the user is notified.
 - If no session ID is pinned, the gateway starts a fresh session.
 - `/new` clears the current binding's pin and starts fresh.
 - `/resume <sid>` pins the specified session ID for the current binding.
@@ -49,8 +50,8 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
 | `/todos` | Show the current todo list |
-| `/new` | Send a /new command to Chord to start a fresh session; clears the current session pin |
-| `/resume <id>` | Resume and pin a specific session |
+| `/new` | Ask the current Chord process to start a new session; if no process is available, clear the current session pin and start a fresh Chord process |
+| `/resume <id>` | Resume and pin a specific session; if the session cannot be resumed, the pin is cleared and the user is notified |
 | `/sessions` | List recent sessions from the workspace |
 | `/current` | Show the current binding status, including workspace, IM/chat binding, active session, and pending interaction |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
@@ -130,6 +131,9 @@ Resume a session:
 ```text
 You: /resume 2026-04-14-abc123
 Gateway: 🔄 Resuming session 2026-04-14-abc123
+
+# If the session no longer exists or is busy:
+Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may be busy.
 ```
 
 Check the current binding:
@@ -148,6 +152,8 @@ Start fresh:
 ```text
 You: /new
 Gateway: 🆕 /new sent to chord process.
+# If no Chord process is currently usable:
+Gateway: 🆕 New session started.
 ```
 
 ## Multi-IM login

@@ -213,6 +213,64 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 	}
 }
 
+func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	stdinFile := filepath.Join(dir, "stdin.txt")
+	fakeChord := filepath.Join(dir, "fake-chord.sh")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellQuote(argsFile) + "\n" +
+		"while IFS= read -r line; do printf '%s\\n' \"$line\" >> " + shellQuote(stdinFile) + "; done\n"
+	if err := os.WriteFile(fakeChord, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake chord: %v", err)
+	}
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := NewNotificationRouter(mgr)
+	r.SetAdapter(sender)
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	legacyKey := legacyProcessKeyString("ws1", "wechat", "chat-1")
+	if err := mgr.pins.Set(key, "old-session"); err != nil {
+		t.Fatalf("set old pin: %v", err)
+	}
+	if err := mgr.pins.Set(legacyKey, "legacy-session"); err != nil {
+		t.Fatalf("set legacy pin: %v", err)
+	}
+	oldProc := &ChordProcess{key: key, workspaceID: "ws1", stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
+	mgr.procs[key] = oldProc
+
+	r.handleSendCommand(ws, "chat-1", IMCommand{Type: "send", Content: "hello after cleanup"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"}, key, oldProc)
+	defer mgr.StopAll(time.Second)
+
+	if got := mgr.pins.Get(key); got != "" {
+		t.Fatalf("pin = %q, want cleared", got)
+	}
+	if got := mgr.pins.Get(legacyKey); got != "" {
+		t.Fatalf("legacy pin = %q, want cleared", got)
+	}
+	if got := sender.lastMessage().text; !strings.Contains(got, "Previous Chord session was not found or is busy") {
+		t.Fatalf("message = %q", got)
+	}
+	args := readFakeChordArgs(t, argsFile)
+	if strings.Contains(args, "--resume") || strings.Contains(args, "old-session") {
+		t.Fatalf("fallback spawn args = %q, want no pinned resume", args)
+	}
+	var stdin string
+	for i := 0; i < 200; i++ {
+		data, err := os.ReadFile(stdinFile)
+		if err == nil && strings.Contains(string(data), "hello after cleanup") {
+			stdin = string(data)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(stdin, "hello after cleanup") {
+		t.Fatalf("fresh session stdin = %q, want original message", stdin)
+	}
+}
+
 func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
 	dir := t.TempDir()
 	defaultDir := filepath.Join(dir, "default")
@@ -644,30 +702,22 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	}
 }
 
-func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
-	fakeChord := makeFakeChordBinary(t, "")
+func TestHandleNewSendsCommandToActiveProcess(t *testing.T) {
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
-	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	cfg := &config.Config{ChordPath: makeFakeChordBinary(t, ""), Workspaces: []config.Workspace{*ws}}
 	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
 	sender := &stubIMAdapter{typ: "wechat"}
 	r := &NotificationRouter{mgr: mgr, adapter: sender}
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	stdin := &captureWriteCloser{}
+	mgr.procs[key] = &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
 	if err := mgr.pins.Set(key, "old-session"); err != nil {
 		t.Fatalf("set old pin: %v", err)
 	}
 
-	// Spawn an initial process so /new has something to send to.
-	stdin := &captureWriteCloser{}
-	proc, err := mgr.SpawnWithArgsForKey(key)
-	if err != nil {
-		t.Fatalf("SpawnWithArgsForKey() error = %v", err)
-	}
-	proc.stdin = stdin
-
 	r.handleNew(ws, "chat-1", "wechat")
-	defer mgr.StopAll(time.Second)
 
 	if got := mgr.pins.Get(key); got != "" {
 		t.Fatalf("pin = %q, want cleared", got)
@@ -680,8 +730,44 @@ func TestHandleNewStartsFreshSessionAndClearsPin(t *testing.T) {
 	}
 }
 
-func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
+func TestHandleNewStartsFreshSessionAndClearsPinWhenUnavailable(t *testing.T) {
 	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "")
+	stateDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
+	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{mgr: mgr, adapter: sender}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	legacyKey := legacyProcessKeyString("ws1", "wechat", "chat-1")
+	if err := mgr.pins.Set(key, "old-session"); err != nil {
+		t.Fatalf("set old pin: %v", err)
+	}
+	if err := mgr.pins.Set(legacyKey, "legacy-session"); err != nil {
+		t.Fatalf("set legacy pin: %v", err)
+	}
+
+	r.handleNew(ws, "chat-1", "wechat")
+	defer mgr.StopAll(time.Second)
+
+	if got := mgr.pins.Get(key); got != "" {
+		t.Fatalf("pin = %q, want cleared", got)
+	}
+	if got := mgr.pins.Get(legacyKey); got != "" {
+		t.Fatalf("legacy pin = %q, want cleared", got)
+	}
+	if got := sender.lastMessage().text; got != "🆕 New session started." {
+		t.Fatalf("message = %q", got)
+	}
+	args := readFakeChordArgs(t, argsFile)
+	if strings.Contains(args, "--resume") || strings.Contains(args, "old-session") || strings.Contains(args, "legacy-session") {
+		t.Fatalf("/new spawn args = %q, want no pinned resume", args)
+	}
+}
+
+func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
+	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "ready:session-123")
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
@@ -708,8 +794,39 @@ func TestHandleResumePinsSessionAndStartsWithResumeArgs(t *testing.T) {
 	}
 }
 
+func TestHandleResumeFailureClearsPinAndReports(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	fakeChord := filepath.Join(dir, "fake-chord.sh")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellQuote(argsFile) + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(fakeChord, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake chord: %v", err)
+	}
+	workspaceDir := t.TempDir()
+	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
+	cfg := &config.Config{ChordPath: fakeChord, Workspaces: []config.Workspace{*ws}}
+	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{mgr: mgr, adapter: sender}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+
+	r.handleResume(ws, "chat-1", "missing-session", "wechat")
+
+	if got := mgr.pins.Get(key); got != "" {
+		t.Fatalf("pin = %q, want cleared", got)
+	}
+	if got := sender.lastMessage().text; got != "❌ Failed to resume session missing-session. It may not exist or may be busy." {
+		t.Fatalf("message = %q", got)
+	}
+	if got := mgr.GetProcessForKey(key); got != nil {
+		t.Fatalf("failed resume process should be removed, got %#v", got)
+	}
+}
+
 func TestHandleResumeDoesNotSpawnProcessForBusyCheck(t *testing.T) {
-	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "")
+	fakeChord, argsFile := makeFakeChordBinaryWithArgsFile(t, "ready:session-123")
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	ws := &config.Workspace{ID: "ws1", Path: workspaceDir}
@@ -745,7 +862,7 @@ func TestHandleNewAndResumeErrorPaths(t *testing.T) {
 		r := &NotificationRouter{mgr: NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()}), adapter: sender}
 
 		r.handleNew(ws, "chat-1", "wechat")
-		if got := sender.lastMessage().text; got != "❌ No active chord process." {
+		if got := sender.lastMessage().text; got != "❌ Failed to start new session." {
 			t.Fatalf("message = %q", got)
 		}
 	})

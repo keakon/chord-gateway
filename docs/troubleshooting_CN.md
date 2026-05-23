@@ -170,6 +170,12 @@ chat_bindings:
 
 然后用 `/new` 清除当前绑定，或用 `/resume <id>` pin 到已知 session。
 
+如果普通文本消息因为 pinned session 已被清理或被占用而无法送达，gateway 会清除该 pin，启动新 session，重试发送一次原消息，并在聊天中提示：
+
+```text
+⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.
+```
+
 ## 运行时问题
 
 ### Chord 没有回复

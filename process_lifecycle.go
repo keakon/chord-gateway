@@ -44,9 +44,7 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 		}
 		done := make(chan struct{})
 		go func() {
-			p.waitOnce.Do(func() {
-				_ = cmd.Wait()
-			})
+			p.waitAndRecordExit(cmd)
 			close(done)
 		}()
 
@@ -98,17 +96,8 @@ func (p *ChordProcess) handleExit() {
 	p.mu.Unlock()
 
 	// Serialize Cmd.Wait calls. TerminateGroup may call Wait concurrently.
-	// Waiting here guarantees ProcessState is fully populated before reading it.
-	if cmd != nil {
-		p.waitOnce.Do(func() {
-			_ = cmd.Wait()
-		})
-	}
-
-	exitCode := 0
-	if cmd != nil && cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
+	// Waiting here guarantees the process exit is recorded before checking it.
+	exitCode := p.waitAndRecordExit(cmd)
 
 	log.Infof("[%v] chord process exited pid=%v exit_code=%v crashed=%v", processLogContext(key, state), pid, exitCode, crashed)
 	if crashed && strings.TrimSpace(stderr) != "" {

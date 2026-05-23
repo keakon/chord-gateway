@@ -24,6 +24,7 @@ workspaceID | imType | chatID
 gateway 不使用 `chord headless --continue`，而是为每个绑定保存一个 pinned Chord session ID。
 
 - 如果当前绑定已有 pinned session ID，gateway 会用 `--resume <sid>` 启动 Chord。
+- 如果 pinned session 已被清理或被占用导致 resume 失败，普通文本消息会自动改用新 session 重试，并提示用户。
 - 如果没有 pinned session ID，gateway 会启动一个新 session。
 - `/new` 会清除当前绑定的 pin 并启动新 session。
 - `/resume <sid>` 会把指定 session ID pin 到当前绑定。
@@ -40,8 +41,8 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
 | `/todos` | 查看当前 todo 列表 |
-| `/new` | 向 Chord 发送 /new 命令以开始新会话；清除当前 session pin |
-| `/resume <id>` | 恢复并 pin 指定 session |
+| `/new` | 优先交给当前 Chord 进程启动新 session；如果没有可用进程，则清除当前 session pin 并启动新的 Chord 进程 |
+| `/resume <id>` | 恢复并 pin 指定 session；如果恢复失败，会清除该 pin 并提示用户 |
 | `/sessions` | 列出最近 session |
 | `/current` | 查看当前聊天 pin 的 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
@@ -114,7 +115,10 @@ Gateway: 📋 Recent sessions:
 
 ```text
 You: /resume 2026-04-14-abc123
-Gateway: ✅ Resumed session 2026-04-14-abc123
+Gateway: 🔄 Resuming session 2026-04-14-abc123
+
+# 如果 session 不存在或被占用：
+Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may be busy.
 ```
 
 查看当前 session：
@@ -129,6 +133,8 @@ Gateway: 📍 Current session: 2026-04-14-abc123
 ```text
 You: /new
 Gateway: 🆕 /new sent to chord process.
+# 如果当前没有可用 Chord 进程：
+Gateway: 🆕 New session started.
 ```
 
 ## 多 IM 登录

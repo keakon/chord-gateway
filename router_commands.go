@@ -204,10 +204,41 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	}
 	if err := proc.SendUserMessage(cmd.Content); err != nil {
 		log.Errorf("failed to send user message workspace=%v error=%v", ws.ID, err)
+		if r.retrySendInFreshSession(ws, chatID, procKey, cmd.Content) {
+			return
+		}
 		r.sendText(chatID, "❌ Failed to send message to chord.")
 		return
 	}
 	r.beginTurn(procKey)
+}
+
+func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatID, procKey, content string) bool {
+	if r.mgr == nil {
+		return false
+	}
+	if r.mgr.pins != nil {
+		if err := r.mgr.clearSessionPinForKey(procKey); err != nil {
+			log.Warnf("clear session pin before retry failed key=%v error=%v", procKey, err)
+		}
+	}
+	r.mgr.StopProcessKey(procKey)
+	proc, err := r.mgr.SpawnWithArgsForKey(procKey)
+	if err != nil {
+		log.Errorf("failed to start fresh chord session for retry workspace=%v error=%v", ws.ID, err)
+		return false
+	}
+	if proc == nil {
+		log.Errorf("no process for retry workspace=%v", ws.ID)
+		return false
+	}
+	if err := proc.SendUserMessage(content); err != nil {
+		log.Errorf("failed to send user message to fresh session workspace=%v error=%v", ws.ID, err)
+		return false
+	}
+	r.beginTurn(procKey)
+	r.sendText(chatID, "⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.")
+	return true
 }
 
 // submitQuestionAnswer forwards an answer to chord, resolves the Feishu card,

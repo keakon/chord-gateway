@@ -257,33 +257,30 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	}
 }
 
-// handleNew sends /new to the current chord process via stdin.
-// If no process exists yet, it spawns one first.
+// handleNew asks the current chord process to start a fresh session when possible.
+// If no usable process is already running, fall back to clearing the pin and
+// starting a fresh headless process without trying to resume a pinned session first.
 func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID, imType string) {
 	if r.mgr == nil {
 		r.sendText(chatID, "❌ Process manager not available.")
 		return
 	}
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	proc, err := r.mgr.GetOrSpawnForKey(key)
-	if err != nil {
-		r.sendText(chatID, "❌ Failed to connect to chord process.")
-		return
-	}
-	if proc == nil || !proc.Alive() {
-		r.sendText(chatID, "❌ No active chord process.")
-		return
-	}
-	if r.mgr.pins != nil {
-		if err := r.mgr.pins.Set(key, ""); err != nil {
-			log.Warnf("clear session pin failed key=%v error=%v", key, err)
+	proc := r.mgr.GetProcessForKey(key)
+	if proc != nil && (proc.Alive() || proc.cmd == nil && proc.stdin != nil) {
+		if r.mgr.pins != nil {
+			if err := r.mgr.clearSessionPinForKey(key); err != nil {
+				log.Warnf("clear session pin failed key=%v error=%v", key, err)
+			}
+		}
+		if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err == nil {
+			r.sendText(chatID, "🆕 /new sent to chord process.")
+			return
+		} else {
+			log.Warnf("failed to send /new to chord process key=%v error=%v", key, err)
 		}
 	}
-	if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err != nil {
-		r.sendText(chatID, "❌ Failed to send /new command.")
-		return
-	}
-	r.sendText(chatID, "🆕 /new sent to chord process.")
+	r.respawnSession(ws, chatID, imType, "")
 }
 
 // handleResume stops the current process and spawns one with --resume.
@@ -306,12 +303,12 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 	}
 	r.mgr.StopProcessKey(key)
 	if r.mgr.pins != nil {
-		if err := r.mgr.pins.Set(key, sessionID); err != nil {
-			if isResume {
+		if isResume {
+			if err := r.mgr.pins.Set(key, sessionID); err != nil {
 				log.Warnf("pin resume session failed key=%v session_id=%v error=%v", key, sessionID, err)
-			} else {
-				log.Warnf("clear session pin failed key=%v error=%v", key, err)
 			}
+		} else if err := r.mgr.clearSessionPinForKey(key); err != nil {
+			log.Warnf("clear session pin failed key=%v error=%v", key, err)
 		}
 	}
 	var spawnArgs []string
@@ -334,9 +331,37 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		return
 	}
 	if isResume {
+		if !r.resumeProcessAvailable(proc, sessionID) {
+			if r.mgr.pins != nil {
+				if err := r.mgr.clearSessionPinForKey(key); err != nil {
+					log.Warnf("clear failed resume session pin failed key=%v session_id=%v error=%v", key, sessionID, err)
+				}
+			}
+			r.mgr.StopProcessKey(key)
+			log.Warnf("resume session failed after spawn key=%v session_id=%v", key, sessionID)
+			r.sendText(chatID, fmt.Sprintf("❌ Failed to resume session %s. It may not exist or may be busy.", sessionID))
+			return
+		}
 		r.sendText(chatID, fmt.Sprintf("🔄 Resuming session %s", sessionID))
 	} else {
 		r.sendText(chatID, "🆕 New session started.")
+	}
+}
+
+func (r *NotificationRouter) resumeProcessAvailable(proc *ChordProcess, sessionID string) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if proc == nil || !proc.Alive() {
+			return false
+		}
+		state := proc.State()
+		if strings.TrimSpace(state.SessionID) == strings.TrimSpace(sessionID) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

@@ -170,6 +170,12 @@ Use:
 
 Then use `/new` to clear the current binding or `/resume <id>` to pin a known session.
 
+If a normal text message cannot be delivered because the pinned session was removed or is busy, the gateway clears that pin, starts a fresh session, retries the message once, and notifies the chat:
+
+```text
+⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.
+```
+
 ## Runtime issues
 
 ### Chord does not respond

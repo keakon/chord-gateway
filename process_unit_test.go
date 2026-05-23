@@ -96,6 +96,31 @@ func TestChordManagerGetOrSpawnForKeyMissingWorkspace(t *testing.T) {
 	}
 }
 
+func TestChordManagerGetOrSpawnForKeyReplacesExitedProcess(t *testing.T) {
+	chordBinary := makeFakeChordBinary(t, "")
+	workspaceDir := t.TempDir()
+	cfg := &config.Config{
+		ChordPath:  chordBinary,
+		Workspaces: []config.Workspace{{ID: "ws1", Path: workspaceDir}},
+	}
+	mgr := newTestChordManager(cfg)
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
+	dead := &ChordProcess{key: key, workspaceID: "ws1"}
+	mgr.procs[key] = dead
+
+	p, err := mgr.GetOrSpawnForKey(key)
+	if err != nil {
+		t.Fatalf("GetOrSpawnForKey error = %v", err)
+	}
+	defer mgr.StopAll(time.Millisecond)
+	if p == nil || p == dead {
+		t.Fatalf("GetOrSpawnForKey returned %#v, want fresh process", p)
+	}
+	if got := mgr.GetProcessForKey(key); got != p {
+		t.Fatalf("process map = %#v, want fresh process %#v", got, p)
+	}
+}
+
 func TestProcessKeyRoundTripOpaqueParts(t *testing.T) {
 	key := processKey{workspaceID: "ws|1", imType: "wechat", chatID: "chat|room|42"}.String()
 	workspaceID, imType, chatID := parseProcessKey(key)

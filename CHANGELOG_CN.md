@@ -17,6 +17,10 @@
 - 将 Go toolchain 要求更新到 1.26.3，并刷新第三方 Go 依赖。
 - Done 确认渲染现在优先使用显式的 `done_report` / `done_reason` 字段；当存在待处理 Done 确认时，普通文本会作为拒绝理由处理。
 
+### Fixed
+
+- 修复 pinned Chord session 过期或不可用时的 IM 会话恢复行为：`/new` 会优先交给已有可用进程处理，必要时不再带过期 resume 启动新会话；普通消息在旧 session 已清理或被占用导致发送失败时会自动以新 session 重试一次；`/resume <id>` 现在会提示 session 不存在或被占用，而不是误报成功；已退出的 Chord 进程也不会再被复用。
+
 ## v0.3.1 – 2026-05-11
 
 ### Changed

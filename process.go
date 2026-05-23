@@ -26,6 +26,8 @@ type ChordProcess struct {
 
 	waitOnce sync.Once
 	exitOnce sync.Once
+	exited   bool
+	exitCode int
 	stderr   *tailBuffer
 
 	pgid int
@@ -141,7 +143,10 @@ func (m *ChordManager) GetProcessForKey(key string) *ChordProcess {
 
 func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 	if p := m.GetProcessForKey(key); p != nil {
-		return p, nil
+		if p.Alive() || p.cmd == nil && p.stdin != nil {
+			return p, nil
+		}
+		m.removeProcessIfCurrent(key, p)
 	}
 	workspaceID, _, _ := parseProcessKey(key)
 	if workspaceID == "" {
@@ -169,6 +174,39 @@ func (m *ChordManager) spawnArgsForKey(key string) []string {
 		return nil
 	}
 	return []string{"--resume", sid}
+}
+
+func (m *ChordManager) clearSessionPinForKey(key string) error {
+	if m == nil || m.pins == nil {
+		return nil
+	}
+	var firstErr error
+	if err := m.pins.Set(key, ""); err != nil {
+		firstErr = err
+	}
+	workspaceID, imType, chatID := parseProcessKey(key)
+	if workspaceID == "" && imType == "" && chatID == "" {
+		return firstErr
+	}
+	legacyKey := legacyProcessKeyString(workspaceID, imType, chatID)
+	if legacyKey == key {
+		return firstErr
+	}
+	if err := m.pins.Set(legacyKey, ""); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+func (m *ChordManager) removeProcessIfCurrent(key string, p *ChordProcess) {
+	if m == nil || p == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.procs[key] == p {
+		delete(m.procs, key)
+	}
+	m.mu.Unlock()
 }
 
 // StopAll terminates all managed processes (best-effort) and clears the process map.
@@ -399,7 +437,32 @@ func (p *ChordProcess) Alive() bool {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return false
 	}
-	return p.cmd.ProcessState == nil
+	return !p.exited
+}
+
+func (p *ChordProcess) waitAndRecordExit(cmd *exec.Cmd) int {
+	if cmd == nil {
+		p.mu.Lock()
+		p.exited = true
+		exitCode := p.exitCode
+		p.mu.Unlock()
+		return exitCode
+	}
+	p.waitOnce.Do(func() {
+		_ = cmd.Wait()
+		exitCode := 0
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		p.mu.Lock()
+		p.exited = true
+		p.exitCode = exitCode
+		p.mu.Unlock()
+	})
+	p.mu.Lock()
+	exitCode := p.exitCode
+	p.mu.Unlock()
+	return exitCode
 }
 
 // SendCommand writes a JSON command to the chord process stdin.

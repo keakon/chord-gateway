@@ -103,6 +103,18 @@ func (a *stubIMAdapter) lastMessage() sentMessage {
 	return a.sent[len(a.sent)-1]
 }
 
+type errorWriteCloser struct {
+	err error
+}
+
+func (w *errorWriteCloser) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func (w *errorWriteCloser) Close() error {
+	return nil
+}
+
 type captureWriteCloser struct {
 	mu     sync.Mutex
 	buf    bytes.Buffer
@@ -138,10 +150,15 @@ func makeFakeChordBinaryWithArgsFile(t testingT, behavior string) (string, strin
 	dir := t.TempDir()
 	path := dir + "/fake-chord.sh"
 	argsFile := dir + "/args.txt"
+	readySession := ""
+	if strings.HasPrefix(behavior, "ready:") {
+		readySession = strings.TrimPrefix(behavior, "ready:")
+	}
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > " + shellQuote(argsFile) + "\n" +
 		"case " + shellQuote(behavior) + " in\n" +
 		"  fail) exit 42 ;;\n" +
+		"  ready:*) printf '{\"type\":\"ready\",\"payload\":{\"session_id\":\"%s\"}}\\n' " + shellQuote(readySession) + " ;;\n" +
 		"esac\n" +
 		"while IFS= read -r line; do :; done\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {

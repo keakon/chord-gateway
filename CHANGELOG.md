@@ -17,6 +17,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Updated the Go toolchain requirement to 1.26.3 and refreshed third-party Go dependencies.
 - Done confirmation rendering now prefers explicit `done_report` / `done_reason` fields and treats plain text during a pending Done confirmation as the deny reason.
 
+### Fixed
+
+- Fixed IM session recovery when pinned Chord sessions are stale or unavailable: `/new` now prefers an existing live process but starts fresh without a stale resume when needed, normal messages retry once in a fresh session after stale/busy pinned-session delivery failures, `/resume <id>` now reports missing/busy sessions instead of falsely appearing successful, and exited Chord processes are no longer reused.
+
 ## v0.3.1 – 2026-05-11
 
 ### Changed
