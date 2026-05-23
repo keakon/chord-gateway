@@ -151,6 +151,8 @@ func NewFeishuAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 
 func (a *FeishuAdapter) Type() string { return "feishu" }
 
+func (a *FeishuAdapter) SupportsLoginRenewal() bool { return false }
+
 func (a *FeishuAdapter) getIMConfig() config.IMAdapterConfig {
 	a.imCfgMu.RLock()
 	defer a.imCfgMu.RUnlock()

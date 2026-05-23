@@ -53,7 +53,7 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/resume <id>` | Resume and pin a specific session |
 | `/sessions` | List recent sessions from the workspace |
 | `/current` | Show the current binding status, including workspace, IM/chat binding, active session, and pending interaction |
-| `/login [platform]` | Start a login flow, for example `/login wechat` |
+| `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 | any other text | Send the text to Chord, or answer a pending question if one exists |
 
 Notes:
@@ -164,6 +164,7 @@ The gateway replies with a WeChat QR login link. After scanning, it updates the 
 
 Notes:
 
+- `/login` without a platform only shows usage and supported login-renewal platforms; it does not start any login flow.
 - `/login` is only for platforms that support interactive login renewal; the documented renewal flow today is `/login wechat`.
 - Feishu does not need and does not support in-chat login or renewal through `/login feishu`. The gateway automatically obtains and refreshes Feishu access tokens from the configured app credentials.
 - If Feishu connection/configuration becomes invalid, check the deployment configuration and Feishu developer console for app credentials, permissions, event subscriptions, and long-connection settings; do not send or change `app_id` / `app_secret` in an IM chat.

@@ -26,10 +26,11 @@ type sentMessage struct {
 type stubIMAdapter struct {
 	typ string
 
-	connectFunc    func() error
-	sendFunc       func(chatID, text string) error
-	disconnectFunc func()
-	startLoginFunc func() (string, error)
+	connectFunc          func() error
+	sendFunc             func(chatID, text string) error
+	disconnectFunc       func()
+	supportsLoginRenewal bool
+	startLoginFunc       func() (string, error)
 
 	mu              sync.Mutex
 	connectCalls    int
@@ -71,6 +72,8 @@ func (a *stubIMAdapter) Disconnect() {
 }
 
 func (a *stubIMAdapter) Type() string { return a.typ }
+
+func (a *stubIMAdapter) SupportsLoginRenewal() bool { return a.supportsLoginRenewal }
 
 func (a *stubIMAdapter) StartLogin() (string, error) {
 	a.mu.Lock()

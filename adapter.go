@@ -16,6 +16,9 @@ type IMAdapter interface {
 	Disconnect()
 	// Type returns the adapter type identifier (e.g. "wechat", "feishu").
 	Type() string
+	// SupportsLoginRenewal reports whether StartLogin can initiate an interactive
+	// login-renewal flow. It must be side-effect free.
+	SupportsLoginRenewal() bool
 	// StartLogin initiates a login flow and returns a URL for the user to
 	// scan/confirm. Only supported by adapters that require interactive login.
 	// Returns ("", ErrLoginNotSupported) for adapters that don't need login.

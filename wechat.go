@@ -200,6 +200,8 @@ func NewWechatAdapter(_ *config.Config, imCfg config.IMAdapterConfig, paths *con
 
 func (a *WechatAdapter) Type() string { return "wechat" }
 
+func (a *WechatAdapter) SupportsLoginRenewal() bool { return true }
+
 // StartLogin initiates a WeChat iLink QR login flow and returns the QR URL.
 // The user should open this URL on their phone and scan the QR code in WeChat.
 // A background goroutine polls for scan confirmation and auto-replaces the

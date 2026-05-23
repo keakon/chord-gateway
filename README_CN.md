@@ -113,7 +113,7 @@ chord-gateway -f config.yaml
 | `/resume <id>` | 恢复并 pin 指定 session |
 | `/sessions` | 列出最近 session |
 | `/current` | 查看当前绑定状态和 pin 的 session |
-| `/login [platform]` | 启动交互式登录流程 |
+| `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 
 完整命令行为和会话语义见 [docs/usage_CN.md](./docs/usage_CN.md)。
 

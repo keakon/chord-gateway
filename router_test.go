@@ -59,6 +59,48 @@ func TestNewNotificationRouterAndSetAdapter(t *testing.T) {
 	}
 }
 
+func TestHandleLoginWithoutTargetDoesNotStartLogin(t *testing.T) {
+	adapter := &stubIMAdapter{
+		typ:                  "wechat",
+		supportsLoginRenewal: true,
+		startLoginFunc: func() (string, error) {
+			return "qr-url", nil
+		},
+	}
+	r := NewNotificationRouter(newTestChordManager(testConfig()))
+	r.SetAdapter(adapter)
+
+	r.handleLogin("chat-1", "")
+
+	if adapter.startLoginCalls != 0 {
+		t.Fatalf("StartLogin calls = %d, want 0", adapter.startLoginCalls)
+	}
+	if got := adapter.lastMessage().text; !strings.Contains(got, "Supported platforms: wechat") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestHandleLoginWithTargetStartsLogin(t *testing.T) {
+	adapter := &stubIMAdapter{
+		typ:                  "wechat",
+		supportsLoginRenewal: true,
+		startLoginFunc: func() (string, error) {
+			return "qr-url", nil
+		},
+	}
+	r := NewNotificationRouter(newTestChordManager(testConfig()))
+	r.SetAdapter(adapter)
+
+	r.handleLogin("chat-1", "wechat")
+
+	if adapter.startLoginCalls != 1 {
+		t.Fatalf("StartLogin calls = %d, want 1", adapter.startLoginCalls)
+	}
+	if got := adapter.lastMessage().text; !strings.Contains(got, "qr-url") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
 func TestHandleIncomingMessageNoConfigLoaded(t *testing.T) {
 	sender := &stubIMAdapter{typ: "console"}
 	r := &NotificationRouter{adapter: sender, lastKeyChatID: make(map[string]string)}
@@ -1459,7 +1501,7 @@ func TestChatIDLookupHelpers(t *testing.T) {
 }
 
 func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
-	wechat := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
+	wechat := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 	feishu := &stubIMAdapter{typ: "feishu", startLoginFunc: func() (string, error) { return "", ErrLoginNotSupported }}
 	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{adapter: multi}
@@ -1497,7 +1539,7 @@ func TestHandleLogin(t *testing.T) {
 	})
 
 	t.Run("show usage when target missing", func(t *testing.T) {
-		sender := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
+		sender := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: sender}
 		r.handleLogin("chat", "")
 		if got := sender.lastMessage().text; !strings.Contains(got, "/login <platform>") || !strings.Contains(got, "wechat") {
@@ -1506,7 +1548,7 @@ func TestHandleLogin(t *testing.T) {
 	})
 
 	t.Run("adapter not found", func(t *testing.T) {
-		sender := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
+		sender := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: sender}
 		r.handleLogin("chat", "feishu")
 		if got := sender.lastMessage().text; !strings.Contains(got, "No feishu adapter found") {
@@ -1526,7 +1568,7 @@ func TestHandleLogin(t *testing.T) {
 
 	t.Run("login failure", func(t *testing.T) {
 		loginErr := errors.New("boom")
-		loginAdapter := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "", loginErr }}
+		loginAdapter := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "", loginErr }}
 		r := &NotificationRouter{adapter: loginAdapter}
 		r.handleLogin("chat", "wechat")
 		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "Failed to get WeChat login link") {
@@ -1535,7 +1577,7 @@ func TestHandleLogin(t *testing.T) {
 	})
 
 	t.Run("login success", func(t *testing.T) {
-		loginAdapter := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
+		loginAdapter := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 		r := &NotificationRouter{adapter: loginAdapter}
 		r.handleLogin("chat", "wechat")
 		if got := loginAdapter.lastMessage().text; !strings.Contains(got, "https://wx-login") {

@@ -119,7 +119,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 | `/resume <id>` | Resume and pin a session |
 | `/sessions` | List recent sessions |
 | `/current` | Show the current binding status and pinned session |
-| `/login [platform]` | Start an interactive login flow |
+| `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 
 See [docs/usage.md](./docs/usage.md) for full command behavior and session semantics.
 

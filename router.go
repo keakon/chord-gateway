@@ -539,7 +539,7 @@ func (r *NotificationRouter) availableLoginTargets() []string {
 		if adapter == nil {
 			continue
 		}
-		if _, err := adapter.StartLogin(); errors.Is(err, ErrLoginNotSupported) {
+		if !adapter.SupportsLoginRenewal() {
 			continue
 		}
 		cmdName := config.NormalizeIMType(name)

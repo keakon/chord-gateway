@@ -44,7 +44,7 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/resume <id>` | 恢复并 pin 指定 session |
 | `/sessions` | 列出最近 session |
 | `/current` | 查看当前聊天 pin 的 session |
-| `/login [platform]` | 启动登录流程，例如 `/login wechat` |
+| `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送给 Chord；如果当前有待回答问题，则作为问题答案 |
 
 ## 问题交互
@@ -145,6 +145,7 @@ gateway 会返回微信二维码登录链接。扫码后 token 会自动更新�
 
 注意：
 
+- 不带平台参数的 `/login` 只会显示用法和支持登录续期的平台，不会启动任何登录流程。
 - `/login` 只用于支持交互式登录续期的平台；当前文档化的续期流程是 `/login wechat`。
 - 飞书不需要、也不支持在会话中通过 `/login feishu` 登录或续期。飞书 access token 会由 gateway 使用已配置的应用凭证自动获取和刷新。
 - 如果收到飞书连接或配置失效通知，请在部署配置或飞书开放平台中检查应用凭证、权限、事件订阅和长连接设置；不要在 IM 会话中发送或修改 `app_id` / `app_secret`。

@@ -101,6 +101,8 @@ func (m *MultiAdapter) Disconnect() {
 // Type returns "multi".
 func (m *MultiAdapter) Type() string { return "multi" }
 
+func (m *MultiAdapter) SupportsLoginRenewal() bool { return false }
+
 // StartLogin returns ErrLoginNotSupported.
 // Login routing for the active adapter is handled by NotificationRouter via
 // findAdapterByType. This method exists only to satisfy the IMAdapter interface
