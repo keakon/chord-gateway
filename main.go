@@ -20,40 +20,6 @@ import (
 	"github.com/keakon/chord-gateway/internal/buildinfo"
 )
 
-// version is the bare gateway version string injected via ldflags.
-//
-// The CLI prints the richer build identity from buildinfo.Current().Short(),
-// but we still keep this historical variable as the compatibility point for
-// existing `-X main.version=...` build pipelines. init() mirrors whichever side
-// was set so the CLI version output, startup logs, and diagnostics all agree.
-//
-// Historical path:
-//
-//	-ldflags "-X main.version=<version>"
-//
-// Newer builds may also (or instead) override internal/buildinfo.Version
-// directly, together with Commit, BuildTime, and Dirty for richer diagnostics:
-//
-//	-ldflags "-X github.com/keakon/chord-gateway/internal/buildinfo.Version=<version> ..."
-var version = buildinfo.DefaultDevVersion
-
-func init() {
-	// init() runs after package-level var initialization for both this file
-	// and internal/buildinfo, but before main() — and before anything calls
-	// buildinfo.Current() (which is sync.OnceValue-cached). This is the
-	// correct time to bridge the two ldflags paths.
-	switch {
-	case !buildinfo.IsHistoricalMainVersion(version) && buildinfo.IsDefaultDevVersion(buildinfo.Version):
-		// Only the historical -X main.version=... path was used.
-		buildinfo.Version = version
-	case buildinfo.IsHistoricalMainVersion(version) && !buildinfo.IsDefaultDevVersion(buildinfo.Version):
-		// Only the new -X .../buildinfo.Version=... path was used.
-		version = buildinfo.Version
-	}
-	// If both are set, we trust each — CI may set them deliberately and the
-	// values are expected to match.
-}
-
 func main() {
 	// Resolve paths first to get the default config file location.
 	// Priority: --config flag > CHORD_GATEWAY_CONFIG env > $XDG_CONFIG_HOME/chord-gateway/config.yaml > ~/.config/chord-gateway/config.yaml

@@ -50,7 +50,7 @@ jobs:
             mkdir -p "$(dirname "${out}")"
 
             GOOS="${goos}" GOARCH="${goarch}" \
-              go build -trimpath -ldflags "-s -w -X main.version=${version}" \
+              go build -trimpath -ldflags "-s -w -X github.com/keakon/chord-gateway/internal/buildinfo.Version=${version}" \
               -o "${out}" .
 
             cp LICENSE "build/${name}/"

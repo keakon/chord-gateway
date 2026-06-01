@@ -7,27 +7,79 @@ import (
 	"testing"
 )
 
-func TestDefaultVersionIsDevelopmentSemver(t *testing.T) {
-	if Version != DefaultDevVersion {
-		t.Fatalf("Version = %q, want %q", Version, DefaultDevVersion)
+func TestDefaultVersionIsResolvedFromBuildMetadata(t *testing.T) {
+	if Version != "" {
+		t.Fatalf("Version = %q, want empty default before ldflags", Version)
 	}
 	if DefaultDevVersion != "v0.3.2-dev" {
 		t.Fatalf("DefaultDevVersion = %q, want %q", DefaultDevVersion, "v0.3.2-dev")
 	}
 }
 
-func TestVersionClassifiers(t *testing.T) {
-	if !IsDefaultDevVersion(" \t" + DefaultDevVersion + "\n") {
-		t.Fatalf("IsDefaultDevVersion(%q) = false, want true", DefaultDevVersion)
+func TestResolvedVersion(t *testing.T) {
+	cases := []struct {
+		name            string
+		explicitVersion string
+		moduleVersion   string
+		want            string
+	}{
+		{
+			name:            "ldflags version wins",
+			explicitVersion: "v1.2.3",
+			moduleVersion:   "v0.3.2",
+			want:            "v1.2.3",
+		},
+		{
+			name:          "go install module version",
+			moduleVersion: "v0.3.2",
+			want:          "v0.3.2",
+		},
+		{
+			name:          "go install prerelease module version",
+			moduleVersion: "v0.3.2-rc.1",
+			want:          "v0.3.2-rc.1",
+		},
+		{
+			name:          "go install incompatible module version",
+			moduleVersion: "v2.0.0+incompatible",
+			want:          "v2.0.0+incompatible",
+		},
+		{
+			name:          "local checkout pseudo-version uses dev fallback",
+			moduleVersion: "v0.3.2-0.20260601082651-d0a3464485db",
+			want:          DefaultDevVersion,
+		},
+		{
+			name:          "dirty local checkout pseudo-version uses dev fallback",
+			moduleVersion: "v0.3.2-0.20260601082651-d0a3464485db+dirty",
+			want:          DefaultDevVersion,
+		},
+		{
+			name:          "prerelease pseudo-version uses dev fallback",
+			moduleVersion: "v0.3.2-rc.1.0.20260601082651-d0a3464485db",
+			want:          DefaultDevVersion,
+		},
+		{
+			name:          "local devel build uses dev fallback",
+			moduleVersion: "(devel)",
+			want:          DefaultDevVersion,
+		},
+		{
+			name:          "non-semver module version uses dev fallback",
+			moduleVersion: "latest",
+			want:          DefaultDevVersion,
+		},
+		{
+			name: "missing module version uses dev fallback",
+			want: DefaultDevVersion,
+		},
 	}
-	if IsDefaultDevVersion("dev") {
-		t.Fatal("IsDefaultDevVersion(\"dev\") = true, want false")
-	}
-	if !IsHistoricalMainVersion(" dev\n") {
-		t.Fatal("IsHistoricalMainVersion(\" dev\\n\") = false, want true")
-	}
-	if IsHistoricalMainVersion(DefaultDevVersion) {
-		t.Fatalf("IsHistoricalMainVersion(%q) = true, want false", DefaultDevVersion)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolvedVersion(tc.explicitVersion, tc.moduleVersion); got != tc.want {
+				t.Fatalf("resolvedVersion(%q, %q) = %q, want %q", tc.explicitVersion, tc.moduleVersion, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -139,7 +191,7 @@ func TestShortIncludesDirtyOnlyWhenTrue(t *testing.T) {
 		{
 			name: "dirty true",
 			info: Info{Version: "dev", Commit: "abcdef1234567890", Dirty: "true"},
-			want: "dev abcdef123456 dirty",
+			want: "dev* abcdef123456",
 		},
 		{
 			name: "dirty false omitted",
@@ -159,7 +211,7 @@ func TestShortIncludesDirtyOnlyWhenTrue(t *testing.T) {
 		{
 			name: "short commit not truncated",
 			info: Info{Version: "v1.0.0", Commit: "abc123", Dirty: "true"},
-			want: "v1.0.0 abc123 dirty",
+			want: "v1.0.0* abc123",
 		},
 		{
 			name: "empty version becomes unknown",

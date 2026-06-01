@@ -41,11 +41,13 @@ go build -o chord-gateway .
 
 ## Build identity
 
-`chord-gateway --version` 会输出紧凑的构建身份信息。启用 buildvcs 时，普通本地 `go build` 也会带上 Go 的 VCS 回退信息，例如：
+`chord-gateway --version` 会输出紧凑的构建身份信息。启用 buildvcs 时，普通本地 `go build` 会使用开发版本号，并带上 Go 的 VCS 回退信息，例如：
 
 ```text
-chord-gateway version dev 8da87da152e2 dirty
+chord-gateway version v0.3.2-dev* 8da87da152e2
 ```
+
+像 `go install github.com/keakon/chord-gateway@v0.3.2` 这样的 tagged module 安装会显示 tag 版本；本地 checkout 构建则回退到开发版本号。
 
 每次启动时，gateway 日志都会输出一组构建字段（`gateway_version`、`gateway_commit`、`gateway_build_time`、`gateway_vcs_time`、`gateway_dirty`、`go_version`）。当启动 `chord headless` 子进程时，gateway 还会记录配置的 `chord_binary` 路径及其 `chord_binary_mtime`，方便区分是 gateway 版本问题还是子 Chord 二进制问题。
 

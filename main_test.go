@@ -8,15 +8,6 @@ import (
 	"github.com/keakon/chord-gateway/internal/buildinfo"
 )
 
-func TestRootCommandDefaultVersionMatchesBuildinfoDefaultDevVersion(t *testing.T) {
-	if version != buildinfo.DefaultDevVersion {
-		t.Fatalf("version = %q, want %q", version, buildinfo.DefaultDevVersion)
-	}
-	if buildinfo.Version != buildinfo.DefaultDevVersion {
-		t.Fatalf("buildinfo.Version = %q, want %q", buildinfo.Version, buildinfo.DefaultDevVersion)
-	}
-}
-
 func TestRootCommandVersionUsesBuildIdentity(t *testing.T) {
 	paths := &config.Paths{ConfigFile: "config.yaml"}
 	flagConfig := paths.ConfigFile

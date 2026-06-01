@@ -11,6 +11,7 @@ package buildinfo
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -25,15 +26,11 @@ import (
 //	-X github.com/keakon/chord-gateway/internal/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 //	-X github.com/keakon/chord-gateway/internal/buildinfo.Dirty=false
 //
-// The historical `-X main.version=<version>` path is bridged from main.go
-// to Version here during package init for backwards compatibility with
-// existing CI workflows.
-//
 // Plain `go build` still records useful VCS fields through Go's build info
 // when the build is performed inside a Git checkout with buildvcs enabled, so
 // Commit and Dirty remain populated even without ldflags.
 var (
-	Version   = DefaultDevVersion
+	Version   = ""
 	Commit    = ""
 	BuildTime = ""
 	Dirty     = ""
@@ -71,9 +68,8 @@ type BinaryMetadata struct {
 }
 
 const (
-	unknown               = "unknown"
-	DefaultDevVersion     = "v0.3.2-dev"
-	historicalMainVersion = "dev"
+	unknown           = "unknown"
+	DefaultDevVersion = "v0.3.2-dev"
 )
 
 // current is the cached result of [computeCurrent]. The build identity does
@@ -81,25 +77,30 @@ const (
 // at most once per process.
 var current = sync.OnceValue(computeCurrent)
 
+var (
+	semverTagPattern      = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$`)
+	pseudoVersionSuffixRE = regexp.MustCompile(`(?:^|[.-])[0-9]{14}-[0-9a-fA-F]{12}$`)
+)
+
 // Current returns best-effort build metadata for the running binary. Explicit
 // ldflags values take precedence over Go VCS fallback fields. The result is
 // cached after the first call.
 func Current() Info { return current() }
 
 func computeCurrent() Info {
-	settings := readBuildSettings()
+	metadata := readBuildMetadata()
 	info := Info{
-		Version:   valueOrUnknown(Version),
+		Version:   resolvedVersion(Version, metadata.moduleVersion),
 		Commit:    strings.TrimSpace(Commit),
 		BuildTime: strings.TrimSpace(BuildTime),
-		VCSTime:   strings.TrimSpace(settings["vcs.time"]),
+		VCSTime:   strings.TrimSpace(metadata.settings["vcs.time"]),
 		Dirty:     strings.TrimSpace(Dirty),
 		GoVersion: runtime.Version(),
 		GOOS:      runtime.GOOS,
 		GOARCH:    runtime.GOARCH,
 	}
 	if info.Commit == "" {
-		info.Commit = strings.TrimSpace(settings["vcs.revision"])
+		info.Commit = strings.TrimSpace(metadata.settings["vcs.revision"])
 	}
 	if info.Commit == "" {
 		info.Commit = unknown
@@ -111,7 +112,7 @@ func computeCurrent() Info {
 		info.VCSTime = unknown
 	}
 	if info.Dirty == "" {
-		info.Dirty = strings.TrimSpace(settings["vcs.modified"])
+		info.Dirty = strings.TrimSpace(metadata.settings["vcs.modified"])
 	}
 	if info.Dirty == "" {
 		info.Dirty = unknown
@@ -144,17 +145,17 @@ func MetadataForPath(path string) BinaryMetadata {
 }
 
 // Short returns a compact one-line identity intended for human-facing
-// surfaces (e.g. a verbose CLI output). It includes the version, short commit
-// (when known), and a `dirty` marker only when the working tree was modified
-// at build time. A clean or unknown dirty state is omitted to keep the line
-// concise.
+// surfaces. It includes the version, a trailing `*` on the version when the
+// working tree was modified at build time, and the short commit when known.
+// A clean or unknown dirty state is omitted to keep the line concise.
 func (i Info) Short() string {
-	parts := []string{valueOrUnknown(i.Version)}
+	version := valueOrUnknown(i.Version)
+	if i.Dirty == "true" {
+		version += "*"
+	}
+	parts := []string{version}
 	if commit := shortCommit(i.Commit); commit != "" && commit != unknown {
 		parts = append(parts, commit)
-	}
-	if i.Dirty == "true" {
-		parts = append(parts, "dirty")
 	}
 	return strings.Join(parts, " ")
 }
@@ -202,28 +203,37 @@ func (i Info) LogString() string {
 	return strings.Join(parts, " ")
 }
 
-// IsDefaultDevVersion reports whether version is the source default used by
-// plain local development builds.
-func IsDefaultDevVersion(version string) bool {
-	return strings.TrimSpace(version) == DefaultDevVersion
+type buildMetadata struct {
+	moduleVersion string
+	settings      map[string]string
 }
 
-// IsHistoricalMainVersion reports whether version is the legacy main.version
-// placeholder value used before buildinfo became the source of truth.
-func IsHistoricalMainVersion(version string) bool {
-	return strings.TrimSpace(version) == historicalMainVersion
-}
-
-func readBuildSettings() map[string]string {
-	settings := make(map[string]string)
+func readBuildMetadata() buildMetadata {
+	metadata := buildMetadata{settings: make(map[string]string)}
 	bi, ok := debug.ReadBuildInfo()
 	if !ok || bi == nil {
-		return settings
+		return metadata
 	}
+	metadata.moduleVersion = bi.Main.Version
 	for _, setting := range bi.Settings {
-		settings[setting.Key] = setting.Value
+		metadata.settings[setting.Key] = setting.Value
 	}
-	return settings
+	return metadata
+}
+
+func resolvedVersion(explicitVersion, moduleVersion string) string {
+	if version := strings.TrimSpace(explicitVersion); version != "" {
+		return version
+	}
+	if version := strings.TrimSpace(moduleVersion); isReleaseModuleVersion(version) {
+		return version
+	}
+	return DefaultDevVersion
+}
+
+func isReleaseModuleVersion(version string) bool {
+	baseVersion, _, _ := strings.Cut(version, "+")
+	return semverTagPattern.MatchString(version) && !pseudoVersionSuffixRE.MatchString(baseVersion)
 }
 
 func shortCommit(commit string) string {

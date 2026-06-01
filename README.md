@@ -47,11 +47,13 @@ chord-gateway --version
 
 ## Build identity
 
-`chord-gateway --version` prints a compact build identity. A normal local `go build` includes Go VCS fallback data when buildvcs is enabled, for example:
+`chord-gateway --version` prints a compact build identity. A normal local `go build` uses the development version and includes Go VCS fallback data when buildvcs is enabled, for example:
 
 ```text
-chord-gateway version dev 8da87da152e2 dirty
+chord-gateway version v0.3.2-dev* 8da87da152e2
 ```
+
+Tagged module installs such as `go install github.com/keakon/chord-gateway@v0.3.2` report the tag version, while local checkout builds fall back to the development version.
 
 Startup logs include the gateway build fields emitted on every launch (`gateway_version`, `gateway_commit`, `gateway_build_time`, `gateway_vcs_time`, `gateway_dirty`, and `go_version`). When a `chord headless` child process is spawned, the gateway logs the configured `chord_binary` path and its `chord_binary_mtime` to help distinguish gateway-version issues from child Chord binary issues.
 
