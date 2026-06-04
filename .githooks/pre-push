@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+has_doc_changes=0
+while IFS= read -r path; do
+  [[ -z "$path" ]] && continue
+  case "$path" in
+    *.md|*.markdown|docs/*|website/*|scripts/check-docs.py|scripts/sync-docs.mjs|.github/workflows/docs.yml)
+      has_doc_changes=1
+      break
+      ;;
+  esac
+done < <(git diff --name-only @{push}...HEAD 2>/dev/null || git diff --name-only HEAD~1...HEAD)
+
+if ! command -v goimports >/dev/null 2>&1; then
+  echo "pre-push: goimports not found in PATH" >&2
+  echo "install with: go install golang.org/x/tools/cmd/goimports@latest" >&2
+  exit 1
+fi
+
+if ! command -v staticcheck >/dev/null 2>&1; then
+  echo "pre-push: staticcheck not found in PATH" >&2
+  echo "install with: go install honnef.co/go/tools/cmd/staticcheck@latest" >&2
+  exit 1
+fi
+
+echo "pre-push: checking goimports"
+out="$(goimports -l -local github.com/keakon/chord-gateway .)"
+if [[ -n "$out" ]]; then
+  echo "pre-push: goimports formatting needed:" >&2
+  echo "$out" >&2
+  echo "Run: goimports -w -local github.com/keakon/chord-gateway ." >&2
+  exit 1
+fi
+
+echo "pre-push: running go vet"
+go vet ./...
+
+echo "pre-push: running staticcheck"
+staticcheck -checks 'all,-ST1000' ./...
+
+echo "pre-push: running short tests"
+go test -short -timeout=2m ./...
+
+if [[ "$has_doc_changes" -eq 1 ]]; then
+  echo "pre-push: running docs checks"
+  python3 scripts/check-docs.py
+fi
