@@ -17,6 +17,16 @@ cd "$repo_root"
 
 files="$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')"
 if [[ -n "${files}" ]]; then
+  while IFS= read -r f; do
+    [[ -z "${f}" ]] && continue
+    if ! git diff --quiet -- "${f}"; then
+      echo "pre-commit: ${f} has unstaged changes"
+      echo "pre-commit: refusing to format and re-stage partially staged Go files"
+      echo "pre-commit: stage the whole file, stash unstaged changes, or split the commit"
+      exit 1
+    fi
+  done <<< "${files}"
+
   count=0
   while IFS= read -r f; do
     [[ -z "${f}" ]] && continue
