@@ -102,7 +102,7 @@ gateway 的路由由 IM 平台决定：
 ## 最低限度安全提示
 
 - 把 IM 发送者视为对 workspace 的控制面访问者。
-- 飞书公网部署请配置 `owner_open_id` 和/或 `allowed_open_ids`。
+- 除在受控聊天中进行短时联调外，请为飞书配置 `owner_open_id` 和/或 `allowed_open_ids`。
 - 不要把 gateway 状态目录或密钥提交到版本控制。详见：[权限与安全边界](./permissions-and-safety_CN.md)
 
 ## 故障排查入口

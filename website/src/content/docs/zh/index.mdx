@@ -25,6 +25,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
   </Card>
   <Card title="本地优先边界" icon="seti:lock">
     Chord 进程、工作区文件、运行时状态和凭据都继续保留在你自己的机器或服务器上。
+    聊天消息仍会经过所选 IM 平台；模型服务的数据边界由 Chord 配置决定。
   </Card>
   <Card title="按聊天隔离" icon="document">
     gateway 按 workspace、IM 类型和 chat ID 路由，让不同聊天保留独立的 Chord session pin。
@@ -41,7 +42,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     ```bash
     go install github.com/keakon/chord-gateway@latest
     ```
-    请单独安装 Chord，并确保 `chord` 在 `PATH` 中；也可以在 gateway 配置里设置 `chord_path`。
+    请按 [Chord 官方说明](https://github.com/keakon/chord/blob/main/README_CN.md#三步完成设置)单独安装，并确保 `chord` 在 `PATH` 中；也可以在网关配置里设置 `chord_path`。
   </Card>
   <Card title="2. 选择 IM 平台" icon="random">
     从 [微信 iLink](/chord-gateway/zh/wechat/) 或 [飞书](/chord-gateway/zh/feishu/) 开始，然后在 `config.yaml` 中只保留需要的 adapter。

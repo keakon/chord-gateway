@@ -315,7 +315,7 @@ Before you leave the gateway running unattended:
 - Run `/status` from every IM chat you expect to use.
 - Confirm `chord_path` resolves to the intended Chord binary under the service environment.
 - Confirm the gateway log path and state directory are writable by the service user.
-- For Feishu, configure `owner_open_id` and/or `allowed_open_ids` before exposing the bot beyond local testing.
+- For Feishu, configure `owner_open_id` and/or `allowed_open_ids` before unattended use; localhost does not restrict who can message the bot.
 - Keep backups of `config.yaml` and any state directory that contains WeChat token files if you want login state to survive host replacement.
 - Know how to stop the service:
   - systemd user service: `systemctl --user stop chord-gateway`

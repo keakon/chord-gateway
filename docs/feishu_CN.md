@@ -16,9 +16,9 @@
 
 对新手最稳妥的首轮流程建议是：
 
-1. 先只配 **一个 workspace**。
-2. 先不要配置 `owner_open_id` / `allowed_open_ids`，先确认机器人能跑通。
-3. 等你在日志里看到第一条成功收消息记录后，再收紧访问控制。
+1. 先只配置 **一个工作区**。
+2. 只使用私聊或受控测试群进行联调。
+3. 如果为了获取自己的 ID 而暂时不配置 `owner_open_id` / `allowed_open_ids`，收到第一条消息后应立即补上允许名单并重启。
 
 ## 这条接入是什么
 
@@ -158,7 +158,7 @@ msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx c
 3. 把这条日志视为第一阶段成功标志：
    - `chat_id=oc_xxx` 表示 gateway 识别到了哪个飞书聊天
    - `open_id=ou_xxx` 表示是谁发来的消息
-4. 如果不是本地自用测试，建议尽快收敛访问控制：
+4. 日常使用前请收紧访问控制；网关在本机运行并不能限制谁可向机器人发消息：
 
 ```yaml
 ims:

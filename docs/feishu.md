@@ -17,8 +17,8 @@ Prepare these things first:
 Recommended first-run strategy for beginners:
 
 1. Start with **one workspace**.
-2. Start without `owner_open_id` / `allowed_open_ids` so you can confirm the bot works first.
-3. After you see the first successful message in logs, tighten access control.
+2. Use a private chat or controlled test group for setup.
+3. If you temporarily omit `owner_open_id` / `allowed_open_ids` to discover your ID, add the allowlist and restart immediately after the first message.
 
 ## What this integration is
 
@@ -158,7 +158,7 @@ msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx c
 3. Treat this log line as the first success checkpoint:
    - `chat_id=oc_xxx` tells you which Feishu chat the gateway saw
    - `open_id=ou_xxx` tells you who sent the message
-4. If you plan to deploy beyond local testing, lock down access:
+4. Before regular use, lock down access (localhost does not restrict who can message the bot):
 
 ```yaml
 ims:

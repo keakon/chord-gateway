@@ -315,7 +315,7 @@ Gateway 自身日志仍会写入 `<state_dir>/gateway.log`；`journalctl` 主要
 - 从每个预期使用的 IM 聊天里执行 `/status`。
 - `chord_path` 在 service 环境下指向预期 Chord 二进制。
 - gateway 日志路径和状态目录对 service 用户可写。
-- 飞书 bot 暴露给更多用户前，已配置 `owner_open_id` 和/或 `allowed_open_ids`。
+- 飞书已配置 `owner_open_id` 和/或 `allowed_open_ids`；网关在本机运行并不能限制谁可向机器人发消息。
 - 如果希望迁移机器后保留登录状态，请备份 `config.yaml`，以及包含微信 token 的状态目录。
 - 知道如何停止服务：
   - systemd user service：`systemctl --user stop chord-gateway`

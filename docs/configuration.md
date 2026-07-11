@@ -89,9 +89,9 @@ Feishu access control behavior:
 - If either field is set, only messages and commands from listed `open_id`s are processed; all others are silently ignored.
 - `owner_open_id` is automatically included in the effective allowlist.
 
-How to discover your `open_id`:
+How to discover your `open_id` during controlled setup:
 
-1. Start the gateway without `owner_open_id` or `allowed_open_ids` (all users allowed by default).
+1. Use a private chat or controlled test group, then start the gateway without `owner_open_id` or `allowed_open_ids` (all users are temporarily allowed).
 2. Send a text message (`text` or `post`) from the Feishu chat.
 3. Check the gateway log for a line like:
 
@@ -209,62 +209,9 @@ That means different chats and different IMs keep separate pinned sessions, even
 
 If `session_pins_file` is not set, the store defaults to `<state_dir>/session-pins.json`.
 
-## Example: Bind a Feishu chat to a workspace with `/bind`
+## Feishu binding workflow
 
-Recommended workflow:
-
-1. Start the gateway with a single workspace and do not set `chat_bindings` yet.
-2. Create the target group in Feishu and add the app bot to that group.
-3. Send a text message (`text` or `post`) in the group.
-4. In that same chat, run `/bind <workspace_id> <path>`.
-5. The gateway updates only Feishu `chat_bindings` and `workspaces` in memory, then writes the same binding/workspace change back to the YAML config file.
-
-`/bind` accepts exactly two arguments. The path must start with `/`, `~`, a Windows drive prefix such as `C:\\` or `C:/`, or a UNC prefix such as `\\\\server\\share`; after expansion it must be accessible and must be a directory. YAML comments are preserved in common cases, but the file may be re-encoded with normalized formatting.
-
-Example command:
-
-```text
-/bind project-a ~/work/project-a
-```
-
-Manual YAML edits remain supported, but they still require a gateway restart to take effect.
-
-## Example: Discover a Feishu group `chat_id`
-
-When you prefer to fill `chat_bindings` manually, the recommended workflow is:
-
-1. Start the gateway with a single workspace and do not set `chat_bindings` yet.
-2. Create the target group in Feishu and add the app bot to that group.
-3. Send a text message (`text` or `post`) in the group. If your enterprise permissions only allow `@`-bot group messages, send `@bot your message`.
-4. In the gateway log, look for a record like:
-
-```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
-```
-
-5. Copy `chat_id=oc_xxx` and write it back into the config:
-
-```yaml
-ims:
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    chat_bindings:
-      oc_xxx: project-a
-workspaces:
-  project-a:
-    path: ~/work/project-a
-```
-
-Here:
-
-- `oc_xxx` is the real Feishu group `chat_id`
-- `project-a` is your own workspace ID under `workspaces`
-
-For a new group chat:
-
-- with a single workspace and empty `chat_bindings`, the new group routes to that only workspace automatically
-- with multiple workspaces, a new group that is missing from `chat_bindings` gets an explicit "not bound to any workspace" reply, and the gateway log includes the missing `chat_id`
+For the task-oriented `/bind` procedure and manual `chat_id` discovery, see [Feishu guide — Multi-workspace routing](./feishu.md#multi-workspace-routing-with-bind). This reference only defines the `chat_bindings` field and its constraints above.
 
 ## Example: Feishu Multi-Workspace
 

@@ -19,6 +19,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- Streamlined the bilingual quickstart around a single-workspace first-run path, linked the official Chord installation instructions, removed repeated Feishu binding procedures from the configuration reference, and clarified IM/model data boundaries and Feishu allowlist requirements.
 - Upgraded the documentation stack to Astro 7 and Starlight 0.41, aligned the declared Node.js baseline with CI, and refreshed transitive dependencies so the production dependency audit reports no known vulnerabilities.
 - Updated the Go toolchain requirement to 1.26.3 and refreshed third-party Go dependencies.
 - Done confirmation rendering now prefers explicit `done_report` / `done_reason` fields and treats plain text during a pending Done confirmation as the deny reason.

@@ -10,7 +10,7 @@
 - English: [README.md](./README.md)
 - 文档站: <https://keakon.github.io/chord-gateway/zh/>
 - 完整文档: [docs/index_CN.md](./docs/index_CN.md)
-- 运行要求: Go 1.26+，并且本机可用 `chord` 可执行文件
+- 运行要求：Go 1.26.3+，并且本机可用 `chord` 可执行文件
 
 ## 功能特性
 
@@ -37,33 +37,14 @@ go install github.com/keakon/chord-gateway@latest
 go build -o chord-gateway .
 ```
 
-请单独安装 Chord，并确保 `chord` 在 `PATH` 中可执行；也可以在 gateway 配置中设置 `chord_path`。由于 gateway 直接执行二进制文件，`chord_path` 不支持 shell alias。
+请先按 [Chord 官方安装说明](https://github.com/keakon/chord/blob/main/README_CN.md#三步完成设置)单独安装 Chord，并确保 `chord` 在 `PATH` 中可执行；也可以在网关配置中设置 `chord_path`。由于网关直接执行二进制文件，`chord_path` 不支持 shell alias。
 
-## Build identity
-
-`chord-gateway --version` 会输出紧凑的构建身份信息。启用 buildvcs 时，普通本地 `go build` 会使用开发版本号，并带上 Go 的 VCS 回退信息，例如：
-
-```text
-chord-gateway version v0.3.2-dev* 8da87da152e2
-```
-
-像 `go install github.com/keakon/chord-gateway@v0.3.2` 这样的 tagged module 安装会显示 tag 版本；本地 checkout 构建则回退到开发版本号。
-
-每次启动时，gateway 日志都会输出一组构建字段（`gateway_version`、`gateway_commit`、`gateway_build_time`、`gateway_vcs_time`、`gateway_dirty`、`go_version`）。当启动 `chord headless` 子进程时，gateway 还会记录配置的 `chord_binary` 路径及其 `chord_binary_mtime`，方便区分是 gateway 版本问题还是子 Chord 二进制问题。
-
-对于发布构建，可通过 ldflags 注入精确构建信息：
+验证两个程序均可用：
 
 ```bash
-go build -o chord-gateway \
-  -ldflags "\
-    -X github.com/keakon/chord-gateway/internal/buildinfo.Version=v0.1.0 \
-    -X github.com/keakon/chord-gateway/internal/buildinfo.Commit=$(git rev-parse HEAD) \
-    -X github.com/keakon/chord-gateway/internal/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-    -X github.com/keakon/chord-gateway/internal/buildinfo.Dirty=false" \
-  .
+chord-gateway --version
+chord --version
 ```
-
-仍然支持 `go build -o chord-gateway .`；只是如果没有显式注入，`gateway_build_time` 会是 `unknown`，而 `gateway_commit`、`gateway_vcs_time`、`gateway_dirty` 会在可用时从 Go build info 中回退获取。
 
 ## 快速开始
 
@@ -96,7 +77,7 @@ chord-gateway -f config.yaml
 
 ## 支持范围 / 已知限制
 
-- 源码构建需要 Go 1.26+，并且需要单独安装 `chord` 二进制；`chord-gateway` 不会内置 Chord。
+- 源码构建需要 Go 1.26.3+，并且需要单独安装 `chord` 二进制；`chord-gateway` 不会内置 Chord。
 - 当前 CI 会构建这些目标：`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`、`windows/amd64`。
 - 微信始终路由到一个 workspace。存在多个 workspace 时，必须通过 `ims.wechat.workspace_id` 指定微信使用哪个 workspace。
 - 飞书多 workspace 路由通过 `ims.feishu.chat_bindings` 把 chat ID 映射到 workspace ID。当前飞书入站处理只接受文本消息，非文本消息会被忽略。
@@ -137,7 +118,7 @@ chord-gateway -f config.yaml
 
 `chord-gateway` 会把 IM 消息路由到本地 `chord headless` 进程，而该进程可以与配置的工作区交互。请把 IM 访问视为对该工作区的控制面访问。
 
-公网飞书部署建议配置 allowlist（`owner_open_id` 和/或 `allowed_open_ids`）。请不要把飞书密钥、微信 token 文件（默认 `<state_dir>/wechat/token.json`，除非设置了 `ims.wechat.token_path`）或 gateway 状态目录提交到版本控制。详见 [docs/permissions-and-safety_CN.md](./docs/permissions-and-safety_CN.md) 和 [SECURITY_CN.md](./SECURITY_CN.md)。
+除在受控聊天中进行短时联调外，请为飞书配置允许名单（`owner_open_id` 和/或 `allowed_open_ids`）。即使网关运行在本机，也不代表只有本机用户能通过飞书向机器人发消息。请不要把飞书密钥、微信 token 文件（默认 `<state_dir>/wechat/token.json`，除非设置了 `ims.wechat.token_path`）或网关状态目录提交到版本控制。详见 [docs/permissions-and-safety_CN.md](./docs/permissions-and-safety_CN.md) 和 [SECURITY_CN.md](./SECURITY_CN.md)。
 
 ## License
 

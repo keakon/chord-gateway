@@ -89,9 +89,9 @@ workspaces:
 - 只要设置了其中任意一个字段，就只处理在 allowlist 中的用户的消息和命令，其他用户的消息会被静默忽略。
 - `owner_open_id` 会自动加入最终 allowlist。
 
-如何获取 `open_id`：
+如何在受控联调中获取 `open_id`：
 
-1. 先不设置 `owner_open_id` 和 `allowed_open_ids` 启动 gateway（默认允许所有用户）。
+1. 使用私聊或受控测试群，暂不设置 `owner_open_id` 和 `allowed_open_ids` 启动网关（此时会暂时允许所有用户）。
 2. 从飞书聊天中发送一条文本消息（`text` 或 `post`）。
 3. 在 gateway 日志中查找类似下面的记录：
 
@@ -207,62 +207,9 @@ workspaceID | imType | chatID
 
 如果未设置 `session_pins_file`，默认路径为 `<state_dir>/session-pins.json`。
 
-## 示例：用 `/bind` 绑定飞书聊天到 workspace
+## 飞书绑定流程
 
-推荐流程：
-
-1. 先用单 workspace 配置启动 gateway，不要填写 `chat_bindings`。
-2. 在飞书中创建目标群聊，并把应用机器人添加到该群。
-3. 在这个群里发送一条文本消息（`text` 或 `post`）。
-4. 直接在该聊天中执行 `/bind <workspace_id> <path>`。
-5. gateway 只会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`，并把对应的绑定/workspace 变更写回 YAML 配置文件。
-
-`/bind` 只接受两个参数。路径必须以 `/`、`~`、Windows 盘符前缀（如 `C:\\` 或 `C:/`）或 UNC 前缀（如 `\\\\server\\share`）开头；展开后必须可访问且必须是目录。常见 YAML 注释会保留，但文件格式可能被重新编码为规范化格式。
-
-示例命令：
-
-```text
-/bind project-a ~/work/project-a
-```
-
-手工编辑 YAML 仍然支持，但修改后仍需要重启 gateway 才会生效。
-
-## 示例：发现飞书群聊 `chat_id`
-
-当你更希望手工填写 `chat_bindings` 时，推荐按下面的顺序操作：
-
-1. 先用单 workspace 配置启动 gateway，不要填写 `chat_bindings`。
-2. 在飞书中创建目标群聊，并把应用机器人添加到该群。
-3. 在这个群里发送一条文本消息（`text` 或 `post`）。如果企业权限只允许群里 `@` 机器人消息，请使用 `@机器人 你的消息`。
-4. 在 gateway 日志中查找类似下面的记录：
-
-```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
-```
-
-5. 记录其中的 `chat_id=oc_xxx`，并把它填回配置：
-
-```yaml
-ims:
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    chat_bindings:
-      oc_xxx: project-a
-workspaces:
-  project-a:
-    path: ~/work/project-a
-```
-
-其中：
-
-- `oc_xxx` 是飞书群聊的真实 `chat_id`
-- `project-a` 是你自己在 `workspaces` 下定义的 workspace ID
-
-如果是新的群聊：
-
-- 单 workspace 且 `chat_bindings` 为空时，新群会自动进入这个唯一 workspace
-- 多 workspace 时，新群如果没有写入 `chat_bindings`，gateway 会回复未绑定 workspace 的错误，并在日志中标明对应 `chat_id`
+`/bind` 的任务型操作步骤和手工获取 `chat_id` 的方法见[飞书指南 — 多工作区路由](./feishu_CN.md#多工作区路由与-bind)。本参考页只说明上文 `chat_bindings` 字段的含义与约束。
 
 ## 示例：飞书多工作区
 

@@ -8,6 +8,8 @@ The gateway is not a multi-tenant sandbox.
 
 Treat an allowed IM sender as someone who can interact with Chord in the configured workspace. Depending on Chord configuration and permissions, that may include reading files, editing files, running tools, or requesting model actions.
 
+Workspace files and the Chord process stay on the gateway host, but chat messages and replies still pass through the selected IM platform. Data sent to model providers is governed by the Chord configuration.
+
 ## Recommended deployment practices
 
 - Use a dedicated machine, user account, container, or VM for gateway deployments when possible.
@@ -18,7 +20,7 @@ Treat an allowed IM sender as someone who can interact with Chord in the configu
 
 ## Feishu access control
 
-For Feishu, configure `owner_open_id` and/or `allowed_open_ids` when deploying beyond local testing.
+Except during brief setup in a controlled chat, configure `owner_open_id` and/or `allowed_open_ids` for Feishu. The bot receives messages through Feishu's cloud service, so running the gateway on localhost does not restrict who can reach it.
 
 ```yaml
 ims:
@@ -36,6 +38,8 @@ Behavior:
 - If either field is set, only listed `open_id`s are allowed.
 - `owner_open_id` is included in the effective allowlist.
 - Rejected messages are silently ignored.
+
+If you must leave the allowlist empty to discover your `open_id`, use a private chat or controlled test group, copy the ID from the gateway log, configure the allowlist, and restart immediately.
 
 ## Credential handling
 

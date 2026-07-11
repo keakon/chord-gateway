@@ -102,7 +102,7 @@ If there is exactly one workspace, both `workspace_id` (WeChat) and `chat_bindin
 ## Security notes (minimum)
 
 - Treat IM senders as control-plane users for the configured workspace.
-- For Feishu beyond local testing, configure `owner_open_id` and/or `allowed_open_ids`.
+- Except during brief setup in a controlled chat, configure `owner_open_id` and/or `allowed_open_ids` for Feishu.
 - Do not commit gateway state or secrets. See: [Permissions & safety](./permissions-and-safety.md)
 
 ## Troubleshooting entry points

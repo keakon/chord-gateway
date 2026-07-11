@@ -25,6 +25,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
   </Card>
   <Card title="Local-first boundary" icon="seti:lock">
     Chord processes, workspace files, runtime state, and credentials stay on your machine or server.
+    Chat messages still pass through the selected IM platform, and model-provider data handling follows your Chord configuration.
   </Card>
   <Card title="Per-chat isolation" icon="document">
     Gateway routes by workspace, IM type, and chat ID so different chats keep separate pinned Chord sessions.
@@ -41,7 +42,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     ```bash
     go install github.com/keakon/chord-gateway@latest
     ```
-    Install Chord separately and make sure `chord` is on `PATH`, or set `chord_path` in the gateway config.
+    Install [Chord](https://github.com/keakon/chord#three-step-setup) separately and make sure `chord` is on `PATH`, or set `chord_path` in the gateway config.
   </Card>
   <Card title="2. Choose an IM platform" icon="random">
     Start with [WeChat iLink](/chord-gateway/wechat/) or [Feishu](/chord-gateway/feishu/), then keep only the adapter you need in `config.yaml`.

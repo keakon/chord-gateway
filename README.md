@@ -10,7 +10,7 @@
 - Chinese version: [README_CN.md](./README_CN.md)
 - Documentation site: <https://keakon.github.io/chord-gateway/>
 - Full documentation: [docs/index.md](./docs/index.md)
-- Requires: Go 1.26+ and a working `chord` binary
+- Requires: Go 1.26.3+ and a working `chord` binary
 
 ## Features
 
@@ -37,39 +37,14 @@ Or build from a local checkout:
 go build -o chord-gateway .
 ```
 
-Install Chord separately and make sure `chord` is available in `PATH`, or set `chord_path` in the gateway config. Shell aliases are not supported for `chord_path` because the gateway executes the binary directly.
+Install [Chord](https://github.com/keakon/chord#three-step-setup) separately and make sure `chord` is available in `PATH`, or set `chord_path` in the gateway config. Shell aliases are not supported for `chord_path` because the gateway executes the binary directly.
 
 Verify the installation:
 
 ```bash
 chord-gateway --version
+chord --version
 ```
-
-## Build identity
-
-`chord-gateway --version` prints a compact build identity. A normal local `go build` uses the development version and includes Go VCS fallback data when buildvcs is enabled, for example:
-
-```text
-chord-gateway version v0.3.2-dev* 8da87da152e2
-```
-
-Tagged module installs such as `go install github.com/keakon/chord-gateway@v0.3.2` report the tag version, while local checkout builds fall back to the development version.
-
-Startup logs include the gateway build fields emitted on every launch (`gateway_version`, `gateway_commit`, `gateway_build_time`, `gateway_vcs_time`, `gateway_dirty`, and `go_version`). When a `chord headless` child process is spawned, the gateway logs the configured `chord_binary` path and its `chord_binary_mtime` to help distinguish gateway-version issues from child Chord binary issues.
-
-For release builds, inject exact build metadata with ldflags:
-
-```bash
-go build -o chord-gateway \
-  -ldflags "\
-    -X github.com/keakon/chord-gateway/internal/buildinfo.Version=v0.1.0 \
-    -X github.com/keakon/chord-gateway/internal/buildinfo.Commit=$(git rev-parse HEAD) \
-    -X github.com/keakon/chord-gateway/internal/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-    -X github.com/keakon/chord-gateway/internal/buildinfo.Dirty=false" \
-  .
-```
-
-Plain `go build -o chord-gateway .` remains supported; `gateway_build_time` will be `unknown` unless injected, while `gateway_commit`, `gateway_vcs_time`, and `gateway_dirty` come from Go build info when available.
 
 ## Quickstart
 
@@ -102,7 +77,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 
 ## Support scope / known limitations
 
-- Source builds require Go 1.26+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
+- Source builds require Go 1.26.3+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
 - CI currently builds these targets: `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, and `windows/amd64`.
 - WeChat always routes to one workspace. When multiple workspaces exist, set `ims.wechat.workspace_id` to choose the workspace used by WeChat.
 - Feishu multi-workspace routing uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.
@@ -143,7 +118,7 @@ See [docs/usage.md](./docs/usage.md) for full command behavior and session seman
 
 `chord-gateway` routes IM messages to a local `chord headless` process that can interact with the configured workspace. Treat IM access as control-plane access to that workspace.
 
-For public Feishu deployments, configure an allowlist (`owner_open_id` and/or `allowed_open_ids`). Keep Feishu secrets, WeChat token files (`<state_dir>/wechat/token.json` unless `ims.wechat.token_path` is set), and the gateway state directory out of version control. See [docs/permissions-and-safety.md](./docs/permissions-and-safety.md) and [SECURITY.md](./SECURITY.md).
+Except during brief testing in a controlled chat, configure a Feishu allowlist (`owner_open_id` and/or `allowed_open_ids`). Running the gateway locally does not restrict who can message the bot through Feishu. Keep Feishu secrets, WeChat token files (`<state_dir>/wechat/token.json` unless `ims.wechat.token_path` is set), and the gateway state directory out of version control. See [docs/permissions-and-safety.md](./docs/permissions-and-safety.md) and [SECURITY.md](./SECURITY.md).
 
 ## License
 
