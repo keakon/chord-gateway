@@ -143,7 +143,7 @@ func makeFeishuCardActionEvent(openID, chatID, requestID, action string) *larkca
 func stringPtr(s string) *string { return &s }
 
 func TestFeishuMessageEvent_EnqueuesAndDispatches(t *testing.T) {
-	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
 	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
 	defer a.dedupe.Close()
 	defer cancel()
@@ -160,7 +160,7 @@ func TestFeishuMessageEvent_EnqueuesAndDispatches(t *testing.T) {
 }
 
 func TestFeishuMessageEvent_DuplicateDedup(t *testing.T) {
-	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
 	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
 	defer a.dedupe.Close()
 	defer cancel()
@@ -230,7 +230,7 @@ func TestFeishuMessageEvent_AllowlistFilter(t *testing.T) {
 	}
 }
 
-func TestFeishuMessageEvent_NoFilterWhenNotConfigured(t *testing.T) {
+func TestFeishuMessageEvent_DeniesWhenNotConfigured(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
 	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
 	defer a.dedupe.Close()
@@ -240,8 +240,8 @@ func TestFeishuMessageEvent_NoFilterWhenNotConfigured(t *testing.T) {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if dispatched.Load() != 1 {
-		t.Fatalf("any user should pass when no filter configured, got %d", dispatched.Load())
+	if dispatched.Load() != 0 {
+		t.Fatalf("empty allowlist should deny all users, got %d", dispatched.Load())
 	}
 }
 
@@ -413,7 +413,7 @@ func TestFeishuCardActionEvent_UsesRequestIDAndInternalActionAsMessageID(t *test
 }
 
 func TestFeishuMessageEvent_ContentMatchesText(t *testing.T) {
-	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", AllowedOpenIDs: []string{"ou_user"}}
 	a := testFeishuAdapter(t, fc)
 	defer a.dedupe.Close()
 
@@ -432,7 +432,7 @@ func TestFeishuMessageEvent_ContentMatchesText(t *testing.T) {
 }
 
 func TestFeishuMessageEvent_PostContentDispatchesPlainText(t *testing.T) {
-	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", AllowedOpenIDs: []string{"ou_user"}}
 	a := testFeishuAdapter(t, fc)
 	defer a.dedupe.Close()
 

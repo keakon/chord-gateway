@@ -442,8 +442,8 @@ func TestConfigHelpers(t *testing.T) {
 
 	t.Run("Feishu allowlist", func(t *testing.T) {
 		fc := &FeishuConfig{}
-		if !fc.IsOpenIDAllowed("any") {
-			t.Fatal("empty allowlist should allow")
+		if fc.IsOpenIDAllowed("any") {
+			t.Fatal("empty allowlist should deny")
 		}
 		fc.OwnerOpenID = "ou_owner"
 		if !fc.IsOpenIDAllowed("ou_owner") {
@@ -458,6 +458,12 @@ func TestConfigHelpers(t *testing.T) {
 		}
 		if fc.IsOpenIDAllowed("ou_x") {
 			t.Fatal("non-allowlisted user should be denied")
+		}
+		if !fc.IsOwner("ou_owner") {
+			t.Fatal("configured owner should be recognized")
+		}
+		if fc.IsOwner("ou_a") || fc.IsOwner("") || (*FeishuConfig)(nil).IsOwner("ou_owner") {
+			t.Fatal("non-owner, empty, and nil config should not be recognized as owner")
 		}
 	})
 }

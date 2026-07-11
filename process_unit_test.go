@@ -84,6 +84,89 @@ func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	}
 }
 
+func TestChordManagerLifecycleLocksAreScopedAndReleased(t *testing.T) {
+	mgr := &ChordManager{}
+	key1 := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	key2 := (processKey{workspaceID: "ws2", imType: "wechat", chatID: "chat-2"}).String()
+
+	releaseKey1 := mgr.acquireKeyLock(key1)
+	if got := lifecycleKeyLockCount(mgr); got != 1 {
+		t.Fatalf("lifecycle lock count = %d, want 1", got)
+	}
+	releaseKey2 := mgr.acquireKeyLock(key2)
+	if got := lifecycleKeyLockCount(mgr); got != 2 {
+		t.Fatalf("lifecycle lock count = %d, want 2", got)
+	}
+	releaseKey2()
+	releaseKey1()
+	if got := lifecycleKeyLockCount(mgr); got != 0 {
+		t.Fatalf("released lifecycle locks retained: %d", got)
+	}
+}
+
+func TestChordManagerStopWaitsForSameKeyLifecycleOperation(t *testing.T) {
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	p := &ChordProcess{key: key, stdin: &captureWriteCloser{}}
+	mgr.procs[key] = p
+
+	releaseKeyLock := mgr.acquireKeyLock(key)
+	stopped := make(chan struct{})
+	go func() {
+		mgr.StopProcessKey(key)
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+		t.Fatal("StopProcessKey completed during another lifecycle operation for the same key")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := mgr.GetProcessForKey(key); got != p {
+		t.Fatalf("process changed while lifecycle lock was held: got %#v, want %#v", got, p)
+	}
+
+	releaseKeyLock()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("StopProcessKey did not complete after lifecycle operation released the key")
+	}
+	if got := mgr.GetProcessForKey(key); got != nil {
+		t.Fatalf("process remains after StopProcessKey: %#v", got)
+	}
+	if got := lifecycleKeyLockCount(mgr); got != 0 {
+		t.Fatalf("released lifecycle lock retained: %d", got)
+	}
+}
+
+func TestChordManagerDifferentKeyLifecycleOperationsRemainParallel(t *testing.T) {
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	key1 := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	key2 := (processKey{workspaceID: "ws2", imType: "wechat", chatID: "chat-2"}).String()
+	mgr.procs[key2] = &ChordProcess{key: key2, stdin: &captureWriteCloser{}}
+
+	releaseKey1 := mgr.acquireKeyLock(key1)
+	defer releaseKey1()
+
+	stopped := make(chan struct{})
+	go func() {
+		mgr.StopProcessKey(key2)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("operation for a different process key was unnecessarily serialized")
+	}
+}
+
+func lifecycleKeyLockCount(mgr *ChordManager) int {
+	mgr.keyLocksMu.Lock()
+	defer mgr.keyLocksMu.Unlock()
+	return len(mgr.keyLocks)
+}
+
 func TestChordManagerGetOrSpawnForKeyMissingWorkspace(t *testing.T) {
 	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
 	mgr.cfg.Store(&config.Config{})

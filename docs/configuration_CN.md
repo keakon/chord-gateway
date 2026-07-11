@@ -71,7 +71,7 @@ workspaces:
 |---|---|---|---|---|
 | `app_id` | string | 是 | - | 飞书应用 ID |
 | `app_secret` | string | 是 | - | 飞书应用密钥 |
-| `owner_open_id` | string | 否 | - | owner open_id；如果设置，会自动加入有效 allowlist |
+| `owner_open_id` | string | 条件必填 | - | owner open_id；除非 `allowed_open_ids` 非空，否则必须设置 |
 | `allowed_open_ids` | array | 否 | `[]` | 额外允许的 open_id 列表 |
 | `chat_bindings` | object | 条件必填 | - | 从飞书 chat ID 到 workspace ID 的映射。存在多个 workspace 时必须设置。 |
 
@@ -85,21 +85,21 @@ workspaces:
 
 飞书访问控制行为：
 
-- 如果 `owner_open_id` 和 `allowed_open_ids` 都未设置，则默认允许所有用户——不做任何过滤。
-- 只要设置了其中任意一个字段，就只处理在 allowlist 中的用户的消息和命令，其他用户的消息会被静默忽略。
+- 如果 `owner_open_id` 和 `allowed_open_ids` 都未设置，则忽略所有消息和命令。
+- 只处理 allowlist 中用户的消息和命令；其他用户会被忽略，并仅用其 `open_id` 和 `chat_id` 记录审计日志。
 - `owner_open_id` 会自动加入最终 allowlist。
 
 如何在受控联调中获取 `open_id`：
 
-1. 使用私聊或受控测试群，暂不设置 `owner_open_id` 和 `allowed_open_ids` 启动网关（此时会暂时允许所有用户）。
+1. 使用私聊或受控测试群，暂不设置 `owner_open_id` 和 `allowed_open_ids` 启动网关。此状态下不会处理任何消息。
 2. 从飞书聊天中发送一条文本消息（`text` 或 `post`）。
 3. 在 gateway 日志中查找类似下面的记录：
 
 ```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
+msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
 ```
 
-4. 记录其中的 `open_id=ou_xxx`，将其设置为 `owner_open_id` 或添加到 `allowed_open_ids`。
+4. 审计日志会刻意省略不受信任的消息正文。记录其中的 `open_id=ou_xxx`，将其设置为 `owner_open_id` 或添加到 `allowed_open_ids`。
 5. 重启 gateway 使 allowlist 变更生效。（`/bind` 只更新飞书 `chat_bindings` 和 `workspaces`，不会重载 allowlist 字段。）
 
 你也可以通过飞书管理后台或[飞书开放平台 API](https://open.feishu.cn/document/server-docs/authentication/access-token/tenant_access_token) 获取 `open_id`。

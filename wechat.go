@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -518,10 +519,14 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 			fmt.Println("New QR code (scan again):")
 			fmt.Printf("  %s\n", newQR.QRCodeImgContent)
 		case "confirmed":
+			baseURL, err := a.trustedLoginBaseURL(statusResp.BaseURL)
+			if err != nil {
+				return err
+			}
 			log.Infof("wechat ilink: login successful!")
 			tok := &TokenData{
 				Token:     statusResp.BotToken,
-				BaseURL:   statusResp.BaseURL,
+				BaseURL:   baseURL,
 				AccountID: statusResp.ILinkBotID,
 				UserID:    statusResp.ILinkUserID,
 				SavedAt:   time.Now().Format(time.RFC3339),
@@ -536,6 +541,29 @@ func (a *WechatAdapter) login(ctx context.Context) error {
 	}
 
 	return fmt.Errorf("login timeout (%v)", ilinkLoginTimeout)
+}
+
+func (a *WechatAdapter) trustedLoginBaseURL(raw string) (string, error) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return "", fmt.Errorf("wechat ilink: invalid login base URL")
+	}
+	configured := ""
+	if a.imCfg.Wechat != nil {
+		configured = strings.TrimRight(strings.TrimSpace(a.imCfg.Wechat.BaseURL), "/")
+	}
+	if configured != "" {
+		cu, parseErr := url.Parse(configured)
+		if parseErr != nil || !strings.EqualFold(cu.Scheme, u.Scheme) || !strings.EqualFold(cu.Host, u.Host) {
+			return "", fmt.Errorf("wechat ilink: login base URL does not match configured endpoint")
+		}
+		return raw, nil
+	}
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("wechat ilink: login base URL must use https")
+	}
+	return raw, nil
 }
 
 func (a *WechatAdapter) getBotQRCode() (*ilinkQRCodeResponse, error) {

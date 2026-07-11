@@ -71,7 +71,7 @@ Task guide: [Feishu guide](./feishu.md)
 |---|---|---|---|---|
 | `app_id` | string | yes | - | Feishu app ID |
 | `app_secret` | string | yes | - | Feishu app secret |
-| `owner_open_id` | string | no | - | Owner `open_id`; if set, it is part of the effective allowlist |
+| `owner_open_id` | string | conditional | - | Owner `open_id`; required unless `allowed_open_ids` is non-empty |
 | `allowed_open_ids` | array | no | `[]` | Additional allowed `open_id`s |
 | `chat_bindings` | object | conditional | - | Mapping from Feishu chat ID to workspace ID. Required when more than one workspace exists. |
 
@@ -85,21 +85,21 @@ Feishu uses long connection mode to receive events:
 
 Feishu access control behavior:
 
-- If neither `owner_open_id` nor `allowed_open_ids` is set, all users are allowed — no filtering is applied.
-- If either field is set, only messages and commands from listed `open_id`s are processed; all others are silently ignored.
+- If neither `owner_open_id` nor `allowed_open_ids` is set, all messages and commands are ignored.
+- Only messages and commands from listed `open_id`s are processed; all others are ignored after an audit log records only their `open_id` and `chat_id`.
 - `owner_open_id` is automatically included in the effective allowlist.
 
 How to discover your `open_id` during controlled setup:
 
-1. Use a private chat or controlled test group, then start the gateway without `owner_open_id` or `allowed_open_ids` (all users are temporarily allowed).
+1. Use a private chat or controlled test group, then start the gateway without `owner_open_id` or `allowed_open_ids`. No messages will be processed in this state.
 2. Send a text message (`text` or `post`) from the Feishu chat.
 3. Check the gateway log for a line like:
 
 ```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
+msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
 ```
 
-4. Copy the `open_id=ou_xxx` value and set it as `owner_open_id` or add it to `allowed_open_ids`.
+4. The audit log intentionally omits the untrusted message content. Copy the `open_id=ou_xxx` value and set it as `owner_open_id` or add it to `allowed_open_ids`.
 5. Restart the gateway for the allowlist change to take effect. (`/bind` only updates Feishu `chat_bindings` and `workspaces`; it does not reload allowlist fields.)
 
 You can also find `open_id` values through the Feishu admin console or the [Feishu Open Platform API](https://open.feishu.cn/document/server-docs/authentication/access-token/tenant_access_token).

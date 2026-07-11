@@ -125,6 +125,41 @@ func TestWechatAdapter_HelperMethods(t *testing.T) {
 	})
 }
 
+func TestWechatAdapterTrustedLoginBaseURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		raw        string
+		want       string
+		wantErr    bool
+	}{
+		{name: "unconfigured HTTPS endpoint", raw: " https://api.example.com/ ", want: "https://api.example.com"},
+		{name: "configured endpoint matches case-insensitively", configured: "HTTPS://API.EXAMPLE.COM/root/", raw: "https://api.example.com/v2/", want: "https://api.example.com/v2"},
+		{name: "userinfo rejected", raw: "https://user@api.example.com", wantErr: true},
+		{name: "missing host rejected", raw: "https:///path", wantErr: true},
+		{name: "unconfigured HTTP rejected", raw: "http://api.example.com", wantErr: true},
+		{name: "configured scheme mismatch rejected", configured: "https://api.example.com", raw: "http://api.example.com", wantErr: true},
+		{name: "configured host mismatch rejected", configured: "https://api.example.com", raw: "https://evil.example.com", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newTestWechatAdapter(t)
+			a.imCfg.Wechat.BaseURL = tt.configured
+			got, err := a.trustedLoginBaseURL(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("trustedLoginBaseURL(%q) = %q, want error", tt.raw, got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("trustedLoginBaseURL(%q) = %q, %v; want %q", tt.raw, got, err, tt.want)
+			}
+		})
+	}
+}
+
 func TestWechatAdapter_APIHelpers(t *testing.T) {
 	t.Run("apiGet and apiPost send expected request", func(t *testing.T) {
 		var gotMethod, gotPath, gotAuth string

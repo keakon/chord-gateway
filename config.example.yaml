@@ -26,11 +26,11 @@ ims:
   # feishu:
   #   app_id: cli_xxx
   #   app_secret: xxx
-  #   # owner_open_id: ou_owner_xxx     # Only this user's messages/commands are processed.
+  #   owner_open_id: ou_owner_xxx       # Required unless allowed_open_ids is non-empty.
   #   # allowed_open_ids:               # Additional allowed users (owner is auto-included).
   #   #   - ou_user2
-  #   # To discover your open_id: send a message, then check gateway log for
-  #   #   open_id=ou_xxx in the "feishu: received message" line.
+  #   # To discover your open_id safely, start once without an allowlist, send a
+  #   # message, and copy open_id=ou_xxx from the "non-allowed open_id" log line.
   #   chat_bindings:
   #     oc_chat_project_a: project-a
   #     oc_chat_project_b: project-b

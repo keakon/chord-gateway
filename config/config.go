@@ -77,13 +77,10 @@ type FeishuConfig struct {
 }
 
 // IsOpenIDAllowed checks if an open_id is allowed to send messages.
-// If neither owner_open_id nor allowed_open_ids is configured, all are allowed.
+// An empty allowlist denies access.
 func (fc *FeishuConfig) IsOpenIDAllowed(openID string) bool {
-	if fc == nil {
-		return true
-	}
-	if fc.OwnerOpenID == "" && len(fc.AllowedOpenIDs) == 0 {
-		return true
+	if fc == nil || strings.TrimSpace(openID) == "" {
+		return false
 	}
 	if fc.OwnerOpenID == openID {
 		return true
@@ -94,6 +91,11 @@ func (fc *FeishuConfig) IsOpenIDAllowed(openID string) bool {
 		}
 	}
 	return false
+}
+
+// IsOwner reports whether openID is the explicitly configured owner.
+func (fc *FeishuConfig) IsOwner(openID string) bool {
+	return fc != nil && strings.TrimSpace(openID) != "" && fc.OwnerOpenID == openID
 }
 
 // Workspace defines a project directory.

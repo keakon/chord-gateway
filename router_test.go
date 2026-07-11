@@ -428,7 +428,7 @@ func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.
 	}
 }
 
-func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
+func TestHandleBindSelectsExistingWorkspaceAndBinding(t *testing.T) {
 	dir := t.TempDir()
 	defaultDir := filepath.Join(dir, "default")
 	projectDir := filepath.Join(dir, "project-a")
@@ -438,7 +438,7 @@ func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
 		}
 	}
 	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\nworkspaces:\n  default:\n    path: " + defaultDir + "\n"
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: " + defaultDir + "\n  project-a:\n    path: " + projectDir + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_user", Text: "/bind project-a \"" + projectDir + "\""})
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_owner", Text: "/bind project-a \"" + projectDir + "\""})
 
 	msg := sender.lastMessage().text
 	if !strings.Contains(msg, "Bound") || !strings.Contains(msg, "project-a") {
@@ -483,7 +483,7 @@ func TestHandleBindCreatesWorkspaceAndBinding(t *testing.T) {
 func TestHandleBindRejectsInvalidQuotedPath(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\nworkspaces:\n  default:\n    path: ~/default\n"
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: ~/default\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func TestHandleBindRejectsInvalidQuotedPath(t *testing.T) {
 	r.SetConfigFile(configPath)
 	r.SetAdapter(sender)
 
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_user", Text: "/bind project-a \"~/work/project a"})
+	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_owner", Text: "/bind project-a \"~/work/project a"})
 
 	if got := sender.lastMessage().text; got != "⚠️ Usage: /bind <workspace_id> <path>" {
 		t.Fatalf("message = %q", got)
@@ -522,7 +522,7 @@ func TestHandleBindFromDefaultWorkspaceStopsOldProcess(t *testing.T) {
 		}
 	}
 	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: " + defaultDir + "\nchord_path: " + fakeChord + "\n"
+	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: " + defaultDir + "\n  project-a:\n    path: " + projectDir + "\nchord_path: " + fakeChord + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -721,7 +721,7 @@ func TestHandleBindRejectsPathMismatch(t *testing.T) {
 	// Try to bind to ws1 with a different path — should error.
 	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws1 \"" + differentDir + "\""})
 	msg := sender.lastMessage().text
-	if !strings.Contains(msg, "❌") || !strings.Contains(msg, "refusing to overwrite") {
+	if !strings.Contains(msg, "⛔") || !strings.Contains(msg, "existing workspace") {
 		t.Fatalf("expected path mismatch error, got: %q", msg)
 	}
 }

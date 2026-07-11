@@ -18,7 +18,7 @@ Recommended first-run strategy for beginners:
 
 1. Start with **one workspace**.
 2. Use a private chat or controlled test group for setup.
-3. If you temporarily omit `owner_open_id` / `allowed_open_ids` to discover your ID, add the allowlist and restart immediately after the first message.
+3. Start once without an allowlist to discover your ID from the rejected-message audit log; messages are not processed until you configure the allowlist and restart.
 
 ## What this integration is
 
@@ -115,6 +115,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner_open_id: ou_xxx
 workspaces:
   default:
     path: /path/to/project
@@ -127,6 +128,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner_open_id: ou_xxx
 workspaces:
   default:
     path: /path/to/project
@@ -148,17 +150,18 @@ What to expect on startup:
 
 ## Step 5: Verify inbound events and obtain `open_id`
 
-1. Send a **text message** (`text` or `post`) to the bot (DM or group).
-2. Check gateway logs for a line like:
+If you do not know your `open_id`, first omit `owner_open_id`, start the gateway, and send a **text message** (`text` or `post`) to the bot. The message will not be processed.
+
+1. Check gateway logs for a line like:
 
 ```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
+msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
 ```
 
-3. Treat this log line as the first success checkpoint:
+2. Treat this content-free audit log as the first success checkpoint:
    - `chat_id=oc_xxx` tells you which Feishu chat the gateway saw
    - `open_id=ou_xxx` tells you who sent the message
-4. Before regular use, lock down access (localhost does not restrict who can message the bot):
+3. Stop the gateway and configure the owner (localhost does not restrict who can message the bot):
 
 ```yaml
 ims:

@@ -478,10 +478,10 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		r.sendText(chatID, "❌ Feishu configuration not loaded.")
 		return
 	}
-	// Permission check: only allowed open_ids can execute /bind.
+	// Binding changes workspace routing and is owner-only.
 	feishuCfg := imCfg.Feishu
-	if feishuCfg != nil && !feishuCfg.IsOpenIDAllowed(msg.SenderID) {
-		log.Warnf("bind: sender not allowed, ignoring sender_id=%v chat_id=%v", msg.SenderID, chatID)
+	if !feishuCfg.IsOwner(msg.SenderID) {
+		log.Warnf("bind: sender is not owner, ignoring sender_id=%v chat_id=%v", msg.SenderID, chatID)
 		return
 	}
 	if cmd.Invalid || strings.TrimSpace(cmd.WorkspaceID) == "" || strings.TrimSpace(cmd.Path) == "" {
@@ -492,12 +492,26 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		r.sendText(chatID, "❌ Cannot update config: config file path not set.")
 		return
 	}
+	configuredWorkspace := cfg.WorkspaceByID(cmd.WorkspaceID)
+	if configuredWorkspace == nil || configuredWorkspace.Path != config.Expand(cmd.Path) {
+		r.sendText(chatID, "⛔ /bind can only select an existing workspace with its configured path.")
+		return
+	}
 
 	oldWorkspaceID := currentFeishuBinding(cfg, chatID)
 	hadOldBinding := oldWorkspaceID != ""
 	if oldWorkspaceID == "" {
 		if oldWS, err := cfg.ResolveWorkspace(msg.IMType, chatID); err == nil && oldWS != nil {
 			oldWorkspaceID = oldWS.ID
+		}
+	}
+	if oldWorkspaceID == "" {
+		for key, knownChatID := range r.snapshotLastKeyChatID() {
+			workspaceID, imType, _ := parseProcessKey(key)
+			if knownChatID == chatID && config.NormalizeIMType(imType) == "feishu" {
+				oldWorkspaceID = workspaceID
+				break
+			}
 		}
 	}
 

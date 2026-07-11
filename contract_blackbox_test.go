@@ -36,7 +36,7 @@ func TestChordHeadlessContract_StatusAndOptionalEvents(t *testing.T) {
 	provider := newMockOpenAIProvider()
 	provider.enqueue(sseScenario{
 		chunks: []string{
-			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"TodoWrite"}}]}}]}`,
+			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"todo_write"}}]}}]}`,
 			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"todos\":[{\"id\":\"todo-1\",\"content\":\"Review current state\",\"status\":\"in_progress\",\"active_form\":\"reviewing current state\"}]}"}}]}}]}`,
 			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"finish_reason":"tool_calls"}]}`,
 			`data: [DONE]`,

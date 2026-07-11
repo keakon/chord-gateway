@@ -45,6 +45,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner_open_id: ou_xxx
 workspaces:
   default:
     path: /path/to/project
@@ -54,7 +55,7 @@ idle_timeout: 30m
 
 启动网关前，请在飞书后台选择长连接接收事件、订阅 `im.message.receive_v1`、把机器人加入私聊或受控测试群，并发布应用版本。需要交互式确认和提问卡片时，再添加 `card.action.trigger`。具体权限与后台操作见 [飞书接入指南](./docs/feishu_CN.md)。
 
-这份最小配置会暂时允许所有飞书发送者，仅适合受控联调。收到第一条消息后，从网关日志复制自己的 `open_id`，将其配置为 `owner_open_id` 并重启。即使网关运行在本机，也不代表只有本机用户能通过飞书访问机器人。
+生成最终配置前，可以安全获取自己的 ID：先不配置 `owner_open_id` 和 `allowed_open_ids` 启动一次，发送一条文本消息，然后从 `message from non-allowed open_id` 日志中复制 `open_id=ou_xxx`。该日志不包含消息正文，消息也不会被处理。停止网关，把该值配置为 `owner_open_id` 后再启动。即使网关运行在本机，也不代表只有本机用户能通过飞书访问机器人。
 
 ## 3. 启动并验证
 
@@ -64,11 +65,11 @@ chord-gateway -f config.yaml
 
 启动后：
 
-1. 完成微信扫码登录，或从受控飞书聊天发送一条文本消息。
+1. 完成微信扫码登录，或从飞书 owner 账号发送一条文本消息。
 2. 发送 `/status`，确认显示的是预期工作区。
 3. 发送普通文本请求，开始使用 Chord。
 
-使用飞书时，请从 `feishu: received message` 日志中复制 `open_id=ou_xxx`，将其添加为 `owner_open_id`，并在日常使用前重启网关。
+使用飞书时，还应确认 allowlist 之外账号发送的消息会被忽略。
 
 ## 4. 稳定运行后再增加高级路由
 

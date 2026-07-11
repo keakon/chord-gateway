@@ -88,12 +88,45 @@ func (t *tailBuffer) String() string {
 
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
-	mu      sync.Mutex
-	cfg     atomic.Pointer[config.Config]
-	procs   map[string]*ChordProcess // processKey.String() → active process
-	onEvent func(key string, eventType string, state ControlState)
+	mu            sync.Mutex
+	lifecycleGate sync.RWMutex
+	keyLocksMu    sync.Mutex
+	keyLocks      map[string]*lifecycleKeyLock
+	cfg           atomic.Pointer[config.Config]
+	procs         map[string]*ChordProcess // processKey.String() → active process
+	onEvent       func(key string, eventType string, state ControlState)
 
 	pins *sessionPinStore
+}
+
+type lifecycleKeyLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (m *ChordManager) acquireKeyLock(key string) func() {
+	m.keyLocksMu.Lock()
+	if m.keyLocks == nil {
+		m.keyLocks = make(map[string]*lifecycleKeyLock)
+	}
+	lock := m.keyLocks[key]
+	if lock == nil {
+		lock = &lifecycleKeyLock{}
+		m.keyLocks[key] = lock
+	}
+	lock.refs++
+	m.keyLocksMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		m.keyLocksMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(m.keyLocks, key)
+		}
+		m.keyLocksMu.Unlock()
+	}
 }
 
 // NewChordManager creates a new ChordManager.
@@ -211,6 +244,9 @@ func (m *ChordManager) removeProcessIfCurrent(key string, p *ChordProcess) {
 
 // StopAll terminates all managed processes (best-effort) and clears the process map.
 func (m *ChordManager) StopAll(grace time.Duration) {
+	m.lifecycleGate.Lock()
+	defer m.lifecycleGate.Unlock()
+
 	m.mu.Lock()
 	procs := make([]*ChordProcess, 0, len(m.procs))
 	for _, p := range m.procs {
@@ -225,6 +261,11 @@ func (m *ChordManager) StopAll(grace time.Duration) {
 }
 
 func (m *ChordManager) StopProcessKey(key string) {
+	m.lifecycleGate.RLock()
+	defer m.lifecycleGate.RUnlock()
+	releaseKeyLock := m.acquireKeyLock(key)
+	defer releaseKeyLock()
+
 	m.mu.Lock()
 	p, ok := m.procs[key]
 	if !ok {
@@ -237,6 +278,11 @@ func (m *ChordManager) StopProcessKey(key string) {
 }
 
 func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*ChordProcess, error) {
+	m.lifecycleGate.RLock()
+	defer m.lifecycleGate.RUnlock()
+	releaseKeyLock := m.acquireKeyLock(key)
+	defer releaseKeyLock()
+
 	m.mu.Lock()
 	// Stop existing process for this key.
 	if p, ok := m.procs[key]; ok {

@@ -20,7 +20,7 @@ Workspace files and the Chord process stay on the gateway host, but chat message
 
 ## Feishu access control
 
-Except during brief setup in a controlled chat, configure `owner_open_id` and/or `allowed_open_ids` for Feishu. The bot receives messages through Feishu's cloud service, so running the gateway on localhost does not restrict who can reach it.
+Configure `owner_open_id` and/or `allowed_open_ids` for Feishu. The bot receives messages through Feishu's cloud service, so running the gateway on localhost does not restrict who can reach it.
 
 ```yaml
 ims:
@@ -34,12 +34,12 @@ ims:
 
 Behavior:
 
-- If neither field is set, all users are allowed.
-- If either field is set, only listed `open_id`s are allowed.
+- If neither field is set, no messages or commands are processed.
+- Only listed `open_id`s are allowed.
 - `owner_open_id` is included in the effective allowlist.
-- Rejected messages are silently ignored.
+- Rejected messages are ignored after a content-free audit log records their `open_id` and `chat_id`.
 
-If you must leave the allowlist empty to discover your `open_id`, use a private chat or controlled test group, copy the ID from the gateway log, configure the allowlist, and restart immediately.
+To discover your `open_id`, start with an empty allowlist in a private chat or controlled test group, send one message, copy the ID from the rejected-message audit log, then configure the allowlist and restart. The discovery message is not processed and its content is not logged.
 
 ## Credential handling
 

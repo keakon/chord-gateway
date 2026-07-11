@@ -45,6 +45,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner_open_id: ou_xxx
 workspaces:
   default:
     path: /path/to/project
@@ -54,7 +55,7 @@ idle_timeout: 30m
 
 Before starting the gateway, configure the Feishu app to use a long connection, subscribe to `im.message.receive_v1`, add the bot to a private chat or controlled test group, and publish the app version. Add `card.action.trigger` if you want interactive confirmation and question cards. See the [Feishu guide](./docs/feishu.md) for exact permissions and console steps.
 
-The minimal config temporarily allows every Feishu sender. Use it only for controlled setup: after the first message, copy your `open_id` from the gateway log, set `owner_open_id`, and restart. Running the gateway locally does not limit who can message the bot through Feishu.
+Before creating the final config, you can discover your ID safely: start once without `owner_open_id` or `allowed_open_ids`, send a text message, and copy `open_id=ou_xxx` from the `message from non-allowed open_id` log entry. The message is logged without its content and is not processed. Stop the gateway, set that value as `owner_open_id`, then restart. Running the gateway locally does not limit who can message the bot through Feishu.
 
 ## 3. Run and verify
 
@@ -64,11 +65,11 @@ chord-gateway -f config.yaml
 
 After startup:
 
-1. Complete the WeChat QR login, or send a text message from the controlled Feishu chat.
+1. Complete the WeChat QR login, or send a text message from the owner Feishu account.
 2. Send `/status` and confirm the expected workspace is shown.
 3. Send a normal text request to Chord.
 
-For Feishu, copy `open_id=ou_xxx` from the `feishu: received message` log entry, add it as `owner_open_id`, and restart before regular use.
+For Feishu, verify that messages from accounts outside the allowlist are ignored.
 
 ## 4. Add advanced routing later
 

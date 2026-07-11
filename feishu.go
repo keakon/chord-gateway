@@ -683,7 +683,7 @@ func (a *FeishuAdapter) handleMessageEvent(_ context.Context, event *larkim.P2Me
 	messageID := derefString(message.MessageId)
 
 	if !fc.IsOpenIDAllowed(senderOpenID) {
-		log.Debugf("feishu: message from non-allowed open_id, ignoring open_id=%v chat_id=%v", senderOpenID, chatID)
+		log.Infof("feishu: message from non-allowed open_id, ignoring open_id=%v chat_id=%v", senderOpenID, chatID)
 		return nil
 	}
 

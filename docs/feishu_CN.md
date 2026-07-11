@@ -18,7 +18,7 @@
 
 1. 先只配置 **一个工作区**。
 2. 只使用私聊或受控测试群进行联调。
-3. 如果为了获取自己的 ID 而暂时不配置 `owner_open_id` / `allowed_open_ids`，收到第一条消息后应立即补上允许名单并重启。
+3. 先不配置 allowlist 启动一次，从被拒绝消息的审计日志获取自己的 ID；配置 allowlist 并重启前，消息不会被处理。
 
 ## 这条接入是什么
 
@@ -115,6 +115,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner_open_id: ou_xxx
 workspaces:
   default:
     path: /path/to/project
@@ -127,6 +128,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner_open_id: ou_xxx
 workspaces:
   default:
     path: /path/to/project
@@ -148,17 +150,18 @@ chord-gateway -f config.yaml
 
 ## 第 5 步：验证入站事件并获取 `open_id`
 
-1. 给机器人发送一条 **文本消息**（`text` 或 `post`；私聊或群聊均可）。
-2. 在 gateway 日志中查找类似记录：
+如果还不知道自己的 `open_id`，请先省略 `owner_open_id`，启动 gateway，再给机器人发送一条 **文本消息**（`text` 或 `post`）。该消息不会被处理。
+
+1. 在 gateway 日志中查找类似记录：
 
 ```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
+msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
 ```
 
-3. 把这条日志视为第一阶段成功标志：
+2. 把这条不含消息正文的审计日志视为第一阶段成功标志：
    - `chat_id=oc_xxx` 表示 gateway 识别到了哪个飞书聊天
    - `open_id=ou_xxx` 表示是谁发来的消息
-4. 日常使用前请收紧访问控制；网关在本机运行并不能限制谁可向机器人发消息：
+3. 停止 gateway 并配置 owner；网关在本机运行并不能限制谁可向机器人发消息：
 
 ```yaml
 ims:
