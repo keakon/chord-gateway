@@ -275,6 +275,17 @@ storage_dir: /tmp/x
 	}
 }
 
+func TestLoad_ExampleConfig(t *testing.T) {
+	path := filepath.Join("..", "config.example.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%q) error = %v", path, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate example config: %v", err)
+	}
+}
+
 func TestLoad_ExpandsWechatTokenPath(t *testing.T) {
 	dir := t.TempDir()
 	oldHome := os.Getenv("HOME")

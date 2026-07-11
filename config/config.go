@@ -488,6 +488,8 @@ func Load(path string) (*Config, error) {
 	}
 	var cfg Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
+	// Unknown fields are intentionally tolerated for compatibility with older
+	// configs. Validation still rejects unsupported structural forms.
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
