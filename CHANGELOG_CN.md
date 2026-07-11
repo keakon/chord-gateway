@@ -19,6 +19,7 @@
 
 ### Changed
 
+- 文档站构建栈升级到 Astro 7 与 Starlight 0.41，声明的 Node.js 基线与 CI 保持一致，并刷新传递依赖，使生产依赖审计不再报告已知漏洞。
 - 将 Go toolchain 要求更新到 1.26.3，并刷新第三方 Go 依赖。
 - Done 确认渲染现在优先使用显式的 `done_report` / `done_reason` 字段；当存在待处理 Done 确认时，普通文本会作为拒绝理由处理。
 
