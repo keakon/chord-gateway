@@ -25,6 +25,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Fixed
 
+- Restricted gateway-managed state directories to `0700` and sensitive persisted state and rotating logs to `0600`, including existing files that were previously created with wider permissions.
 - Fixed IM session recovery when pinned Chord sessions are stale or unavailable: `/new` now prefers an existing live process but starts fresh without a stale resume when needed, normal messages retry once in a fresh session after stale/busy pinned-session delivery failures, `/resume <id>` now reports missing/busy sessions instead of falsely appearing successful, and exited Chord processes are no longer reused.
 
 ## v0.3.1 – 2026-05-11

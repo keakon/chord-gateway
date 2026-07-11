@@ -6,13 +6,28 @@ import (
 	"path/filepath"
 )
 
+const (
+	privateDirMode  = 0o700
+	privateFileMode = 0o600
+)
+
 func writeFileAtomically(path string, data []byte, perm os.FileMode) error {
+	return writeFileAtomicallyInDir(path, data, perm, 0o755, true)
+}
+
+func writePrivateFileAtomically(path string, data []byte) error {
+	return writeFileAtomicallyInDir(path, data, privateFileMode, privateDirMode, false)
+}
+
+func writeFileAtomicallyInDir(path string, data []byte, perm, dirPerm os.FileMode, preserveExistingMode bool) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return fmt.Errorf("mkdir atomic write dir: %w", err)
 	}
 	if info, err := os.Stat(path); err == nil {
-		perm = info.Mode().Perm()
+		if preserveExistingMode {
+			perm = info.Mode().Perm()
+		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat atomic write target: %w", err)
 	}

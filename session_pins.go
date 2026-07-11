@@ -19,9 +19,11 @@ type sessionPinStore struct {
 
 func newSessionPinStore(storageDir string) *sessionPinStore {
 	return &sessionPinStore{
-		path:   filepath.Join(storageDir, "session-pins.json"),
-		pins:   make(map[string]string),
-		writer: writeFileAtomically,
+		path: filepath.Join(storageDir, "session-pins.json"),
+		pins: make(map[string]string),
+		writer: func(path string, data []byte, _ os.FileMode) error {
+			return writePrivateFileAtomically(path, data)
+		},
 	}
 }
 

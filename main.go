@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -64,13 +63,15 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			return fmt.Errorf("config validation: %w", err)
 		}
 
-		// Ensure state directory exists for logging.
-		if err := os.MkdirAll(filepath.Dir(paths.LogFile), 0o755); err != nil {
-			return fmt.Errorf("create log dir: %w", err)
+		if err := os.MkdirAll(paths.StateDir, privateDirMode); err != nil {
+			return fmt.Errorf("create state dir: %w", err)
+		}
+		if err := os.Chmod(paths.StateDir, privateDirMode); err != nil {
+			return fmt.Errorf("restrict state dir permissions: %w", err)
 		}
 
 		// Set up golog to write to stderr and to a rotating log file.
-		logFile, err := golog.NewRotatingFileWriter(paths.LogFile, 10*1024*1024, 3)
+		logFile, err := newPrivateRotatingLogWriter(paths.LogFile, 10*1024*1024, 3)
 		if err != nil {
 			return fmt.Errorf("create rotating log writer: %w", err)
 		}

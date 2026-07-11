@@ -834,7 +834,7 @@ func (a *WechatAdapter) saveToken() {
 		log.Errorf("wechat ilink: failed to marshal token error=%v", err)
 		return
 	}
-	if err := writeFileAtomically(a.tokenFile, data, 0o600); err != nil {
+	if err := writePrivateFileAtomically(a.tokenFile, data); err != nil {
 		log.Errorf("wechat ilink: failed to save token error=%v", err)
 	}
 }
@@ -873,7 +873,7 @@ func (a *WechatAdapter) saveSyncBuf() {
 		log.Errorf("wechat ilink: failed to marshal sync buf error=%v", err)
 		return
 	}
-	if err := writeFileAtomically(a.syncBufPath(), data, 0o600); err != nil {
+	if err := writePrivateFileAtomically(a.syncBufPath(), data); err != nil {
 		log.Errorf("wechat ilink: failed to save sync buf error=%v", err)
 	}
 }
