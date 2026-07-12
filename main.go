@@ -123,6 +123,16 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		metricsCtx, cancelMetrics := context.WithCancel(context.Background())
+		metricsDone := make(chan struct{})
+		go func() {
+			defer close(metricsDone)
+			reportQueueMetrics(metricsCtx, router, adapter, queueMetricsLogInterval, nil)
+		}()
+		defer func() {
+			cancelMetrics()
+			<-metricsDone
+		}()
 		go func() {
 			<-ctx.Done()
 			log.Infof("gateway shutting down, terminating chord processes")

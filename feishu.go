@@ -105,6 +105,7 @@ type FeishuAdapter struct {
 	// Async message queues. A chat always hashes to the same shard, preserving
 	// per-chat ordering while allowing unrelated chats to make progress.
 	messageQueues [feishuDispatchShards]chan IncomingMessage
+	queueMetrics  queueMetrics
 	dedupe        *DedupeStore
 	wg            sync.WaitGroup
 }
@@ -648,12 +649,14 @@ func (a *FeishuAdapter) queueConsumer(ctx context.Context, queue <-chan Incoming
 				select {
 				case msg := <-queue:
 					a.dispatchMessage(msg)
+					a.queueMetrics.processed.Add(1)
 				default:
 					return
 				}
 			}
 		case msg := <-queue:
 			a.dispatchMessage(msg)
+			a.queueMetrics.processed.Add(1)
 		}
 	}
 }
@@ -770,11 +773,26 @@ func (a *FeishuAdapter) enqueueIncomingMessage(msg IncomingMessage) bool {
 	queue := a.messageQueues[feishuMessageShard(msg)]
 	select {
 	case queue <- msg:
+		a.queueMetrics.enqueued.Add(1)
 		return true
 	default:
+		a.queueMetrics.full.Add(1)
 		log.Errorf("feishu: message queue full, dropping message chat_id=%v message_id=%v", msg.ChatID, msg.MessageID)
 		return false
 	}
+}
+
+func (a *FeishuAdapter) metricsSnapshot() queueMetricsSnapshot {
+	if a == nil {
+		return queueMetricsSnapshot{}
+	}
+	depth := 0
+	capacity := 0
+	for _, queue := range a.messageQueues {
+		depth += len(queue)
+		capacity += cap(queue)
+	}
+	return a.queueMetrics.snapshot(depth, capacity)
 }
 
 func feishuMessageShard(msg IncomingMessage) int {

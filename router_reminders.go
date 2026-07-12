@@ -92,6 +92,8 @@ func (r *NotificationRouter) fireReminder(key string) {
 			switch r.outbound.enqueue(key, task) {
 			case outboundQueued, outboundClosed:
 				return
+			case outboundFull:
+				r.outbound.metrics.syncFallback.Add(1)
 			}
 		}
 		task()

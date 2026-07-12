@@ -687,6 +687,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 			log.Debugf("[%v] outbound notification dispatcher closed, dropping event=%v", processLogContext(key, state), eventType)
 			return
 		case outboundFull:
+			r.outbound.metrics.syncFallback.Add(1)
 			log.Warnf("[%v] outbound notification queue full, sending synchronously event=%v", processLogContext(key, state), eventType)
 		}
 	}

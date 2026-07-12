@@ -84,6 +84,10 @@ func TestOutboundDispatcherCloseDrainsAndRejectsNewTasks(t *testing.T) {
 	}
 	d.close()
 	completed.Wait()
+	snapshot := d.metricsSnapshot()
+	if snapshot.Enqueued != 2 || snapshot.Processed != 2 {
+		t.Fatalf("metrics after drain = %#v, want 2 enqueued and processed", snapshot)
+	}
 	if got := d.enqueue("key", func() {}); got != outboundClosed {
 		t.Fatalf("enqueue after close = %v, want closed", got)
 	}
@@ -110,6 +114,9 @@ func TestOutboundDispatcherReportsFullShard(t *testing.T) {
 	}
 	if got := d.enqueue(key, func() {}); got != outboundFull {
 		t.Fatalf("enqueue beyond capacity = %v, want full", got)
+	}
+	if snapshot := d.metricsSnapshot(); snapshot.Full != 1 || snapshot.Enqueued != outboundQueueSize+1 {
+		t.Fatalf("metrics at capacity = %#v", snapshot)
 	}
 	close(release)
 	d.close()

@@ -21,11 +21,12 @@ const (
 )
 
 type outboundDispatcher struct {
-	mu     sync.RWMutex
-	closed bool
-	cancel context.CancelFunc
-	queues [outboundDispatchShards]chan outboundTask
-	wg     sync.WaitGroup
+	mu      sync.RWMutex
+	closed  bool
+	cancel  context.CancelFunc
+	queues  [outboundDispatchShards]chan outboundTask
+	metrics queueMetrics
+	wg      sync.WaitGroup
 }
 
 func newOutboundDispatcher() *outboundDispatcher {
@@ -46,12 +47,15 @@ func (d *outboundDispatcher) enqueue(key string, task outboundTask) outboundEnqu
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.closed {
+		d.metrics.closed.Add(1)
 		return outboundClosed
 	}
 	select {
 	case d.queues[stableShard(key, len(d.queues))] <- task:
+		d.metrics.enqueued.Add(1)
 		return outboundQueued
 	default:
+		d.metrics.full.Add(1)
 		return outboundFull
 	}
 }
@@ -80,14 +84,29 @@ func (d *outboundDispatcher) consume(ctx context.Context, queue <-chan outboundT
 				select {
 				case task := <-queue:
 					task()
+					d.metrics.processed.Add(1)
 				default:
 					return
 				}
 			}
 		case task := <-queue:
 			task()
+			d.metrics.processed.Add(1)
 		}
 	}
+}
+
+func (d *outboundDispatcher) metricsSnapshot() queueMetricsSnapshot {
+	if d == nil {
+		return queueMetricsSnapshot{}
+	}
+	depth := 0
+	capacity := 0
+	for _, queue := range d.queues {
+		depth += len(queue)
+		capacity += cap(queue)
+	}
+	return d.metrics.snapshot(depth, capacity)
 }
 
 func stableShard(key string, count int) int {
