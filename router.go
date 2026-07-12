@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/keakon/golog/log"
@@ -29,14 +30,15 @@ type NotificationRouter struct {
 	configFile string
 	bindMu     sync.Mutex
 
-	mu sync.Mutex
+	mu sync.RWMutex
 
 	// Per-binding chatID tracking: key -> chatID.
-	lastKeyChatID  map[string]string
-	reminders      map[string]*time.Timer
-	expiredPending map[string]expiredPendingState
-	cardHandles    map[string]InteractiveCardHandle
-	outbound       *outboundDispatcher
+	lastKeyChatID         map[string]string
+	lastKeyChatIDSnapshot atomic.Pointer[map[string]string]
+	reminders             map[string]*time.Timer
+	expiredPending        map[string]expiredPendingState
+	cardHandles           map[string]InteractiveCardHandle
+	outbound              *outboundDispatcher
 }
 
 type expiredPendingState struct {
@@ -101,7 +103,11 @@ func (r *NotificationRouter) getConfig() *config.Config {
 
 func (r *NotificationRouter) recordChatID(key, chatID string) {
 	r.mu.Lock()
+	if r.lastKeyChatID == nil {
+		r.lastKeyChatID = make(map[string]string)
+	}
 	r.lastKeyChatID[key] = chatID
+	r.publishLastKeyChatIDLocked()
 	r.mu.Unlock()
 }
 
@@ -188,13 +194,26 @@ func (r *NotificationRouter) expiredPendingTTL() time.Duration {
 }
 
 func (r *NotificationRouter) snapshotLastKeyChatID() map[string]string {
+	if snapshot := r.lastKeyChatIDSnapshot.Load(); snapshot != nil {
+		return *snapshot
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cp := maps.Clone(r.lastKeyChatID)
-	if cp == nil {
-		cp = make(map[string]string)
+	if snapshot := r.lastKeyChatIDSnapshot.Load(); snapshot != nil {
+		return *snapshot
 	}
-	return cp
+	r.publishLastKeyChatIDLocked()
+	return *r.lastKeyChatIDSnapshot.Load()
+}
+
+// publishLastKeyChatIDLocked publishes an immutable binding map for lock-free
+// readers. Caller must hold r.mu and must not mutate the published clone.
+func (r *NotificationRouter) publishLastKeyChatIDLocked() {
+	snapshot := maps.Clone(r.lastKeyChatID)
+	if snapshot == nil {
+		snapshot = make(map[string]string)
+	}
+	r.lastKeyChatIDSnapshot.Store(&snapshot)
 }
 
 // findFeishuAdapter resolves the FeishuAdapter from the adapter chain.
@@ -564,6 +583,7 @@ func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd 
 		delete(r.lastKeyChatID, oldKey)
 	}
 	r.lastKeyChatID[newKey] = chatID
+	r.publishLastKeyChatIDLocked()
 	r.mu.Unlock()
 
 	if r.mgr != nil && oldKey != "" {

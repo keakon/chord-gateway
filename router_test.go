@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1962,6 +1963,61 @@ func TestSendTextAndBroadcastHelpers(t *testing.T) {
 	}
 	if got := feishu.lastMessage().chatID; got != "feishu-config" {
 		t.Fatalf("feishu broadcast chatID = %q", got)
+	}
+}
+
+func BenchmarkNotificationRouterSnapshotLastKeyChatIDParallel(b *testing.B) {
+	r := &NotificationRouter{lastKeyChatID: make(map[string]string, 64)}
+	for i := 0; i < 64; i++ {
+		key := (processKey{workspaceID: "ws", imType: "wechat", chatID: fmt.Sprintf("chat-%d", i)}).String()
+		r.lastKeyChatID[key] = fmt.Sprintf("chat-%d", i)
+	}
+	_ = r.snapshotLastKeyChatID()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = r.snapshotLastKeyChatID()
+		}
+	})
+}
+
+func TestNotificationRouterBindingSnapshotIsCopyOnWrite(t *testing.T) {
+	r := &NotificationRouter{lastKeyChatID: make(map[string]string)}
+	r.recordChatID("key-1", "chat-1")
+	before := r.snapshotLastKeyChatID()
+	r.recordChatID("key-2", "chat-2")
+	after := r.snapshotLastKeyChatID()
+
+	if _, ok := before["key-2"]; ok {
+		t.Fatal("previous snapshot changed after a later binding update")
+	}
+	if got := after["key-1"]; got != "chat-1" {
+		t.Fatalf("existing binding = %q, want chat-1", got)
+	}
+	if got := after["key-2"]; got != "chat-2" {
+		t.Fatalf("new binding = %q, want chat-2", got)
+	}
+}
+
+func TestNotificationRouterBindingSnapshotConcurrentReadWrite(t *testing.T) {
+	r := &NotificationRouter{lastKeyChatID: make(map[string]string)}
+	r.recordChatID("initial", "chat")
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = r.snapshotLastKeyChatID()["initial"]
+			}
+		}()
+	}
+	for i := 0; i < 100; i++ {
+		r.recordChatID(fmt.Sprintf("key-%d", i), fmt.Sprintf("chat-%d", i))
+	}
+	wg.Wait()
+	if got := len(r.snapshotLastKeyChatID()); got != 101 {
+		t.Fatalf("snapshot size = %d, want 101", got)
 	}
 }
 
