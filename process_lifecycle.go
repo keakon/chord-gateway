@@ -153,21 +153,8 @@ func (m *ChordManager) IdleCheckLoop() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		m.mu.Lock()
-		idle := make([]*ChordProcess, 0)
 		timeout := m.cfg.Load().IdleTimeoutDuration()
-		for _, p := range m.procs {
-			p.mu.Lock()
-			if time.Since(p.lastActivity) > timeout {
-				idle = append(idle, p)
-			}
-			p.mu.Unlock()
-		}
-		// Remove idle procs from map.
-		for _, p := range idle {
-			delete(m.procs, p.key)
-		}
-		m.mu.Unlock()
+		idle := m.collectIdleProcesses(timeout)
 
 		// Close stdin for idle processes to let them exit gracefully.
 		// Then, if they don't exit quickly, terminate the whole process group.
@@ -187,4 +174,32 @@ func (m *ChordManager) IdleCheckLoop() {
 			p.TerminateGroup(2 * time.Second)
 		}
 	}
+}
+
+func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProcess {
+	m.mu.RLock()
+	procs := make([]*ChordProcess, 0, len(m.procs))
+	for _, p := range m.procs {
+		procs = append(procs, p)
+	}
+	m.mu.RUnlock()
+
+	idle := make([]*ChordProcess, 0)
+	for _, p := range procs {
+		p.mu.Lock()
+		if time.Since(p.lastActivity) > timeout {
+			idle = append(idle, p)
+		}
+		p.mu.Unlock()
+	}
+	// Remove only the exact processes inspected above. A process may have
+	// been replaced under the same key while the snapshot was checked.
+	m.mu.Lock()
+	for _, p := range idle {
+		if m.procs[p.key] == p {
+			delete(m.procs, p.key)
+		}
+	}
+	m.mu.Unlock()
+	return idle
 }

@@ -154,6 +154,67 @@ func TestProcessEnvelopeLogsOutsideProcessLock(t *testing.T) {
 	<-done
 }
 
+func TestCollectIdleProcessesDoesNotHoldManagerLockWhileWaitingForProcess(t *testing.T) {
+	blocked := &ChordProcess{key: "blocked", lastActivity: time.Now()}
+	available := &ChordProcess{key: "available", lastActivity: time.Now()}
+	mgr := &ChordManager{procs: map[string]*ChordProcess{
+		blocked.key:   blocked,
+		available.key: available,
+	}}
+	blocked.mu.Lock()
+	scanDone := make(chan struct{})
+	go func() {
+		mgr.collectIdleProcesses(time.Hour)
+		close(scanDone)
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	lookupDone := make(chan *ChordProcess, 1)
+	go func() { lookupDone <- mgr.GetProcessForKey(available.key) }()
+	select {
+	case got := <-lookupDone:
+		if got != available {
+			t.Fatalf("lookup = %p, want %p", got, available)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("process lookup blocked behind idle process state lock")
+	}
+	blocked.mu.Unlock()
+	<-scanDone
+}
+
+func TestCollectIdleProcessesDoesNotRemoveReplacement(t *testing.T) {
+	key := "key"
+	oldProcess := &ChordProcess{key: key, lastActivity: time.Now().Add(-time.Hour)}
+	newProcess := &ChordProcess{key: key, lastActivity: time.Now()}
+	mgr := &ChordManager{procs: map[string]*ChordProcess{key: oldProcess}}
+	oldProcess.mu.Lock()
+	done := make(chan []*ChordProcess, 1)
+	go func() { done <- mgr.collectIdleProcesses(time.Minute) }()
+	time.Sleep(20 * time.Millisecond)
+	mgr.mu.Lock()
+	mgr.procs[key] = newProcess
+	mgr.mu.Unlock()
+	oldProcess.mu.Unlock()
+	idle := <-done
+	if len(idle) != 1 || idle[0] != oldProcess {
+		t.Fatalf("idle = %v, want old process", idle)
+	}
+	if got := mgr.GetProcessForKey(key); got != newProcess {
+		t.Fatalf("replacement = %p, want %p", got, newProcess)
+	}
+}
+
+func BenchmarkChordManagerGetProcessForKeyParallel(b *testing.B) {
+	mgr := &ChordManager{procs: map[string]*ChordProcess{"key": {key: "key"}}}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = mgr.GetProcessForKey("key")
+		}
+	})
+}
+
 func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	cfg := &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: t.TempDir()}, {ID: "ws2", Path: t.TempDir()}}}
 	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}

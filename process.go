@@ -89,7 +89,7 @@ func (t *tailBuffer) String() string {
 
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	lifecycleGate sync.RWMutex
 	keyLocksMu    sync.Mutex
 	keyLocks      map[string]*lifecycleKeyLock
@@ -170,8 +170,8 @@ func (m *ChordManager) SetOnEvent(fn func(key, eventType string, state ControlSt
 
 // GetProcessForKey returns the active process for a process key, or nil if none exists.
 func (m *ChordManager) GetProcessForKey(key string) *ChordProcess {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.procs[key]
 }
 
@@ -308,7 +308,9 @@ func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*Ch
 		return nil, fmt.Errorf("workspace %s not found", workspaceID)
 	}
 
+	m.mu.RLock()
 	onEvent := m.onEvent
+	m.mu.RUnlock()
 	p, err := m.spawn(ws, key, onEvent, extraArgs...)
 	if err != nil {
 		return nil, err
