@@ -817,3 +817,82 @@ func TestFeishuConnect_ClientErrorReturnsInsteadOfHanging(t *testing.T) {
 		t.Fatal("Connect() hung on client error")
 	}
 }
+
+func TestFeishuGetAccessTokenCoalescesConcurrentRefreshes(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"code":0,"app_access_token":"shared-token","expire":3600}`))
+	}))
+	defer server.Close()
+
+	oldBaseURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldBaseURL }()
+	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	defer a.dedupe.Close()
+	a.httpClient = server.Client()
+
+	const callers = 16
+	start := make(chan struct{})
+	results := make(chan string, callers)
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			<-start
+			token, err := a.getAccessToken()
+			results <- token
+			errs <- err
+		}()
+	}
+	close(start)
+	for range callers {
+		if err := <-errs; err != nil {
+			t.Fatalf("getAccessToken() error = %v", err)
+		}
+		if token := <-results; token != "shared-token" {
+			t.Fatalf("token = %q, want shared-token", token)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("token refresh requests = %d, want 1", got)
+	}
+}
+
+func TestFeishuGetAccessTokenSharesRefreshFailure(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"code":1,"msg":"denied"}`))
+	}))
+	defer server.Close()
+
+	oldBaseURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldBaseURL }()
+	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	defer a.dedupe.Close()
+	a.httpClient = server.Client()
+
+	const callers = 16
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			<-start
+			_, err := a.getAccessToken()
+			errs <- err
+		}()
+	}
+	close(start)
+	for range callers {
+		if err := <-errs; err == nil || !strings.Contains(err.Error(), "denied") {
+			t.Fatalf("getAccessToken() error = %v, want denied", err)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("failed token refresh requests = %d, want 1", got)
+	}
+}

@@ -200,13 +200,9 @@ func TestDedupeStore_ContainsExpiryMarksDirtyForPersistence(t *testing.T) {
 		t.Fatal("Contains should mark store dirty after dropping expired key")
 	}
 
-	ds.mu.Lock()
-	if err := ds.saveToFileLocked(); err != nil {
-		ds.mu.Unlock()
+	if err := ds.compact(); err != nil {
 		t.Fatalf("save cleaned dedupe file: %v", err)
 	}
-	ds.dirty = false
-	ds.mu.Unlock()
 
 	data, err = os.ReadFile(ds.storagePath)
 	if err != nil {
@@ -232,13 +228,12 @@ func TestDedupeStore_CleanupKeepsDirtyWhenSaveFails(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Second),
 	}
 	ds.dirty = true
-	badPath := filepath.Join(dir, "dedupe.json")
-	if err := os.Mkdir(badPath, 0o700); err != nil {
-		ds.mu.Unlock()
-		t.Fatalf("create directory at dedupe file path: %v", err)
+	ds.writeSnapshot = func(string, []byte) error { return fmt.Errorf("write failed") }
+	ds.mu.Unlock()
+	if err := ds.compact(); err == nil {
+		t.Fatal("compact should fail")
 	}
-	ds.storagePath = badPath
-	ds.cleanupExpiredAndSaveLocked()
+	ds.mu.Lock()
 	if !ds.dirty {
 		ds.mu.Unlock()
 		t.Fatal("dirty should remain true after failed cleanup save")
@@ -355,6 +350,163 @@ func TestDedupeStore_CloseCompactsJournal(t *testing.T) {
 	}
 }
 
+func TestDedupeStore_CommitDoesNotBlockOnSnapshotWrite(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ds.Close()
+	ds.Commit("before-compaction")
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	ds.writeSnapshot = func(path string, data []byte) error {
+		close(writeStarted)
+		<-releaseWrite
+		return writePrivateFileAtomically(path, data)
+	}
+	compactDone := make(chan error, 1)
+	go func() { compactDone <- ds.compact() }()
+	<-writeStarted
+
+	commitDone := make(chan struct{})
+	go func() {
+		ds.Commit("during-compaction")
+		close(commitDone)
+	}()
+	select {
+	case <-commitDone:
+	case <-time.After(time.Second):
+		t.Fatal("Commit blocked while snapshot was being written")
+	}
+	close(releaseWrite)
+	if err := <-compactDone; err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	ds.writeSnapshot = writePrivateFileAtomically
+
+	reopened, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if !reopened.Contains("before-compaction") || !reopened.Contains("during-compaction") {
+		t.Fatal("snapshot and active journal entries should both survive compaction")
+	}
+}
+
+func TestDedupeStore_LoadsRotatedJournalAfterInterruptedCompaction(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds.Commit("rotated-entry")
+	ds.mu.Lock()
+	rotatedPath, err := ds.rotateJournalLocked()
+	ds.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(rotatedPath); err != nil {
+		t.Fatalf("rotated journal missing: %v", err)
+	}
+
+	reopened, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Contains("rotated-entry") {
+		t.Fatal("entry from interrupted compaction should be recovered")
+	}
+	reopened.Close()
+	ds.Close()
+}
+
+func TestDedupeStore_RetriesFailedCompaction(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds.Commit("retry-entry")
+	ds.writeSnapshot = func(string, []byte) error { return fmt.Errorf("write failed") }
+	if err := ds.compact(); err == nil {
+		t.Fatal("first compact should fail")
+	}
+	rotated, err := filepath.Glob(ds.journalPath + ".compact-*")
+	if err != nil || len(rotated) != 1 {
+		t.Fatalf("rotated journals after failure = %v, err = %v", rotated, err)
+	}
+	ds.writeSnapshot = writePrivateFileAtomically
+	if err := ds.compact(); err != nil {
+		t.Fatalf("retry compact: %v", err)
+	}
+	rotated, err = filepath.Glob(ds.journalPath + ".compact-*")
+	if err != nil || len(rotated) != 0 {
+		t.Fatalf("rotated journals after retry = %v, err = %v", rotated, err)
+	}
+	ds.Close()
+
+	reopened, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if !reopened.Contains("retry-entry") {
+		t.Fatal("entry should survive failed and retried compaction")
+	}
+}
+
+func TestDedupeStore_ReusesJournalFileUntilRotation(t *testing.T) {
+	ds, err := NewDedupeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds.Commit("first")
+	ds.mu.Lock()
+	firstFile := ds.journalFile
+	ds.mu.Unlock()
+	if firstFile == nil {
+		t.Fatal("journal file should be open after commit")
+	}
+	ds.Commit("second")
+	ds.mu.Lock()
+	secondFile := ds.journalFile
+	ds.mu.Unlock()
+	if secondFile != firstFile {
+		t.Fatal("consecutive commits should reuse the journal file")
+	}
+	if err := ds.compact(); err != nil {
+		t.Fatal(err)
+	}
+	ds.mu.Lock()
+	afterRotation := ds.journalFile
+	ds.mu.Unlock()
+	if afterRotation != nil {
+		t.Fatal("journal file should be closed after rotation")
+	}
+	ds.Close()
+}
+
+func TestDedupeStore_CloseReleasesJournalFile(t *testing.T) {
+	ds, err := NewDedupeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds.Commit("entry")
+	ds.mu.Lock()
+	f := ds.journalFile
+	ds.mu.Unlock()
+	if f == nil {
+		t.Fatal("journal file should be open after commit")
+	}
+	ds.Close()
+	if _, err := f.Write([]byte("closed")); err == nil {
+		t.Fatal("journal file should be closed after store close")
+	}
+}
+
 func BenchmarkDedupeStoreCommitJournal(b *testing.B) {
 	ds, err := NewDedupeStore(b.TempDir())
 	if err != nil {
@@ -365,5 +517,35 @@ func BenchmarkDedupeStoreCommitJournal(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ds.Commit(fmt.Sprintf("message-%d", i))
+	}
+}
+
+func BenchmarkDedupeStoreCompaction(b *testing.B) {
+	for _, entries := range []int{1000, 10000} {
+		b.Run(fmt.Sprintf("entries-%d", entries), func(b *testing.B) {
+			ds, err := NewDedupeStore(b.TempDir())
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(ds.Close)
+			expiresAt := time.Now().Add(time.Hour)
+			ds.mu.Lock()
+			for i := 0; i < entries; i++ {
+				key := fmt.Sprintf("message-%d", i)
+				ds.entries[key] = dedupeEntry{Key: key, Committed: true, ExpiresAt: expiresAt}
+			}
+			ds.dirty = true
+			ds.mu.Unlock()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := ds.compact(); err != nil {
+					b.Fatal(err)
+				}
+				ds.mu.Lock()
+				ds.dirty = true
+				ds.mu.Unlock()
+			}
+		})
 	}
 }

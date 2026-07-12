@@ -86,6 +86,7 @@ type FeishuAdapter struct {
 	accessToken   string
 	tokenExpireAt time.Time
 	mu            sync.Mutex
+	tokenRefresh  *feishuTokenRefresh
 	cancel        context.CancelFunc
 
 	connMu sync.Mutex
@@ -106,6 +107,13 @@ type FeishuAdapter struct {
 	messageQueues [feishuDispatchShards]chan IncomingMessage
 	dedupe        *DedupeStore
 	wg            sync.WaitGroup
+}
+
+type feishuTokenRefresh struct {
+	done     chan struct{}
+	token    string
+	expireAt time.Time
+	err      error
 }
 
 func (a *FeishuAdapter) sendCardOrFallback(chatID string, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
@@ -789,22 +797,43 @@ func feishuMessageShard(msg IncomingMessage) int {
 
 func (a *FeishuAdapter) getAccessToken() (string, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.accessToken != "" && time.Now().Before(a.tokenExpireAt) {
-		return a.accessToken, nil
+		token := a.accessToken
+		a.mu.Unlock()
+		return token, nil
 	}
+	if refresh := a.tokenRefresh; refresh != nil {
+		a.mu.Unlock()
+		<-refresh.done
+		return refresh.token, refresh.err
+	}
+	refresh := &feishuTokenRefresh{done: make(chan struct{})}
+	a.tokenRefresh = refresh
+	a.mu.Unlock()
 
+	refresh.token, refresh.expireAt, refresh.err = a.fetchAccessToken()
+	a.mu.Lock()
+	if refresh.err == nil {
+		a.accessToken = refresh.token
+		a.tokenExpireAt = refresh.expireAt
+	}
+	close(refresh.done)
+	a.tokenRefresh = nil
+	a.mu.Unlock()
+	return refresh.token, refresh.err
+}
+
+func (a *FeishuAdapter) fetchAccessToken() (string, time.Time, error) {
 	fc := a.feishuConfig()
 	if fc == nil {
-		return "", fmt.Errorf("feishu: config missing")
+		return "", time.Time{}, fmt.Errorf("feishu: config missing")
 	}
 	body, err := json.Marshal(map[string]string{
 		"app_id":     fc.AppID,
 		"app_secret": fc.AppSecret,
 	})
 	if err != nil {
-		return "", fmt.Errorf("marshal feishu token request: %w", err)
+		return "", time.Time{}, fmt.Errorf("marshal feishu token request: %w", err)
 	}
 	resp, err := a.httpClient.Post(
 		feishuOpenBaseURL+"/open-apis/auth/v3/app_access_token/internal",
@@ -812,29 +841,28 @@ func (a *FeishuAdapter) getAccessToken() (string, error) {
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return "", fmt.Errorf("feishu token HTTP request: %w", err)
+		return "", time.Time{}, fmt.Errorf("feishu token HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var result FeishuTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("feishu decode token response: %w", err)
+		return "", time.Time{}, fmt.Errorf("feishu decode token response: %w", err)
 	}
 
 	if result.Code != 0 {
-		return "", fmt.Errorf("feishu token error: code=%d msg=%s", result.Code, result.Msg)
+		return "", time.Time{}, fmt.Errorf("feishu token error: code=%d msg=%s", result.Code, result.Msg)
 	}
 
-	a.accessToken = result.AppAccessToken
 	// Refresh 5 minutes before actual expiry.
 	expiry := result.Expire - 300
 	if expiry <= 0 {
 		expiry = result.Expire
 	}
-	a.tokenExpireAt = time.Now().Add(time.Duration(expiry) * time.Second)
+	expireAt := time.Now().Add(time.Duration(expiry) * time.Second)
 
 	log.Infof("feishu: access token refreshed expire=%v", result.Expire)
-	return a.accessToken, nil
+	return result.AppAccessToken, expireAt, nil
 }
 
 // --- Sending messages ---

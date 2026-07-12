@@ -36,6 +36,7 @@ type NotificationRouter struct {
 	reminders      map[string]*time.Timer
 	expiredPending map[string]expiredPendingState
 	cardHandles    map[string]InteractiveCardHandle
+	outbound       *outboundDispatcher
 }
 
 type expiredPendingState struct {
@@ -54,6 +55,7 @@ func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 		reminders:      make(map[string]*time.Timer),
 		expiredPending: make(map[string]expiredPendingState),
 		cardHandles:    make(map[string]InteractiveCardHandle),
+		outbound:       newOutboundDispatcher(),
 	}
 	if mgr != nil {
 		mgr.SetOnEvent(r.HandleChordEvent)
@@ -78,6 +80,15 @@ func (r *NotificationRouter) currentAdapter() IMAdapter {
 	r.adapterMu.RLock()
 	defer r.adapterMu.RUnlock()
 	return r.adapter
+}
+
+// Close drains queued proactive notifications. No new tasks are accepted once
+// shutdown begins; callers then disconnect adapters after this returns.
+func (r *NotificationRouter) Close() {
+	if r == nil {
+		return
+	}
+	r.outbound.close()
 }
 
 // getConfig returns the current config snapshot from the chord manager.
@@ -645,6 +656,24 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		return
 	}
 
+	task := func() {
+		r.deliverChordEvent(key, imType, chatID, eventType, state, msg)
+	}
+	if r.outbound != nil {
+		switch r.outbound.enqueue(key, task) {
+		case outboundQueued:
+			return
+		case outboundClosed:
+			log.Debugf("[%v] outbound notification dispatcher closed, dropping event=%v", processLogContext(key, state), eventType)
+			return
+		case outboundFull:
+			log.Warnf("[%v] outbound notification queue full, sending synchronously event=%v", processLogContext(key, state), eventType)
+		}
+	}
+	task()
+}
+
+func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType string, state ControlState, msg string) {
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
 			if r.sendFeishuConfirmCard(chatID, key, state) {

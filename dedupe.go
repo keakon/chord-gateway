@@ -32,15 +32,18 @@ type dedupeEntry struct {
 // It supports in-flight reservation (TryBegin → Commit/Release) so that
 // a message that is being processed does not get re-enqueued concurrently.
 type DedupeStore struct {
-	mu          sync.Mutex
-	entries     map[string]dedupeEntry // key → entry
-	ttl         time.Duration
-	storagePath string
-	journalPath string
-	stopCleanup chan struct{}
-	cleanupDone chan struct{}
-	closeOnce   sync.Once
-	dirty       bool
+	mu            sync.Mutex
+	compactMu     sync.Mutex
+	entries       map[string]dedupeEntry // key → entry
+	ttl           time.Duration
+	storagePath   string
+	journalPath   string
+	stopCleanup   chan struct{}
+	cleanupDone   chan struct{}
+	closeOnce     sync.Once
+	dirty         bool
+	journalFile   *os.File
+	writeSnapshot func(string, []byte) error
 }
 
 // NewDedupeStore creates a new DedupeStore with file persistence.
@@ -50,12 +53,13 @@ func NewDedupeStore(storageDir string) (*DedupeStore, error) {
 	}
 
 	ds := &DedupeStore{
-		entries:     make(map[string]dedupeEntry),
-		ttl:         defaultDedupeTTL,
-		storagePath: filepath.Join(storageDir, dedupeFileName),
-		journalPath: filepath.Join(storageDir, dedupeFileName+dedupeJournalSuffix),
-		stopCleanup: make(chan struct{}),
-		cleanupDone: make(chan struct{}),
+		entries:       make(map[string]dedupeEntry),
+		ttl:           defaultDedupeTTL,
+		storagePath:   filepath.Join(storageDir, dedupeFileName),
+		journalPath:   filepath.Join(storageDir, dedupeFileName+dedupeJournalSuffix),
+		stopCleanup:   make(chan struct{}),
+		cleanupDone:   make(chan struct{}),
+		writeSnapshot: writePrivateFileAtomically,
 	}
 
 	// Load persisted entries.
@@ -143,13 +147,14 @@ func (ds *DedupeStore) Close() {
 	ds.closeOnce.Do(func() {
 		close(ds.stopCleanup)
 		<-ds.cleanupDone
-		ds.mu.Lock()
-		defer ds.mu.Unlock()
-		if ds.dirty {
-			if err := ds.saveToFileLocked(); err == nil {
-				ds.dirty = false
-			}
+		if err := ds.compact(); err != nil {
+			log.Errorf("dedupe: failed to compact on close error=%v", err)
 		}
+		ds.mu.Lock()
+		if err := ds.closeJournalLocked(); err != nil {
+			log.Errorf("dedupe: failed to close journal error=%v", err)
+		}
+		ds.mu.Unlock()
 	})
 }
 
@@ -162,20 +167,9 @@ func (ds *DedupeStore) cleanupLoop() {
 		case <-ds.stopCleanup:
 			return
 		case <-ticker.C:
-			ds.mu.Lock()
-			ds.cleanupExpiredAndSaveLocked()
-			ds.mu.Unlock()
-		}
-	}
-}
-
-// cleanupExpiredAndSaveLocked removes expired entries and persists the updated state.
-// Caller must hold ds.mu.
-func (ds *DedupeStore) cleanupExpiredAndSaveLocked() {
-	dirty := ds.cleanExpiredLocked()
-	if dirty || ds.dirty {
-		if err := ds.saveToFileLocked(); err == nil {
-			ds.dirty = false
+			if err := ds.compact(); err != nil {
+				log.Errorf("dedupe: failed to compact during cleanup error=%v", err)
+			}
 		}
 	}
 }
@@ -194,32 +188,95 @@ func (ds *DedupeStore) cleanExpiredLocked() bool {
 	return dirty
 }
 
-// saveToFileLocked persists committed entries to disk. Caller must hold ds.mu.
-func (ds *DedupeStore) saveToFileLocked() error {
+// compact rotates the active journal under the store lock, then writes the
+// snapshot without blocking message deduplication. Rotated journals remain
+// recoverable until the snapshot has been replaced successfully.
+func (ds *DedupeStore) compact() error {
 	if ds.storagePath == "" {
 		return nil
 	}
-	// Only persist committed entries (in-flight are transient).
+	ds.compactMu.Lock()
+	defer ds.compactMu.Unlock()
+
+	ds.mu.Lock()
+	if ds.cleanExpiredLocked() {
+		ds.dirty = true
+	}
+	rotated, err := filepath.Glob(ds.journalPath + ".compact-*")
+	if err != nil {
+		ds.mu.Unlock()
+		return err
+	}
+	if !ds.dirty && len(rotated) == 0 {
+		ds.mu.Unlock()
+		return nil
+	}
+	if _, err := os.Stat(ds.journalPath); err == nil {
+		rotatedPath, err := ds.rotateJournalLocked()
+		if err != nil {
+			ds.mu.Unlock()
+			return err
+		}
+		rotated = append(rotated, rotatedPath)
+	} else if !os.IsNotExist(err) {
+		ds.mu.Unlock()
+		return err
+	}
+
 	var toSave []dedupeEntry
 	for _, e := range ds.entries {
 		if e.Committed {
 			toSave = append(toSave, e)
 		}
 	}
+	ds.dirty = false
+	ds.mu.Unlock()
+
 	data, err := json.Marshal(toSave)
 	if err != nil {
-		log.Errorf("dedupe: failed to marshal entries error=%v", err)
+		ds.markDirty()
 		return err
 	}
-	if err := writePrivateFileAtomically(ds.storagePath, data); err != nil {
-		log.Errorf("dedupe: failed to write file error=%v", err)
+	if err := ds.writeSnapshot(ds.storagePath, data); err != nil {
+		ds.markDirty()
 		return err
 	}
-	if err := os.Remove(ds.journalPath); err != nil && !os.IsNotExist(err) {
-		log.Errorf("dedupe: failed to remove compacted journal error=%v", err)
-		return err
+	for _, path := range rotated {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
+}
+
+// rotateJournalLocked gives the current journal a unique recovery name.
+// Caller must hold ds.mu.
+func (ds *DedupeStore) rotateJournalLocked() (string, error) {
+	if err := ds.closeJournalLocked(); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(ds.journalPath), filepath.Base(ds.journalPath)+".compact-*")
+	if err != nil {
+		return "", err
+	}
+	path := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	if err := os.Rename(ds.journalPath, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func (ds *DedupeStore) markDirty() {
+	ds.mu.Lock()
+	ds.dirty = true
+	ds.mu.Unlock()
 }
 
 // appendToJournalLocked records one commit without rewriting the snapshot.
@@ -230,18 +287,32 @@ func (ds *DedupeStore) appendToJournalLocked(entry dedupeEntry) error {
 		return err
 	}
 	data = append(data, '\n')
-	f, err := os.OpenFile(ds.journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, privateFileMode)
-	if err != nil {
+	if ds.journalFile == nil {
+		f, err := os.OpenFile(ds.journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, privateFileMode)
+		if err != nil {
+			return err
+		}
+		if err := f.Chmod(privateFileMode); err != nil {
+			_ = f.Close()
+			return err
+		}
+		ds.journalFile = f
+	}
+	if _, err := ds.journalFile.Write(data); err != nil {
+		_ = ds.closeJournalLocked()
 		return err
 	}
-	if err := f.Chmod(privateFileMode); err != nil {
-		_ = f.Close()
-		return err
+	return nil
+}
+
+// closeJournalLocked releases the active append handle before rotation or
+// shutdown. Caller must hold ds.mu.
+func (ds *DedupeStore) closeJournalLocked() error {
+	if ds.journalFile == nil {
+		return nil
 	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
+	f := ds.journalFile
+	ds.journalFile = nil
 	return f.Close()
 }
 
@@ -259,29 +330,37 @@ func (ds *DedupeStore) loadFromFiles() {
 		log.Warnf("dedupe: failed to parse file error=%v", err)
 	}
 
-	f, err := os.Open(ds.journalPath)
+	rotated, err := filepath.Glob(ds.journalPath + ".compact-*")
+	if err != nil {
+		log.Warnf("dedupe: failed to find rotated journals error=%v", err)
+	}
+	for _, path := range append(rotated, ds.journalPath) {
+		ds.loadJournal(path)
+	}
+	log.Infof("dedupe: loaded entries from file count=%v", len(ds.entries))
+}
+
+func (ds *DedupeStore) loadJournal(path string) {
+	f, err := os.Open(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Warnf("dedupe: failed to read journal error=%v", err)
+			log.Warnf("dedupe: failed to read journal path=%v error=%v", path, err)
 		}
-		log.Infof("dedupe: loaded entries from file count=%v", len(ds.entries))
 		return
 	}
 	defer f.Close()
-
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		var entry dedupeEntry
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			log.Warnf("dedupe: failed to parse journal entry error=%v", err)
+			log.Warnf("dedupe: failed to parse journal entry path=%v error=%v", path, err)
 			continue
 		}
 		ds.loadEntry(entry)
 	}
 	if err := scanner.Err(); err != nil {
-		log.Warnf("dedupe: failed to scan journal error=%v", err)
+		log.Warnf("dedupe: failed to scan journal path=%v error=%v", path, err)
 	}
-	log.Infof("dedupe: loaded entries from file count=%v", len(ds.entries))
 }
 
 func (ds *DedupeStore) loadSnapshot(data []byte) error {
@@ -296,7 +375,8 @@ func (ds *DedupeStore) loadSnapshot(data []byte) error {
 }
 
 func (ds *DedupeStore) loadEntry(entry dedupeEntry) {
-	if entry.Committed && time.Now().Before(entry.ExpiresAt) {
+	current, exists := ds.entries[entry.Key]
+	if entry.Committed && time.Now().Before(entry.ExpiresAt) && (!exists || current.ExpiresAt.Before(entry.ExpiresAt)) {
 		ds.entries[entry.Key] = entry
 	}
 }

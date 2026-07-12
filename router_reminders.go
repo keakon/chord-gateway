@@ -84,8 +84,17 @@ func (r *NotificationRouter) fireReminder(key string) {
 	}
 	msg := r.formatLongRunningNotification(state)
 	if msg != "" {
-		r.sendText(chatID, msg)
-		r.markVisibleOutput(key)
+		task := func() {
+			r.sendText(chatID, msg)
+			r.markVisibleOutput(key)
+		}
+		if r.outbound != nil {
+			switch r.outbound.enqueue(key, task) {
+			case outboundQueued, outboundClosed:
+				return
+			}
+		}
+		task()
 		return
 	}
 	r.scheduleReminder(key, state.LastPushAt)

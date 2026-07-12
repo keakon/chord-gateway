@@ -127,6 +127,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			<-ctx.Done()
 			log.Infof("gateway shutting down, terminating chord processes")
 			mgr.StopAll(2 * time.Second)
+			router.Close()
 			adapter.Disconnect()
 		}()
 
