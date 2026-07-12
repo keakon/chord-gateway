@@ -39,11 +39,13 @@ func testFeishuAdapter(t *testing.T, fc *config.FeishuConfig) *FeishuAdapter {
 	a := &FeishuAdapter{
 		imCfg:             cfg.IMs[0],
 		httpClient:        nil,
-		messageQueue:      make(chan IncomingMessage, 16),
 		dedupe:            dedupe,
 		fragments:         make(map[string]feishuFragmentBuffer),
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
+	}
+	for i := range a.messageQueues {
+		a.messageQueues[i] = make(chan IncomingMessage, 16)
 	}
 	router := &NotificationRouter{
 		mgr:           newTestChordManager(cfg),
@@ -64,27 +66,60 @@ func testFeishuAdapterWithQueue(t *testing.T, fc *config.FeishuConfig) (*FeishuA
 	ctx, cancel := context.WithCancel(context.Background())
 	var dispatched atomic.Int32
 
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				for {
-					select {
-					case <-a.messageQueue:
-						dispatched.Add(1)
-					default:
-						return
+	a.wg.Add(len(a.messageQueues))
+	for _, queue := range a.messageQueues {
+		go func() {
+			defer a.wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					for {
+						select {
+						case <-queue:
+							dispatched.Add(1)
+						default:
+							return
+						}
 					}
+				case <-queue:
+					dispatched.Add(1)
 				}
-			case <-a.messageQueue:
-				dispatched.Add(1)
 			}
-		}
-	}()
+		}()
+	}
 
 	return a, &dispatched, cancel
+}
+
+func feishuTestQueue(a *FeishuAdapter, msg IncomingMessage) chan IncomingMessage {
+	return a.messageQueues[feishuMessageShard(msg)]
+}
+
+type recordingMessageRouter struct {
+	block  map[string]<-chan struct{}
+	notify chan IncomingMessage
+}
+
+func (r *recordingMessageRouter) HandleIncomingMessage(msg IncomingMessage) {
+	if wait := r.block[msg.ChatID]; wait != nil {
+		<-wait
+	}
+	if r.notify != nil {
+		r.notify <- msg
+	}
+}
+
+func differentFeishuShardChat(t *testing.T, appID, chatID string) string {
+	t.Helper()
+	shard := feishuMessageShard(IncomingMessage{AppID: appID, ChatID: chatID})
+	for i := 0; i < 1000; i++ {
+		candidate := fmt.Sprintf("other-%d", i)
+		if feishuMessageShard(IncomingMessage{AppID: appID, ChatID: candidate}) != shard {
+			return candidate
+		}
+	}
+	t.Fatal("failed to find chat assigned to a different shard")
+	return ""
 }
 
 func makeFeishuMessageEvent(openID, chatID, messageID, text string) *larkim.P2MessageReceiveV1 {
@@ -248,7 +283,8 @@ func TestFeishuMessageEvent_DeniesWhenNotConfigured(t *testing.T) {
 func TestFeishuMessageEvent_QueueFullRelease(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
 	a := testFeishuAdapter(t, fc)
-	a.messageQueue = make(chan IncomingMessage, 1)
+	msg := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	a.messageQueues[feishuMessageShard(msg)] = make(chan IncomingMessage, 1)
 	defer a.dedupe.Close()
 
 	if err := a.handleMessageEvent(context.Background(), makeFeishuMessageEvent("ou_user", "oc_chat1", "msg_001", "first")); err != nil {
@@ -354,7 +390,8 @@ func TestFeishuCardActionEvent_InvalidActionIgnored(t *testing.T) {
 func TestFeishuCardActionEvent_QueueFullRelease(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
 	a := testFeishuAdapter(t, fc)
-	a.messageQueue = make(chan IncomingMessage, 1)
+	msg := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	a.messageQueues[feishuMessageShard(msg)] = make(chan IncomingMessage, 1)
 	defer a.dedupe.Close()
 
 	if _, err := a.handleCardActionEvent(context.Background(), makeFeishuCardActionEvent("ou_owner", "oc_chat1", "req_1", "allow")); err != nil {
@@ -396,8 +433,9 @@ func TestFeishuCardActionEvent_UsesRequestIDAndInternalActionAsMessageID(t *test
 	if _, err := a.handleCardActionEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
+	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
-	case msg := <-a.messageQueue:
+	case msg := <-feishuTestQueue(a, queued):
 		if msg.MessageID != "req_9:confirm:allow:" {
 			t.Fatalf("MessageID = %q", msg.MessageID)
 		}
@@ -421,8 +459,9 @@ func TestFeishuMessageEvent_ContentMatchesText(t *testing.T) {
 	if err := a.handleMessageEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
+	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
-	case msg := <-a.messageQueue:
+	case msg := <-feishuTestQueue(a, queued):
 		if msg.Text != "hello world" {
 			t.Fatalf("Text = %q", msg.Text)
 		}
@@ -442,8 +481,9 @@ func TestFeishuMessageEvent_PostContentDispatchesPlainText(t *testing.T) {
 	if err := a.handleMessageEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
+	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
-	case msg := <-a.messageQueue:
+	case msg := <-feishuTestQueue(a, queued):
 		if msg.Text != "/deny not safe" {
 			t.Fatalf("Text = %q", msg.Text)
 		}
@@ -621,8 +661,9 @@ func TestFeishuCardActionFrameTypeCard_Dispatches(t *testing.T) {
 	if _, _, err := clientConn.ReadMessage(); err != nil {
 		t.Fatalf("read response frame: %v", err)
 	}
+	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
-	case msg := <-a.messageQueue:
+	case msg := <-feishuTestQueue(a, queued):
 		if msg.InternalAction == nil || msg.InternalAction.Type != "confirm" || msg.InternalAction.Action != "allow" || msg.InternalAction.RequestID != "req_card" {
 			t.Fatalf("message internal action = %#v", msg.InternalAction)
 		}
@@ -639,8 +680,9 @@ func TestFeishuAdapterUpdateIMConfigAffectsAllowlist(t *testing.T) {
 	if err := a.handleMessageEvent(context.Background(), makeFeishuMessageEvent("ou_old", "oc_chat1", "msg_old", "old")); err != nil {
 		t.Fatalf("old owner handleMessageEvent() error = %v", err)
 	}
+	queued := IncomingMessage{AppID: "cli_test", ChatID: "oc_chat1"}
 	select {
-	case msg := <-a.messageQueue:
+	case msg := <-feishuTestQueue(a, queued):
 		t.Fatalf("old owner should be rejected after config update, got %#v", msg)
 	default:
 	}
@@ -648,7 +690,7 @@ func TestFeishuAdapterUpdateIMConfigAffectsAllowlist(t *testing.T) {
 		t.Fatalf("new owner handleMessageEvent() error = %v", err)
 	}
 	select {
-	case msg := <-a.messageQueue:
+	case msg := <-feishuTestQueue(a, queued):
 		if msg.SenderID != "ou_new" {
 			t.Fatalf("message = %#v", msg)
 		}
@@ -662,8 +704,10 @@ func TestQueueConsumerDrainsOnCancel(t *testing.T) {
 	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
 	defer a.dedupe.Close()
 
-	a.messageQueue <- IncomingMessage{ChatID: "chat-1", MessageID: "m1"}
-	a.messageQueue <- IncomingMessage{ChatID: "chat-1", MessageID: "m2"}
+	msg1 := IncomingMessage{ChatID: "chat-1", MessageID: "m1"}
+	msg2 := IncomingMessage{ChatID: "chat-1", MessageID: "m2"}
+	feishuTestQueue(a, msg1) <- msg1
+	feishuTestQueue(a, msg2) <- msg2
 
 	cancel()
 	a.wg.Wait()
@@ -671,6 +715,82 @@ func TestQueueConsumerDrainsOnCancel(t *testing.T) {
 	if got := dispatched.Load(); got != 2 {
 		t.Fatalf("queueConsumer should drain all queued messages on cancel, got %d", got)
 	}
+}
+
+func TestFeishuQueuePreservesPerChatOrder(t *testing.T) {
+	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	defer a.dedupe.Close()
+	router := &recordingMessageRouter{notify: make(chan IncomingMessage, 3)}
+	a.msgRouter = router
+	ctx, cancel := context.WithCancel(context.Background())
+	queue := feishuTestQueue(a, IncomingMessage{AppID: "app", ChatID: "chat"})
+	a.wg.Add(1)
+	go a.queueConsumer(ctx, queue)
+	for i := 0; i < 3; i++ {
+		msg := IncomingMessage{AppID: "app", ChatID: "chat", MessageID: fmt.Sprintf("m%d", i)}
+		if !a.enqueueIncomingMessage(msg) {
+			t.Fatalf("enqueue message %d failed", i)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case msg := <-router.notify:
+			if want := fmt.Sprintf("m%d", i); msg.MessageID != want {
+				t.Fatalf("message %d = %q, want %q", i, msg.MessageID, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for queued message")
+		}
+	}
+	cancel()
+	a.wg.Wait()
+}
+
+func TestFeishuQueueDifferentShardsProgressIndependently(t *testing.T) {
+	const appID = "app"
+	const slowChat = "slow"
+	fastChat := differentFeishuShardChat(t, appID, slowChat)
+	releaseSlow := make(chan struct{})
+	router := &recordingMessageRouter{
+		block:  map[string]<-chan struct{}{slowChat: releaseSlow},
+		notify: make(chan IncomingMessage, 2),
+	}
+	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: appID, AppSecret: "secret"})
+	defer a.dedupe.Close()
+	a.msgRouter = router
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	slowQueue := feishuTestQueue(a, IncomingMessage{AppID: appID, ChatID: slowChat})
+	fastQueue := feishuTestQueue(a, IncomingMessage{AppID: appID, ChatID: fastChat})
+	a.wg.Add(2)
+	go a.queueConsumer(ctx, slowQueue)
+	go a.queueConsumer(ctx, fastQueue)
+
+	if !a.enqueueIncomingMessage(IncomingMessage{AppID: appID, ChatID: slowChat, MessageID: "slow"}) {
+		t.Fatal("enqueue slow message failed")
+	}
+	if !a.enqueueIncomingMessage(IncomingMessage{AppID: appID, ChatID: fastChat, MessageID: "fast"}) {
+		t.Fatal("enqueue fast message failed")
+	}
+	select {
+	case msg := <-router.notify:
+		if msg.MessageID != "fast" {
+			t.Fatalf("first completed message = %q, want fast", msg.MessageID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fast shard was blocked by slow shard")
+	}
+	close(releaseSlow)
+	select {
+	case msg := <-router.notify:
+		if msg.MessageID != "slow" {
+			t.Fatalf("second completed message = %q, want slow", msg.MessageID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slow message did not complete after release")
+	}
+	cancel()
+	a.wg.Wait()
 }
 
 func TestFeishuConnect_ClientErrorReturnsInsteadOfHanging(t *testing.T) {

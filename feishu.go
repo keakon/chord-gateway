@@ -28,6 +28,7 @@ import (
 const (
 	feishuMaxTextLen       = 4000
 	feishuQueueSize        = 256
+	feishuDispatchShards   = 8
 	feishuDefaultPing      = 2 * time.Minute
 	feishuDefaultReconnect = 2 * time.Minute
 	feishuFragmentTTL      = 5 * time.Second
@@ -100,10 +101,11 @@ type FeishuAdapter struct {
 	reconnectInterval time.Duration
 	runLongConn       func(context.Context, *larkdispatcher.EventDispatcher) error
 
-	// Async message queue.
-	messageQueue chan IncomingMessage
-	dedupe       *DedupeStore
-	wg           sync.WaitGroup
+	// Async message queues. A chat always hashes to the same shard, preserving
+	// per-chat ordering while allowing unrelated chats to make progress.
+	messageQueues [feishuDispatchShards]chan IncomingMessage
+	dedupe        *DedupeStore
+	wg            sync.WaitGroup
 }
 
 func (a *FeishuAdapter) sendCardOrFallback(chatID string, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
@@ -135,7 +137,9 @@ func NewFeishuAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 		fragments:         make(map[string]feishuFragmentBuffer),
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
-		messageQueue:      make(chan IncomingMessage, feishuQueueSize),
+	}
+	for i := range a.messageQueues {
+		a.messageQueues[i] = make(chan IncomingMessage, feishuQueueSize)
 	}
 	a.runLongConn = a.runLongConnection
 
@@ -200,9 +204,11 @@ func (a *FeishuAdapter) Connect() error {
 		return fmt.Errorf("feishu: initial access token: %w", err)
 	}
 
-	// Start the async queue consumer goroutine.
-	a.wg.Add(1)
-	go a.queueConsumer(ctx)
+	// Start one consumer per stable chat shard.
+	a.wg.Add(len(a.messageQueues))
+	for _, queue := range a.messageQueues {
+		go a.queueConsumer(ctx, queue)
+	}
 
 	dispatcher := larkdispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(a.handleMessageEvent).
@@ -624,7 +630,7 @@ func (a *FeishuAdapter) Disconnect() {
 }
 
 // queueConsumer reads messages from the queue and dispatches them.
-func (a *FeishuAdapter) queueConsumer(ctx context.Context) {
+func (a *FeishuAdapter) queueConsumer(ctx context.Context, queue <-chan IncomingMessage) {
 	defer a.wg.Done()
 	for {
 		select {
@@ -632,13 +638,13 @@ func (a *FeishuAdapter) queueConsumer(ctx context.Context) {
 			// Drain remaining messages from the queue.
 			for {
 				select {
-				case msg := <-a.messageQueue:
+				case msg := <-queue:
 					a.dispatchMessage(msg)
 				default:
 					return
 				}
 			}
-		case msg := <-a.messageQueue:
+		case msg := <-queue:
 			a.dispatchMessage(msg)
 		}
 	}
@@ -753,13 +759,30 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 }
 
 func (a *FeishuAdapter) enqueueIncomingMessage(msg IncomingMessage) bool {
+	queue := a.messageQueues[feishuMessageShard(msg)]
 	select {
-	case a.messageQueue <- msg:
+	case queue <- msg:
 		return true
 	default:
 		log.Errorf("feishu: message queue full, dropping message chat_id=%v message_id=%v", msg.ChatID, msg.MessageID)
 		return false
 	}
+}
+
+func feishuMessageShard(msg IncomingMessage) int {
+	const offset64 = uint64(14695981039346656037)
+	const prime64 = uint64(1099511628211)
+	hash := offset64
+	for i := 0; i < len(msg.AppID); i++ {
+		hash ^= uint64(msg.AppID[i])
+		hash *= prime64
+	}
+	hash *= prime64
+	for i := 0; i < len(msg.ChatID); i++ {
+		hash ^= uint64(msg.ChatID[i])
+		hash *= prime64
+	}
+	return int(hash % uint64(feishuDispatchShards))
 }
 
 // --- Access token management ---
