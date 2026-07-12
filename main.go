@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -133,12 +134,17 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			cancelMetrics()
 			<-metricsDone
 		}()
+		var shutdownOnce sync.Once
+		shutdown := func() {
+			shutdownOnce.Do(func() {
+				shutdownGateway(adapter, mgr, router, 2*time.Second)
+			})
+		}
+		defer shutdown()
 		go func() {
 			<-ctx.Done()
 			log.Infof("gateway shutting down, terminating chord processes")
-			mgr.StopAll(2 * time.Second)
-			router.Close()
-			adapter.Disconnect()
+			shutdown()
 		}()
 
 		// Connect and block
@@ -147,5 +153,17 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		}
 
 		return nil
+	}
+}
+
+func shutdownGateway(adapter IMAdapter, mgr *ChordManager, router *NotificationRouter, grace time.Duration) {
+	if mgr != nil {
+		mgr.StopAll(grace)
+	}
+	if router != nil {
+		router.Close()
+	}
+	if adapter != nil {
+		adapter.Disconnect()
 	}
 }

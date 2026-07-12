@@ -680,15 +680,13 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		r.deliverChordEvent(key, imType, chatID, eventType, state, msg)
 	}
 	if r.outbound != nil {
-		switch r.outbound.enqueue(key, task) {
+		result := r.outbound.enqueueOrWait(key, task)
+		switch result {
 		case outboundQueued:
 			return
 		case outboundClosed:
 			log.Debugf("[%v] outbound notification dispatcher closed, dropping event=%v", processLogContext(key, state), eventType)
 			return
-		case outboundFull:
-			r.outbound.metrics.syncFallback.Add(1)
-			log.Warnf("[%v] outbound notification queue full, sending synchronously event=%v", processLogContext(key, state), eventType)
 		}
 	}
 	task()

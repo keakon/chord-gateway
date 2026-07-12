@@ -198,11 +198,29 @@ func TestCollectIdleProcessesDoesNotRemoveReplacement(t *testing.T) {
 	mgr.mu.Unlock()
 	oldProcess.mu.Unlock()
 	idle := <-done
-	if len(idle) != 1 || idle[0] != oldProcess {
-		t.Fatalf("idle = %v, want old process", idle)
+	if len(idle) != 0 {
+		t.Fatalf("replaced process should not be returned for termination: %v", idle)
 	}
 	if got := mgr.GetProcessForKey(key); got != newProcess {
 		t.Fatalf("replacement = %p, want %p", got, newProcess)
+	}
+}
+
+func TestCollectIdleProcessesKeepsProcessThatBecomesActive(t *testing.T) {
+	key := "key"
+	p := &ChordProcess{key: key, lastActivity: time.Now().Add(-time.Hour)}
+	mgr := &ChordManager{procs: map[string]*ChordProcess{key: p}}
+	p.mu.Lock()
+	done := make(chan []*ChordProcess, 1)
+	go func() { done <- mgr.collectIdleProcesses(time.Minute) }()
+	time.Sleep(20 * time.Millisecond)
+	p.lastActivity = time.Now()
+	p.mu.Unlock()
+	if idle := <-done; len(idle) != 0 {
+		t.Fatalf("newly active process classified as idle: %v", idle)
+	}
+	if got := mgr.GetProcessForKey(key); got != p {
+		t.Fatalf("active process removed: got %p, want %p", got, p)
 	}
 }
 
@@ -298,6 +316,18 @@ func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	}
 	if !p2.stoppedByGateway {
 		t.Fatal("StopProcessKey should mark process stopped by gateway")
+	}
+}
+
+func TestChordManagerStopAllPermanentlyRejectsSpawn(t *testing.T) {
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	mgr.StopAll(0)
+	key := (processKey{workspaceID: "ws", imType: "wechat", chatID: "chat"}).String()
+	if _, err := mgr.GetOrSpawnForKey(key); !errors.Is(err, ErrManagerShuttingDown) {
+		t.Fatalf("get or spawn after StopAll error = %v, want ErrManagerShuttingDown", err)
+	}
+	if _, err := mgr.SpawnWithArgsForKey(key); !errors.Is(err, ErrManagerShuttingDown) {
+		t.Fatalf("spawn after StopAll error = %v, want ErrManagerShuttingDown", err)
 	}
 }
 
@@ -420,6 +450,62 @@ func TestChordManagerGetOrSpawnForKeyReplacesExitedProcess(t *testing.T) {
 	if got := mgr.GetProcessForKey(key); got != p {
 		t.Fatalf("process map = %#v, want fresh process %#v", got, p)
 	}
+}
+
+func TestChordManagerConcurrentGetOrSpawnForKeyReturnsSameProcess(t *testing.T) {
+	chordBinary := makeFakeChordBinary(t, "")
+	cfg := &config.Config{
+		ChordPath:  chordBinary,
+		Workspaces: []config.Workspace{{ID: "ws1", Path: t.TempDir()}},
+	}
+	mgr := newTestChordManager(cfg)
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
+	releaseKeyLock := mgr.acquireKeyLock(key)
+
+	type result struct {
+		process *ChordProcess
+		err     error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			process, err := mgr.GetOrSpawnForKey(key)
+			results <- result{process: process, err: err}
+		}()
+	}
+	waitForLifecycleKeyLockRefs(t, mgr, key, 3)
+	releaseKeyLock()
+
+	first := <-results
+	second := <-results
+	defer mgr.StopAll(time.Millisecond)
+	if first.err != nil || second.err != nil {
+		t.Fatalf("concurrent GetOrSpawnForKey errors = (%v, %v)", first.err, second.err)
+	}
+	if first.process == nil || first.process != second.process {
+		t.Fatalf("concurrent processes = (%p, %p), want the same non-nil process", first.process, second.process)
+	}
+	if got := mgr.GetProcessForKey(key); got != first.process {
+		t.Fatalf("managed process = %p, want %p", got, first.process)
+	}
+}
+
+func waitForLifecycleKeyLockRefs(t *testing.T, mgr *ChordManager, key string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mgr.keyLocksMu.Lock()
+		refs := 0
+		if lock := mgr.keyLocks[key]; lock != nil {
+			refs = lock.refs
+		}
+		mgr.keyLocksMu.Unlock()
+		if refs == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("lifecycle key lock refs did not reach %d", want)
 }
 
 func TestProcessKeyRoundTripOpaqueParts(t *testing.T) {

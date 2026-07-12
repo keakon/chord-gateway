@@ -121,3 +121,87 @@ func TestOutboundDispatcherReportsFullShard(t *testing.T) {
 	close(release)
 	d.close()
 }
+
+func TestOutboundDispatcherEnqueueOrWaitPreservesOrderUnderContention(t *testing.T) {
+	d := newOutboundDispatcher()
+	key := "ordered"
+	releaseFirst := make(chan struct{})
+	firstStarted := make(chan struct{})
+	completed := make(chan int, outboundQueueSize+3)
+	if d.enqueue(key, func() {
+		close(firstStarted)
+		<-releaseFirst
+		completed <- 0
+	}) != outboundQueued {
+		t.Fatal("enqueue first task failed")
+	}
+	<-firstStarted
+	for i := 1; i <= outboundQueueSize; i++ {
+		value := i
+		if d.enqueue(key, func() { completed <- value }) != outboundQueued {
+			t.Fatalf("enqueue queued task %d failed", i)
+		}
+	}
+	firstQueued := make(chan outboundEnqueueResult, 1)
+	go func() {
+		firstQueued <- d.enqueueOrWait(key, func() { completed <- outboundQueueSize + 1 })
+	}()
+	deadline := time.Now().Add(time.Second)
+	for d.metricsSnapshot().Full != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("first producer did not block on the full shard")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	secondQueued := make(chan outboundEnqueueResult, 1)
+	go func() {
+		secondQueued <- d.enqueueOrWait(key, func() { completed <- outboundQueueSize + 2 })
+	}()
+	close(releaseFirst)
+	if result := <-firstQueued; result != outboundQueued {
+		t.Fatalf("first waiting enqueue = %v, want queued", result)
+	}
+	if result := <-secondQueued; result != outboundQueued {
+		t.Fatalf("second waiting enqueue = %v, want queued", result)
+	}
+	d.close()
+	for want := 0; want <= outboundQueueSize+2; want++ {
+		if got := <-completed; got != want {
+			t.Fatalf("completed task = %d, want %d", got, want)
+		}
+	}
+	if snapshot := d.metricsSnapshot(); snapshot.Full != 1 {
+		t.Fatalf("overload metrics = %#v, want one full enqueue", snapshot)
+	}
+}
+
+func TestOutboundDispatcherCloseWakesBlockingEnqueue(t *testing.T) {
+	d := newOutboundDispatcher()
+	key := "blocked-close"
+	release := make(chan struct{})
+	started := make(chan struct{})
+	if d.enqueue(key, func() {
+		close(started)
+		<-release
+	}) != outboundQueued {
+		t.Fatal("enqueue blocking task failed")
+	}
+	<-started
+	for range outboundQueueSize {
+		if d.enqueue(key, func() {}) != outboundQueued {
+			t.Fatal("fill queue failed")
+		}
+	}
+	result := make(chan outboundEnqueueResult, 1)
+	go func() { result <- d.enqueueOrWait(key, func() {}) }()
+	closeDone := make(chan struct{})
+	go func() {
+		d.close()
+		close(closeDone)
+	}()
+	if got := <-result; got != outboundClosed {
+		t.Fatalf("blocking enqueue after close = %v, want closed", got)
+	}
+	close(release)
+	<-closeDone
+}

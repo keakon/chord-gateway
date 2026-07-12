@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -50,6 +51,8 @@ type ChordProcess struct {
 	statusWaiters []chan ControlState
 }
 
+var ErrManagerShuttingDown = errors.New("chord manager is shutting down")
+
 // tailBuffer keeps the last N bytes written.
 // Used to capture child-process stderr without unbounded memory growth.
 type tailBuffer struct {
@@ -91,6 +94,7 @@ func (t *tailBuffer) String() string {
 type ChordManager struct {
 	mu            sync.RWMutex
 	lifecycleGate sync.RWMutex
+	shuttingDown  atomic.Bool
 	keyLocksMu    sync.Mutex
 	keyLocks      map[string]*lifecycleKeyLock
 	cfg           atomic.Pointer[config.Config]
@@ -176,6 +180,14 @@ func (m *ChordManager) GetProcessForKey(key string) *ChordProcess {
 }
 
 func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
+	m.lifecycleGate.RLock()
+	defer m.lifecycleGate.RUnlock()
+	if m.shuttingDown.Load() {
+		return nil, ErrManagerShuttingDown
+	}
+	releaseKeyLock := m.acquireKeyLock(key)
+	defer releaseKeyLock()
+
 	if p := m.GetProcessForKey(key); p != nil {
 		if p.Alive() || p.cmd == nil && p.stdin != nil {
 			return p, nil
@@ -190,7 +202,7 @@ func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 	if cfg == nil || cfg.WorkspaceByID(workspaceID) == nil {
 		return nil, nil
 	}
-	return m.SpawnWithArgsForKey(key, m.spawnArgsForKey(key)...)
+	return m.spawnWithArgsForKeyLocked(key, m.spawnArgsForKey(key)...)
 }
 
 func (m *ChordManager) spawnArgsForKey(key string) []string {
@@ -245,6 +257,7 @@ func (m *ChordManager) removeProcessIfCurrent(key string, p *ChordProcess) {
 
 // StopAll terminates all managed processes (best-effort) and clears the process map.
 func (m *ChordManager) StopAll(grace time.Duration) {
+	m.shuttingDown.Store(true)
 	m.lifecycleGate.Lock()
 	defer m.lifecycleGate.Unlock()
 
@@ -281,9 +294,17 @@ func (m *ChordManager) StopProcessKey(key string) {
 func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*ChordProcess, error) {
 	m.lifecycleGate.RLock()
 	defer m.lifecycleGate.RUnlock()
+	if m.shuttingDown.Load() {
+		return nil, ErrManagerShuttingDown
+	}
 	releaseKeyLock := m.acquireKeyLock(key)
 	defer releaseKeyLock()
+	return m.spawnWithArgsForKeyLocked(key, extraArgs...)
+}
 
+// spawnWithArgsForKeyLocked replaces and starts one process. The caller holds
+// lifecycleGate for reading and the lifecycle lock for key.
+func (m *ChordManager) spawnWithArgsForKeyLocked(key string, extraArgs ...string) (*ChordProcess, error) {
 	m.mu.Lock()
 	// Stop existing process for this key.
 	if p, ok := m.procs[key]; ok {

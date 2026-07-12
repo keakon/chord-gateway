@@ -89,11 +89,10 @@ func (r *NotificationRouter) fireReminder(key string) {
 			r.markVisibleOutput(key)
 		}
 		if r.outbound != nil {
-			switch r.outbound.enqueue(key, task) {
+			result := r.outbound.enqueueOrWait(key, task)
+			switch result {
 			case outboundQueued, outboundClosed:
 				return
-			case outboundFull:
-				r.outbound.metrics.syncFallback.Add(1)
 			}
 		}
 		task()
