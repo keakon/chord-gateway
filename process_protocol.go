@@ -45,9 +45,11 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 // processEnvelope updates ControlState based on the envelope type and calls onEvent.
 func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	p.mu.Lock()
+	now := time.Now()
+	updatedAt := now.Format(time.RFC3339)
 
-	p.lastActivity = time.Now()
-	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
+	p.lastActivity = now
+	p.state.UpdatedAt = updatedAt
 
 	var eventType string
 	var sessionPin string
@@ -69,9 +71,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "activity":
 		p.state.Busy = true
-		p.lastActivity = time.Now()
 		if p.state.LastPushAt.IsZero() {
-			p.state.LastPushAt = time.Now()
+			p.state.LastPushAt = now
 		}
 		var payload struct {
 			AgentID string `json:"agent_id"`
@@ -134,8 +135,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		var payload DoneCompletionPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastNotification = &NotificationPayload{Message: payload.Report, Reason: "done_completion", AgentID: payload.AgentID}
-			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-			p.lastActivity = time.Now()
 		}
 		eventType = "done_completion"
 
@@ -144,17 +143,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastLocalShell = &payload
 			p.state.Busy = false
-			p.state.UpdatedAt = time.Now().Format(time.RFC3339)
-			p.lastActivity = time.Now()
 		}
 		eventType = "local_shell_result"
 
 	case "agent_done":
-		p.lastActivity = time.Now()
 		eventType = "agent_done"
 
 	case "info":
-		p.lastActivity = time.Now()
 		var payload struct {
 			Message string `json:"message"`
 		}
@@ -164,7 +159,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "info"
 
 	case "toast":
-		p.lastActivity = time.Now()
 		var payload struct {
 			Message string `json:"message"`
 			Level   string `json:"level"`
@@ -205,7 +199,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			}
 			p.state.LastAssistantToolCalls = payload.ToolCalls
 			p.state.InternalEventsSinceLastPush = 0
-			p.state.LastPushAt = time.Now()
+			p.state.LastPushAt = now
 		}
 
 	case "todos":
@@ -217,7 +211,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			p.state.Todos = nil
 		} else {
 			p.state.Todos = wrapper.Todos
-			p.lastActivity = time.Now()
 		}
 		if !p.state.LastPushAt.IsZero() {
 			p.state.InternalEventsSinceLastPush++

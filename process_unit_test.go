@@ -83,6 +83,46 @@ func TestProcessEnvelopeReadyPersistsPinOutsideProcessLock(t *testing.T) {
 	<-done
 }
 
+func BenchmarkProcessEnvelope(b *testing.B) {
+	cases := []struct {
+		name string
+		env  HeadlessEnvelope
+	}{
+		{name: "subscribe-response", env: HeadlessEnvelope{Type: "subscribe_response"}},
+		{name: "activity", env: HeadlessEnvelope{Type: "activity", Payload: json.RawMessage(`{"type":"tool","detail":"running"}`)}},
+		{name: "assistant-message", env: HeadlessEnvelope{Type: "assistant_message", Payload: json.RawMessage(`{"text":"completed","agent_id":"agent","tool_calls":2}`)}},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			p := &ChordProcess{key: "ws|wechat|chat"}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				p.processEnvelope(&tc.env)
+			}
+		})
+	}
+}
+
+func TestProcessEnvelopeUsesConsistentEventTimestamp(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+	p.processEnvelope(&HeadlessEnvelope{
+		Type:    "assistant_message",
+		Payload: json.RawMessage(`{"text":"completed","agent_id":"agent","tool_calls":2}`),
+	})
+	state := p.State()
+	if !state.LastPushAt.Equal(p.lastActivity) {
+		t.Fatalf("LastPushAt = %v, lastActivity = %v", state.LastPushAt, p.lastActivity)
+	}
+	updatedAt, err := time.Parse(time.RFC3339, state.UpdatedAt)
+	if err != nil {
+		t.Fatalf("parse UpdatedAt: %v", err)
+	}
+	if updatedAt.Unix() != p.lastActivity.Unix() {
+		t.Fatalf("UpdatedAt = %v, lastActivity = %v", updatedAt, p.lastActivity)
+	}
+}
+
 func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	cfg := &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: t.TempDir()}, {ID: "ws2", Path: t.TempDir()}}}
 	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
