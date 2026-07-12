@@ -186,11 +186,11 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 
 	idle := make([]*ChordProcess, 0)
 	for _, p := range procs {
-		p.mu.Lock()
+		p.mu.RLock()
 		if time.Since(p.lastActivity) > timeout {
 			idle = append(idle, p)
 		}
-		p.mu.Unlock()
+		p.mu.RUnlock()
 	}
 	// Remove only the exact processes inspected above. A process may have
 	// been replaced under the same key while the snapshot was checked.

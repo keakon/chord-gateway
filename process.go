@@ -19,7 +19,7 @@ import (
 
 // ChordProcess manages a single chord headless child process.
 type ChordProcess struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	cancel context.CancelFunc
@@ -401,8 +401,8 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 
 // State returns a copy of the current control state.
 func (p *ChordProcess) State() ControlState {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.state
 }
 
@@ -481,8 +481,8 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 
 // Alive returns true if the chord process is still running.
 func (p *ChordProcess) Alive() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.cmd == nil || p.cmd.Process == nil {
 		return false
 	}
@@ -508,9 +508,9 @@ func (p *ChordProcess) waitAndRecordExit(cmd *exec.Cmd) int {
 		p.exitCode = exitCode
 		p.mu.Unlock()
 	})
-	p.mu.Lock()
+	p.mu.RLock()
 	exitCode := p.exitCode
-	p.mu.Unlock()
+	p.mu.RUnlock()
 	return exitCode
 }
 

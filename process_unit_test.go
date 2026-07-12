@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -213,6 +214,50 @@ func BenchmarkChordManagerGetProcessForKeyParallel(b *testing.B) {
 			_ = mgr.GetProcessForKey("key")
 		}
 	})
+}
+
+func BenchmarkChordProcessStateParallel(b *testing.B) {
+	p := &ChordProcess{state: ControlState{SessionID: "session", Busy: true, Phase: "working"}}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = p.State()
+		}
+	})
+}
+
+func BenchmarkChordProcessAliveParallel(b *testing.B) {
+	p := &ChordProcess{cmd: &exec.Cmd{Process: &os.Process{Pid: 1}}}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = p.Alive()
+		}
+	})
+}
+
+func TestChordProcessReadMethodsShareStateLock(t *testing.T) {
+	p := &ChordProcess{cmd: &exec.Cmd{Process: &os.Process{Pid: 1}}}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	stateDone := make(chan struct{})
+	go func() {
+		_ = p.State()
+		close(stateDone)
+	}()
+	aliveDone := make(chan struct{})
+	go func() {
+		_ = p.Alive()
+		close(aliveDone)
+	}()
+	for name, done := range map[string]<-chan struct{}{"State": stateDone, "Alive": aliveDone} {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s blocked behind another reader", name)
+		}
+	}
 }
 
 func TestChordManagerProcessLookupAndStop(t *testing.T) {
