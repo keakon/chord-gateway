@@ -43,7 +43,8 @@ type ChordProcess struct {
 	mgr              *ChordManager // back-reference for auto-restart
 
 	// Callback for events that need IM notification.
-	onEvent func(key string, eventType string, state ControlState)
+	onEvent   func(key string, eventType string, state ControlState)
+	eventLogf func(format string, args ...any)
 
 	// statusWaiters are notified when a status_response envelope arrives.
 	statusWaiters []chan ControlState

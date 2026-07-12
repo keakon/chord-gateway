@@ -123,6 +123,37 @@ func TestProcessEnvelopeUsesConsistentEventTimestamp(t *testing.T) {
 	}
 }
 
+func TestProcessEnvelopeLogsOutsideProcessLock(t *testing.T) {
+	logStarted := make(chan struct{})
+	releaseLog := make(chan struct{})
+	p := &ChordProcess{
+		key: "ws|wechat|chat",
+		eventLogf: func(string, ...any) {
+			close(logStarted)
+			<-releaseLog
+		},
+	}
+	done := make(chan struct{})
+	go func() {
+		p.processEnvelope(&HeadlessEnvelope{Type: "agent_done"})
+		close(done)
+	}()
+	<-logStarted
+
+	stateRead := make(chan struct{})
+	go func() {
+		_ = p.State()
+		close(stateRead)
+	}()
+	select {
+	case <-stateRead:
+	case <-time.After(time.Second):
+		t.Fatal("State blocked while event log was being written")
+	}
+	close(releaseLog)
+	<-done
+}
+
 func TestChordManagerProcessLookupAndStop(t *testing.T) {
 	cfg := &config.Config{Workspaces: []config.Workspace{{ID: "ws1", Path: t.TempDir()}, {ID: "ws2", Path: t.TempDir()}}}
 	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}

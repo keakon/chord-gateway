@@ -225,21 +225,6 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		log.Debugf("unknown headless event type type=%v", env.Type)
 	}
 
-	if eventType != "" {
-		log.Infof("[%v] gateway event event=%v raw_type=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v", processLogContext(p.key, p.state),
-			eventType,
-			env.Type,
-			p.state.Busy,
-			p.state.Phase,
-			p.state.LastOutcome,
-			len(p.state.LastAssistantText),
-			p.state.LastAssistantToolCalls,
-			p.state.PendingConfirm != nil,
-			p.state.PendingQuestion != nil,
-			p.state.LastError,
-		)
-	}
-
 	// Capture callback params under lock, then invoke outside lock to prevent
 	// deadlock: onEvent → router → proc.Alive/SendCommand → p.mu.
 	var (
@@ -248,6 +233,27 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		state   = p.state // copy
 	)
 	p.mu.Unlock()
+
+	if eventType != "" {
+		format := "[%v] gateway event event=%v raw_type=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v"
+		args := []any{processLogContext(key, state),
+			eventType,
+			env.Type,
+			state.Busy,
+			state.Phase,
+			state.LastOutcome,
+			len(state.LastAssistantText),
+			state.LastAssistantToolCalls,
+			state.PendingConfirm != nil,
+			state.PendingQuestion != nil,
+			state.LastError,
+		}
+		if p.eventLogf != nil {
+			p.eventLogf(format, args...)
+		} else {
+			log.Infof(format, args...)
+		}
+	}
 
 	if sessionPin != "" && p.mgr != nil && p.mgr.pins != nil {
 		if err := p.mgr.pins.Set(key, sessionPin); err != nil {
