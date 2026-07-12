@@ -50,6 +50,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 
 	var eventType string
+	var sessionPin string
 
 	switch env.Type {
 	case "ready":
@@ -59,11 +60,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			if strings.TrimSpace(payload.SessionID) != "" {
 				p.state.SessionID = payload.SessionID
-				if p.mgr != nil && p.mgr.pins != nil {
-					if perr := p.mgr.pins.Set(p.key, payload.SessionID); perr != nil {
-						log.Warnf("[%v] persist session pin failed error=%v", processLogContext(p.key, p.state), perr)
-					}
-				}
+				sessionPin = payload.SessionID
 			}
 		}
 		log.Infof("[%v] gateway event event=%v raw_type=%v", processLogContext(p.key, p.state), "ready", "ready")
@@ -258,6 +255,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		state   = p.state // copy
 	)
 	p.mu.Unlock()
+
+	if sessionPin != "" && p.mgr != nil && p.mgr.pins != nil {
+		if err := p.mgr.pins.Set(key, sessionPin); err != nil {
+			log.Warnf("[%v] persist session pin failed error=%v", processLogContext(key, state), err)
+		}
+	}
 
 	if eventType != "" && onEvent != nil {
 		onEvent(key, eventType, state)

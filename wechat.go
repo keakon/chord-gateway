@@ -668,7 +668,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) {
 		}
 
 		// Update sync buf.
-		if resp.GetUpdatesBuf != "" {
+		if resp.GetUpdatesBuf != "" && resp.GetUpdatesBuf != a.syncBuf {
 			a.syncBuf = resp.GetUpdatesBuf
 			a.saveSyncBuf()
 		}

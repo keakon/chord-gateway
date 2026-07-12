@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +43,44 @@ func TestTruncateStderrTail(t *testing.T) {
 	if got := truncateStderrTail(strings.Repeat("x", 2100), 0); len(got) != 2000 {
 		t.Fatalf("default truncate len = %d, want 2000", len(got))
 	}
+}
+
+func TestProcessEnvelopeReadyPersistsPinOutsideProcessLock(t *testing.T) {
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	pins := &sessionPinStore{
+		pins: make(map[string]string),
+		writer: func(string, []byte, os.FileMode) error {
+			close(writeStarted)
+			<-releaseWrite
+			return errors.New("write failed")
+		},
+	}
+	mgr := &ChordManager{pins: pins}
+	p := &ChordProcess{key: "ws|wechat|chat", mgr: mgr}
+	payload, err := json.Marshal(map[string]string{"session_id": "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		p.processEnvelope(&HeadlessEnvelope{Type: "ready", Payload: payload})
+		close(done)
+	}()
+
+	<-writeStarted
+	stateRead := make(chan struct{})
+	go func() {
+		_ = p.State()
+		close(stateRead)
+	}()
+	select {
+	case <-stateRead:
+	case <-time.After(time.Second):
+		t.Fatal("State blocked while session pin was being persisted")
+	}
+	close(releaseWrite)
+	<-done
 }
 
 func TestChordManagerProcessLookupAndStop(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,12 +183,12 @@ func TestDedupeStore_ContainsExpiryMarksDirtyForPersistence(t *testing.T) {
 	}
 	ds.Commit(key)
 
-	data, err := os.ReadFile(ds.storagePath)
+	data, err := os.ReadFile(ds.journalPath)
 	if err != nil {
-		t.Fatalf("read persisted dedupe file before expiry: %v", err)
+		t.Fatalf("read persisted dedupe journal before expiry: %v", err)
 	}
 	if !strings.Contains(string(data), key) {
-		t.Fatalf("persisted dedupe file should contain key %q before expiry: %s", key, data)
+		t.Fatalf("persisted dedupe journal should contain key %q before expiry: %s", key, data)
 	}
 
 	time.Sleep(100 * time.Millisecond)
@@ -310,4 +311,59 @@ func TestDedupeStore_CloseIdempotent(t *testing.T) {
 	ds.Close()
 	// Should not panic on repeated close.
 	ds.Close()
+}
+
+func TestDedupeStore_LoadsJournalBeforeCleanClose(t *testing.T) {
+	dir := t.TempDir()
+	ds1, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "app1|chat1|journal"
+	ds1.Commit(key)
+
+	ds2, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ds2.Contains(key) {
+		t.Fatal("journaled key should survive reopening before clean close")
+	}
+	ds2.Close()
+	ds1.Close()
+}
+
+func TestDedupeStore_CloseCompactsJournal(t *testing.T) {
+	dir := t.TempDir()
+	ds, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "app1|chat1|compact"
+	ds.Commit(key)
+	ds.Close()
+
+	if _, err := os.Stat(filepath.Join(dir, dedupeFileName+dedupeJournalSuffix)); !os.IsNotExist(err) {
+		t.Fatalf("journal should be removed after compaction, stat error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, dedupeFileName))
+	if err != nil {
+		t.Fatalf("read compacted snapshot: %v", err)
+	}
+	if !strings.Contains(string(data), key) {
+		t.Fatalf("compacted snapshot should contain key %q: %s", key, data)
+	}
+}
+
+func BenchmarkDedupeStoreCommitJournal(b *testing.B) {
+	ds, err := NewDedupeStore(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(ds.Close)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ds.Commit(fmt.Sprintf("message-%d", i))
+	}
 }

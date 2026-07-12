@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +18,7 @@ const (
 	defaultDedupeTTL    = 24 * time.Hour
 	dedupeCleanupPeriod = 5 * time.Minute
 	dedupeFileName      = "dedupe.json"
+	dedupeJournalSuffix = ".journal"
 )
 
 // dedupeEntry tracks a message's deduplication state.
@@ -34,7 +36,9 @@ type DedupeStore struct {
 	entries     map[string]dedupeEntry // key → entry
 	ttl         time.Duration
 	storagePath string
+	journalPath string
 	stopCleanup chan struct{}
+	cleanupDone chan struct{}
 	closeOnce   sync.Once
 	dirty       bool
 }
@@ -49,11 +53,13 @@ func NewDedupeStore(storageDir string) (*DedupeStore, error) {
 		entries:     make(map[string]dedupeEntry),
 		ttl:         defaultDedupeTTL,
 		storagePath: filepath.Join(storageDir, dedupeFileName),
+		journalPath: filepath.Join(storageDir, dedupeFileName+dedupeJournalSuffix),
 		stopCleanup: make(chan struct{}),
+		cleanupDone: make(chan struct{}),
 	}
 
 	// Load persisted entries.
-	ds.loadFromFile()
+	ds.loadFromFiles()
 
 	go ds.cleanupLoop()
 
@@ -93,14 +99,15 @@ func (ds *DedupeStore) Commit(key string) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
-	ds.entries[key] = dedupeEntry{
+	entry := dedupeEntry{
 		Key:       key,
 		Committed: true,
 		ExpiresAt: time.Now().Add(ds.ttl),
 	}
+	ds.entries[key] = entry
 	ds.dirty = true
-	if err := ds.saveToFileLocked(); err == nil {
-		ds.dirty = false
+	if err := ds.appendToJournalLocked(entry); err != nil {
+		log.Errorf("dedupe: failed to append journal error=%v", err)
 	}
 }
 
@@ -135,10 +142,19 @@ func (ds *DedupeStore) Contains(key string) bool {
 func (ds *DedupeStore) Close() {
 	ds.closeOnce.Do(func() {
 		close(ds.stopCleanup)
+		<-ds.cleanupDone
+		ds.mu.Lock()
+		defer ds.mu.Unlock()
+		if ds.dirty {
+			if err := ds.saveToFileLocked(); err == nil {
+				ds.dirty = false
+			}
+		}
 	})
 }
 
 func (ds *DedupeStore) cleanupLoop() {
+	defer close(ds.cleanupDone)
 	ticker := time.NewTicker(dedupeCleanupPeriod)
 	defer ticker.Stop()
 	for {
@@ -199,11 +215,38 @@ func (ds *DedupeStore) saveToFileLocked() error {
 		log.Errorf("dedupe: failed to write file error=%v", err)
 		return err
 	}
+	if err := os.Remove(ds.journalPath); err != nil && !os.IsNotExist(err) {
+		log.Errorf("dedupe: failed to remove compacted journal error=%v", err)
+		return err
+	}
 	return nil
 }
 
-// loadFromFile loads committed entries from disk. Caller must NOT hold ds.mu.
-func (ds *DedupeStore) loadFromFile() {
+// appendToJournalLocked records one commit without rewriting the snapshot.
+// Caller must hold ds.mu.
+func (ds *DedupeStore) appendToJournalLocked(entry dedupeEntry) error {
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	f, err := os.OpenFile(ds.journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, privateFileMode)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(privateFileMode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// loadFromFiles loads the compacted snapshot and commits appended after it.
+func (ds *DedupeStore) loadFromFiles() {
 	if ds.storagePath == "" {
 		return
 	}
@@ -212,19 +255,48 @@ func (ds *DedupeStore) loadFromFile() {
 		if !os.IsNotExist(err) {
 			log.Warnf("dedupe: failed to read file error=%v", err)
 		}
-		return
-	}
-	var entries []dedupeEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
+	} else if err := ds.loadSnapshot(data); err != nil {
 		log.Warnf("dedupe: failed to parse file error=%v", err)
+	}
+
+	f, err := os.Open(ds.journalPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Warnf("dedupe: failed to read journal error=%v", err)
+		}
+		log.Infof("dedupe: loaded entries from file count=%v", len(ds.entries))
 		return
 	}
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	for _, e := range entries {
-		if e.Committed && time.Now().Before(e.ExpiresAt) {
-			ds.entries[e.Key] = e
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var entry dedupeEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			log.Warnf("dedupe: failed to parse journal entry error=%v", err)
+			continue
 		}
+		ds.loadEntry(entry)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Warnf("dedupe: failed to scan journal error=%v", err)
 	}
 	log.Infof("dedupe: loaded entries from file count=%v", len(ds.entries))
+}
+
+func (ds *DedupeStore) loadSnapshot(data []byte) error {
+	var entries []dedupeEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		ds.loadEntry(entry)
+	}
+	return nil
+}
+
+func (ds *DedupeStore) loadEntry(entry dedupeEntry) {
+	if entry.Committed && time.Now().Before(entry.ExpiresAt) {
+		ds.entries[entry.Key] = entry
+	}
 }
