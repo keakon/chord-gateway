@@ -11,10 +11,11 @@ import (
 )
 
 type sessionPinStore struct {
-	mu     sync.Mutex
-	path   string
-	pins   map[string]string // processKey.String() -> sessionID
-	writer func(path string, data []byte, perm os.FileMode) error
+	mu        sync.Mutex
+	persistMu sync.Mutex
+	path      string
+	pins      map[string]string // processKey.String() -> sessionID
+	writer    func(path string, data []byte, perm os.FileMode) error
 }
 
 func newSessionPinStore(storageDir string) *sessionPinStore {
@@ -28,8 +29,8 @@ func newSessionPinStore(storageDir string) *sessionPinStore {
 }
 
 func (s *sessionPinStore) Load() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -44,17 +45,22 @@ func (s *sessionPinStore) Load() error {
 	if pins == nil {
 		pins = make(map[string]string)
 	}
+	s.mu.Lock()
 	s.pins = pins
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *sessionPinStore) Save() error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.savePinsLocked(s.pins)
+	pins := maps.Clone(s.pins)
+	s.mu.Unlock()
+	return s.savePins(pins)
 }
 
-func (s *sessionPinStore) savePinsLocked(pins map[string]string) error {
+func (s *sessionPinStore) savePins(pins map[string]string) error {
 	data, err := json.MarshalIndent(pins, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal pins: %w", err)
@@ -76,21 +82,31 @@ func (s *sessionPinStore) Get(key string) string {
 // Set persists a pinned sessionID for the given process key. Passing an empty
 // sessionID removes the pin.
 func (s *sessionPinStore) Set(key, sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 
+	s.mu.Lock()
+	current, exists := s.pins[key]
+	remove := strings.TrimSpace(sessionID) == ""
+	if remove && !exists || !remove && exists && current == sessionID {
+		s.mu.Unlock()
+		return nil
+	}
 	updated := maps.Clone(s.pins)
+	s.mu.Unlock()
 	if updated == nil {
 		updated = make(map[string]string)
 	}
-	if strings.TrimSpace(sessionID) == "" {
+	if remove {
 		delete(updated, key)
 	} else {
 		updated[key] = sessionID
 	}
-	if err := s.savePinsLocked(updated); err != nil {
+	if err := s.savePins(updated); err != nil {
 		return err
 	}
+	s.mu.Lock()
 	s.pins = updated
+	s.mu.Unlock()
 	return nil
 }
