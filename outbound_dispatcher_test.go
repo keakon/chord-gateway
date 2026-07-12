@@ -170,8 +170,8 @@ func TestOutboundDispatcherEnqueueOrWaitPreservesOrderUnderContention(t *testing
 			t.Fatalf("completed task = %d, want %d", got, want)
 		}
 	}
-	if snapshot := d.metricsSnapshot(); snapshot.Full != 1 {
-		t.Fatalf("overload metrics = %#v, want one full enqueue", snapshot)
+	if snapshot := d.metricsSnapshot(); snapshot.Full != 1 || snapshot.Blocked != 1 {
+		t.Fatalf("overload metrics = %#v, want one full and blocked enqueue", snapshot)
 	}
 }
 

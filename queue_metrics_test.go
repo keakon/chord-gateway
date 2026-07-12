@@ -28,11 +28,20 @@ func TestQueueMetricsSnapshot(t *testing.T) {
 	metrics.processed.Add(2)
 	metrics.full.Add(1)
 	metrics.closed.Add(4)
-	metrics.syncFallback.Add(1)
+	metrics.blocked.Add(1)
 	got := metrics.snapshot(5, 256)
-	want := queueMetricsSnapshot{Enqueued: 3, Processed: 2, Full: 1, Closed: 4, SyncFallback: 1, Depth: 5, Capacity: 256}
+	want := queueMetricsSnapshot{Enqueued: 3, Processed: 2, Full: 1, Closed: 4, Blocked: 1, Depth: 5, Capacity: 256}
 	if got != want {
 		t.Fatalf("snapshot = %#v, want %#v", got, want)
+	}
+}
+
+func TestQueueMetricsSnapshotDelta(t *testing.T) {
+	previous := queueMetricsSnapshot{Enqueued: 10, Processed: 8, Full: 1, Closed: 2, Blocked: 1}
+	current := queueMetricsSnapshot{Enqueued: 15, Processed: 12, Full: 3, Closed: 2, Blocked: 2}
+	want := queueMetricsSnapshot{Enqueued: 5, Processed: 4, Full: 2, Blocked: 1}
+	if got := current.delta(previous); got != want {
+		t.Fatalf("delta = %#v, want %#v", got, want)
 	}
 }
 

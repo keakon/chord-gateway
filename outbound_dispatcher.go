@@ -83,6 +83,7 @@ func (d *outboundDispatcher) enqueueTask(key string, task outboundTask, block bo
 			return outboundClosed
 		default:
 			d.metrics.full.Add(1)
+			d.metrics.blocked.Add(1)
 		}
 		select {
 		case queue <- task:

@@ -53,6 +53,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	var eventType string
 	var sessionPin string
+	var deferredLog func(string, ControlState)
 
 	switch env.Type {
 	case "ready":
@@ -65,7 +66,9 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				sessionPin = payload.SessionID
 			}
 		}
-		log.Infof("[%v] gateway event event=%v raw_type=%v", processLogContext(p.key, p.state), "ready", "ready")
+		deferredLog = func(key string, state ControlState) {
+			log.Infof("[%v] gateway event event=%v raw_type=%v", processLogContext(key, state), "ready", "ready")
+		}
 		// No notification.
 		eventType = ""
 
@@ -192,10 +195,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.LastAssistantText = payload.Text
 				eventType = "assistant_message"
 			} else {
-				log.Debugf("[%v] gateway assistant_message had empty text; skipping notification agent_id=%v tool_calls=%v", processLogContext(p.key, p.state),
-					payload.AgentID,
-					payload.ToolCalls,
-				)
+				agentID, toolCalls := payload.AgentID, payload.ToolCalls
+				deferredLog = func(key string, state ControlState) {
+					log.Debugf("[%v] gateway assistant_message had empty text; skipping notification agent_id=%v tool_calls=%v", processLogContext(key, state), agentID, toolCalls)
+				}
 			}
 			p.state.LastAssistantToolCalls = payload.ToolCalls
 			p.state.InternalEventsSinceLastPush = 0
@@ -207,7 +210,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			Todos []TodoItem `json:"todos"`
 		}
 		if err := json.Unmarshal(env.Payload, &wrapper); err != nil {
-			log.Warnf("[%v] failed to parse todos payload error=%v", processLogContext(p.key, p.state), err)
+			parseErr := err
+			deferredLog = func(key string, state ControlState) {
+				log.Warnf("[%v] failed to parse todos payload error=%v", processLogContext(key, state), parseErr)
+			}
 			p.state.Todos = nil
 		} else {
 			p.state.Todos = wrapper.Todos
@@ -222,7 +228,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "assistant_rollback"
 
 	default:
-		log.Debugf("unknown headless event type type=%v", env.Type)
+		rawType := env.Type
+		deferredLog = func(string, ControlState) { log.Debugf("unknown headless event type type=%v", rawType) }
 	}
 
 	// Capture callback params under lock, then invoke outside lock to prevent
@@ -233,6 +240,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		state   = p.state // copy
 	)
 	p.mu.Unlock()
+
+	if deferredLog != nil {
+		deferredLog(key, state)
+	}
 
 	if eventType != "" {
 		format := "[%v] gateway event event=%v raw_type=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v"
