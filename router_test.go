@@ -811,6 +811,24 @@ func TestHandleChordEventRoutesDirectAndLegacy(t *testing.T) {
 		}
 	})
 
+	t.Run("subagent lifecycle events route to chat", func(t *testing.T) {
+		sender := &stubIMAdapter{typ: "wechat"}
+		r := &NotificationRouter{adapter: sender}
+		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+		r.HandleChordEvent(key, "agent_started", ControlState{LastAgentStarted: &AgentStartedPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Description: "Review changes"}})
+		r.HandleChordEvent(key, "agent_notify", ControlState{LastAgentNotify: &AgentNotifyPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Kind: "progress", Message: "Tests pass"}})
+		r.HandleChordEvent(key, "agent_done", ControlState{LastAgentDone: &AgentDonePayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Summary: "Reviewed"}})
+		messages := sender.sentMessages()
+		if len(messages) != 3 {
+			t.Fatalf("messages = %#v", messages)
+		}
+		for i, want := range []string{"Delegated reviewer · adhoc-1", "reviewer · adhoc-1 · progress", "reviewer · adhoc-1 completed"} {
+			if messages[i].chatID != "chat-1" || !strings.Contains(messages[i].text, want) {
+				t.Fatalf("message[%d] = %#v, want %q", i, messages[i], want)
+			}
+		}
+	})
+
 	t.Run("todos notification forwards full list", func(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		r := &NotificationRouter{adapter: sender}
@@ -1222,19 +1240,20 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
 
 	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{
-		Activity:  true,
-		AgentDone: true,
-		Info:      true,
-		Toast:     true,
-		Todos:     true,
+		Activity:     true,
+		AgentStarted: true,
+		AgentNotify:  true,
+		Info:         true,
+		Toast:        true,
+		Todos:        true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "activity", "agent_done", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1304,8 +1323,8 @@ func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	if msg := r.formatNotification("idle", ControlState{LastOutcome: "completed"}); msg != "✅ Chord: Ready for input" {
 		t.Fatalf("idle = %q, want %q", msg, "✅ Chord: Ready for input")
 	}
-	if msg := r.formatNotification("agent_done", ControlState{}); msg != "" {
-		t.Fatalf("agent_done = %q, want empty", msg)
+	if msg := r.formatNotification("agent_done", ControlState{LastAssistantAgentID: "agent-1", LastAssistantText: "Reviewed", LastAgentDone: &AgentDonePayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Summary: "Reviewed"}}); !strings.Contains(msg, "reviewer · adhoc-1 completed") || !strings.Contains(msg, "Reviewed") {
+		t.Fatalf("agent_done = %q", msg)
 	}
 	if msg := r.formatNotification("todos", ControlState{}); msg != "📋 No todos." {
 		t.Fatalf("todos = %q, want %q", msg, "📋 No todos.")
@@ -1708,6 +1727,15 @@ func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	}
 	if msg := r.formatNotification("assistant_message", ControlState{}); msg != "" {
 		t.Fatalf("assistant_message empty = %q, want empty", msg)
+	}
+	if msg := r.formatNotification("assistant_message", ControlState{LastAssistantText: "reviewed", LastAssistantAgentID: "agent-1", LastAssistantTaskID: "adhoc-1", LastAssistantAgentType: "reviewer"}); msg != "🤖 reviewer · adhoc-1\n\nreviewed" {
+		t.Fatalf("subagent assistant_message = %q", msg)
+	}
+	if msg := r.formatNotification("agent_started", ControlState{LastAgentStarted: &AgentStartedPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Description: "Review changes"}}); !strings.Contains(msg, "🧩 Delegated reviewer · adhoc-1") || !strings.Contains(msg, "Review changes") {
+		t.Fatalf("agent_started = %q", msg)
+	}
+	if msg := r.formatNotification("agent_notify", ControlState{LastAgentNotify: &AgentNotifyPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Kind: "progress", Message: "Tests pass"}}); !strings.Contains(msg, "📣 reviewer · adhoc-1 · progress") || !strings.Contains(msg, "Tests pass") {
+		t.Fatalf("agent_notify = %q", msg)
 	}
 	if msg := r.formatNotification("local_shell_result", ControlState{LastLocalShell: &LocalShellPayload{Command: "pwd", Output: "/tmp/ws\n"}}); !strings.Contains(msg, "✅ Local shell: pwd") || !strings.Contains(msg, "/tmp/ws") {
 		t.Fatalf("local_shell_result = %q", msg)

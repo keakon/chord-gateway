@@ -34,15 +34,21 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "error":
 		return ""
 
+	case "agent_started":
+		return r.formatAgentStartedNotification(state)
+
+	case "agent_notify":
+		return r.formatAgentNotifyNotification(state)
+
 	case "agent_done":
-		// assistant_message already delivers the user-visible completion content.
-		// Keep agent_done as internal state only; do not push another message.
-		return ""
+		return r.formatAgentDoneNotification(state)
 
 	case "assistant_message":
-		// Send the completed assistant message.
 		if state.LastAssistantText == "" {
 			return ""
+		}
+		if state.LastAssistantAgentID != "" {
+			return truncate(fmt.Sprintf("🤖 %s\n\n%s", formatAgentLabel(state.LastAssistantAgentType, state.LastAssistantAgentID, state.LastAssistantTaskID), strings.TrimSpace(state.LastAssistantText)))
 		}
 		return state.LastAssistantText
 
@@ -68,6 +74,59 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	default:
 		return ""
 	}
+}
+
+func (r *NotificationRouter) formatAgentStartedNotification(state ControlState) string {
+	payload := state.LastAgentStarted
+	if payload == nil {
+		return ""
+	}
+	label := formatAgentLabel(payload.AgentType, payload.AgentID, payload.TaskID)
+	description := strings.TrimSpace(payload.Description)
+	if description == "" {
+		return truncate("🧩 Delegated " + label)
+	}
+	return truncate(fmt.Sprintf("🧩 Delegated %s\n%s", label, description))
+}
+
+func (r *NotificationRouter) formatAgentNotifyNotification(state ControlState) string {
+	payload := state.LastAgentNotify
+	if payload == nil || strings.TrimSpace(payload.Message) == "" {
+		return ""
+	}
+	label := formatAgentLabel(payload.AgentType, payload.AgentID, payload.TaskID)
+	kind := strings.TrimSpace(payload.Kind)
+	if kind != "" {
+		label += " · " + kind
+	}
+	return truncate(fmt.Sprintf("📣 %s\n%s", label, strings.TrimSpace(payload.Message)))
+}
+
+func (r *NotificationRouter) formatAgentDoneNotification(state ControlState) string {
+	payload := state.LastAgentDone
+	if payload == nil {
+		return ""
+	}
+	message := "✅ " + formatAgentLabel(payload.AgentType, payload.AgentID, payload.TaskID) + " completed"
+	summary := strings.TrimSpace(payload.Summary)
+	if summary != "" {
+		message += "\n" + summary
+	}
+	return truncate(message)
+}
+
+func formatAgentLabel(agentType, agentID, taskID string) string {
+	label := strings.TrimSpace(agentType)
+	if label == "" {
+		label = strings.TrimSpace(agentID)
+	}
+	if label == "" {
+		label = "SubAgent"
+	}
+	if taskID = strings.TrimSpace(taskID); taskID != "" {
+		label += " · " + taskID
+	}
+	return label
 }
 
 func (r *NotificationRouter) formatLocalShellNotification(state ControlState) string {

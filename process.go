@@ -406,9 +406,9 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	go p.readLoop(ctx, stdoutPipe)
 
 	// Send subscribe to limit events to control-plane essentials.
-	// Core delivery guarantees stay enabled for assistant_message /
-	// confirm_request / question_request / idle. Optional visibility is configured
-	// in gateway.
+	// Core delivery guarantees stay enabled for assistant messages,
+	// confirmation flows, idle state, and SubAgent completion summaries.
+	// Optional visibility is configured in gateway.
 	// If chord headless is too old, it may emit an error; ignore.
 	if err := p.SendCommand(map[string]any{
 		"type":   "subscribe",
@@ -478,8 +478,8 @@ func (p *ChordProcess) notifyStatusWaiters(state ControlState) {
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, handoff_request,
-	// idle, error, notification, done_completion, and local_shell_result.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result"}
+	// idle, error, notification, done_completion, local_shell_result, and agent_done.
+	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done"}
 	if cfg == nil {
 		return events
 	}
@@ -488,7 +488,8 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 		event   string
 	}{
 		{cfg.EventVisibility.Activity, "activity"},
-		{cfg.EventVisibility.AgentDone, "agent_done"},
+		{cfg.EventVisibility.AgentStarted, "agent_started"},
+		{cfg.EventVisibility.AgentNotify, "agent_notify"},
 		{cfg.EventVisibility.Info, "info"},
 		{cfg.EventVisibility.Toast, "toast"},
 		{cfg.EventVisibility.Todos, "todos"},

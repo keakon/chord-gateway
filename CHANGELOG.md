@@ -10,6 +10,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Added end-to-end SubAgent event forwarding: completion summaries are now always subscribed and sent to IM, optional `agent_started` / `agent_notify` events expose delegation progress, and SubAgent assistant text is labeled with its agent and task identity.
 - Added Chord headless `handoff_request` support: gateway now subscribes by default, displays the full handoff plan with available agents/model pools, and accepts `/handoff <agent> [model_pool]` or `/handoff-deny <reason>` responses.
 - Added IM `!` / `！` local shell shortcuts backed by Chord headless `local_shell` commands. Gateway now subscribes to `local_shell_result` by default and renders stdout/stderr results back to IM chats.
 

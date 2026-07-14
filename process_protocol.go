@@ -149,7 +149,25 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "local_shell_result"
 
+	case "agent_started":
+		var payload AgentStartedPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastAgentStarted = &payload
+		}
+		eventType = "agent_started"
+
+	case "agent_notify":
+		var payload AgentNotifyPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastAgentNotify = &payload
+		}
+		eventType = "agent_notify"
+
 	case "agent_done":
+		var payload AgentDonePayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastAgentDone = &payload
+		}
 		eventType = "agent_done"
 
 	case "info":
@@ -186,9 +204,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "assistant_message":
 		var payload struct {
-			Text      string `json:"text"`
-			AgentID   string `json:"agent_id"`
-			ToolCalls int    `json:"tool_calls"`
+			Text          string `json:"text"`
+			AgentID       string `json:"agent_id"`
+			TaskID        string `json:"task_id"`
+			AgentType     string `json:"agent_type"`
+			ParentAgentID string `json:"parent_agent_id"`
+			ToolCalls     int    `json:"tool_calls"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			if strings.TrimSpace(payload.Text) != "" {
@@ -201,6 +222,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				}
 			}
 			p.state.LastAssistantToolCalls = payload.ToolCalls
+			p.state.LastAssistantAgentID = payload.AgentID
+			p.state.LastAssistantTaskID = payload.TaskID
+			p.state.LastAssistantAgentType = payload.AgentType
+			p.state.LastAssistantParentAgentID = payload.ParentAgentID
 			p.state.InternalEventsSinceLastPush = 0
 			p.state.LastPushAt = now
 		}
@@ -225,6 +250,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "assistant_rollback":
 		p.state.LastAssistantText = ""
+		p.state.LastAssistantAgentID = ""
+		p.state.LastAssistantTaskID = ""
+		p.state.LastAssistantAgentType = ""
+		p.state.LastAssistantParentAgentID = ""
 		eventType = "assistant_rollback"
 
 	default:

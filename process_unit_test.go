@@ -124,6 +124,78 @@ func TestProcessEnvelopeUsesConsistentEventTimestamp(t *testing.T) {
 	}
 }
 
+func TestProcessEnvelopeOnlyGlobalIdleStopsGatewayNotifications(t *testing.T) {
+	events := make([]string, 0, 2)
+	p := &ChordProcess{
+		key: "ws|wechat|chat",
+		onEvent: func(_ string, eventType string, _ ControlState) {
+			events = append(events, eventType)
+		},
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "agent_started", Payload: json.RawMessage(`{"agent_id":"agent-1"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "activity", Payload: json.RawMessage(`{"agent_id":"agent-1","type":"streaming"}`)})
+	if state := p.State(); !state.Busy {
+		t.Fatal("gateway became idle while a SubAgent was still active")
+	}
+	for _, eventType := range events {
+		if eventType == "idle" {
+			t.Fatal("gateway routed idle before receiving the global idle envelope")
+		}
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: json.RawMessage(`{"last_outcome":"completed"}`)})
+	state := p.State()
+	if state.Busy || state.LastOutcome != "completed" {
+		t.Fatalf("state after global idle = busy=%v outcome=%q", state.Busy, state.LastOutcome)
+	}
+	if got := events[len(events)-1]; got != "idle" {
+		t.Fatalf("last routed event = %q, want idle", got)
+	}
+}
+
+func TestProcessEnvelopePreservesSubAgentMetadata(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+	p.processEnvelope(&HeadlessEnvelope{Type: "agent_started", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","description":"Review changes","parent_agent_id":"main"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "agent_notify", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","kind":"progress","message":"Tests pass","parent_agent_id":"main","target_agent_id":"main"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: json.RawMessage(`{"text":"Reviewed","agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","parent_agent_id":"main","tool_calls":1}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "agent_done", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","summary":"Done","parent_agent_id":"main"}`)})
+
+	state := p.State()
+	if state.LastAgentStarted == nil || state.LastAgentStarted.Description != "Review changes" {
+		t.Fatalf("LastAgentStarted = %#v", state.LastAgentStarted)
+	}
+	if state.LastAgentNotify == nil || state.LastAgentNotify.Kind != "progress" || state.LastAgentNotify.Message != "Tests pass" || state.LastAgentNotify.TargetAgentID != "main" {
+		t.Fatalf("LastAgentNotify = %#v", state.LastAgentNotify)
+	}
+	if state.LastAssistantAgentID != "agent-1" || state.LastAssistantTaskID != "adhoc-1" || state.LastAssistantAgentType != "reviewer" || state.LastAssistantParentAgentID != "main" {
+		t.Fatalf("assistant metadata = agent=%q task=%q type=%q parent=%q", state.LastAssistantAgentID, state.LastAssistantTaskID, state.LastAssistantAgentType, state.LastAssistantParentAgentID)
+	}
+	if state.LastAgentDone == nil || state.LastAgentDone.Summary != "Done" {
+		t.Fatalf("LastAgentDone = %#v", state.LastAgentDone)
+	}
+}
+
+func TestProcessEnvelopeEmitsSubAgentLifecycleCallbacks(t *testing.T) {
+	var got []string
+	p := &ChordProcess{
+		key: "ws|wechat|chat",
+		onEvent: func(_ string, eventType string, _ ControlState) {
+			got = append(got, eventType)
+		},
+	}
+	for _, env := range []HeadlessEnvelope{
+		{Type: "agent_started", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1"}`)},
+		{Type: "agent_notify", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","message":"working"}`)},
+		{Type: "agent_done", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","summary":"done"}`)},
+	} {
+		p.processEnvelope(&env)
+	}
+	if strings.Join(got, ",") != "agent_started,agent_notify,agent_done" {
+		t.Fatalf("callbacks = %v", got)
+	}
+}
+
 func TestProcessEnvelopeLogsOutsideProcessLock(t *testing.T) {
 	logStarted := make(chan struct{})
 	releaseLog := make(chan struct{})

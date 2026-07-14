@@ -275,6 +275,31 @@ storage_dir: /tmp/x
 	}
 }
 
+func TestLoad_EventVisibilitySubAgentEvents(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := `ims:
+  wechat:
+    workspace_id: ws1
+workspaces:
+  ws1:
+    path: /tmp/ws1
+event_visibility:
+  agent_started: true
+  agent_notify: true
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.EventVisibility.AgentStarted || !cfg.EventVisibility.AgentNotify {
+		t.Fatalf("EventVisibility = %#v", cfg.EventVisibility)
+	}
+}
+
 func TestLoad_ExampleConfig(t *testing.T) {
 	path := filepath.Join("..", "config.example.yaml")
 	cfg, err := Load(path)

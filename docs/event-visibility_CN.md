@@ -17,6 +17,7 @@ gateway 始终订阅以下事件：
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `agent_done`
 
 这些事件提供 IM 控制所需的最小行为：
 
@@ -29,6 +30,7 @@ gateway 始终订阅以下事件：
 - 面向用户的标准通知
 - 非 loop Done 完成报告
 - 本地 shell 命令结果
+- SubAgent 完成摘要
 
 ## 可选可见事件
 
@@ -37,7 +39,8 @@ gateway 始终订阅以下事件：
 ```yaml
 event_visibility:
   activity: false
-  agent_done: false
+  agent_started: false
+  agent_notify: false
   info: false
   toast: false
   todos: false
@@ -46,7 +49,8 @@ event_visibility:
 | 字段 | 事件类型 | 典型用途 |
 |---|---|---|
 | `activity` | `activity` | 较低层进度细节。gateway 会记录 phase 状态，但长时间提醒不会直接暴露这些 phase。 |
-| `agent_done` | `agent_done` | 子 agent 完成通知 |
+| `agent_started` | `agent_started` | SubAgent 委托开始通知 |
+| `agent_notify` | `agent_notify` | 面向 owner 或指定委派工作流的非阻塞更新 |
 | `info` | `info` | 信息类消息 |
 | `toast` | `toast` | 短暂提示消息 |
 | `todos` | `todos` | 完整 Todo 列表更新；每个事件都会完整转发且不去重，并会计入长时间提醒的内部事件数 |
@@ -65,9 +69,13 @@ event_visibility:
 
 `assistant_message` 是发送到 IM 的主要最终回复。
 
+SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent ID）和任务 ID。`agent_done` 始终订阅并发送权威完成摘要，因此也能覆盖只有工具调用、没有 assistant 文本的完成轮次。
+
 `notification` 是用户提醒的标准事件，包括权限请求、问题请求、blocked 错误和完全停止后的完成通知。
 
-`idle` 事件通常不会触发兜底完成消息。如果某个 `idle` 事件清理了待回答问题、待确认请求或待处理 handoff 请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题、待确认请求或待处理 handoff 请求的空闲进程前，也会发送同样的失效提示。
+`idle` 表示全局空闲：主 agent 与所有 SubAgent 都已停止活跃工作。单个 agent 的 idle 状态变化不会作为协议 `idle` 事件暴露，因此只要仍有任何 agent 在工作，gateway 就会保持 busy，不会停止长时间提醒，也不会发送 idle 通知。
+
+全局 `idle` 事件通常不会触发兜底完成消息。如果它清理了待回答问题、待确认请求或待处理 handoff 请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题、待确认请求或待处理 handoff 请求的空闲进程前，也会发送同样的失效提示。
 
 ## 日志
 

@@ -156,14 +156,15 @@ This keeps workspace definitions stable while each IM adapter declares how it ma
 Optional flags (boolean):
 
 - `activity`
-- `agent_done`
+- `agent_started`
+- `agent_notify`
 - `info`
 - `toast`
 - `todos`
 
-Essential events are always subscribed and cannot be disabled.
+Essential events are always subscribed and cannot be disabled. This includes `agent_done`, so tool-only SubAgent completions always surface their summary.
 
-`done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases.
+`agent_started` and `agent_notify` are opt-in to avoid noisy orchestration updates. `done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases.
 
 ## Path and State Resolution
 
@@ -237,7 +238,8 @@ chord_path: chord
 idle_timeout: 30m
 event_visibility:
   activity: false
-  agent_done: false
+  agent_started: false
+  agent_notify: false
   info: false
   toast: false
   todos: false
@@ -270,7 +272,8 @@ chord_path: chord
 idle_timeout: 30m
 event_visibility:
   activity: false
-  agent_done: false
+  agent_started: false
+  agent_notify: false
   info: false
   toast: false
   todos: true

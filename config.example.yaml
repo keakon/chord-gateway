@@ -55,12 +55,13 @@ chord_path: chord
 idle_timeout: 30m
 
 # --- Optional: Control-Plane Event Subscriptions ---
-# Only non-essential events are controllable here. Essential events
-# (assistant_message, confirm_request, question_request, idle, error,
-# notification) are always subscribed.
+# Only non-essential events are controllable here. Essential events include
+# assistant_message, requests, idle/error, Done reports, local shell results,
+# and SubAgent completion summaries; they are always subscribed.
 event_visibility:
   activity: false
-  agent_done: false
+  agent_started: false
+  agent_notify: false
   info: false
   toast: false
   todos: false

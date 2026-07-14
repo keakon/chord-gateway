@@ -17,6 +17,7 @@ The gateway always subscribes to these events:
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `agent_done`
 
 These events provide the minimum behavior required for IM control:
 
@@ -29,6 +30,7 @@ These events provide the minimum behavior required for IM control:
 - canonical user-facing notifications
 - non-loop Done completion reports
 - local shell command results
+- SubAgent completion summaries
 
 ## Optional visible events
 
@@ -37,7 +39,8 @@ Optional events are disabled by default. Enable them through `event_visibility`:
 ```yaml
 event_visibility:
   activity: false
-  agent_done: false
+  agent_started: false
+  agent_notify: false
   info: false
   toast: false
   todos: false
@@ -46,7 +49,8 @@ event_visibility:
 | Field | Event type | Typical use |
 |---|---|---|
 | `activity` | `activity` | Lower-level progress details. The gateway records phase state but does not expose phases in long-running reminders. |
-| `agent_done` | `agent_done` | Sub-agent completion notifications |
+| `agent_started` | `agent_started` | SubAgent delegation start notifications |
+| `agent_notify` | `agent_notify` | Non-blocking owner or targeted delegated-workstream updates |
 | `info` | `info` | Informational messages |
 | `toast` | `toast` | Short transient messages |
 | `todos` | `todos` | Full todo list updates; every event is forwarded without deduplication and counts as an internal event for long-running reminders |
@@ -65,9 +69,13 @@ Internal-event counts are currently based on gateway-tracked progress events suc
 
 `assistant_message` is the primary final response sent to IM.
 
+SubAgent `assistant_message` events are labeled with their agent type (falling back to agent ID) and task ID. `agent_done` is always subscribed and sends the authoritative completion summary; this also covers tool-only completion turns that have no assistant text.
+
 `notification` is the canonical event for user alerts, including permission requests, question requests, blocked errors, and fully stopped completion.
 
-`idle` events normally do not emit fallback completion messages. If an `idle` event clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request.
+`idle` represents global idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
+
+Global `idle` events normally do not emit fallback completion messages. If one clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request.
 
 ## Logs
 

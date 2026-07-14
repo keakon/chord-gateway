@@ -28,9 +28,16 @@ type ControlState struct {
 	// Todos from chord process
 	Todos []TodoItem `json:"todos,omitempty"`
 
-	LastAssistantText      string             `json:"-"` // last completed assistant message
-	LastAssistantToolCalls int                `json:"-"` // tool calls executed in the last turn
-	LastLocalShell         *LocalShellPayload `json:"-"`
+	LastAssistantText          string               `json:"-"` // last completed assistant message
+	LastAssistantToolCalls     int                  `json:"-"` // tool calls executed in the last turn
+	LastAssistantAgentID       string               `json:"-"`
+	LastAssistantTaskID        string               `json:"-"`
+	LastAssistantAgentType     string               `json:"-"`
+	LastAssistantParentAgentID string               `json:"-"`
+	LastAgentStarted           *AgentStartedPayload `json:"-"`
+	LastAgentNotify            *AgentNotifyPayload  `json:"-"`
+	LastAgentDone              *AgentDonePayload    `json:"-"`
+	LastLocalShell             *LocalShellPayload   `json:"-"`
 
 	// For long-running reminders.
 	InternalEventsSinceLastPush int       `json:"-"`
@@ -101,6 +108,39 @@ type DoneCompletionPayload struct {
 	Status  string `json:"status,omitempty"`
 	AgentID string `json:"agent_id,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+}
+
+// AgentStartedPayload is emitted when a delegated SubAgent starts running.
+type AgentStartedPayload struct {
+	AgentID       string `json:"agent_id"`
+	TaskID        string `json:"task_id"`
+	AgentType     string `json:"agent_type,omitempty"`
+	Description   string `json:"description,omitempty"`
+	ParentAgentID string `json:"parent_agent_id,omitempty"`
+	ParentTaskID  string `json:"parent_task_id,omitempty"`
+}
+
+// AgentNotifyPayload is a non-blocking update from a delegated SubAgent.
+type AgentNotifyPayload struct {
+	AgentID       string `json:"agent_id"`
+	TaskID        string `json:"task_id"`
+	AgentType     string `json:"agent_type,omitempty"`
+	ParentAgentID string `json:"parent_agent_id,omitempty"`
+	ParentTaskID  string `json:"parent_task_id,omitempty"`
+	TargetAgentID string `json:"target_agent_id,omitempty"`
+	TargetTaskID  string `json:"target_task_id,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Message       string `json:"message"`
+}
+
+// AgentDonePayload is the terminal completion summary from a delegated SubAgent.
+type AgentDonePayload struct {
+	AgentID       string `json:"agent_id"`
+	TaskID        string `json:"task_id"`
+	AgentType     string `json:"agent_type,omitempty"`
+	ParentAgentID string `json:"parent_agent_id,omitempty"`
+	ParentTaskID  string `json:"parent_task_id,omitempty"`
+	Summary       string `json:"summary"`
 }
 
 // LocalShellPayload is the local_shell_result event payload.
