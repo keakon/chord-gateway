@@ -8,6 +8,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+### Changed
+
+- Updated the Go toolchain requirement to 1.27.0 and refreshed third-party Go dependencies (`golog` v0.4.1, Lark SDK v3.10.0).
+
 ### Fixed
 
 - Gateway now preserves headless idle state transitions for configuration-only model-pool switches while suppressing the generic ready-for-input message. Pending confirmation, question, and handoff expiry notifications continue to be delivered.

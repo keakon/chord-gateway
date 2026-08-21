@@ -10,7 +10,7 @@
 chord --version
 ```
 
-然后使用 Go 1.26.3 或更高版本安装网关：
+然后使用 Go 1.27.0 或更高版本安装网关：
 
 ```bash
 go install github.com/keakon/chord-gateway@latest

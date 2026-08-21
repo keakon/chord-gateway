@@ -10,7 +10,7 @@ Install [Chord](https://github.com/keakon/chord#three-step-setup), complete its 
 chord --version
 ```
 
-Then install the gateway with Go 1.26.3 or later:
+Then install the gateway with Go 1.27.0 or later:
 
 ```bash
 go install github.com/keakon/chord-gateway@latest

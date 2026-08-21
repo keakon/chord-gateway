@@ -10,7 +10,7 @@
 - Chinese version: [README_CN.md](./README_CN.md)
 - Documentation site: <https://keakon.github.io/chord-gateway/>
 - Full documentation: [docs/index.md](./docs/index.md)
-- Requires: Go 1.26.3+ and a working `chord` binary
+- Requires: Go 1.27.0+ and a working `chord` binary
 
 ## Features
 
@@ -77,7 +77,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 
 ## Support scope / known limitations
 
-- Source builds require Go 1.26.3+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
+- Source builds require Go 1.27.0+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
 - CI currently builds these targets: `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, and `windows/amd64`.
 - WeChat always routes to one workspace. When multiple workspaces exist, set `ims.wechat.workspace_id` to choose the workspace used by WeChat.
 - Feishu multi-workspace routing uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.

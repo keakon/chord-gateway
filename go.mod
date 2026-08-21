@@ -1,11 +1,11 @@
 module github.com/keakon/chord-gateway
 
-go 1.26.3
+go 1.27.0
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/keakon/golog v0.3.0
-	github.com/larksuite/oapi-sdk-go/v3 v3.8.1
+	github.com/keakon/golog v0.4.1
+	github.com/larksuite/oapi-sdk-go/v3 v3.10.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
