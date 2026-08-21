@@ -13,9 +13,13 @@ type ControlState struct {
 	Busy        bool   `json:"busy"`
 	Phase       string `json:"phase"`
 	PhaseDetail string `json:"phase_detail"`
-	LastError   string `json:"last_error"`
-	LastOutcome string `json:"last_outcome"` // "completed" / "cancelled" / "error" / ""
-	UpdatedAt   string `json:"updated_at"`
+	// SuppressUserNotification applies only to the most recent idle event. It
+	// does not change the idle state transition; the router uses it to skip a
+	// user-facing completion reminder for configuration-only quiescence.
+	SuppressUserNotification bool   `json:"-"`
+	LastError                string `json:"last_error"`
+	LastOutcome              string `json:"last_outcome"` // "completed" / "cancelled" / "error" / ""
+	UpdatedAt                string `json:"updated_at"`
 
 	// Pending interactions
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`

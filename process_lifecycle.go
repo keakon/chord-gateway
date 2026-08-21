@@ -127,6 +127,8 @@ func (p *ChordProcess) handleExit() {
 
 func (p *ChordProcess) transitionToIdle(updatedAt string, expirePending bool) {
 	p.state.Busy = false
+	p.state.Phase = ""
+	p.state.PhaseDetail = ""
 	if expirePending {
 		p.state.ExpiredConfirm = p.state.PendingConfirm
 		p.state.ExpiredQuestion = p.state.PendingQuestion

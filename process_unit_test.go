@@ -154,6 +154,31 @@ func TestProcessEnvelopeOnlyGlobalIdleStopsGatewayNotifications(t *testing.T) {
 	}
 }
 
+func TestProcessEnvelopeSuppressedIdleStopsStateButSkipsNotification(t *testing.T) {
+	events := make([]string, 0, 1)
+	p := &ChordProcess{
+		key: "ws|wechat|chat",
+		onEvent: func(_ string, eventType string, state ControlState) {
+			events = append(events, eventType)
+			if eventType == "idle" && !state.SuppressUserNotification {
+				t.Fatalf("idle state SuppressUserNotification = false, want true")
+			}
+		},
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "activity", Payload: json.RawMessage(`{"type":"streaming"}`)})
+	events = events[:0]
+	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: json.RawMessage(`{"last_outcome":"completed","suppress_user_notification":true}`)})
+
+	state := p.State()
+	if state.Busy || state.Phase != "" || state.LastOutcome != "completed" {
+		t.Fatalf("state after suppressed idle = busy=%v phase=%q outcome=%q", state.Busy, state.Phase, state.LastOutcome)
+	}
+	if len(events) != 1 || events[0] != "idle" {
+		t.Fatalf("events = %v, want [idle]", events)
+	}
+}
+
 func TestProcessEnvelopePreservesSubAgentMetadata(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat"}
 	p.processEnvelope(&HeadlessEnvelope{Type: "agent_started", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","description":"Review changes","parent_agent_id":"main"}`)})

@@ -75,7 +75,7 @@ SubAgent `assistant_message` events are labeled with their agent type (falling b
 
 `idle` represents global idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
 
-Global `idle` events normally do not emit fallback completion messages. If one clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request.
+Global `idle` events normally do not emit fallback completion messages. If one clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request. Chord may include `suppress_user_notification: true` for configuration-only quiescence, such as a manual model-pool switch; the gateway still records the process as idle and stops reminders, but skips the generic idle message. Pending-interaction expiry notifications still take precedence.
 
 ## Logs
 

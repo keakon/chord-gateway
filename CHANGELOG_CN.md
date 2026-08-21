@@ -6,6 +6,12 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
+## 未发布
+
+### 修复
+
+- 对于仅由配置操作（例如手动切换 model pool）导致的静默状态，gateway 现在仍会正确收口 headless idle 状态，但不再发送通用的“可输入”提示。待确认、问题和 handoff 的过期通知仍会正常发送。
+
 ## v0.3.2
 
 ### Added

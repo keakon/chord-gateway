@@ -166,6 +166,9 @@ func (r *NotificationRouter) formatIdleNotification(state ControlState) string {
 	if msg := r.formatExpiredPendingNotification(state); msg != "" {
 		return msg
 	}
+	if state.SuppressUserNotification {
+		return ""
+	}
 	return "✅ Chord: Ready for input"
 }
 

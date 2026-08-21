@@ -90,11 +90,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "idle":
 		p.transitionToIdle("", false)
+		p.state.SuppressUserNotification = false
 		var payload struct {
-			LastOutcome string `json:"last_outcome"`
+			LastOutcome              string `json:"last_outcome"`
+			SuppressUserNotification bool   `json:"suppress_user_notification"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastOutcome = payload.LastOutcome
+			p.state.SuppressUserNotification = payload.SuppressUserNotification
 		}
 		eventType = "idle"
 

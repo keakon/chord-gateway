@@ -1604,8 +1604,14 @@ func TestFormatIdleNotification(t *testing.T) {
 	if got := r.formatNotification("idle", ControlState{}); got != "✅ Chord: Ready for input" {
 		t.Fatalf("idle without expired pending = %q", got)
 	}
+	if got := r.formatNotification("idle", ControlState{SuppressUserNotification: true}); got != "" {
+		t.Fatalf("suppressed idle = %q, want empty", got)
+	}
 	if got := r.formatNotification("idle", ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env"}}); !strings.Contains(got, "pending question has expired") {
 		t.Fatalf("expired question notification = %q", got)
+	}
+	if got := r.formatNotification("idle", ControlState{SuppressUserNotification: true, ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
+		t.Fatalf("expired confirmation should override suppression = %q", got)
 	}
 	if got := r.formatNotification("idle_timeout", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
 		t.Fatalf("expired confirm notification = %q", got)

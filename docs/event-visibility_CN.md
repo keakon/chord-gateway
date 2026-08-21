@@ -75,7 +75,7 @@ SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent 
 
 `idle` 表示全局空闲：主 agent 与所有 SubAgent 都已停止活跃工作。单个 agent 的 idle 状态变化不会作为协议 `idle` 事件暴露，因此只要仍有任何 agent 在工作，gateway 就会保持 busy，不会停止长时间提醒，也不会发送 idle 通知。
 
-全局 `idle` 事件通常不会触发兜底完成消息。如果它清理了待回答问题、待确认请求或待处理 handoff 请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题、待确认请求或待处理 handoff 请求的空闲进程前，也会发送同样的失效提示。
+全局 `idle` 事件通常不会触发兜底完成消息。如果它清理了待回答问题、待确认请求或待处理 handoff 请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题、待确认请求或待处理 handoff 请求的空闲进程前，也会发送同样的失效提示。Chord 可能会在配置操作（例如手动切换 model pool）导致静默时附带 `suppress_user_notification: true`；gateway 仍然把进程收口为 idle 并停止提醒，只跳过通用 idle 消息。待处理交互的失效提示优先级更高，不受该字段抑制。
 
 ## 日志
 
