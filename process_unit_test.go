@@ -154,6 +154,104 @@ func TestProcessEnvelopeOnlyGlobalIdleStopsGatewayNotifications(t *testing.T) {
 	}
 }
 
+func TestProcessEnvelopeCompactionStatusSavesTerminalOutcomeWithoutPush(t *testing.T) {
+	events := make([]string, 0, 1)
+	p := &ChordProcess{
+		key: "ws|wechat|chat",
+		onEvent: func(_ string, eventType string, _ ControlState) {
+			events = append(events, eventType)
+		},
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"skipped","trigger":"model_driven","reason":"projected savings too small"}`)})
+	state := p.State()
+	if state.LastCompaction == nil {
+		t.Fatal("compaction_status must be saved to ControlState")
+	}
+	if state.LastCompaction.Status != "skipped" || state.LastCompaction.Trigger != "model_driven" {
+		t.Fatalf("LastCompaction = %+v, want skipped/model_driven", state.LastCompaction)
+	}
+	if !strings.Contains(state.LastCompaction.Reason, "projected savings") {
+		t.Fatalf("LastCompaction.Reason = %q, want projected savings", state.LastCompaction.Reason)
+	}
+	// A compaction outcome is never pushed as a chat message.
+	if len(events) != 0 {
+		t.Fatalf("compaction_status must not push an event, got %v", events)
+	}
+
+	// A later terminal outcome replaces the previous one.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"succeeded","trigger":"model_driven"}`)})
+	if got := p.State().LastCompaction.Status; got != "succeeded" {
+		t.Fatalf("LastCompaction.Status after replace = %q, want succeeded", got)
+	}
+}
+
+func TestProcessEnvelopeCompactionStatusIgnoresSyntheticSkipWhileSlotActive(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+
+	// A real usage-driven compaction owns the slot.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"usage_driven","plan_id":"11"}`)})
+
+	// A synthetic started (sync interval/cooldown skip) and its skipped
+	// terminal must not overwrite the running plan's state.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"model_driven","plan_id":"12","synthetic":true}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"skipped","trigger":"model_driven","plan_id":"12","reason":"minimum 3-request-batch interval"}`)})
+	state := p.State()
+	if state.LastCompaction == nil || state.LastCompaction.Status != "started" || state.LastCompaction.PlanID != "11" {
+		t.Fatalf("LastCompaction after synthetic pair = %+v, want the running plan's started", state.LastCompaction)
+	}
+
+	// The running plan's own terminal resolves the slot.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"succeeded","trigger":"usage_driven","plan_id":"11"}`)})
+	if got := p.State().LastCompaction.Status; got != "succeeded" {
+		t.Fatalf("LastCompaction.Status after owning terminal = %q, want succeeded", got)
+	}
+}
+
+func TestProcessEnvelopeCompactionStatusRealTakeoverSupersedesSlot(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"usage_driven","plan_id":"11"}`)})
+	// A real model-driven started takes over the slot...
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"model_driven","plan_id":"22"}`)})
+	// ...so the superseded plan's late terminal must be dropped.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"succeeded","trigger":"usage_driven","plan_id":"11"}`)})
+	state := p.State()
+	if state.LastCompaction == nil || state.LastCompaction.PlanID != "22" || state.LastCompaction.Status != "started" {
+		t.Fatalf("LastCompaction after superseded terminal = %+v, want plan 22 started", state.LastCompaction)
+	}
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"succeeded","trigger":"model_driven","plan_id":"22"}`)})
+	if got := p.State().LastCompaction.Status; got != "succeeded" {
+		t.Fatalf("LastCompaction.Status after owning terminal = %q, want succeeded", got)
+	}
+}
+
+func TestProcessEnvelopeCompactionStatusLoneSyntheticSkipShowsOnIdleSlot(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+
+	// No compaction is running: the synthetic started is ignored, but the
+	// skipped terminal still surfaces because the slot is idle.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"model_driven","plan_id":"9","synthetic":true}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"skipped","trigger":"model_driven","plan_id":"9","reason":"minimum 3-request-batch interval"}`)})
+	state := p.State()
+	if state.LastCompaction == nil || state.LastCompaction.Status != "skipped" || state.LastCompaction.PlanID != "9" {
+		t.Fatalf("LastCompaction after lone synthetic skip = %+v, want skipped/9", state.LastCompaction)
+	}
+}
+
+func TestProcessEnvelopeCompactionStatusEmptyPlanIDTerminalKeepsRunningSlot(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"usage_driven","plan_id":"11"}`)})
+	// A terminal without a plan id matches nothing: it must not clear a
+	// running plan's state.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"skipped","trigger":"model_driven","reason":"unknown plan"}`)})
+	state := p.State()
+	if state.LastCompaction == nil || state.LastCompaction.Status != "started" || state.LastCompaction.PlanID != "11" {
+		t.Fatalf("LastCompaction after plan-less terminal = %+v, want the running plan's started", state.LastCompaction)
+	}
+}
+
 func TestProcessEnvelopeSuppressedIdleStopsStateButSkipsNotification(t *testing.T) {
 	events := make([]string, 0, 1)
 	p := &ChordProcess{

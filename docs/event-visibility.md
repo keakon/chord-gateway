@@ -18,6 +18,7 @@ The gateway always subscribes to these events:
 - `done_completion`
 - `local_shell_result`
 - `agent_done`
+- `compaction_status`
 
 These events provide the minimum behavior required for IM control:
 
@@ -31,6 +32,7 @@ These events provide the minimum behavior required for IM control:
 - non-loop Done completion reports
 - local shell command results
 - SubAgent completion summaries
+- last context-checkpoint outcome for `/status`
 
 ## Optional visible events
 

@@ -8,6 +8,10 @@
 
 ## 未发布
 
+### 新功能
+
+- gateway 现在始终订阅 Chord 的 `compaction_status` 事件，并在 `/status` 中展示最近一次上下文检查点的结果（例如 `succeeded`、带原因的 `skipped`、`failed`）；这些结果不会作为聊天消息推送。未占用压缩槽位的跳过事件不会覆盖仍在运行中的压缩结果。
+
 ### 变更
 
 - 将 Go toolchain 要求更新到 1.27.0，并刷新第三方 Go 依赖（`golog` v0.4.1、飞书 SDK v3.10.0）。

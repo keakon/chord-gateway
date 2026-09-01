@@ -129,5 +129,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `agent_done`
+- `compaction_status`
 
 Optional events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).

@@ -129,5 +129,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `agent_done`
+- `compaction_status`
 
 可选事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。

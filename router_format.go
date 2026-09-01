@@ -583,6 +583,17 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		sb.WriteString("\n📋 Last outcome: ")
 		sb.WriteString(state.LastOutcome)
 	}
+	if state.LastCompaction != nil && state.LastCompaction.Status != "" && state.LastCompaction.Status != "started" {
+		sb.WriteString("\n🧠 Last context checkpoint: ")
+		sb.WriteString(state.LastCompaction.Status)
+		if state.LastCompaction.Trigger == "model_driven" {
+			sb.WriteString(" (model-driven)")
+		}
+		if state.LastCompaction.Reason != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(state.LastCompaction.Reason)
+		}
+	}
 	if state.LastError != "" {
 		sb.WriteString("\n❌ Last error: ")
 		sb.WriteString(state.LastError)

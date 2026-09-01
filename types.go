@@ -51,6 +51,27 @@ type ControlState struct {
 	ToastLevel                  string    `json:"-"` // from toast event
 	// Last notification emitted by chord headless for guaranteed user-facing alerts.
 	LastNotification *NotificationPayload `json:"-"`
+	// LastCompaction is the most recent compaction_status terminal outcome
+	// forwarded by chord headless. Progress events are filtered headless-side;
+	// the gateway only ever sees started and terminal outcomes, and never
+	// turns them into chat messages.
+	LastCompaction *CompactionStatusPayload `json:"-"`
+}
+
+// CompactionStatusPayload is the compaction_status envelope payload.
+// Status is one of started|succeeded|skipped|failed|cancelled; trigger is
+// manual|usage_driven|length_recovery|oversize_driven|model_driven|model_downshift.
+// PlanID correlates a terminal outcome with the started that produced it.
+// Synthetic marks lifecycle events of a plan that never occupied the
+// compaction slot (the chord-side synchronous interval/cooldown skip): a
+// single-slot consumer must not let a synthetic pair overwrite the state of a
+// compaction that is still running.
+type CompactionStatusPayload struct {
+	Status    string `json:"status"`
+	Trigger   string `json:"trigger"`
+	Reason    string `json:"reason,omitempty"`
+	PlanID    string `json:"plan_id,omitempty"`
+	Synthetic bool   `json:"synthetic,omitempty"`
 }
 
 type InteractiveCardHandle struct {

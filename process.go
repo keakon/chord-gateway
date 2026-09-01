@@ -38,6 +38,12 @@ type ChordProcess struct {
 	state        ControlState
 	lastActivity time.Time
 
+	// compactionPlanID tracks the plan id of the compaction that currently
+	// owns the single compaction slot (set by a non-synthetic started, cleared
+	// by its terminal). Guards state.LastCompaction from being overwritten by
+	// synthetic sync-skip pairs or superseded plans' late outcomes.
+	compactionPlanID string
+
 	// Auto-restart on crash
 	autoRestart      bool
 	stoppedByGateway bool
@@ -479,7 +485,7 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, handoff_request,
 	// idle, error, notification, done_completion, local_shell_result, and agent_done.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done"}
+	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "compaction_status"}
 	if cfg == nil {
 		return events
 	}

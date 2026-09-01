@@ -1188,6 +1188,18 @@ func TestParseIMCommand(t *testing.T) {
 // formatStatus
 // ---------------------------------------------------------------------------
 
+func TestFormatStatusShowsLastCompactionOutcome(t *testing.T) {
+	s := formatBindingStatus(nil, "", "", ControlState{LastCompaction: &CompactionStatusPayload{Status: "skipped", Trigger: "model_driven", Reason: "projected savings too small"}})
+	if !strings.Contains(s, "Last context checkpoint") || !strings.Contains(s, "skipped") || !strings.Contains(s, "model-driven") || !strings.Contains(s, "projected savings") {
+		t.Fatalf("status with compaction outcome = %q, want checkpoint line", s)
+	}
+	// A started-only compaction (no terminal outcome yet) is not shown.
+	s = formatBindingStatus(nil, "", "", ControlState{LastCompaction: &CompactionStatusPayload{Status: "started", Trigger: "model_driven"}})
+	if strings.Contains(s, "Last context checkpoint") {
+		t.Fatalf("started-only compaction must not be shown in status, got %q", s)
+	}
+}
+
 func TestFormatStatus(t *testing.T) {
 	t.Run("busy shows spinner", func(t *testing.T) {
 		s := formatBindingStatus(nil, "", "", ControlState{Busy: true})
@@ -1240,7 +1252,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "compaction_status"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1253,7 +1265,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "compaction_status", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}

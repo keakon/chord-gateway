@@ -173,6 +173,41 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "agent_done"
 
+	case "compaction_status":
+		// Terminal compaction outcomes (started/succeeded/skipped/failed/
+		// cancelled) are saved for status/diagnostic interfaces. They are
+		// never pushed as chat messages; headless already filters progress
+		// events out of this envelope.
+		var payload CompactionStatusPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			// The gateway mirrors the single-slot compaction semantics of the
+			// TUI pill. A synthetic started (the chord-side synchronous
+			// interval/cooldown skip) never occupies the slot: while a real
+			// compaction runs, its skipped terminal must not overwrite the
+			// running plan's state. A terminal from a plan that no longer owns
+			// the slot (the skipped half of a synthetic pair, or a superseded
+			// plan's late outcome) is dropped; an idle slot applies any
+			// outcome (a lone synthetic skip is still surfaced).
+			switch payload.Status {
+			case "started":
+				if payload.Synthetic {
+					break
+				}
+				p.compactionPlanID = payload.PlanID
+				p.state.LastCompaction = &payload
+			default:
+				// While a plan owns the slot, only its own terminal may resolve
+				// it. An empty plan id matches nothing: it must not clear a
+				// running plan's state.
+				if p.compactionPlanID != "" && payload.PlanID != p.compactionPlanID {
+					break
+				}
+				p.compactionPlanID = ""
+				p.state.LastCompaction = &payload
+			}
+		}
+		eventType = ""
+
 	case "info":
 		var payload struct {
 			Message string `json:"message"`

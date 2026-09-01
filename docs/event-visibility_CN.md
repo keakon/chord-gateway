@@ -18,6 +18,7 @@ gateway 始终订阅以下事件：
 - `done_completion`
 - `local_shell_result`
 - `agent_done`
+- `compaction_status`
 
 这些事件提供 IM 控制所需的最小行为：
 
@@ -31,6 +32,7 @@ gateway 始终订阅以下事件：
 - 非 loop Done 完成报告
 - 本地 shell 命令结果
 - SubAgent 完成摘要
+- 供 `/status` 展示最近一次上下文检查点结果
 
 ## 可选可见事件
 

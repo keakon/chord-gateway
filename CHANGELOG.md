@@ -8,6 +8,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+### Added
+
+- Gateway now always subscribes to Chord's `compaction_status` event and surfaces the latest context-checkpoint outcome in `/status` (for example `succeeded`, `skipped` with its reason, or `failed`); outcomes are never pushed as chat messages. A skipped checkpoint that never occupied the compaction slot does not overwrite the outcome of a compaction that is still running.
+
 ### Changed
 
 - Updated the Go toolchain requirement to 1.27.0 and refreshed third-party Go dependencies (`golog` v0.4.1, Lark SDK v3.10.0).
