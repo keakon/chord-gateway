@@ -19,6 +19,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 ### Fixed
 
 - Gateway now preserves headless idle state transitions for configuration-only model-pool switches while suppressing the generic ready-for-input message. Pending confirmation, question, and handoff expiry notifications continue to be delivered.
+- Corrected the Feishu setup guide against current Feishu Open Platform behavior: the event page is **Event Subscriptions** (not “Events and callbacks”), `im.message.receive_v1` appears as **Receive message v2.0**, and receive-message scopes are **per scenario** — using both DMs and group chats requires granting both the DM scope and the group scope, not just any one of them. The guide now also documents the **Batch import** JSON flow and clarifies that `im:message:update` is not required because `im:message` / `im:message:send_as_bot` already cover the card update call.
 
 ## v0.3.2
 

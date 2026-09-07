@@ -45,11 +45,10 @@ Beginner checklist:
 
 ## Step 1: Configure events (long connection)
 
-In the Feishu console under “Events and callbacks”:
+In the Feishu console under **Event Subscriptions**:
 
-1. Select **Receive events via long connection**.
-2. In event subscriptions, subscribe to:
-   - `im.message.receive_v1`
+1. Select **Use long connection to receive events** (do not use the webhook / developer-server mode).
+2. Add the event `im.message.receive_v1`. In the console it is listed as **Receive message v2.0** under the **Messages & Groups** category.
 
 Notes:
 
@@ -72,20 +71,48 @@ Feishu requires permissions (scopes) for both receiving events and sending messa
 
 ### 3.1 Minimal scopes (recommended starting point)
 
-In the Feishu console under **Permissions & Scopes**, grant **at least**:
+In the Feishu console open **Permissions & Scopes**. Instead of ticking permissions
+one by one, click **Batch import** and paste the JSON below.
 
-- **Send messages as bot** (required for gateway replies)
-  - typically one of: `im:message` / `im:message:send_as_bot`
+- **Send messages as the app** (required for gateway replies, and also covers the
+  card update used to resolve confirmation/question cards). Grant **any one** of:
+  - `im:message` — get and send messages in p2p chats and groups
+  - `im:message:send_as_bot` — send messages as the app (smallest option)
 
-- **Receive message events** (required for `im.message.receive_v1`)
-  - choose the smallest set that matches your usage:
-    - If you only use **DM** with the bot: `im:message.p2p_msg:readonly`
-    - If you use **group chats** and plan to @mention the bot: `im:message.group_at_msg:readonly`
-    - If you want to receive **all group messages** (more powerful, often treated as sensitive): `im:message.group_msg`
+- **Receive message events** (required for `im.message.receive_v1`). These are
+  **not** alternatives — Feishu decides what to push per scenario, so grant one
+  scope for **each** scenario you use:
+  - **DM with the bot**: `im:message.p2p_msg:readonly`
+  - **Group chats, @ the bot** (user messages only): `im:message.group_at_msg:readonly`
+  - **Group chats, @ the bot** (including messages from other bots): `im:message.group_at_msg.include_bot:readonly`
+  - **All group messages** (more powerful, treated as sensitive): `im:message.group_msg`
+
+> If you use both DMs and group chats, grant **both** the DM scope and the group
+> scope. A DM-only app silently receives nothing in group chats.
+
+Smallest DM-only setup:
+
+```json
+{
+  "scopes": {
+    "tenant": [
+      "im:message:send_as_bot",
+      "im:message.p2p_msg:readonly"
+    ],
+    "user": []
+  }
+}
+```
+
+If you also use group chats, add `im:message.group_at_msg:readonly` (or
+`im:message.group_msg`) to the `tenant` array.
 
 Notes:
 
-- Feishu allows subscribing to `im.message.receive_v1` as long as **any one** of the above “receive message” scopes is granted.
+- The gateway sends text and interactive cards with `POST /open-apis/im/v1/messages`,
+  and resolves a confirmation/question card with `PATCH /open-apis/im/v1/messages/{message_id}`.
+  Both accept `im:message` or `im:message:send_as_bot`, so the dedicated
+  `im:message:update` scope is **not** required.
 - Tenant policies vary. The console may require admin approval for some scopes.
 
 ### 3.2 Publish after any change (easy to miss)
@@ -97,7 +124,9 @@ After changing **capabilities / permissions / event subscriptions**, you must **
 Common symptoms:
 
 - The gateway establishes long connection, but never logs `feishu: received message`.
+- DMs work but group chats produce nothing: the DM receive scope was granted without the matching group scope.
 - The gateway logs API errors when sending messages, e.g. `feishu API error: code=... msg=...`.
+- Confirmation/question buttons work, but the card never changes to the resolved state: usually a card update failure (only messages sent within 14 days can be updated).
 
 Fix:
 

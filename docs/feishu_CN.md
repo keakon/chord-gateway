@@ -45,11 +45,10 @@
 
 ## 第 1 步：配置事件（长连接）
 
-在飞书后台的“事件与回调”中：
+在飞书后台的 **事件订阅** 中：
 
-1. 选择 **使用长连接接收事件**。
-2. 在事件订阅中至少订阅：
-   - `im.message.receive_v1`
+1. 选择 **使用长连接接收事件**（不要选 webhook / 开发者服务器模式）。
+2. 添加事件 `im.message.receive_v1`。它在控制台中显示为 **消息与群组** 分类下的 **接收消息 v2.0**。
 
 补充说明：
 
@@ -72,20 +71,46 @@
 
 ### 3.1 最小权限（建议从这里开始）
 
-在飞书后台 **权限管理（Permissions & Scopes）** 中，建议至少开启：
+在飞书后台打开 **权限管理（Permissions & Scopes）**。除了逐项勾选，也可以点击
+**批量导入**，直接粘贴下面的 JSON 一键开通。
 
-- **以机器人身份发消息**（用于 gateway 回复）
-  - 通常对应 `im:message` / `im:message:send_as_bot` 这类权限项（具体名称以控制台为准）
+- **以应用身份发消息**（gateway 回复需要；同时也覆盖把确认/提问卡片置为已解决的那次卡片更新）
+  - 以下**任选其一**即可：
+    - `im:message`（获取与发送单聊、群组消息）
+    - `im:message:send_as_bot`（以应用的身份发消息，范围最小）
 
 - **接收消息事件**（用于订阅 `im.message.receive_v1`）
-  - 按你的使用场景选择最小集合：
+  - 这几项**不是三选一**：飞书按场景分别判断推送范围，你用到哪种场景就要开哪个：
     - 只用 **私聊**：`im:message.p2p_msg:readonly`
-    - 用 **群聊并 @ 机器人**：`im:message.group_at_msg:readonly`
-    - 需要接收 **群内所有消息**（能力更强，通常属于敏感权限）：`im:message.group_msg`
+    - 用 **群聊并 @ 机器人**（仅用户消息）：`im:message.group_at_msg:readonly`
+    - 用 **群聊并 @ 机器人**（含其他机器人消息）：`im:message.group_at_msg.include_bot:readonly`
+    - 需要接收 **群内所有消息**（能力更强，属于敏感权限）：`im:message.group_msg`
+
+> 如果私聊和群聊都要用，**两种权限都要开**。只开私聊权限时，群里 @ 机器人会静默收不到任何消息。
+
+最小（仅私聊）配置：
+
+```json
+{
+  "scopes": {
+    "tenant": [
+      "im:message:send_as_bot",
+      "im:message.p2p_msg:readonly"
+    ],
+    "user": []
+  }
+}
+```
+
+如果还要用群聊，往 `tenant` 数组里追加 `im:message.group_at_msg:readonly`
+（或 `im:message.group_msg`）。
 
 说明：
 
-- 飞书允许在开通“接收消息”相关权限中的**任意一个**后订阅 `im.message.receive_v1`。
+- gateway 用 `POST /open-apis/im/v1/messages` 发送文本和交互卡片，用
+  `PATCH /open-apis/im/v1/messages/{message_id}` 把确认/提问卡片置为已解决。
+  这两个接口都接受 `im:message` 或 `im:message:send_as_bot`，因此**不需要**额外开
+  `im:message:update`。
 - 不同企业/租户策略可能需要管理员审批。
 
 ### 3.2 任何变更后都要发布（最容易遗漏）
@@ -97,7 +122,9 @@
 常见表现：
 
 - 长连接已建立，但始终没有 `feishu: received message` 日志。
+- 私聊正常但群聊毫无反应：只开了私聊接收权限，没有开对应的群聊接收权限。
 - gateway 发送消息时报错，例如：`feishu API error: code=... msg=...`。
+- 确认/提问按钮点了有效，但卡片始终不变成“已解决”状态：通常是卡片更新失败（仅支持更新发送后 14 天内的消息）。
 
 处理步骤：
 
