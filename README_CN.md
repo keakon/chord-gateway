@@ -91,6 +91,7 @@ chord-gateway -f config.yaml
 | `/cancel` | 取消当前 turn |
 | `/allow` / `/deny [reason]` | 批准或拒绝待确认请求 |
 | `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
+| `/role [编号\|角色名]` | 显示当前主角色与可切换角色；不带参数时展示菜单，带编号或角色名时切换到目标角色 |
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 为当前绑定启动新 session |
 | `/resume <id>` | 恢复并 pin 指定 session |

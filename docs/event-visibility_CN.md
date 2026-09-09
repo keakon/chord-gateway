@@ -17,6 +17,7 @@ gateway 始终订阅以下事件：
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `role_change`
 - `agent_done`
 - `compaction_status`
 
@@ -31,6 +32,7 @@ gateway 始终订阅以下事件：
 - 面向用户的标准通知
 - 非 loop Done 完成报告
 - 本地 shell 命令结果
+- 供 `/status` 跟踪当前主角色
 - SubAgent 完成摘要
 - 供 `/status` 展示最近一次上下文检查点结果
 

@@ -44,13 +44,14 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 
 | 命令 | 说明 |
 |---|---|
-| `/status` | 查看当前 Chord 状态：busy/idle、phase、待处理交互 |
+| `/status` | 查看当前 Chord 状态：busy/idle、session、当前角色、phase、最近一次上下文检查点结果、待处理交互 |
 | `/cancel` | 取消当前 turn |
 | `/allow` | 批准待确认请求 |
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
 | `/handoff <agent> [model_pool]` | 将待处理 Chord handoff 请求的接受结果转发给 Chord；不带参数时由 Chord 使用默认 agent |
 | `/handoff-deny <reason>` | 将待处理 Chord handoff 请求的拒绝结果和原因转发给 Chord |
+| `/role [编号\|角色名]` | 显示当前主角色与可切换角色；不带参数时展示菜单，带编号或角色名时切换到目标角色 |
 | `!<command>` / `！<command>` | 通过绑定工作区向 Chord 发送 `local_shell` 命令，并回传 Chord 返回的 stdout/stderr 结果 |
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 优先交给当前 Chord 进程启动新 session；如果没有可用进程，则清除当前 session pin 并启动新的 Chord 进程 |
@@ -122,6 +123,28 @@ Reply /answer 1 / 1,2 / or type your answer
 - `/handoff-deny <reason>`：拒绝 handoff 请求，并附带原因。
 
 请按 gateway 消息中展示的名称填写 agent 和 model pool。如果当前没有待处理的 Chord handoff 请求，这些命令只会返回提示，不会启动新的 Chord 动作。
+
+## 角色切换
+
+`/role` 切换主 agent 角色（例如从 `builder` 切到 `planner`），不会新建 session，也不会丢弃当前会话上下文。
+
+- `/role` 显示当前角色和 Chord 可切换的角色列表。飞书里用交互卡片呈现，每个角色一个按钮；文本平台显示为编号列表。
+- `/role <编号>` 按编号选择角色（选择时会重新拉取最新列表，编号始终对应当前角色）。
+- `/role <角色名>` 直接按名称切换。
+
+```text
+You: /role
+Gateway: 🎭 Current role: builder
+1. builder (current)
+2. planner
+Reply /role <number> or /role <name> to switch.
+```
+
+只有 Chord 配置为 main-mode 的角色才会出现在列表里，SubAgent 不会是切换目标。切到当前角色会提示没有变化。如果 Chord 拒绝切换（例如仍有待处理的 handoff 决策），gateway 会原样显示 Chord 的说明。它和 `/handoff` 的区别：handoff 是让另一个角色执行待处理 plan，`/role` 是直接切换当前会话的主角色。
+
+如果切换请求失败或等待响应超时，gateway 会提示结果尚未确认，并尝试更新已点击的飞书卡片，避免停留在 Processing。未收到响应不代表切换一定失败；重试前先发送 `/status` 确认当前角色。飞书卡片点击只在原卡片上更新结果，不再额外发一条聊天消息；文本平台仍会发消息。
+
+需要支持 headless `role` 控制命令的 Chord 版本才能列出并切换角色；旧版 Chord 下该命令会提示无法加载角色列表。
 
 ## Chord local shell 快捷入口
 

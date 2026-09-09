@@ -10,6 +10,7 @@
 
 ### 新功能
 
+- 新增 IM `/role` 命令，通过 Chord headless 切换主 agent 角色（例如 `builder` → `planner`）：`/role` 列出当前角色与可切换角色（飞书为按钮卡片，文本平台为编号列表），`/role <编号>` / `/role <角色名>` 选择目标角色。gateway 现在始终订阅 Chord 的 `role_change` 事件，并在 `/status` 中跟踪当前主角色。需要支持 headless `role` 控制命令的 Chord 版本。切换请求失败或响应超时时，已点击的飞书卡片会更新为结果未确认，并提示用户在重试前用 `/status` 核实当前角色。飞书卡片点击只在原卡片上更新结果，不再额外发一条聊天消息。
 - gateway 现在始终订阅 Chord 的 `compaction_status` 事件，并在 `/status` 中展示最近一次上下文检查点的结果（例如 `succeeded`、带原因的 `skipped`、`failed`）；这些结果不会作为聊天消息推送。未占用压缩槽位的跳过事件不会覆盖仍在运行中的压缩结果。
 
 ### 变更

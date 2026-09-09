@@ -17,6 +17,7 @@ The gateway always subscribes to these events:
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `role_change`
 - `agent_done`
 - `compaction_status`
 
@@ -31,6 +32,7 @@ These events provide the minimum behavior required for IM control:
 - canonical user-facing notifications
 - non-loop Done completion reports
 - local shell command results
+- active-role tracking for `/status`
 - SubAgent completion summaries
 - last context-checkpoint outcome for `/status`
 

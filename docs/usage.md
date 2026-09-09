@@ -44,13 +44,14 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 
 | Command | Description |
 |---|---|
-| `/status` | Show current Chord state: busy/idle, phase, and pending interaction |
+| `/status` | Show current Chord state: busy/idle, session, current role, phase, last context checkpoint, and pending interaction |
 | `/cancel` | Cancel the current turn |
 | `/allow` | Approve the pending confirmation |
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
 | `/handoff <agent> [model_pool]` | Forward an acceptance for a pending Chord handoff request; omit arguments to let Chord use its default agent |
 | `/handoff-deny <reason>` | Forward a rejection for a pending Chord handoff request with a reason |
+| `/role [number\|name]` | Show the current main-agent role and the switchable roles, or switch to a target role by list number or name |
 | `!<command>` / `！<command>` | Send a Chord `local_shell` command through the bound workspace and return Chord's stdout/stderr result |
 | `/todos` | Show the current todo list |
 | `/new` | Ask the current Chord process to start a new session; if no process is available, clear the current session pin and start a fresh Chord process |
@@ -129,6 +130,28 @@ When Chord sends a `handoff_request`, the gateway posts the handoff plan, availa
 - `/handoff-deny <reason>` to reject the handoff request.
 
 Use the agent and model pool names exactly as shown in the gateway message. If no Chord handoff request is pending, these commands only return a warning and do not start a new Chord action.
+
+## Role switching
+
+`/role` switches the main agent role (for example `builder` → `planner`) without starting a new session or discarding the conversation context.
+
+- `/role` shows the current role and the roles Chord offers. In Feishu the list is an interactive card with one button per role; on text platforms it is a numbered list.
+- `/role <number>` picks a role from the numbered list. The gateway re-fetches the list from Chord when you select, so the number resolves against the current roles.
+- `/role <name>` switches by role name.
+
+```text
+You: /role
+Gateway: 🎭 Current role: builder
+1. builder (current)
+2. planner
+Reply /role <number> or /role <name> to switch.
+```
+
+Only the roles Chord configures as main-mode agents are offered; SubAgents are never switch targets. Switching to the current role is reported as a no-op. If Chord rejects the switch (for example while a handoff decision is still pending), the gateway shows Chord's message. The difference from `/handoff`: handoff hands a pending plan to another role for execution, while `/role` changes the active role of the ongoing session directly.
+
+If the switch request fails or its response times out, the gateway reports an unconfirmed result and attempts to resolve the clicked Feishu card instead of leaving it in Processing. A missing response does not prove the switch failed; send `/status` to check the current role before retrying. A Feishu card click is patched in place and does not also send a duplicate chat line; text platforms still get a message.
+
+Requires a Chord headless build that supports the `role` control command; with an older Chord the command reports that the role list cannot be loaded.
 
 ## Chord local shell shortcut
 

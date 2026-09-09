@@ -129,6 +129,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `notification`
 - `done_completion`
 - `local_shell_result`
+- `role_change`
 - `agent_done`
 - `compaction_status`
 

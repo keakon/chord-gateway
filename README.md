@@ -91,6 +91,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 | `/cancel` | Cancel the current turn |
 | `/allow` / `/deny [reason]` | Approve or deny a pending confirmation |
 | `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
+| `/role [number\|name]` | Show the current main-agent role and the switchable roles, or switch to a target role by list number or name |
 | `/todos` | Show the current todo list |
 | `/new` | Start a fresh session for the current binding |
 | `/resume <id>` | Resume and pin a session |
