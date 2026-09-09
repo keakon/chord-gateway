@@ -83,13 +83,13 @@ func displaySender(msg IncomingMessage) string {
 // updateFeishuCardStatus resolves a previously-sent interactive Feishu card
 // (referenced by processKey/requestType/requestID) by patching it with the
 // supplied card body. No-op for non-Feishu IMs or when no handle is available.
-func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, processKey, requestType, requestID string, card map[string]any) {
+func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, processKey, requestType, requestID string, card map[string]any) bool {
 	if msg.IMType != "feishu" {
-		return
+		return false
 	}
 	feishu := r.findFeishuAdapter()
 	if feishu == nil {
-		return
+		return false
 	}
 	stored, ok := r.takeCardHandle(processKey, requestType, requestID)
 	handle := stored
@@ -97,15 +97,18 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, process
 		handle = mergeCardHandles(stored, msg.InternalAction.Handle)
 	}
 	if !ok && (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
-		return
+		return false
 	}
 	if err := feishu.UpdateInteractiveCard(handle, card); err != nil {
 		log.Warnf("feishu: failed to update interactive card request_id=%v request_type=%v message_id=%v error=%v", requestID, requestType, handle.MessageID, err)
+		return false
 	}
+	return true
 }
 
 // resolveFeishuCard patches the previously-sent interactive Feishu card with a
 // title/message/template tuple, sparing callers from constructing the card body.
-func (r *NotificationRouter) resolveFeishuCard(msg IncomingMessage, processKey, requestType, requestID, title, message, template string) {
-	r.updateFeishuCardStatus(msg, processKey, requestType, requestID, buildFeishuResolvedCard(title, message, template))
+// It reports whether the card was actually patched.
+func (r *NotificationRouter) resolveFeishuCard(msg IncomingMessage, processKey, requestType, requestID, title, message, template string) bool {
+	return r.updateFeishuCardStatus(msg, processKey, requestType, requestID, buildFeishuResolvedCard(title, message, template))
 }

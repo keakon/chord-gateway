@@ -48,6 +48,8 @@ func isValidFeishuCardAction(actionType, action, value string) bool {
 		return action == "allow" || action == "deny"
 	case "question":
 		return action == "answer" && strings.TrimSpace(value) != ""
+	case "role":
+		return action == "switch" && strings.TrimSpace(value) != ""
 	default:
 		return false
 	}

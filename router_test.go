@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1113,6 +1114,9 @@ func TestParseIMCommand(t *testing.T) {
 		{name: "handoff quoted pool", input: "/handoff builder \"fast pool\"", wantType: "handoff", wantAction: "accept", wantAgent: "builder", wantPool: "fast pool"},
 		{name: "handoff extra argument", input: "/handoff builder fast extra", wantType: "handoff", wantAction: "accept", wantInvalid: true},
 		{name: "handoff deny", input: "/handoff-deny revise plan", wantType: "handoff", wantAction: "deny", wantReason: "revise plan"},
+		{name: "role menu", input: "/role", wantType: "role", wantContent: ""},
+		{name: "role numeric", input: "/role 2", wantType: "role", wantContent: "2"},
+		{name: "role name", input: "/role planner", wantType: "role", wantContent: "planner"},
 		{name: "new", input: "/new", wantType: "new"},
 		{name: "resume with session_id", input: "/resume 123", wantType: "resume", wantSessionID: "123"},
 		{name: "sessions", input: "/sessions", wantType: "sessions"},
@@ -1242,6 +1246,17 @@ func TestFormatStatus(t *testing.T) {
 		})
 		if !containsEmoji(s, "❌") {
 			t.Errorf("expected ❌ with last error, got: %s", s)
+		}
+	})
+
+	t.Run("current role shows theater masks", func(t *testing.T) {
+		s := formatBindingStatus(nil, "", "", ControlState{CurrentRole: "engineer"})
+		if !containsEmoji(s, "🎭") || !strings.Contains(s, "Role: engineer") {
+			t.Errorf("expected 🎭 with current role, got: %s", s)
+		}
+		s = formatBindingStatus(nil, "", "", ControlState{})
+		if containsEmoji(s, "🎭") {
+			t.Errorf("expected no 🎭 without current role, got: %s", s)
 		}
 	})
 }
@@ -2282,6 +2297,505 @@ func TestWaitStatus_TimesOutWithoutResponse(t *testing.T) {
 	if _, err := p.WaitStatus(ctx); err == nil {
 		t.Fatal("expected error on context expiry, got nil")
 	}
+}
+
+func waitForRoleRequest(t *testing.T, stdin *captureWriteCloser, action string) {
+	t.Helper()
+	target := `"action":"` + action + `"`
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for role %s request; stdin=%q", action, stdin.String())
+		}
+		if strings.Contains(stdin.String(), target) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestWaitRoleList_DeliversResponse(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	done := make(chan RoleResponse, 1)
+	go func() {
+		resp, err := p.WaitRoleList(ctx)
+		if err != nil {
+			t.Errorf("WaitRoleList: %v", err)
+		}
+		done <- resp
+	}()
+
+	waitForRoleRequest(t, p.stdin.(*captureWriteCloser), "list")
+	p.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"builder","roles":[{"name":"builder","current":true},{"name":"planner"}]}`)})
+
+	resp := <-done
+	if !resp.OK || resp.Role != "builder" || len(resp.Roles) != 2 || resp.Roles[1].Name != "planner" {
+		t.Fatalf("WaitRoleList response = %#v", resp)
+	}
+}
+
+func TestWaitRoleSwitch_SendsSetAndDeliversResponse(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	done := make(chan RoleResponse, 1)
+	go func() {
+		resp, err := p.WaitRoleSwitch(ctx, "planner")
+		if err != nil {
+			t.Errorf("WaitRoleSwitch: %v", err)
+		}
+		done <- resp
+	}()
+
+	waitForRoleRequest(t, p.stdin.(*captureWriteCloser), "set")
+	if s := p.stdin.(*captureWriteCloser).String(); !strings.Contains(s, `"role":"planner"`) {
+		t.Fatalf("role set command = %q", s)
+	}
+	p.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"planner"}`)})
+
+	resp := <-done
+	if !resp.OK || resp.Role != "planner" {
+		t.Fatalf("WaitRoleSwitch response = %#v", resp)
+	}
+}
+
+func TestWaitRoleCommandsSerialize(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	listDone := make(chan RoleResponse, 1)
+	go func() {
+		resp, err := p.WaitRoleList(ctx)
+		if err != nil {
+			t.Errorf("WaitRoleList: %v", err)
+		}
+		listDone <- resp
+	}()
+	waitForRoleRequest(t, p.stdin.(*captureWriteCloser), "list")
+
+	setStarted := make(chan struct{})
+	setDone := make(chan RoleResponse, 1)
+	go func() {
+		close(setStarted)
+		resp, err := p.WaitRoleSwitch(ctx, "planner")
+		if err != nil {
+			t.Errorf("WaitRoleSwitch: %v", err)
+		}
+		setDone <- resp
+	}()
+	<-setStarted
+	deadline := time.Now().Add(50 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if strings.Contains(p.stdin.(*captureWriteCloser).String(), `"action":"set"`) {
+			t.Fatal("role set must wait until the in-flight list round-trip finishes")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"builder","roles":[{"name":"builder"}]}`)})
+	select {
+	case resp := <-listDone:
+		if !resp.OK || resp.Role != "builder" {
+			t.Fatalf("WaitRoleList response = %#v", resp)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("list waiter did not finish")
+	}
+
+	waitForRoleRequest(t, p.stdin.(*captureWriteCloser), "set")
+	p.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"planner"}`)})
+	select {
+	case resp := <-setDone:
+		if !resp.OK || resp.Role != "planner" {
+			t.Fatalf("WaitRoleSwitch response = %#v", resp)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("set waiter did not finish")
+	}
+}
+
+func TestWaitRoleResponse_TimesOutWithoutResponse(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	if _, err := p.WaitRoleList(ctx); err == nil {
+		t.Fatal("expected error on context expiry, got nil")
+	}
+}
+
+func TestRoleEnvelopesTrackCurrentRole(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "role_change", Payload: []byte(`{"role":"planner"}`)})
+	if got := p.State().CurrentRole; got != "planner" {
+		t.Fatalf("CurrentRole after role_change = %q", got)
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "status_response", Payload: []byte(`{"current_role":"builder"}`)})
+	if got := p.State().CurrentRole; got != "builder" {
+		t.Fatalf("CurrentRole after status_response = %q", got)
+	}
+
+	// A role_response reports the newly active role on success.
+	p.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"planner","roles":[{"name":"builder"},{"name":"planner","current":true}]}`)})
+	if got := p.State().CurrentRole; got != "planner" {
+		t.Fatalf("CurrentRole after role_response = %q", got)
+	}
+}
+
+func roleHandlerTestRouter(sender *stubIMAdapter, proc *ChordProcess) (*NotificationRouter, string) {
+	key := (processKey{workspaceID: "ws1", imType: sender.typ, chatID: "chat-1"}).String()
+	if proc.key == "" {
+		proc.key = key
+	}
+	return &NotificationRouter{adapter: sender, lastKeyChatID: make(map[string]string)}, key
+}
+
+// runRoleHandler drives handleRoleCommand in a goroutine and feeds it
+// role_response envelopes whenever it issues the matching role request.
+// responses must line up with requests by index.
+func runRoleHandler(t *testing.T, sender *stubIMAdapter, proc *ChordProcess, cmd IMCommand, incoming IncomingMessage, requests []string, responses []RoleResponse) {
+	t.Helper()
+	r, key := roleHandlerTestRouter(sender, proc)
+	ws := &config.Workspace{ID: "ws1", Path: "/tmp/ws1"}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.handleRoleCommand(ws, "chat-1", cmd, incoming, key, proc)
+	}()
+
+	need := map[string]int{}
+	for i, req := range requests {
+		need[req]++
+		target := `"action":"` + req + `"`
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			if time.Now().After(deadline) {
+				t.Fatalf("timeout waiting for role %s request #%d; stdin=%q", req, need[req], proc.stdin.(*captureWriteCloser).String())
+			}
+			if strings.Count(proc.stdin.(*captureWriteCloser).String(), target) >= need[req] {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		payload, err := json.Marshal(responses[i])
+		if err != nil {
+			t.Fatalf("marshal role response: %v", err)
+		}
+		proc.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: payload})
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("role handler did not finish; last message = %q", sender.lastMessage().text)
+	}
+}
+
+func newRoleTestProcess(imType string) *ChordProcess {
+	return &ChordProcess{
+		key:         (processKey{workspaceID: "ws1", imType: imType, chatID: "chat-1"}).String(),
+		workspaceID: "ws1",
+		stdin:       &captureWriteCloser{},
+	}
+}
+
+func roleListResponse(current string, names ...string) RoleResponse {
+	roles := make([]RoleInfo, 0, len(names))
+	for _, n := range names {
+		roles = append(roles, RoleInfo{Name: n, Current: n == current})
+	}
+	return RoleResponse{OK: true, Role: current, Roles: roles}
+}
+
+func TestRoleMenuShownForBareRole(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	proc := newRoleTestProcess("wechat")
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
+	msg := sender.lastMessage().text
+	requireContains(t, msg, "Current role: builder")
+	requireContains(t, msg, "1. builder (current)")
+	requireContains(t, msg, "2. planner")
+	requireContains(t, msg, "Reply /role <number> or /role <name> to switch.")
+}
+
+func TestRoleSwitchByNumber(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	proc := newRoleTestProcess("wechat")
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "2"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+		[]string{"list", "set"}, []RoleResponse{roleListResponse("builder", "builder", "planner"), {OK: true, Role: "planner"}})
+	requireContains(t, sender.lastMessage().text, "✅ Switched role: planner")
+}
+
+func TestRoleSwitchByNameSkipsStaleNumber(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	proc := newRoleTestProcess("wechat")
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "reviewer"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
+	msg := sender.lastMessage().text
+	requireContains(t, msg, `"reviewer" is not an available role`)
+	if s := proc.stdin.(*captureWriteCloser).String(); strings.Contains(s, `"action":"set"`) {
+		t.Fatalf("no role set expected for unavailable name, stdin=%q", s)
+	}
+}
+
+func TestRoleAlreadyCurrentIsNoOp(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	proc := newRoleTestProcess("wechat")
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "1"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
+	requireContains(t, sender.lastMessage().text, "builder is already the current role")
+	if s := proc.stdin.(*captureWriteCloser).String(); strings.Contains(s, `"action":"set"`) {
+		t.Fatalf("no role set expected for current role, stdin=%q", s)
+	}
+}
+
+func TestRoleInvalidNumberIsRejected(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	proc := newRoleTestProcess("wechat")
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "99"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
+	requireContains(t, sender.lastMessage().text, "Invalid role selection")
+	if s := proc.stdin.(*captureWriteCloser).String(); strings.Contains(s, `"action":"set"`) {
+		t.Fatalf("no role set expected for an invalid number, stdin=%q", s)
+	}
+}
+
+func TestRoleSwitchRejectedMessageIsShown(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	proc := newRoleTestProcess("wechat")
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "planner"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+		[]string{"list", "set"},
+		[]RoleResponse{roleListResponse("builder", "builder", "planner"), {OK: false, Message: "resolve the pending handoff before switching role"}})
+	requireContains(t, sender.lastMessage().text, "resolve the pending handoff before switching role")
+}
+
+func TestRoleInternalActionSwitchesRole(t *testing.T) {
+	sender := &stubIMAdapter{typ: "feishu"}
+	proc := newRoleTestProcess("feishu")
+	incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-123", Value: "planner"}}
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "planner"}, incoming,
+		[]string{"list", "set"},
+		[]RoleResponse{roleListResponse("builder", "builder", "planner"), {OK: true, Role: "planner"}})
+	requireContains(t, sender.lastMessage().text, "✅ Switched role: planner")
+}
+
+func TestRoleInternalActionNumericNameMatchedByName(t *testing.T) {
+	// A card button carries the exact role name. A role literally named "2"
+	// must switch by name even though "2" parses as a menu number: position
+	// 2 here is "planner", so the numeric branch would switch to the wrong
+	// role instead.
+	sender := &stubIMAdapter{typ: "feishu"}
+	proc := newRoleTestProcess("feishu")
+	incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-456", Value: "2"}}
+	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "2"}, incoming,
+		[]string{"list", "set"},
+		[]RoleResponse{roleListResponse("builder", "builder", "planner", "2"), {OK: true, Role: "2"}})
+	requireContains(t, sender.lastMessage().text, "✅ Switched role: 2")
+	if s := proc.stdin.(*captureWriteCloser).String(); !strings.Contains(s, `"role":"2"`) {
+		t.Fatalf("role set must target the literal name, stdin=%q", s)
+	}
+}
+
+func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		failSwitch bool
+		timeout    bool
+		want       string
+	}{
+		{name: "list rejected", want: "backend unavailable"},
+		{name: "switch write failed", failSwitch: true, want: "Could not confirm the role switch. Send /status to check the current role."},
+		{name: "switch response timeout", timeout: true, want: "Could not confirm the role switch. Send /status to check the current role."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.timeout {
+				// Shorten the switch round-trip instead of waiting out the
+				// real 10-second timeout.
+				oldTimeout := roleSwitchTimeout
+				roleSwitchTimeout = 50 * time.Millisecond
+				defer func() { roleSwitchTimeout = oldTimeout }()
+			}
+			feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+			defer feishu.dedupe.Close()
+			var patchedPath, patchedBody, sentText string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/open-apis/auth/v3/app_access_token/internal":
+					_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+				case r.URL.Path == "/open-apis/im/v1/messages/om_role_1" && r.Method == http.MethodPatch:
+					patchedPath = r.URL.Path
+					body, _ := io.ReadAll(r.Body)
+					patchedBody = string(body)
+					_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+				case strings.HasPrefix(r.URL.Path, "/open-apis/im/v1/messages"):
+					body, _ := io.ReadAll(r.Body)
+					sentText = string(body)
+					_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"message_id":"om_new"}}`))
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+				}
+			}))
+			defer server.Close()
+			feishu.httpClient = server.Client()
+			oldBaseURL := feishuOpenBaseURL
+			feishuOpenBaseURL = server.URL
+			defer func() { feishuOpenBaseURL = oldBaseURL }()
+
+			r := &NotificationRouter{adapter: feishu, lastKeyChatID: make(map[string]string)}
+			proc := newRoleTestProcess("feishu")
+			key := proc.key
+			r.recordCardHandle(key, "role", "role-1", &InteractiveCardHandle{MessageID: "om_role_1"})
+			ws := &config.Workspace{ID: "ws1", Path: "/tmp/ws1"}
+			incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"}}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				r.handleRoleCommand(ws, "chat-1", IMCommand{Type: "role", Content: "planner"}, incoming, key, proc)
+			}()
+			waitForRoleRequest(t, proc.stdin.(*captureWriteCloser), "list")
+			if tc.failSwitch || tc.timeout {
+				if tc.failSwitch {
+					proc.mu.Lock()
+					proc.stdin = nil
+					proc.mu.Unlock()
+				}
+				proc.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"builder","roles":[{"name":"builder"},{"name":"planner"}]}`)})
+			} else {
+				proc.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":false,"message":"backend unavailable"}`)})
+			}
+			select {
+			case <-done:
+			case <-time.After(15 * time.Second):
+				t.Fatal("role handler did not finish after failure")
+			}
+
+			if patchedPath != "/open-apis/im/v1/messages/om_role_1" {
+				t.Fatalf("menu card was not resolved, patched path = %q", patchedPath)
+			}
+			if handle, ok := r.takeCardHandle(key, "role", "role-1"); ok {
+				t.Fatalf("resolved card handle should be consumed, got %#v", handle)
+			}
+			if sentText != "" {
+				t.Fatalf("card-originated failure must not send a duplicate chat line, body = %q", sentText)
+			}
+			if !strings.Contains(patchedBody, tc.want) {
+				t.Fatalf("card does not show the failure, body = %q", patchedBody)
+			}
+		})
+	}
+}
+
+func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
+	feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	defer feishu.dedupe.Close()
+	var patchedPath, patchedBody, sentText string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/open-apis/auth/v3/app_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case r.URL.Path == "/open-apis/im/v1/messages/om_role_1" && r.Method == http.MethodPatch:
+			patchedPath = r.URL.Path
+			body, _ := io.ReadAll(r.Body)
+			patchedBody = string(body)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		case strings.HasPrefix(r.URL.Path, "/open-apis/im/v1/messages"):
+			body, _ := io.ReadAll(r.Body)
+			sentText = string(body)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"message_id":"om_new"}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		}
+	}))
+	defer server.Close()
+	feishu.httpClient = server.Client()
+	oldBaseURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldBaseURL }()
+
+	r := &NotificationRouter{adapter: feishu, lastKeyChatID: make(map[string]string)}
+	proc := newRoleTestProcess("feishu")
+	key := proc.key
+	r.recordCardHandle(key, "role", "role-1", &InteractiveCardHandle{MessageID: "om_role_1"})
+	ws := &config.Workspace{ID: "ws1", Path: "/tmp/ws1"}
+	incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"}}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.handleRoleCommand(ws, "chat-1", IMCommand{Type: "role", Content: "planner"}, incoming, key, proc)
+	}()
+	waitForRoleRequest(t, proc.stdin.(*captureWriteCloser), "list")
+	proc.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"builder","roles":[{"name":"builder"},{"name":"planner"}]}`)})
+	waitForRoleRequest(t, proc.stdin.(*captureWriteCloser), "set")
+	proc.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"planner"}`)})
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("role handler did not finish after switch")
+	}
+
+	if patchedPath != "/open-apis/im/v1/messages/om_role_1" {
+		t.Fatalf("menu card was not resolved, patched path = %q", patchedPath)
+	}
+	if sentText != "" {
+		t.Fatalf("card-originated switch must not send a duplicate chat line, body = %q", sentText)
+	}
+	if !strings.Contains(patchedBody, "Switched role: planner") {
+		t.Fatalf("card does not show the switch, body = %q", patchedBody)
+	}
+}
+
+func TestCommandFromInternalActionRole(t *testing.T) {
+	cmd := commandFromInternalAction(&InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"})
+	if cmd.Type != "role" || cmd.Content != "planner" {
+		t.Fatalf("commandFromInternalAction(role) = %#v", cmd)
+	}
+}
+
+func TestValidFeishuRoleCardAction(t *testing.T) {
+	if !isValidFeishuCardAction("role", "switch", "planner") {
+		t.Fatal("role/switch/name should be valid")
+	}
+	if isValidFeishuCardAction("role", "switch", "") {
+		t.Fatal("role switch without a role name must be invalid")
+	}
+	if isValidFeishuCardAction("role", "allow", "planner") {
+		t.Fatal("role/allow must be invalid")
+	}
+	if isValidFeishuCardAction("confirm", "switch", "planner") {
+		t.Fatal("confirm/switch must stay invalid")
+	}
+}
+
+func TestBuildFeishuRoleCard(t *testing.T) {
+	card := buildFeishuRoleCard("oc_chat1", "role-1", "builder", []RoleInfo{{Name: "builder", Current: true}, {Name: "planner"}})
+	data, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("marshal role card: %v", err)
+	}
+	raw := string(data)
+	requireContains(t, raw, `"content":"Switch role"`)
+	requireContains(t, raw, "Current role: builder")
+	requireContains(t, raw, "2. planner")
+	if strings.Contains(raw, `"value":"builder"`) {
+		t.Fatalf("current role must not be a button: %s", raw)
+	}
+	// Buttons carry role context for the card-action callback.
+	requireContains(t, raw, `"type":"role"`)
+	requireContains(t, raw, `"action":"switch"`)
+	requireContains(t, raw, `"request_id":"role-1"`)
+	requireContains(t, raw, `"chat_id":"oc_chat1"`)
+	requireContains(t, raw, `"value":"planner"`)
 }
 
 func TestNormalizeIMTypeAndNames(t *testing.T) {

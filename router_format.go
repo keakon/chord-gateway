@@ -563,6 +563,10 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 	} else {
 		sb.WriteString("\n🧵 Session: (none)")
 	}
+	if state.CurrentRole != "" {
+		sb.WriteString("\n🎭 Role: ")
+		sb.WriteString(state.CurrentRole)
+	}
 	if state.Phase != "" {
 		sb.WriteString("\n📍 Phase: ")
 		sb.WriteString(state.Phase)

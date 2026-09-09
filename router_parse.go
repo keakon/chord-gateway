@@ -51,6 +51,12 @@ func parseIMCommand(text string) IMCommand {
 			reason = strings.TrimSpace(text[len(parts[0]):])
 		}
 		return IMCommand{Type: "handoff", Action: "deny", Reason: reason}
+	case "/role":
+		content := ""
+		if len(parts) > 1 {
+			content = strings.TrimSpace(strings.Join(parts[1:], " "))
+		}
+		return IMCommand{Type: "role", Content: content}
 	case "/new":
 		return IMCommand{Type: "new"}
 	case "/resume":
@@ -88,6 +94,8 @@ func commandFromInternalAction(action *InternalAction) IMCommand {
 		return IMCommand{Type: "confirm", Action: action.Action, RequestID: action.RequestID}
 	case "question":
 		return IMCommand{Type: "question", RequestID: action.RequestID, Answers: []string{action.Value}}
+	case "role":
+		return IMCommand{Type: "role", Content: action.Value}
 	default:
 		return IMCommand{Type: "send"}
 	}

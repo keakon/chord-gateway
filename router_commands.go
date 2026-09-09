@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleQuestionCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "handoff":
 		r.handleHandoffCommand(ws, chatID, cmd, procKey, proc)
+	case "role":
+		r.handleRoleCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "send":
 		r.handleSendCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "local_shell":
@@ -346,4 +349,189 @@ func (r *NotificationRouter) submitQuestionAnswer(ws *config.Workspace, chatID s
 	r.resolveFeishuCard(msg, procKey, "question", requestID, "Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green")
 	log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
 	return true
+}
+
+// roleListTimeout and roleSwitchTimeout bound the two /role chord round-trips.
+// They are package variables so tests can shorten them instead of waiting out
+// the real timeout.
+var (
+	roleListTimeout   = 10 * time.Second
+	roleSwitchTimeout = 10 * time.Second
+)
+
+// handleRoleCommand lists the switchable main-agent roles or switches to one.
+// The target comes from a plain /role reply (number or name) or from a Feishu
+// role-card button (InternalAction.Value carries the role name, matched by
+// exact name and never as a menu number). Every switch
+// refetches the role list from chord so menu numbers and the current-role
+// check reflect the live configuration instead of a stale menu snapshot.
+func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID string, cmd IMCommand, incoming IncomingMessage, procKey string, proc *ChordProcess) {
+	listCtx, listCancel := context.WithTimeout(context.Background(), roleListTimeout)
+	defer listCancel()
+
+	listResp, err := proc.WaitRoleList(listCtx)
+	if err != nil {
+		log.Warnf("role list failed workspace=%v error=%v", ws.ID, err)
+		r.replyRoleResult(chatID, incoming, procKey, "Role unavailable", "❌ Failed to load available roles.", "grey")
+		return
+	}
+	if !listResp.OK {
+		r.replyRoleResult(chatID, incoming, procKey, "Role unavailable", "⚠️ "+roleResponseMessage(listResp.Message, "Failed to load available roles."), "grey")
+		return
+	}
+	current, roles := roleListState(listResp)
+	if len(roles) == 0 {
+		r.replyRoleResult(chatID, incoming, procKey, "Role unavailable", "⚠️ No switchable roles are configured.", "grey")
+		return
+	}
+
+	target := strings.TrimSpace(cmd.Content)
+	if target == "" {
+		r.showRoleMenu(chatID, procKey, current, roles, incoming)
+		return
+	}
+
+	// A card button carries the exact role name, so it must never take the
+	// numeric-menu branch: a role literally named "2" would otherwise resolve
+	// to whatever sits at position 2. Plain-text replies keep the
+	// number-or-name semantics documented for /role.
+	fromCard := incoming.InternalAction != nil && incoming.InternalAction.Type == "role"
+	var name string
+	if n, atoiErr := strconv.Atoi(target); atoiErr == nil && !fromCard {
+		// Numeric menu choice: map against the freshly fetched list.
+		if n < 1 || n > len(roles) {
+			r.sendText(chatID, "⚠️ Invalid role selection. Send /role to see the current roles.")
+			return
+		}
+		name = strings.TrimSpace(roles[n-1].Name)
+	} else {
+		name = strings.TrimSpace(target)
+		if !roleNameAvailable(name, roles) {
+			r.replyRoleResult(chatID, incoming, procKey, "Role unavailable", fmt.Sprintf("⚠️ %q is not an available role. Send /role to see the available roles.", name), "grey")
+			return
+		}
+	}
+
+	if name == current {
+		r.replyRoleResult(chatID, incoming, procKey, "Role unchanged", fmt.Sprintf("ℹ️ %s is already the current role.", name), "grey")
+		return
+	}
+
+	setCtx, setCancel := context.WithTimeout(context.Background(), roleSwitchTimeout)
+	defer setCancel()
+
+	setResp, err := proc.WaitRoleSwitch(setCtx, name)
+	if err != nil {
+		log.Warnf("role switch failed workspace=%v role=%v error=%v", ws.ID, name, err)
+		r.replyRoleResult(chatID, incoming, procKey, "Role switch unconfirmed", "Could not confirm the role switch. Send /status to check the current role.", "grey")
+		return
+	}
+	if !setResp.OK {
+		r.replyRoleResult(chatID, incoming, procKey, "Role switch rejected", "⚠️ "+roleResponseMessage(setResp.Message, "Role switch was rejected."), "red")
+		return
+	}
+	log.Infof("role.switched workspace=%v chat_id=%v role=%v", ws.ID, chatID, name)
+	r.replyRoleResult(chatID, incoming, procKey, "Role switched", "✅ Switched role: "+name, "green")
+}
+
+// showRoleMenu presents the role list, preferring a Feishu interactive card
+// and falling back to a numbered text menu. When a Feishu card send fails the
+// adapter's sendCardOrFallback has already emitted the text fallback, so the
+// handler only falls through to sendText when no Feishu adapter is attached.
+func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles []RoleInfo, incoming IncomingMessage) {
+	if config.NormalizeIMType(incoming.IMType) == "feishu" {
+		if r.sendFeishuRoleMenu(chatID, procKey, current, roles) {
+			return
+		}
+		if r.findFeishuAdapter() != nil {
+			return
+		}
+	}
+	r.sendText(chatID, buildRoleMenuText(current, roles))
+}
+
+// replyRoleResult reports a /role outcome. A Feishu card click is patched in
+// place and does not also send a duplicate chat line; text platforms (and
+// Feishu when the card cannot be patched) still get sendText.
+func (r *NotificationRouter) replyRoleResult(chatID string, incoming IncomingMessage, procKey, title, message, template string) {
+	if r.resolveRoleCard(incoming, procKey, title, message, template) {
+		return
+	}
+	r.sendText(chatID, message)
+}
+
+// resolveRoleCard patches the Feishu role menu card when the switch was
+// triggered by a card button. It is a no-op for text replies, and reports
+// whether a card was actually patched so callers can skip a duplicate chat
+// message.
+func (r *NotificationRouter) resolveRoleCard(incoming IncomingMessage, procKey, title, message, template string) bool {
+	if incoming.InternalAction == nil || incoming.InternalAction.RequestID == "" {
+		return false
+	}
+	return r.resolveFeishuCard(incoming, procKey, "role", incoming.InternalAction.RequestID, title, message, template)
+}
+
+// buildRoleMenuText renders the numbered role list used by text platforms and
+// as the card fallback.
+func buildRoleMenuText(current string, roles []RoleInfo) string {
+	var sb strings.Builder
+	if strings.TrimSpace(current) != "" {
+		fmt.Fprintf(&sb, "🎭 Current role: %s\n", strings.TrimSpace(current))
+	} else {
+		sb.WriteString("🎭 Select a role:\n")
+	}
+	for i, r := range roles {
+		name := strings.TrimSpace(r.Name)
+		if name == "" {
+			continue
+		}
+		line := fmt.Sprintf("%d. %s", i+1, name)
+		if name == current {
+			line += " (current)"
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Reply /role <number> or /role <name> to switch.")
+	return truncate(sb.String())
+}
+
+// roleListState extracts the current role and the non-empty role list from a
+// role_response. The current role is taken from the payload's role field and
+// falls back to the entry marked current.
+func roleListState(resp RoleResponse) (string, []RoleInfo) {
+	roles := make([]RoleInfo, 0, len(resp.Roles))
+	for _, r := range resp.Roles {
+		if strings.TrimSpace(r.Name) != "" {
+			roles = append(roles, RoleInfo{Name: strings.TrimSpace(r.Name), Current: r.Current})
+		}
+	}
+	current := strings.TrimSpace(resp.Role)
+	if current == "" {
+		for _, r := range roles {
+			if r.Current {
+				current = r.Name
+				break
+			}
+		}
+	}
+	return current, roles
+}
+
+func roleNameAvailable(name string, roles []RoleInfo) bool {
+	for _, r := range roles {
+		if r.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// roleResponseMessage returns the chord-provided rejection message, falling
+// back to a generic message when the response carries none.
+func roleResponseMessage(message, fallback string) string {
+	if strings.TrimSpace(message) != "" {
+		return strings.TrimSpace(message)
+	}
+	return fallback
 }

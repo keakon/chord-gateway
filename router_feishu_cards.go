@@ -36,6 +36,68 @@ func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state Co
 	return err == nil
 }
 
+// sendFeishuRoleMenu presents the role list as an interactive Feishu card.
+// On card-send failure sendCardOrFallback emits the text menu fallback and
+// reports a nil handle, so the boolean only reports an interactive card.
+func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string, roles []RoleInfo) bool {
+	feishu := r.findFeishuAdapter()
+	if feishu == nil {
+		return false
+	}
+	reqID := newRoleMenuRequestID()
+	card := buildFeishuRoleCard(chatID, reqID, current, roles)
+	handle, err := feishu.sendCardOrFallback(chatID, card, buildRoleMenuText(current, roles))
+	if err == nil && handle != nil {
+		r.recordCardHandle(procKey, "role", reqID, handle)
+	}
+	return err == nil && handle != nil
+}
+
+// newRoleMenuRequestID synthesizes a request id for a role menu card. Role
+// switches carry no chord request id, so the id only correlates the menu card
+// with its own button clicks for card-status updates.
+func newRoleMenuRequestID() string {
+	return fmt.Sprintf("role-%d", time.Now().UnixNano())
+}
+
+func buildFeishuRoleCard(chatID, reqID, current string, roles []RoleInfo) map[string]any {
+	var lines []string
+	if strings.TrimSpace(current) != "" {
+		lines = append(lines, "Current role: "+strings.TrimSpace(current))
+	}
+	for i, r := range roles {
+		name := strings.TrimSpace(r.Name)
+		if name == "" {
+			continue
+		}
+		line := fmt.Sprintf("%d. %s", i+1, name)
+		if name == current {
+			line += " (current)"
+		}
+		lines = append(lines, line)
+	}
+	elements := []any{map[string]any{"tag": "markdown", "content": "**🎭 Switch role**\n" + strings.Join(lines, "\n")}}
+	baseValue := map[string]any{
+		"type": "role", "action": "switch", "request_id": reqID,
+		"chat_id": chatID, "im_type": "feishu", "issued_at": time.Now().Unix(),
+	}
+	for _, r := range roles {
+		name := strings.TrimSpace(r.Name)
+		if name == "" || name == current {
+			continue
+		}
+		value := cloneCardValue(baseValue)
+		value["value"] = name
+		elements = append(elements, feishuCardButton(truncateButtonLabel(name), "default", value))
+	}
+	return map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
+		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Switch role"}, "template": "blue"},
+		"body":   map[string]any{"elements": elements},
+	}
+}
+
 type feishuCardContext struct {
 	WorkspaceID string
 	SessionID   string
