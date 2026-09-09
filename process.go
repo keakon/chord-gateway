@@ -54,7 +54,14 @@ type ChordProcess struct {
 	eventLogf func(format string, args ...any)
 
 	// statusWaiters are notified when a status_response envelope arrives.
-	statusWaiters []chan ControlState
+	statusWaiters envelopeWaiters[ControlState]
+	// roleWaiters are notified when a role_response envelope arrives.
+	roleWaiters envelopeWaiters[RoleResponse]
+	// roleMu serializes WaitRoleList/WaitRoleSwitch. Role responses carry no
+	// request id, and roleWaiters wakes every waiter with the same payload, so
+	// two concurrent waits could consume each other's response. It is held only
+	// for the Chord round-trip, not for IM card/text I/O.
+	roleMu sync.Mutex
 }
 
 var ErrManagerShuttingDown = errors.New("chord manager is shutting down")
@@ -433,59 +440,97 @@ func (p *ChordProcess) State() ControlState {
 	return p.state
 }
 
-// WaitStatus sends a status command and waits for the next status_response.
-// Returns the resulting ControlState, or ctx.Err() if the context expires first.
-func (p *ChordProcess) WaitStatus(ctx context.Context) (ControlState, error) {
-	ch := make(chan ControlState, 1)
-	p.mu.Lock()
-	p.statusWaiters = append(p.statusWaiters, ch)
-	p.mu.Unlock()
-
-	if err := p.SendCommand(map[string]any{"type": "status"}); err != nil {
-		p.removeStatusWaiter(ch)
-		return ControlState{}, err
-	}
-
-	select {
-	case state := <-ch:
-		return state, nil
-	case <-ctx.Done():
-		p.removeStatusWaiter(ch)
-		return ControlState{}, ctx.Err()
-	}
+// envelopeWaiters holds channels waiting for one typed response envelope.
+// add/remove/notify must be called with the owning ChordProcess mutex held;
+// waitForEnvelope takes the lock itself, so callers pass the waiter field
+// without holding it.
+type envelopeWaiters[T any] struct {
+	waiters []chan T
 }
 
-func (p *ChordProcess) removeStatusWaiter(target chan ControlState) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for i, ch := range p.statusWaiters {
+func (w *envelopeWaiters[T]) add(ch chan T) {
+	w.waiters = append(w.waiters, ch)
+}
+
+func (w *envelopeWaiters[T]) remove(target chan T) {
+	for i, ch := range w.waiters {
 		if ch == target {
-			p.statusWaiters = append(p.statusWaiters[:i], p.statusWaiters[i+1:]...)
+			w.waiters = append(w.waiters[:i], w.waiters[i+1:]...)
 			return
 		}
 	}
 }
 
-// notifyStatusWaiters delivers state to all pending waiters and clears the list.
-// Caller must hold p.mu.
-func (p *ChordProcess) notifyStatusWaiters(state ControlState) {
-	if len(p.statusWaiters) == 0 {
+// notify delivers v to all pending waiters and clears the list.
+func (w *envelopeWaiters[T]) notify(v T) {
+	if len(w.waiters) == 0 {
 		return
 	}
-	for _, ch := range p.statusWaiters {
+	for _, ch := range w.waiters {
 		select {
-		case ch <- state:
+		case ch <- v:
 		default:
 		}
 	}
-	p.statusWaiters = nil
+	w.waiters = nil
+}
+
+// waitForEnvelope registers a typed waiter, sends cmd, and waits for the
+// matching response envelope. Returns ctx.Err() if the context expires first.
+func waitForEnvelope[T any](ctx context.Context, p *ChordProcess, waiters *envelopeWaiters[T], cmd map[string]any) (T, error) {
+	var zero T
+	ch := make(chan T, 1)
+	p.mu.Lock()
+	waiters.add(ch)
+	p.mu.Unlock()
+
+	if err := p.SendCommand(cmd); err != nil {
+		p.mu.Lock()
+		waiters.remove(ch)
+		p.mu.Unlock()
+		return zero, err
+	}
+
+	select {
+	case v := <-ch:
+		return v, nil
+	case <-ctx.Done():
+		p.mu.Lock()
+		waiters.remove(ch)
+		p.mu.Unlock()
+		return zero, ctx.Err()
+	}
+}
+
+// WaitStatus sends a status command and waits for the next status_response.
+// Returns the resulting ControlState, or ctx.Err() if the context expires first.
+func (p *ChordProcess) WaitStatus(ctx context.Context) (ControlState, error) {
+	return waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status"})
+}
+
+// WaitRoleList sends a role list command and waits for the role_response.
+// Returns the ordered list of main-mode roles and the current role.
+func (p *ChordProcess) WaitRoleList(ctx context.Context) (RoleResponse, error) {
+	p.roleMu.Lock()
+	defer p.roleMu.Unlock()
+	return waitForEnvelope(ctx, p, &p.roleWaiters, map[string]any{"type": "role", "action": "list"})
+}
+
+// WaitRoleSwitch requests switching to the named role and waits for the
+// role_response, which reports ok=false with a message when the switch is
+// rejected (unknown/not-available role, already active, pending handoff).
+func (p *ChordProcess) WaitRoleSwitch(ctx context.Context, role string) (RoleResponse, error) {
+	p.roleMu.Lock()
+	defer p.roleMu.Unlock()
+	return waitForEnvelope(ctx, p, &p.roleWaiters, map[string]any{"type": "role", "action": "set", "role": role})
 }
 
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, handoff_request,
-	// idle, error, notification, done_completion, local_shell_result, and agent_done.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "compaction_status"}
+	// idle, error, notification, done_completion, local_shell_result,
+	// agent_done, role_change, and compaction_status.
+	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
 	if cfg == nil {
 		return events
 	}

@@ -13,6 +13,7 @@ type ControlState struct {
 	Busy        bool   `json:"busy"`
 	Phase       string `json:"phase"`
 	PhaseDetail string `json:"phase_detail"`
+	CurrentRole string `json:"current_role,omitempty"`
 	// SuppressUserNotification applies only to the most recent idle event. It
 	// does not change the idle state transition; the router uses it to skip a
 	// user-facing completion reminder for configuration-only quiescence.
@@ -188,12 +189,29 @@ type StatusResponse struct {
 	Busy            bool             `json:"busy"`
 	Phase           string           `json:"phase"`
 	PhaseDetail     string           `json:"phase_detail"`
+	CurrentRole     string           `json:"current_role,omitempty"`
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
 	PendingQuestion *QuestionPayload `json:"pending_question,omitempty"`
 	PendingHandoff  *HandoffPayload  `json:"pending_handoff,omitempty"`
 	LastError       string           `json:"last_error"`
 	LastOutcome     string           `json:"last_outcome"`
 	UpdatedAt       string           `json:"updated_at"`
+}
+
+// RoleInfo describes one switchable main-agent role in a role list.
+type RoleInfo struct {
+	Name    string `json:"name"`
+	Current bool   `json:"current,omitempty"`
+}
+
+// RoleResponse is the payload for type="role_response". Roles is ordered
+// (builder first, planner second when configured, then custom roles
+// alphabetically) and lists only main-mode roles.
+type RoleResponse struct {
+	OK      bool       `json:"ok"`
+	Message string     `json:"message,omitempty"`
+	Role    string     `json:"role,omitempty"`
+	Roles   []RoleInfo `json:"roles,omitempty"`
 }
 
 // IMCommand is a parsed command from IM user.
@@ -282,6 +300,9 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 	s.Busy = resp.Busy
 	s.Phase = resp.Phase
 	s.PhaseDetail = resp.PhaseDetail
+	if resp.CurrentRole != "" {
+		s.CurrentRole = resp.CurrentRole
+	}
 	s.PendingConfirm = resp.PendingConfirm
 	s.PendingQuestion = resp.PendingQuestion
 	s.PendingHandoff = resp.PendingHandoff

@@ -233,9 +233,30 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
 			p.state.applyStatusResponse(&resp)
 			// Wake any goroutines blocked in WaitStatus.
-			p.notifyStatusWaiters(p.state)
+			p.statusWaiters.notify(p.state)
 		}
 		// No onEvent — solicited response.
+
+	case "role_response":
+		var resp RoleResponse
+		if err := json.Unmarshal(env.Payload, &resp); err == nil {
+			if resp.OK && strings.TrimSpace(resp.Role) != "" {
+				p.state.CurrentRole = resp.Role
+			}
+			// Wake any goroutines blocked in WaitRoleList/WaitRoleSwitch.
+			p.roleWaiters.notify(resp)
+		}
+		// No onEvent — solicited response.
+
+	case "role_change":
+		var payload struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(env.Payload, &payload); err == nil && strings.TrimSpace(payload.Role) != "" {
+			p.state.CurrentRole = payload.Role
+		}
+		// No onEvent: a role change is acknowledged synchronously by the
+		// role_response that preceded it; the state cache is enough for /status.
 
 	case "subscribe_response":
 		// No onEvent — ack response.

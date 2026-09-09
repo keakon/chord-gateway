@@ -1252,7 +1252,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "compaction_status"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1265,7 +1265,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "compaction_status", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -2250,7 +2250,7 @@ func TestWaitStatus_DeliversResponse(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for {
 		p.mu.Lock()
-		registered := len(p.statusWaiters) > 0
+		registered := len(p.statusWaiters.waiters) > 0
 		p.mu.Unlock()
 		if registered {
 			break
