@@ -1767,8 +1767,14 @@ func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	if msg := r.formatNotification("agent_started", ControlState{LastAgentStarted: &AgentStartedPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Description: "Review changes"}}); !strings.Contains(msg, "🧩 Delegated reviewer · adhoc-1") || !strings.Contains(msg, "Review changes") {
 		t.Fatalf("agent_started = %q", msg)
 	}
-	if msg := r.formatNotification("agent_notify", ControlState{LastAgentNotify: &AgentNotifyPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Kind: "progress", Message: "Tests pass"}}); !strings.Contains(msg, "📣 reviewer · adhoc-1 · progress") || !strings.Contains(msg, "Tests pass") {
+	if msg := r.formatNotification("agent_notify", ControlState{LastAgentNotify: &AgentNotifyPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Kind: "blocked", Subtype: "stall_resolved", Message: "Tests pass"}}); !strings.Contains(msg, "📣 reviewer · adhoc-1 · blocked/stall_resolved") || !strings.Contains(msg, "Tests pass") {
 		t.Fatalf("agent_notify = %q", msg)
+	}
+	if msg := r.formatNotification("agent_notify", ControlState{LastAgentNotify: &AgentNotifyPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Kind: "progress", Message: "Tests pass"}}); !strings.Contains(msg, "📣 reviewer · adhoc-1 · progress") || strings.Contains(msg, "/") {
+		t.Fatalf("agent_notify without subtype = %q", msg)
+	}
+	if msg := r.formatNotification("agent_notify", ControlState{LastAgentNotify: &AgentNotifyPayload{AgentID: "agent-1", TaskID: "adhoc-1", AgentType: "reviewer", Subtype: "stall_resolved", Message: "Tests pass"}}); !strings.Contains(msg, "📣 reviewer · adhoc-1 · stall_resolved") || !strings.Contains(msg, "Tests pass") {
+		t.Fatalf("agent_notify without kind = %q", msg)
 	}
 	if msg := r.formatNotification("local_shell_result", ControlState{LastLocalShell: &LocalShellPayload{Command: "pwd", Output: "/tmp/ws\n"}}); !strings.Contains(msg, "✅ Local shell: pwd") || !strings.Contains(msg, "/tmp/ws") {
 		t.Fatalf("local_shell_result = %q", msg)

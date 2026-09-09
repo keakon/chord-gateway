@@ -156,6 +156,7 @@ type AgentNotifyPayload struct {
 	TargetAgentID string `json:"target_agent_id,omitempty"`
 	TargetTaskID  string `json:"target_task_id,omitempty"`
 	Kind          string `json:"kind,omitempty"`
+	Subtype       string `json:"subtype,omitempty"`
 	Message       string `json:"message"`
 }
 

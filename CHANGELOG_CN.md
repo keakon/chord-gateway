@@ -16,6 +16,7 @@
 ### 变更
 
 - 将 Go toolchain 要求更新到 1.27.0，并刷新第三方 Go 依赖（`golog` v0.4.1、飞书 SDK v3.10.0）。
+- SubAgent 的 `agent_notify` 通知现在会带上告警子类型（例如 `blocked/stall_resolved`），便于区分已解除的阻塞与仍在持续的阻塞。
 
 ### 修复
 

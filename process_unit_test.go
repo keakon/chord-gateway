@@ -280,7 +280,7 @@ func TestProcessEnvelopeSuppressedIdleStopsStateButSkipsNotification(t *testing.
 func TestProcessEnvelopePreservesSubAgentMetadata(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat"}
 	p.processEnvelope(&HeadlessEnvelope{Type: "agent_started", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","description":"Review changes","parent_agent_id":"main"}`)})
-	p.processEnvelope(&HeadlessEnvelope{Type: "agent_notify", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","kind":"progress","message":"Tests pass","parent_agent_id":"main","target_agent_id":"main"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "agent_notify", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","kind":"blocked","subtype":"stall_resolved","message":"Tests pass","parent_agent_id":"main","target_agent_id":"main"}`)})
 	p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: json.RawMessage(`{"text":"Reviewed","agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","parent_agent_id":"main","tool_calls":1}`)})
 	p.processEnvelope(&HeadlessEnvelope{Type: "agent_done", Payload: json.RawMessage(`{"agent_id":"agent-1","task_id":"adhoc-1","agent_type":"reviewer","summary":"Done","parent_agent_id":"main"}`)})
 
@@ -288,7 +288,7 @@ func TestProcessEnvelopePreservesSubAgentMetadata(t *testing.T) {
 	if state.LastAgentStarted == nil || state.LastAgentStarted.Description != "Review changes" {
 		t.Fatalf("LastAgentStarted = %#v", state.LastAgentStarted)
 	}
-	if state.LastAgentNotify == nil || state.LastAgentNotify.Kind != "progress" || state.LastAgentNotify.Message != "Tests pass" || state.LastAgentNotify.TargetAgentID != "main" {
+	if state.LastAgentNotify == nil || state.LastAgentNotify.Kind != "blocked" || state.LastAgentNotify.Subtype != "stall_resolved" || state.LastAgentNotify.Message != "Tests pass" || state.LastAgentNotify.TargetAgentID != "main" {
 		t.Fatalf("LastAgentNotify = %#v", state.LastAgentNotify)
 	}
 	if state.LastAssistantAgentID != "agent-1" || state.LastAssistantTaskID != "adhoc-1" || state.LastAssistantAgentType != "reviewer" || state.LastAssistantParentAgentID != "main" {

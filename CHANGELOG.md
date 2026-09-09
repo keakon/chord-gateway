@@ -16,6 +16,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 ### Changed
 
 - Updated the Go toolchain requirement to 1.27.0 and refreshed third-party Go dependencies (`golog` v0.4.1, Lark SDK v3.10.0).
+- SubAgent `agent_notify` notifications now include the alert subtype (for example `blocked/stall_resolved`), so a resolved stall is distinguishable from one that is still pending.
 
 ### Fixed
 

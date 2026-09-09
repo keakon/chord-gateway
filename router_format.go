@@ -96,8 +96,14 @@ func (r *NotificationRouter) formatAgentNotifyNotification(state ControlState) s
 	}
 	label := formatAgentLabel(payload.AgentType, payload.AgentID, payload.TaskID)
 	kind := strings.TrimSpace(payload.Kind)
-	if kind != "" {
+	sub := strings.TrimSpace(payload.Subtype)
+	switch {
+	case kind != "" && sub != "":
+		label += " · " + kind + "/" + sub
+	case kind != "":
 		label += " · " + kind
+	case sub != "":
+		label += " · " + sub
 	}
 	return truncate(fmt.Sprintf("📣 %s\n%s", label, strings.TrimSpace(payload.Message)))
 }
