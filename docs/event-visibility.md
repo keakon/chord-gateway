@@ -12,6 +12,7 @@ The gateway always subscribes to these events:
 - `confirm_request`
 - `question_request`
 - `handoff_request`
+- `handoff_cancelled`
 - `idle`
 - `error`
 - `notification`
@@ -27,6 +28,7 @@ These events provide the minimum behavior required for IM control:
 - permission confirmations
 - user questions
 - handoff requests and responses
+- handoff cancellation notices
 - busy/idle state aggregation
 - error reporting
 - canonical user-facing notifications
@@ -80,6 +82,8 @@ SubAgent `assistant_message` events are labeled with their agent type (falling b
 `idle` represents global idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
 
 Global `idle` events normally do not emit fallback completion messages. If one clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request. Chord may include `suppress_user_notification: true` for configuration-only quiescence, such as a manual model-pool switch; the gateway still records the process as idle and stops reminders, but skips the generic idle message. Pending-interaction expiry notifications still take precedence.
+
+Chord may also cancel a pending handoff without a decision, for example when a new request or session switch supersedes it. The gateway consumes the `handoff_cancelled` event, drops the stale pending handoff, and sends a cancellation notice. A later `/handoff` or `/handoff-deny` then falls back to the usual no-pending warning instead of routing the reply to the cancelled request. A `handoff_cancelled` event may arrive late or without a matching request ID; the gateway only clears the pending handoff it targets and leaves a newer pending request untouched.
 
 ## Logs
 

@@ -124,6 +124,8 @@ Reply /answer 1 / 1,2 / or type your answer
 
 请按 gateway 消息中展示的名称填写 agent 和 model pool。如果当前没有待处理的 Chord handoff 请求，这些命令只会返回提示，不会启动新的 Chord 动作。
 
+如果 Chord 在未做决策的情况下取消了待处理 handoff（例如该请求被新的请求或会话切换取代），gateway 会发送取消通知并丢弃该请求。之后再用 `/handoff` 或 `/handoff-deny` 会返回同样的「没有待处理 handoff」提示，而不会把回复路由到已取消的请求。
+
 ## 角色切换
 
 `/role` 切换主 agent 角色（例如从 `builder` 切到 `planner`），不会新建 session，也不会丢弃当前会话上下文。

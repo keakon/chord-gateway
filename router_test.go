@@ -1267,7 +1267,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1280,7 +1280,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1680,6 +1680,53 @@ func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T)
 	r.HandleChordEvent(key, "handoff_request", ControlState{PendingHandoff: &HandoffPayload{RequestID: "new-handoff"}})
 	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil || got.Handoff != nil {
 		t.Fatalf("expired pending was not cleared by new handoff: %#v", got)
+	}
+}
+
+func TestFormatHandoffCancelledNotification(t *testing.T) {
+	r := &NotificationRouter{}
+	if got := r.formatNotification("handoff_cancelled", ControlState{}); got != "" {
+		t.Fatalf("handoff_cancelled without a cancelled request = %q, want empty", got)
+	}
+	got := r.formatNotification("handoff_cancelled", ControlState{ExpiredHandoff: &HandoffPayload{RequestID: "handoff-1"}})
+	if !strings.Contains(got, "cancelled") {
+		t.Fatalf("handoff_cancelled notification = %q", got)
+	}
+}
+
+func TestHandleChordEventHandoffCancelledNotifiesAndRecords(t *testing.T) {
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+
+	r.HandleChordEvent(key, "handoff_cancelled", ControlState{ExpiredHandoff: &HandoffPayload{RequestID: "handoff-1"}})
+
+	if got := sender.lastMessage(); got.chatID != "chat-1" || !strings.Contains(got.text, "cancelled") {
+		t.Fatalf("cancellation message = %#v", got)
+	}
+	if expired := r.lookupExpiredPending(key).Handoff; expired == nil || expired.RequestID != "handoff-1" {
+		t.Fatalf("cancelled handoff was not recorded: %#v", expired)
+	}
+}
+
+func TestHandoffCommandAfterCancelledFallsBackToNoPending(t *testing.T) {
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{adapter: sender}
+	proc := &ChordProcess{key: key, workspaceID: "ws1"}
+
+	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_request", Payload: json.RawMessage(`{"request_id":"handoff-1","plan_path":"plan.md"}`)})
+	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: json.RawMessage(`{"request_id":"handoff-1","reason":"superseded"}`)})
+
+	for _, cmd := range []IMCommand{
+		{Type: "handoff", Action: "accept"},
+		{Type: "handoff", Action: "deny", Reason: "no longer needed"},
+	} {
+		r.handleHandoffCommand(ws, "chat-1", cmd, key, proc)
+		if got := sender.lastMessage().text; got != "⚠️ No pending handoff to respond to." {
+			t.Fatalf("action %q after cancellation = %q", cmd.Action, got)
+		}
 	}
 }
 

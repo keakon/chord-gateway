@@ -125,6 +125,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `confirm_request`
 - `question_request`
 - `handoff_request`
+- `handoff_cancelled`
 - `error`
 - `notification`
 - `done_completion`

@@ -528,9 +528,9 @@ func (p *ChordProcess) WaitRoleSwitch(ctx context.Context, role string) (RoleRes
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, handoff_request,
-	// idle, error, notification, done_completion, local_shell_result,
-	// agent_done, role_change, and compaction_status.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
+	// handoff_cancelled, idle, error, notification, done_completion,
+	// local_shell_result, agent_done, role_change, and compaction_status.
+	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
 	if cfg == nil {
 		return events
 	}

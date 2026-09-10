@@ -125,6 +125,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `confirm_request`
 - `question_request`
 - `handoff_request`
+- `handoff_cancelled`
 - `error`
 - `notification`
 - `done_completion`

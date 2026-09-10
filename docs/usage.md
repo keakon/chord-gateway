@@ -131,6 +131,8 @@ When Chord sends a `handoff_request`, the gateway posts the handoff plan, availa
 
 Use the agent and model pool names exactly as shown in the gateway message. If no Chord handoff request is pending, these commands only return a warning and do not start a new Chord action.
 
+If Chord cancels a pending handoff without a decision (for example because a new request or session switch supersedes it), the gateway sends a cancellation notice and drops the request. A later `/handoff` or `/handoff-deny` then returns the same no-pending warning instead of routing to the cancelled request.
+
 ## Role switching
 
 `/role` switches the main agent role (for example `builder` → `planner`) without starting a new session or discarding the conversation context.

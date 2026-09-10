@@ -290,6 +290,24 @@ func (s *ControlState) applyPendingHandoff(h *HandoffPayload) {
 	s.ExpiredHandoff = nil
 }
 
+// applyHandoffCancelled clears the pending handoff when a cancelled event
+// targets it: an empty request ID matches any pending handoff, while a
+// non-empty one must equal the pending request ID so a late event cannot clear
+// a newer pending handoff. It records the cleared request in ExpiredHandoff so
+// the router notifies the user and resolves late replies, and reports whether
+// a pending handoff was actually cleared.
+func (s *ControlState) applyHandoffCancelled(requestID string) bool {
+	if s.PendingHandoff == nil {
+		return false
+	}
+	if requestID != "" && requestID != s.PendingHandoff.RequestID {
+		return false
+	}
+	s.ExpiredHandoff = s.PendingHandoff
+	s.PendingHandoff = nil
+	return true
+}
+
 // applyStatusResponse merges a chord-headless status_response envelope into
 // the aggregated state, clearing expired-pending markers when the response
 // reports any active pending interaction.

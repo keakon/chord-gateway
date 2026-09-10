@@ -122,6 +122,24 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "handoff_request"
 
+	case "handoff_cancelled":
+		// Chord pushes this when a pending handoff is cancelled without a
+		// decision (for example superseded by a new request or session
+		// switch). The event may arrive late or carry a mismatched/empty
+		// request ID, so only clear when it targets the current pending
+		// handoff; a mismatched event must leave a newer pending handoff
+		// untouched. Clearing records the request in ExpiredHandoff so the
+		// router can notify the user and later /handoff falls back to the
+		// no-pending path.
+		var payload struct {
+			RequestID string `json:"request_id"`
+		}
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			if p.state.applyHandoffCancelled(payload.RequestID) {
+				eventType = "handoff_cancelled"
+			}
+		}
+
 	case "error":
 		var payload struct {
 			Message string `json:"message"`

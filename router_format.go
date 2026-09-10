@@ -25,6 +25,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "handoff_request":
 		return r.formatHandoffNotification(state)
 
+	case "handoff_cancelled":
+		return r.formatHandoffCancelledNotification(state)
+
 	case "idle":
 		return r.formatIdleNotification(state)
 
@@ -166,6 +169,17 @@ func (r *NotificationRouter) formatExpiredPendingNotification(state ControlState
 		return "⌛ The pending handoff request has expired. It was not accepted or denied. Please retry the original request if handoff is still needed."
 	}
 	return ""
+}
+
+// formatHandoffCancelledNotification reports a pending handoff that Chord
+// cancelled without a decision, e.g. because a new request or session switch
+// superseded it. It reuses the ExpiredHandoff slot so the router keeps a
+// record of the cancelled request.
+func (r *NotificationRouter) formatHandoffCancelledNotification(state ControlState) string {
+	if state.ExpiredHandoff == nil {
+		return ""
+	}
+	return "⌛ The pending handoff request was cancelled (superseded by a new request or session switch)."
 }
 
 func (r *NotificationRouter) formatIdleNotification(state ControlState) string {

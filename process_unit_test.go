@@ -154,6 +154,87 @@ func TestProcessEnvelopeOnlyGlobalIdleStopsGatewayNotifications(t *testing.T) {
 	}
 }
 
+func TestProcessEnvelopeHandoffCancelled(t *testing.T) {
+	newProc := func(pending *HandoffPayload) (*ChordProcess, *[]string) {
+		events := &[]string{}
+		p := &ChordProcess{
+			key: "ws|wechat|chat",
+			onEvent: func(_ string, eventType string, _ ControlState) {
+				*events = append(*events, eventType)
+			},
+		}
+		p.state.PendingHandoff = pending
+		return p, events
+	}
+	newPayload := func(requestID string) json.RawMessage {
+		data, err := json.Marshal(map[string]string{"request_id": requestID, "reason": "superseded"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	t.Run("matching request ID clears and notifies", func(t *testing.T) {
+		p, events := newProc(&HandoffPayload{RequestID: "handoff-1"})
+		p.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: newPayload("handoff-1")})
+
+		state := p.State()
+		if state.PendingHandoff != nil {
+			t.Fatalf("pending handoff was not cleared: %#v", state.PendingHandoff)
+		}
+		if state.ExpiredHandoff == nil || state.ExpiredHandoff.RequestID != "handoff-1" {
+			t.Fatalf("cancelled handoff was not recorded: %#v", state.ExpiredHandoff)
+		}
+		if len(*events) != 1 || (*events)[0] != "handoff_cancelled" {
+			t.Fatalf("events = %v, want [handoff_cancelled]", *events)
+		}
+	})
+
+	t.Run("empty request ID clears and notifies", func(t *testing.T) {
+		p, events := newProc(&HandoffPayload{RequestID: "handoff-2"})
+		p.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: newPayload("")})
+
+		state := p.State()
+		if state.PendingHandoff != nil {
+			t.Fatalf("pending handoff was not cleared: %#v", state.PendingHandoff)
+		}
+		if state.ExpiredHandoff == nil || state.ExpiredHandoff.RequestID != "handoff-2" {
+			t.Fatalf("cancelled handoff was not recorded: %#v", state.ExpiredHandoff)
+		}
+		if len(*events) != 1 || (*events)[0] != "handoff_cancelled" {
+			t.Fatalf("events = %v, want [handoff_cancelled]", *events)
+		}
+	})
+
+	t.Run("mismatched request ID leaves newer pending", func(t *testing.T) {
+		p, events := newProc(&HandoffPayload{RequestID: "handoff-new"})
+		p.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: newPayload("handoff-old")})
+
+		state := p.State()
+		if state.PendingHandoff == nil || state.PendingHandoff.RequestID != "handoff-new" {
+			t.Fatalf("newer pending handoff was cleared: %#v", state.PendingHandoff)
+		}
+		if state.ExpiredHandoff != nil {
+			t.Fatalf("mismatched event marked the newer handoff expired: %#v", state.ExpiredHandoff)
+		}
+		if len(*events) != 0 {
+			t.Fatalf("events = %v, want none", *events)
+		}
+	})
+
+	t.Run("no pending handoff is a no-op", func(t *testing.T) {
+		p, events := newProc(nil)
+		p.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: newPayload("")})
+
+		if state := p.State(); state.ExpiredHandoff != nil {
+			t.Fatalf("no pending handoff should not record expiry: %#v", state.ExpiredHandoff)
+		}
+		if len(*events) != 0 {
+			t.Fatalf("events = %v, want none", *events)
+		}
+	})
+}
+
 func TestProcessEnvelopeCompactionStatusSavesTerminalOutcomeWithoutPush(t *testing.T) {
 	events := make([]string, 0, 1)
 	p := &ChordProcess{

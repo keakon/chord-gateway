@@ -12,6 +12,7 @@ gateway 始终订阅以下事件：
 - `confirm_request`
 - `question_request`
 - `handoff_request`
+- `handoff_cancelled`
 - `idle`
 - `error`
 - `notification`
@@ -27,6 +28,7 @@ gateway 始终订阅以下事件：
 - 权限确认
 - 用户问题
 - handoff 请求和响应
+- handoff 取消通知
 - busy/idle 状态聚合
 - 错误报告
 - 面向用户的标准通知
@@ -80,6 +82,8 @@ SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent 
 `idle` 表示全局空闲：主 agent 与所有 SubAgent 都已停止活跃工作。单个 agent 的 idle 状态变化不会作为协议 `idle` 事件暴露，因此只要仍有任何 agent 在工作，gateway 就会保持 busy，不会停止长时间提醒，也不会发送 idle 通知。
 
 全局 `idle` 事件通常不会触发兜底完成消息。如果它清理了待回答问题、待确认请求或待处理 handoff 请求，gateway 会发送针对性的英文失效提示，而不是发送通用完成消息。gateway 在清理仍带有待回答问题、待确认请求或待处理 handoff 请求的空闲进程前，也会发送同样的失效提示。Chord 可能会在配置操作（例如手动切换 model pool）导致静默时附带 `suppress_user_notification: true`；gateway 仍然把进程收口为 idle 并停止提醒，只跳过通用 idle 消息。待处理交互的失效提示优先级更高，不受该字段抑制。
+
+Chord 也可能在未做决策的情况下取消待处理 handoff，例如该请求被新的请求或会话切换取代。gateway 会消费 `handoff_cancelled` 事件，丢弃已失效的待决 handoff，并发送取消通知。之后再用 `/handoff` 或 `/handoff-deny` 会回到常见的「没有待处理 handoff」提示，而不会把回复路由到已取消的请求。`handoff_cancelled` 事件可能迟到，或携带不匹配的 request ID；gateway 只清理该事件指向的待决 handoff，不会误清更新的待决请求。
 
 ## 日志
 
