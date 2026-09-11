@@ -1286,6 +1286,48 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	}
 }
 
+func TestRecordCardHandlePrunesExpiredEntries(t *testing.T) {
+	r := &NotificationRouter{cardHandles: make(map[string]cardHandleEntry)}
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
+
+	staleKey := cardHandleKey(key, "confirm", "req-stale")
+	r.cardHandles[staleKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_stale"}, recordedAt: time.Now().Add(-interactiveCardHandleTTL - time.Minute)}
+	freshKey := cardHandleKey(key, "question", "req-fresh")
+	r.cardHandles[freshKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_fresh"}, recordedAt: time.Now().Add(-time.Minute)}
+
+	r.recordCardHandle(key, "confirm", "req-new", &InteractiveCardHandle{MessageID: "om_new"})
+
+	if _, ok := r.cardHandles[staleKey]; ok {
+		t.Fatal("expired card handle was not pruned")
+	}
+	if _, ok := r.cardHandles[freshKey]; !ok {
+		t.Fatal("fresh card handle should be kept")
+	}
+	if handle, ok := r.takeCardHandle(key, "confirm", "req-new"); !ok || handle.MessageID != "om_new" {
+		t.Fatalf("new card handle = %#v, ok=%v", handle, ok)
+	}
+}
+
+func TestTakeCardHandleDropsExpiredEntries(t *testing.T) {
+	r := &NotificationRouter{cardHandles: make(map[string]cardHandleEntry)}
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
+
+	staleKey := cardHandleKey(key, "confirm", "req-stale")
+	r.cardHandles[staleKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_stale"}, recordedAt: time.Now().Add(-interactiveCardHandleTTL - time.Minute)}
+	if _, ok := r.takeCardHandle(key, "confirm", "req-stale"); ok {
+		t.Fatal("expired card handle must not be returned")
+	}
+	if _, ok := r.cardHandles[staleKey]; ok {
+		t.Fatal("expired card handle must be removed on take")
+	}
+
+	freshKey := cardHandleKey(key, "question", "req-fresh")
+	r.cardHandles[freshKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_fresh"}, recordedAt: time.Now().Add(-time.Minute)}
+	if handle, ok := r.takeCardHandle(key, "question", "req-fresh"); !ok || handle.MessageID != "om_fresh" {
+		t.Fatalf("fresh card handle = %#v, ok=%v", handle, ok)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // formatNotification
 // ---------------------------------------------------------------------------
@@ -3034,7 +3076,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		oldBaseURL := feishuOpenBaseURL
 		feishuOpenBaseURL = server.URL
 		defer func() { feishuOpenBaseURL = oldBaseURL }()
-		r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]InteractiveCardHandle)}
+		r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]cardHandleEntry)}
 		r.recordCardHandle(key, "question", "req-auto", &InteractiveCardHandle{MessageID: "om_sent_1"})
 		msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
 		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", &msg)

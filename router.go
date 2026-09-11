@@ -37,9 +37,21 @@ type NotificationRouter struct {
 	lastKeyChatIDSnapshot atomic.Pointer[map[string]string]
 	reminders             map[string]*time.Timer
 	expiredPending        map[string]expiredPendingState
-	cardHandles           map[string]InteractiveCardHandle
+	cardHandles           map[string]cardHandleEntry
 	outbound              *outboundDispatcher
 }
+
+// cardHandleEntry is a recorded interactive card handle together with the time
+// it was registered, so handles that can no longer be used can be pruned.
+type cardHandleEntry struct {
+	handle     InteractiveCardHandle
+	recordedAt time.Time
+}
+
+// interactiveCardHandleTTL matches the Feishu card update window: a handle
+// older than this can no longer patch its card anyway, so it is discarded to
+// keep unclicked cards from growing the map without bound.
+const interactiveCardHandleTTL = 14 * 24 * time.Hour
 
 type expiredPendingState struct {
 	Question  *QuestionPayload
@@ -56,7 +68,7 @@ func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 		lastKeyChatID:  make(map[string]string),
 		reminders:      make(map[string]*time.Timer),
 		expiredPending: make(map[string]expiredPendingState),
-		cardHandles:    make(map[string]InteractiveCardHandle),
+		cardHandles:    make(map[string]cardHandleEntry),
 		outbound:       newOutboundDispatcher(),
 	}
 	if mgr != nil {
@@ -155,9 +167,15 @@ func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID
 	}
 	r.mu.Lock()
 	if r.cardHandles == nil {
-		r.cardHandles = make(map[string]InteractiveCardHandle)
+		r.cardHandles = make(map[string]cardHandleEntry)
 	}
-	r.cardHandles[cardHandleKey(processKey, requestType, requestID)] = *handle
+	now := time.Now()
+	for key, entry := range r.cardHandles {
+		if now.Sub(entry.recordedAt) > interactiveCardHandleTTL {
+			delete(r.cardHandles, key)
+		}
+	}
+	r.cardHandles[cardHandleKey(processKey, requestType, requestID)] = cardHandleEntry{handle: *handle, recordedAt: now}
 	r.mu.Unlock()
 }
 
@@ -168,11 +186,17 @@ func (r *NotificationRouter) takeCardHandle(processKey, requestType, requestID s
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := cardHandleKey(processKey, requestType, requestID)
-	handle, ok := r.cardHandles[key]
+	entry, ok := r.cardHandles[key]
 	if ok {
 		delete(r.cardHandles, key)
+		// A handle older than the card update window can no longer patch its
+		// card; drop it instead of returning a handle that is guaranteed to
+		// fail. Callers fall back to the callback-supplied handle, if any.
+		if time.Since(entry.recordedAt) > interactiveCardHandleTTL {
+			return InteractiveCardHandle{}, false
+		}
 	}
-	return handle, ok
+	return entry.handle, ok
 }
 
 func mergeCardHandles(primary, fallback InteractiveCardHandle) InteractiveCardHandle {
