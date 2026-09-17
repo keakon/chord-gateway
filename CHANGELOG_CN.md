@@ -13,6 +13,7 @@
 - 新增 IM `/role` 命令，通过 Chord headless 切换主 agent 角色（例如 `builder` → `planner`）：`/role` 列出当前角色与可切换角色（飞书为按钮卡片，文本平台为编号列表），`/role <编号>` / `/role <角色名>` 选择目标角色。gateway 现在始终订阅 Chord 的 `role_change` 事件，并在 `/status` 中跟踪当前主角色。需要支持 headless `role` 控制命令的 Chord 版本。切换请求失败或响应超时时，已点击的飞书卡片会更新为结果未确认，并提示用户在重试前用 `/status` 核实当前角色。飞书卡片点击只在原卡片上更新结果，不再额外发一条聊天消息。
 - gateway 现在始终订阅 Chord 的 `compaction_status` 事件，并在 `/status` 中展示最近一次上下文检查点的结果（例如 `succeeded`、带原因的 `skipped`、`failed`）；这些结果不会作为聊天消息推送。未占用压缩槽位的跳过事件不会覆盖仍在运行中的压缩结果。
 - Gateway 现在会消费 Chord 的 `handoff_cancelled` 事件：当待决 handoff 在未做决策的情况下被取消（例如被新的请求或会话切换取代）时，gateway 会丢弃已失效的待决请求，并向聊天发送取消通知。之后再用 `/handoff` 或 `/handoff-deny` 会回到常见的「没有待处理 handoff」提示，而不再把回复路由到已取消的请求。
+- gateway 现在始终订阅 Chord 的 `background_result` 事件，并把后台任务完成后的持久化结果推送到聊天；Chord 侧没有其它投递通道，因此它此前在 IM 中完全不可见。持久化的上下文压力提示（`context_notice`）同样会被消费，但把它推到聊天属于产品取舍、而不是正确性要求，因此改为通过新增的 `event_visibility.context_notice` 开关选择启用（默认 `false`）。
 
 ### 变更
 
@@ -23,6 +24,7 @@
 
 - 对于仅由配置操作（例如手动切换 model pool）导致的静默状态，gateway 现在仍会正确收口 headless idle 状态，但不再发送通用的“可输入”提示。待确认、问题和 handoff 的过期通知仍会正常发送。
 - 按飞书开放平台当前行为修正了飞书接入指南：事件页面是 **事件订阅**（不是“事件与回调”），`im.message.receive_v1` 在控制台显示为 **接收消息 v2.0**；接收消息权限是**按场景分别生效**的——私聊和群聊都用，必须同时开私聊权限和群聊权限，而不是任选其一。指南同时补充了 **批量导入** JSON 的方式，并说明 `im:message:update` 不是必需项，因为 `im:message` / `im:message:send_as_bot` 已覆盖卡片更新调用。
+- gateway 现在会跟随 Chord 的 `session_switched` 事件。此前 session pin 只在 Chord 进程启动时写入，因此进程内切换会话（handoff plan 执行、`/resume <id>`、`/new`）之后，已 pin 的绑定仍指向被放弃的那个会话，之后重新拉起进程会 resume 错误的会话。
 
 ## v0.3.2
 

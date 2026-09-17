@@ -120,12 +120,12 @@ For a single Feishu workspace, `chat_bindings` may be omitted and all chats use 
 
 The gateway runs `chord headless` and reads JSONL events from stdout. It subscribes to the required control-plane event set by default:
 
-- `idle`
 - `assistant_message`
 - `confirm_request`
 - `question_request`
 - `handoff_request`
 - `handoff_cancelled`
+- `idle`
 - `error`
 - `notification`
 - `done_completion`
@@ -133,5 +133,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `role_change`
 - `agent_done`
 - `compaction_status`
+- `session_switched`
+- `background_result`
 
-Optional events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).
+Optional events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md) for what each event does and which ones are state-only.

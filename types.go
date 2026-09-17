@@ -43,6 +43,15 @@ type ControlState struct {
 	LastAgentNotify            *AgentNotifyPayload  `json:"-"`
 	LastAgentDone              *AgentDonePayload    `json:"-"`
 	LastLocalShell             *LocalShellPayload   `json:"-"`
+	// LastBackgroundResult carries a finished background job's durable result.
+	// chord headless has no other channel for it (by the time the job finishes
+	// the turn is usually idle, so no later assistant_message summarizes it),
+	// so the gateway pushes it as a chat message instead of keeping it
+	// state-only.
+	LastBackgroundResult *BackgroundResultPayload `json:"-"`
+	// LastContextNotice carries a durable context-pressure warning, which also
+	// has no other headless channel, so it is pushed as a chat message.
+	LastContextNotice *ContextNoticePayload `json:"-"`
 
 	// For long-running reminders.
 	InternalEventsSinceLastPush int       `json:"-"`
@@ -176,6 +185,22 @@ type LocalShellPayload struct {
 	Output  string `json:"output"`
 	Failed  bool   `json:"failed"`
 	Error   string `json:"error,omitempty"`
+}
+
+// BackgroundResultPayload is the background_result event payload: the durable
+// result of a finished background job, which is also the only delivery channel
+// for the JOB RESULT card.
+type BackgroundResultPayload struct {
+	TargetAgentID string `json:"target_agent_id,omitempty"`
+	Content       string `json:"content"`
+}
+
+// ContextNoticePayload is the context_notice event payload: a durable
+// context-pressure warning. Level mirrors the three compaction-gate overlays
+// (pressure, imminent, warning).
+type ContextNoticePayload struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
 }
 
 // HeadlessEnvelope is the JSON envelope from chord headless stdout.

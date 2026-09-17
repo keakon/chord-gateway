@@ -21,6 +21,8 @@ The gateway always subscribes to these events:
 - `role_change`
 - `agent_done`
 - `compaction_status`
+- `session_switched`
+- `background_result`
 
 These events provide the minimum behavior required for IM control:
 
@@ -37,6 +39,12 @@ These events provide the minimum behavior required for IM control:
 - active-role tracking for `/status`
 - SubAgent completion summaries
 - last context-checkpoint outcome for `/status`
+- in-band session switches, so a pinned binding follows the session the runtime actually runs
+- finished background job results, which have no other delivery channel
+
+`session_switched` is state-only: the command that caused the switch already answers the user, so no extra chat message is sent. It does re-point the binding's session pin at the newly active session, so later spawns resume the session the runtime actually runs.
+
+`background_result` is pushed to IM as a chat message, because Chord has no other channel for it: a background job usually finishes after the turn went idle, so no later `assistant_message` summarizes it.
 
 ## Optional visible events
 
@@ -47,6 +55,7 @@ event_visibility:
   activity: false
   agent_started: false
   agent_notify: false
+  context_notice: false
   info: false
   toast: false
   todos: false
@@ -57,9 +66,12 @@ event_visibility:
 | `activity` | `activity` | Lower-level progress details. The gateway records phase state but does not expose phases in long-running reminders. |
 | `agent_started` | `agent_started` | SubAgent delegation start notifications |
 | `agent_notify` | `agent_notify` | Non-blocking owner or targeted delegated-workstream updates |
+| `context_notice` | `context_notice` | Durable context-pressure warnings, pushed as chat messages. `level` is one of `pressure`, `imminent` or `warning`. |
 | `info` | `info` | Informational messages |
 | `toast` | `toast` | Short transient messages |
 | `todos` | `todos` | Full todo list updates; every event is forwarded without deduplication and counts as an internal event for long-running reminders |
+
+`context_notice` is opt-in because its chat delivery is a product decision rather than a correctness requirement. One compaction cycle can warn at three escalating levels (`pressure`, `imminent`, `warning`); Chord sends each level at most once and suppresses repeats, so the volume is bounded — but the notice is fire-and-forget. When Chord retracts a notice (for example after a model switch moved the effective threshold), the message already sent to the chat is not withdrawn, so a chat that keeps the warnings enabled can hold a stale one until it scrolls away.
 
 ## Long-running reminders
 

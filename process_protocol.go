@@ -276,6 +276,49 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		// No onEvent: a role change is acknowledged synchronously by the
 		// role_response that preceded it; the state cache is enough for /status.
 
+	case "session_switched":
+		var payload struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			if id := strings.TrimSpace(payload.SessionID); id != "" {
+				p.state.SessionID = id
+				// Compaction outcomes belong to the abandoned session: keep
+				// them and /status would report the old session's checkpoint,
+				// while the old plan's slot owner would drop the new
+				// session's terminals (or vice versa). Reset both.
+				p.state.LastCompaction = nil
+				p.compactionPlanID = ""
+				// chord pushes this only for an in-band switch that replaced
+				// the session without restarting the process (handoff plan
+				// execution, /resume <id>, /new). The pin is otherwise written
+				// only by the ready envelope, so without this the binding keeps
+				// resuming the session the switch abandoned.
+				//
+				// Chord only reports a switch that actually happened, so the
+				// newly active session is the one later spawns must resume:
+				// the pin is re-pointed unconditionally.
+				sessionPin = id
+			}
+		}
+		// No onEvent: the command that triggered the switch already answered
+		// the user, and the state cache keeps /status and later spawns on the
+		// session the runtime actually runs.
+
+	case "background_result":
+		var payload BackgroundResultPayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastBackgroundResult = &payload
+		}
+		eventType = "background_result"
+
+	case "context_notice":
+		var payload ContextNoticePayload
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.LastContextNotice = &payload
+		}
+		eventType = "context_notice"
+
 	case "subscribe_response":
 		// No onEvent — ack response.
 

@@ -158,13 +158,14 @@ Optional flags (boolean):
 - `activity`
 - `agent_started`
 - `agent_notify`
+- `context_notice`
 - `info`
 - `toast`
 - `todos`
 
 Essential events are always subscribed and cannot be disabled. This includes `agent_done`, so tool-only SubAgent completions always surface their summary.
 
-`agent_started` and `agent_notify` are opt-in to avoid noisy orchestration updates. `done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases.
+`agent_started` and `agent_notify` are opt-in to avoid noisy orchestration updates. `done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases. `context_notice` is opt-in because pushing durable context-pressure warnings to a chat is a product decision rather than a correctness requirement; see [event-visibility.md](./event-visibility.md) for the volume and retraction caveats.
 
 ## Path and State Resolution
 
@@ -240,6 +241,7 @@ event_visibility:
   activity: false
   agent_started: false
   agent_notify: false
+  context_notice: false
   info: false
   toast: false
   todos: false
@@ -274,6 +276,7 @@ event_visibility:
   activity: false
   agent_started: false
   agent_notify: false
+  context_notice: false
   info: false
   toast: false
   todos: true

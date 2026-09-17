@@ -62,6 +62,7 @@ event_visibility:
   activity: false
   agent_started: false
   agent_notify: false
+  context_notice: false
   info: false
   toast: false
   todos: false

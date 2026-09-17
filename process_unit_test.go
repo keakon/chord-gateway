@@ -887,3 +887,145 @@ func TestChordProcessTerminateGroupNilAndNoProcess(t *testing.T) {
 		t.Fatal("TerminateGroup should mark no-process instance stopped by gateway")
 	}
 }
+
+// newTestPinStore returns a pin store that persists in memory only.
+func newTestPinStore() *sessionPinStore {
+	return &sessionPinStore{
+		pins:   make(map[string]string),
+		writer: func(string, []byte, os.FileMode) error { return nil },
+	}
+}
+
+func TestProcessEnvelopeSessionSwitchedFollowsActiveSession(t *testing.T) {
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	pins := newTestPinStore()
+	if err := pins.Set(key, "old-session"); err != nil {
+		t.Fatalf("seed pin: %v", err)
+	}
+	events := make([]string, 0, 1)
+	p := &ChordProcess{
+		key: key,
+		mgr: &ChordManager{pins: pins},
+		onEvent: func(_ string, eventType string, _ ControlState) {
+			events = append(events, eventType)
+		},
+	}
+	p.state.SessionID = "old-session"
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)})
+
+	if got := p.State().SessionID; got != "new-session" {
+		t.Fatalf("SessionID = %q, want new-session", got)
+	}
+	// The pin is otherwise written only by the ready envelope, so a pinned
+	// binding would keep resuming the session the switch abandoned.
+	if got := pins.Get(key); got != "new-session" {
+		t.Fatalf("pin = %q, want new-session", got)
+	}
+	// The command that caused the switch already answered the user; a switch
+	// must not add a second chat message.
+	if len(events) != 0 {
+		t.Fatalf("session_switched must not push an event, got %v", events)
+	}
+}
+
+func TestProcessEnvelopeSessionSwitchedRepinsClearedBinding(t *testing.T) {
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	pins := newTestPinStore()
+	p := &ChordProcess{key: key, mgr: &ChordManager{pins: pins}}
+	p.state.SessionID = "old-session"
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)})
+
+	if got := p.State().SessionID; got != "new-session" {
+		t.Fatalf("SessionID = %q, want new-session", got)
+	}
+	// Chord only reports a switch that actually happened, so the pin is
+	// re-pointed at the live session even when it was empty (for example
+	// after /new): later spawns must resume the session the runtime runs.
+	if got := pins.Get(key); got != "new-session" {
+		t.Fatalf("pin = %q, want new-session", got)
+	}
+}
+
+func TestProcessEnvelopeSessionSwitchedIgnoresBlankID(t *testing.T) {
+	pins := newTestPinStore()
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	if err := pins.Set(key, "old-session"); err != nil {
+		t.Fatalf("seed pin: %v", err)
+	}
+	p := &ChordProcess{key: key, mgr: &ChordManager{pins: pins}}
+	p.state.SessionID = "old-session"
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"  "}`)})
+
+	if got := p.State().SessionID; got != "old-session" {
+		t.Fatalf("SessionID = %q, want the previous session kept", got)
+	}
+	if got := pins.Get(key); got != "old-session" {
+		t.Fatalf("pin = %q, want the previous pin kept", got)
+	}
+}
+
+func TestProcessEnvelopeSessionSwitchedClearsCompactionState(t *testing.T) {
+	pins := newTestPinStore()
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	if err := pins.Set(key, "old-session"); err != nil {
+		t.Fatalf("seed pin: %v", err)
+	}
+	p := &ChordProcess{key: key, mgr: &ChordManager{pins: pins}}
+	p.state.SessionID = "old-session"
+
+	// The old session ran a compaction that owns the slot.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"usage_driven","plan_id":"11"}`)})
+	if p.State().LastCompaction == nil {
+		t.Fatal("seed compaction state was not recorded")
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)})
+
+	state := p.State()
+	if state.LastCompaction != nil {
+		t.Fatalf("LastCompaction after switch = %+v, want nil (it belongs to the abandoned session)", state.LastCompaction)
+	}
+	// The new session starts its own compaction; the old plan's late terminal
+	// must not overwrite it.
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"started","trigger":"usage_driven","plan_id":"22"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "compaction_status", Payload: json.RawMessage(`{"status":"succeeded","trigger":"usage_driven","plan_id":"11"}`)})
+	if got := p.State().LastCompaction; got == nil || got.Status != "started" || got.PlanID != "22" {
+		t.Fatalf("LastCompaction after old plan's late terminal = %+v, want the new plan's started", got)
+	}
+}
+
+func TestProcessEnvelopeBackgroundResultAndContextNotice(t *testing.T) {
+	events := make([]string, 0, 2)
+	p := &ChordProcess{
+		key: "ws|wechat|chat",
+		onEvent: func(_ string, eventType string, _ ControlState) {
+			events = append(events, eventType)
+		},
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "background_result", Payload: json.RawMessage(`{"target_agent_id":"agent-1","content":"job finished"}`)})
+	state := p.State()
+	if state.LastBackgroundResult == nil {
+		t.Fatal("background_result must be saved to ControlState")
+	}
+	if state.LastBackgroundResult.Content != "job finished" || state.LastBackgroundResult.TargetAgentID != "agent-1" {
+		t.Fatalf("LastBackgroundResult = %+v", state.LastBackgroundResult)
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "context_notice", Payload: json.RawMessage(`{"level":"imminent","message":"Context will be compacted"}`)})
+	state = p.State()
+	if state.LastContextNotice == nil {
+		t.Fatal("context_notice must be saved to ControlState")
+	}
+	if state.LastContextNotice.Level != "imminent" || state.LastContextNotice.Message != "Context will be compacted" {
+		t.Fatalf("LastContextNotice = %+v", state.LastContextNotice)
+	}
+
+	want := []string{"background_result", "context_notice"}
+	if strings.Join(events, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+}

@@ -529,8 +529,9 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
 	// assistant_message, confirm_request, question_request, handoff_request,
 	// handoff_cancelled, idle, error, notification, done_completion,
-	// local_shell_result, agent_done, role_change, and compaction_status.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
+	// local_shell_result, agent_done, role_change, compaction_status,
+	// session_switched, and background_result.
+	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
 	if cfg == nil {
 		return events
 	}
@@ -541,6 +542,7 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 		{cfg.EventVisibility.Activity, "activity"},
 		{cfg.EventVisibility.AgentStarted, "agent_started"},
 		{cfg.EventVisibility.AgentNotify, "agent_notify"},
+		{cfg.EventVisibility.ContextNotice, "context_notice"},
 		{cfg.EventVisibility.Info, "info"},
 		{cfg.EventVisibility.Toast, "toast"},
 		{cfg.EventVisibility.Todos, "todos"},

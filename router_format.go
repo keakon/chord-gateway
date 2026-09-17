@@ -46,6 +46,12 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "agent_done":
 		return r.formatAgentDoneNotification(state)
 
+	case "background_result":
+		return r.formatBackgroundResultNotification(state)
+
+	case "context_notice":
+		return r.formatContextNoticeNotification(state)
+
 	case "assistant_message":
 		if state.LastAssistantText == "" {
 			return ""
@@ -122,6 +128,51 @@ func (r *NotificationRouter) formatAgentDoneNotification(state ControlState) str
 		message += "\n" + summary
 	}
 	return truncate(message)
+}
+
+// formatBackgroundResultNotification reports a finished background job's
+// durable result. chord headless has no other channel for it: the job usually
+// finishes after the turn went idle, so no later assistant_message summarizes
+// it, and dropping this event would lose the result from IM entirely.
+func (r *NotificationRouter) formatBackgroundResultNotification(state ControlState) string {
+	payload := state.LastBackgroundResult
+	if payload == nil {
+		return ""
+	}
+	content := strings.TrimSpace(payload.Content)
+	if content == "" {
+		return ""
+	}
+	message := "📥 Background job result"
+	if target := strings.TrimSpace(payload.TargetAgentID); target != "" {
+		message += " · " + target
+	}
+	return truncate(message + "\n" + content)
+}
+
+// formatContextNoticeNotification reports a durable context-pressure warning.
+// Level mirrors the compaction-gate overlays (pressure, imminent, warning),
+// and each level is delivered at most once per gate cycle, so the notice is
+// forwarded as-is instead of being deduplicated here.
+func (r *NotificationRouter) formatContextNoticeNotification(state ControlState) string {
+	payload := state.LastContextNotice
+	if payload == nil {
+		return ""
+	}
+	message := strings.TrimSpace(payload.Message)
+	if message == "" {
+		return ""
+	}
+	switch strings.TrimSpace(payload.Level) {
+	case "pressure":
+		return truncate("📈 " + message)
+	case "imminent":
+		return truncate("⚠️ " + message)
+	case "warning":
+		return truncate("⏳ " + message)
+	default:
+		return truncate(message)
+	}
 }
 
 func formatAgentLabel(agentType, agentID, taskID string) string {

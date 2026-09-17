@@ -37,6 +37,7 @@ gateway 不使用 `chord headless --continue`，而是为每个绑定保存一�
 - 如果没有 pinned session ID，gateway 会启动一个新 session。
 - `/new` 会清除当前绑定的 pin 并启动新 session。
 - `/resume <sid>` 会把指定 session ID pin 到当前绑定。
+- 进程内会话切换（`session_switched`）会把 pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
 
 Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `session_pins_file` 配置。
 
@@ -225,8 +226,10 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 - 需要回答问题
 - 任务开始
 - 任务完成
+- 后台任务结果：后台任务结束时推送，通常在 turn 已进入 idle 之后
 - 错误或 blocked 状态
 - 工具失败
+- 上下文压力提示：仅在启用 `event_visibility.context_notice` 时推送
 - 任务长时间仍在处理时，每 5 分钟发送一次提醒
 
 长时间提醒不会直接暴露 `connecting` 这类低层 phase。只要有新的用户可见输出，下一次 5 分钟提醒窗口就会重新计时。如果当前提醒窗口内观察到内部进展事件，提醒会附带简短计数，例如：

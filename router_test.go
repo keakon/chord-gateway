@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1267,7 +1268,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status"}
+	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1280,9 +1281,25 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
+	}
+}
+
+// context_notice is opt-in: it is the only event whose chat delivery is a
+// product decision rather than a correctness requirement, so it must stay out
+// of the default set and appear exactly once when enabled.
+func TestConfiguredHeadlessSubscribeEventsContextNoticeIsOptIn(t *testing.T) {
+	got := configuredHeadlessSubscribeEvents(&config.Config{})
+	if slices.Contains(got, "context_notice") {
+		t.Fatalf("context_notice must not be subscribed by default, got %v", got)
+	}
+
+	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{ContextNotice: true}})
+	want := append([]string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}, "context_notice")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("context_notice-only subscribe events = %v, want %v", got, want)
 	}
 }
 

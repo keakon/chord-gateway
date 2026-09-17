@@ -37,6 +37,7 @@ The gateway does not use `chord headless --continue`. Instead, it stores a pinne
 - If no session ID is pinned, the gateway starts a fresh session.
 - `/new` clears the current binding's pin and starts fresh.
 - `/resume <sid>` pins the specified session ID for the current binding.
+- An in-band session switch (`session_switched`) re-points the pin at the newly active session, so later spawns resume the session the runtime actually runs.
 
 Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pins_file` is configured.
 
@@ -236,8 +237,10 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - question required
 - task started
 - task completed
+- background job results, sent when a background job finishes — usually after the turn already went idle
 - error or blocked state
 - tool failure
+- context-pressure warnings, only when `event_visibility.context_notice` is enabled
 - long-running reminders every 5 minutes while a turn is still busy
 
 Long-running reminders intentionally do not expose low-level phases such as `connecting`. Any user-visible output resets the next 5-minute reminder window. When internal progress events were observed in the current reminder window, the reminder includes a compact count, for example:

@@ -120,12 +120,12 @@ app_id + chat_id + message_id
 
 gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅必需控制面事件：
 
-- `idle`
 - `assistant_message`
 - `confirm_request`
 - `question_request`
 - `handoff_request`
 - `handoff_cancelled`
+- `idle`
 - `error`
 - `notification`
 - `done_completion`
@@ -133,5 +133,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `role_change`
 - `agent_done`
 - `compaction_status`
+- `session_switched`
+- `background_result`
 
-可选事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。
+可选事件由 `event_visibility` 控制。各事件的行为以及哪些只更新状态、不发消息，详见 [event-visibility_CN.md](./event-visibility_CN.md)。

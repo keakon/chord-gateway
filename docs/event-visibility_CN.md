@@ -21,6 +21,8 @@ gateway 始终订阅以下事件：
 - `role_change`
 - `agent_done`
 - `compaction_status`
+- `session_switched`
+- `background_result`
 
 这些事件提供 IM 控制所需的最小行为：
 
@@ -37,6 +39,12 @@ gateway 始终订阅以下事件：
 - 供 `/status` 跟踪当前主角色
 - SubAgent 完成摘要
 - 供 `/status` 展示最近一次上下文检查点结果
+- 进程内会话切换，使已 pin 的绑定跟随运行时实际使用的会话
+- 后台任务完成结果，没有其它投递通道
+
+`session_switched` 只更新状态：触发切换的命令本身已经回复了用户，不再额外发消息。它会把绑定的 session pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
+
+`background_result` 会作为聊天消息推送到 IM，因为 Chord 侧没有其它通道：后台任务通常在 turn 进入 idle 之后才完成，之后不会有 `assistant_message` 再总结它。
 
 ## 可选可见事件
 
@@ -47,6 +55,7 @@ event_visibility:
   activity: false
   agent_started: false
   agent_notify: false
+  context_notice: false
   info: false
   toast: false
   todos: false
@@ -57,9 +66,12 @@ event_visibility:
 | `activity` | `activity` | 较低层进度细节。gateway 会记录 phase 状态，但长时间提醒不会直接暴露这些 phase。 |
 | `agent_started` | `agent_started` | SubAgent 委托开始通知 |
 | `agent_notify` | `agent_notify` | 面向 owner 或指定委派工作流的非阻塞更新 |
+| `context_notice` | `context_notice` | 持久化的上下文压力提示，作为聊天消息推送。`level` 取值为 `pressure`、`imminent` 或 `warning`。 |
 | `info` | `info` | 信息类消息 |
 | `toast` | `toast` | 短暂提示消息 |
 | `todos` | `todos` | 完整 Todo 列表更新；每个事件都会完整转发且不去重，并会计入长时间提醒的内部事件数 |
+
+`context_notice` 默认关闭，因为它的聊天投递属于产品取舍、而不是正确性要求。一次压缩周期最多在三个递进级别上告警（`pressure`、`imminent`、`warning`）；Chord 每个级别只发一次并抑制重复，所以量是有界的——但这类通知是「发出去就不管」的：当 Chord 撤回某条通知时（例如切换模型后有效阈值变化），已经发到聊天里的那条不会撤回，因此长期开启该开关的聊天可能保留一条过期提示，直到它被翻走。
 
 ## 长时间提醒
 
