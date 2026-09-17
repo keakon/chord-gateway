@@ -25,6 +25,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Gateway now preserves headless idle state transitions for configuration-only model-pool switches while suppressing the generic ready-for-input message. Pending confirmation, question, and handoff expiry notifications continue to be delivered.
 - Corrected the Feishu setup guide against current Feishu Open Platform behavior: the event page is **Event Subscriptions** (not “Events and callbacks”), `im.message.receive_v1` appears as **Receive message v2.0**, and receive-message scopes are **per scenario** — using both DMs and group chats requires granting both the DM scope and the group scope, not just any one of them. The guide now also documents the **Batch import** JSON flow and clarifies that `im:message:update` is not required because `im:message` / `im:message:send_as_bot` already cover the card update call.
 - Gateway now follows Chord's `session_switched` event. The session pin was only written when a Chord process started, so an in-band switch (handoff plan execution, `/resume <id>`, `/new`) left a pinned binding pointing at the session the switch abandoned, and a later respawn resumed the wrong session.
+- Gateway now drops a headless `status_response` snapshot that a newer push overtook: Chord versions state-carrying envelopes with a monotonic `seq`, and the status copy is taken on a different goroutine than the push emit, so a late snapshot must not roll SessionID, busy, or pending interactions back. Requires a Chord headless build that sends `seq`.
 
 ## v0.3.2
 

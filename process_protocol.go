@@ -249,7 +249,19 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	case "status_response":
 		var resp StatusResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
-			p.state.applyStatusResponse(&resp)
+			if env.Seq < p.state.LastEnvelopeSeq {
+				// Stale snapshot: a newer push already moved the aggregated
+				// state past what this copy holds (the status copy and the
+				// push emit run on different chord goroutines with no shared
+				// order). Merging it would roll SessionID, busy, and pending
+				// interactions back, so skip the merge. Waiters below still get
+				// the current aggregated state.
+				deferredLog = func(key string, state ControlState) {
+					log.Debugf("[%v] gateway dropped stale status_response seq=%v last_seq=%v", processLogContext(key, state), env.Seq, state.LastEnvelopeSeq)
+				}
+			} else {
+				p.state.applyStatusResponse(&resp)
+			}
 			// Wake any goroutines blocked in WaitStatus.
 			p.statusWaiters.notify(p.state)
 		}
@@ -379,6 +391,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	default:
 		rawType := env.Type
 		deferredLog = func(string, ControlState) { log.Debugf("unknown headless event type type=%v", rawType) }
+	}
+
+	// Track the newest state version seen. chord numbers state-carrying
+	// envelopes monotonically and pushes arrive in seq order, so max() here is
+	// the high-water mark the status_response case guards against. A stale seq
+	// can never advance it, which keeps this update unconditionally safe.
+	if env.Seq > p.state.LastEnvelopeSeq {
+		p.state.LastEnvelopeSeq = env.Seq
 	}
 
 	// Capture callback params under lock, then invoke outside lock to prevent

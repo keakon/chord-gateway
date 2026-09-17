@@ -2401,6 +2401,31 @@ func TestWaitStatus_DeliversResponse(t *testing.T) {
 	}
 }
 
+// A status_response snapshot is copied on chord's command path while pushes
+// emit on its event loop, so a snapshot taken before a switch can arrive after
+// that switch's push. The gateway must drop the stale snapshot instead of
+// rolling SessionID/busy back.
+func TestStaleStatusResponseDoesNotRollBackPushedState(t *testing.T) {
+	proc := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws"}
+
+	// Fresh snapshot before any push: applied unconditionally.
+	proc.processEnvelope(&HeadlessEnvelope{Type: "status_response", Seq: 1, Payload: json.RawMessage(`{"session_id":"sess-A","busy":false,"last_outcome":"completed"}`)})
+	// A newer push moves the session forward.
+	proc.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Seq: 2, Payload: json.RawMessage(`{"session_id":"sess-B"}`)})
+	// The stale snapshot (copied before the switch) arrives late.
+	proc.processEnvelope(&HeadlessEnvelope{Type: "status_response", Seq: 1, Payload: json.RawMessage(`{"session_id":"sess-A","busy":true,"last_outcome":"completed"}`)})
+
+	if proc.state.SessionID != "sess-B" {
+		t.Fatalf("SessionID = %q, want sess-B (stale status_response must not roll back the push)", proc.state.SessionID)
+	}
+	if proc.state.Busy {
+		t.Fatalf("Busy = true, want false (stale snapshot must not overwrite pushed state)")
+	}
+	if proc.state.LastEnvelopeSeq != 2 {
+		t.Fatalf("LastEnvelopeSeq = %d, want 2", proc.state.LastEnvelopeSeq)
+	}
+}
+
 func TestWaitStatus_TimesOutWithoutResponse(t *testing.T) {
 	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

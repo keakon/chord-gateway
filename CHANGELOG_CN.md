@@ -25,6 +25,7 @@
 - 对于仅由配置操作（例如手动切换 model pool）导致的静默状态，gateway 现在仍会正确收口 headless idle 状态，但不再发送通用的“可输入”提示。待确认、问题和 handoff 的过期通知仍会正常发送。
 - 按飞书开放平台当前行为修正了飞书接入指南：事件页面是 **事件订阅**（不是“事件与回调”），`im.message.receive_v1` 在控制台显示为 **接收消息 v2.0**；接收消息权限是**按场景分别生效**的——私聊和群聊都用，必须同时开私聊权限和群聊权限，而不是任选其一。指南同时补充了 **批量导入** JSON 的方式，并说明 `im:message:update` 不是必需项，因为 `im:message` / `im:message:send_as_bot` 已覆盖卡片更新调用。
 - gateway 现在会跟随 Chord 的 `session_switched` 事件。此前 session pin 只在 Chord 进程启动时写入，因此进程内切换会话（handoff plan 执行、`/resume <id>`、`/new`）之后，已 pin 的绑定仍指向被放弃的那个会话，之后重新拉起进程会 resume 错误的会话。
+- gateway 现在会丢掉被更新推送超车的 headless `status_response` 旧快照：Chord 给携带状态的 envelope 按单调 `seq` 编号，而 status 快照与推送分属不同 goroutine 发出，先拷贝的快照可能晚到，因此不能让它把 SessionID、busy 和待决交互回退。需要发送 `seq` 的 Chord headless 版本。
 
 ## v0.3.2
 

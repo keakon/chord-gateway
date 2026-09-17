@@ -21,6 +21,12 @@ type ControlState struct {
 	LastError                string `json:"last_error"`
 	LastOutcome              string `json:"last_outcome"` // "completed" / "cancelled" / "error" / ""
 	UpdatedAt                string `json:"updated_at"`
+	// LastEnvelopeSeq is the highest seq observed on state-carrying envelopes
+	// (pushes and status_response). chord versions pushed state in seq order,
+	// but a status_response snapshot is copied on its command path and can
+	// arrive after a newer push; a snapshot older than this marker is dropped
+	// instead of rolling the aggregated state back.
+	LastEnvelopeSeq uint64 `json:"-"`
 
 	// Pending interactions
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
@@ -206,6 +212,7 @@ type ContextNoticePayload struct {
 // HeadlessEnvelope is the JSON envelope from chord headless stdout.
 type HeadlessEnvelope struct {
 	Type    string          `json:"type"`
+	Seq     uint64          `json:"seq,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
