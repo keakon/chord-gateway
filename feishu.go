@@ -787,12 +787,17 @@ func (a *FeishuAdapter) metricsSnapshot() queueMetricsSnapshot {
 		return queueMetricsSnapshot{}
 	}
 	depth := 0
+	maxDepth := 0
 	capacity := 0
 	for _, queue := range a.messageQueues {
-		depth += len(queue)
+		queued := len(queue)
+		depth += queued
+		if queued > maxDepth {
+			maxDepth = queued
+		}
 		capacity += cap(queue)
 	}
-	return a.queueMetrics.snapshot(depth, capacity)
+	return a.queueMetrics.snapshot(depth, maxDepth, capacity)
 }
 
 func feishuMessageShard(msg IncomingMessage) int {

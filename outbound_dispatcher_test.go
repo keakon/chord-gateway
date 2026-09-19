@@ -153,6 +153,9 @@ func TestOutboundDispatcherEnqueueOrWaitPreservesOrderUnderContention(t *testing
 		}
 		time.Sleep(time.Millisecond)
 	}
+	if snapshot := d.metricsSnapshot(); snapshot.MaxDepth != outboundQueueSize {
+		t.Fatalf("max shard depth while full = %#v, want %d", snapshot, outboundQueueSize)
+	}
 	secondQueued := make(chan outboundEnqueueResult, 1)
 	go func() {
 		secondQueued <- d.enqueueOrWait(key, func() { completed <- outboundQueueSize + 2 })
@@ -170,8 +173,12 @@ func TestOutboundDispatcherEnqueueOrWaitPreservesOrderUnderContention(t *testing
 			t.Fatalf("completed task = %d, want %d", got, want)
 		}
 	}
-	if snapshot := d.metricsSnapshot(); snapshot.Full != 1 || snapshot.Blocked != 1 {
+	snapshot := d.metricsSnapshot()
+	if snapshot.Full != 1 || snapshot.Blocked != 1 {
 		t.Fatalf("overload metrics = %#v, want one full and blocked enqueue", snapshot)
+	}
+	if snapshot.BlockedWaitTotal <= 0 || snapshot.BlockedWaitMax <= 0 {
+		t.Fatalf("blocked wait metrics = %#v, want positive wait durations", snapshot)
 	}
 }
 
@@ -194,6 +201,15 @@ func TestOutboundDispatcherCloseWakesBlockingEnqueue(t *testing.T) {
 	}
 	result := make(chan outboundEnqueueResult, 1)
 	go func() { result <- d.enqueueOrWait(key, func() {}) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for d.metricsSnapshot().Blocked != 1 {
+		if time.Now().After(deadline) {
+			close(release)
+			d.close()
+			t.Fatal("producer did not block before shutdown")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	closeDone := make(chan struct{})
 	go func() {
 		d.close()
@@ -201,6 +217,10 @@ func TestOutboundDispatcherCloseWakesBlockingEnqueue(t *testing.T) {
 	}()
 	if got := <-result; got != outboundClosed {
 		t.Fatalf("blocking enqueue after close = %v, want closed", got)
+	}
+	snapshot := d.metricsSnapshot()
+	if snapshot.Blocked != 1 || snapshot.BlockedWaitTotal == 0 || snapshot.Closed == 0 {
+		t.Fatalf("closed wait metrics = %#v, want blocked wait and closed enqueue", snapshot)
 	}
 	close(release)
 	<-closeDone

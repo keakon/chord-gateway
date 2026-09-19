@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 const (
@@ -85,11 +86,14 @@ func (d *outboundDispatcher) enqueueTask(key string, task outboundTask, block bo
 			d.metrics.full.Add(1)
 			d.metrics.blocked.Add(1)
 		}
+		waitStart := time.Now()
 		select {
 		case queue <- task:
+			d.metrics.recordBlockedWait(time.Since(waitStart))
 			d.metrics.enqueued.Add(1)
 			return outboundQueued
 		case <-d.done:
+			d.metrics.recordBlockedWait(time.Since(waitStart))
 			d.metrics.closed.Add(1)
 			return outboundClosed
 		}
@@ -150,12 +154,17 @@ func (d *outboundDispatcher) metricsSnapshot() queueMetricsSnapshot {
 		return queueMetricsSnapshot{}
 	}
 	depth := 0
+	maxDepth := 0
 	capacity := 0
 	for _, queue := range d.queues {
-		depth += len(queue)
+		queued := len(queue)
+		depth += queued
+		if queued > maxDepth {
+			maxDepth = queued
+		}
 		capacity += cap(queue)
 	}
-	return d.metrics.snapshot(depth, capacity)
+	return d.metrics.snapshot(depth, maxDepth, capacity)
 }
 
 func stableShard(key string, count int) int {

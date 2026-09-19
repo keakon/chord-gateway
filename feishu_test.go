@@ -793,6 +793,21 @@ func TestFeishuQueueDifferentShardsProgressIndependently(t *testing.T) {
 	a.wg.Wait()
 }
 
+func TestFeishuMetricsSnapshotReportsMaxDepth(t *testing.T) {
+	a := testFeishuAdapter(t, nil)
+	a.messageQueues[0] <- IncomingMessage{}
+	a.messageQueues[0] <- IncomingMessage{}
+	a.messageQueues[1] <- IncomingMessage{}
+
+	snapshot := a.metricsSnapshot()
+	if snapshot.Depth != 3 || snapshot.MaxDepth != 2 {
+		t.Fatalf("feishu metrics = %#v, want depth 3 and max depth 2", snapshot)
+	}
+	if want := len(a.messageQueues) * cap(a.messageQueues[0]); snapshot.Capacity != want {
+		t.Fatalf("feishu capacity = %d, want %d", snapshot.Capacity, want)
+	}
+}
+
 func TestFeishuConnect_ClientErrorReturnsInsteadOfHanging(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}
 	a := testFeishuAdapter(t, fc)
