@@ -16,6 +16,8 @@ This prevents orphaned Chord processes and child processes from keeping session 
 
 If the gateway itself is killed with `SIGKILL` (`kill -9`), it cannot run cleanup handlers. Chord's parent-death watcher is expected to detect the parent process change and exit promptly.
 
+A Chord process that crashes (exits while the gateway did not stop it) is respawned automatically after a short delay. If the gateway is shutting down, the pending restart is cancelled instead.
+
 ## Idle timeout
 
 `idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request.
@@ -74,6 +76,9 @@ The gateway logs important routing stages:
 - `gateway event` – raw event parsed from `chord headless` stdout
 - `gateway routing event` – router-side handling decision for a binding
 - `gateway sending notification` – outbound IM send attempt
+- `performance queue=...` – queue metrics logged every 5 minutes for outbound notification shards and Feishu inbound dispatch, including queue `depth`, `max_depth`, `full`, `closed`, `blocked`, and how long blocked enqueues waited (`blocked_wait_total`, `blocked_wait_total_delta`, `blocked_wait_max`, `blocked_slow`, `blocked_slow_delta`). The `*_total` and `blocked_slow` fields are process-lifetime counters; use their `_delta` fields to identify recent provider stalls. `max_depth` is the deepest shard at the time of the sample, not a historical maximum.
+
+Wait durations are recorded only when a blocked queue-capacity wait ends, either by enqueueing or by dispatcher shutdown. They exclude time waiting for the shard producer lock and do not measure end-to-end delivery latency. An ongoing stall may therefore leave wait-duration deltas at zero; also inspect `depth`, `max_depth`, `blocked`, and `processed_delta`. `blocked_wait_max` is the lifetime maximum of completed waits, and `blocked_slow` counts completed waits of at least one second. Feishu inbound dispatch does not wait on a full queue, so its wait metrics remain zero. Backpressure can also reflect traffic bursts, not only a stalled provider.
 
 Useful fields include:
 

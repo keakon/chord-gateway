@@ -16,6 +16,8 @@ gateway 会按需为每个活跃绑定启动 `chord headless` 子进程。
 
 如果 gateway 自身被 `SIGKILL`（`kill -9`）杀死，则无法执行清理 handler。此时依赖 Chord 的 parent-death watcher 检测父进程变化并尽快退出。
 
+如果 Chord 进程崩溃（gateway 并未请求其停止却退出），gateway 会在短暂延迟后自动重新拉起；若此时 gateway 正在关闭，则取消这次待执行的重启。
+
 ## 空闲超时
 
 `idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。
@@ -74,6 +76,9 @@ gateway 会记录关键路由阶段：
 - `gateway event` – 从 `chord headless` stdout 解析出的原始事件
 - `gateway routing event` – router 对某个绑定的处理决策
 - `gateway sending notification` – 尝试向 IM 发送通知
+- `performance queue=...` – 每 5 分钟记录的队列指标，覆盖 outbound 通知分片与飞书入站分发，包含队列 `depth`、`max_depth`、`full`、`closed`、`blocked`，以及阻塞入队的等待时长（`blocked_wait_total`、`blocked_wait_total_delta`、`blocked_wait_max`、`blocked_slow`、`blocked_slow_delta`）。其中 `*_total` 和 `blocked_slow` 是进程生命周期累计值；判断近期 provider 是否停滞时应看对应的 `_delta`。`max_depth` 是采样时最深的分片深度，不是历史最大值。
+
+等待时长只在队列容量等待结束时记录，包括成功入队和 dispatcher 关闭两种情况；不包含等待分片生产者锁的时间，也不代表端到端投递延迟。因此，仍在持续的阻塞可能对应为零的等待时长 delta，应同时检查 `depth`、`max_depth`、`blocked` 和 `processed_delta`。`blocked_wait_max` 是生命周期内已结束等待的最大时长；`blocked_slow` 统计已结束且达到一秒的等待。飞书入站队列满时不会等待，因此其等待指标保持为零。背压也可能来自流量突增，而不一定是 provider 停滞。
 
 常用字段包括：
 

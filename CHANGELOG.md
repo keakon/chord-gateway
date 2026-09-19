@@ -19,6 +19,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Updated the Go toolchain requirement to 1.27.0 and refreshed third-party Go dependencies (`golog` v0.4.1, Lark SDK v3.10.0).
 - SubAgent `agent_notify` notifications now include the alert subtype (for example `blocked/stall_resolved`), so a resolved stall is distinguishable from one that is still pending.
+- The periodic `performance queue=...` metrics line now also reports the current deepest shard (`max_depth`) and completed queue-capacity waits (`blocked_wait_total`, `blocked_wait_max`, `blocked_slow`), helping diagnose notification backpressure. Ongoing waits and shard producer-lock waits are not included in the duration metrics.
 
 ### Fixed
 
@@ -26,6 +27,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Corrected the Feishu setup guide against current Feishu Open Platform behavior: the event page is **Event Subscriptions** (not “Events and callbacks”), `im.message.receive_v1` appears as **Receive message v2.0**, and receive-message scopes are **per scenario** — using both DMs and group chats requires granting both the DM scope and the group scope, not just any one of them. The guide now also documents the **Batch import** JSON flow and clarifies that `im:message:update` is not required because `im:message` / `im:message:send_as_bot` already cover the card update call.
 - Gateway now follows Chord's `session_switched` event. The session pin was only written when a Chord process started, so an in-band switch (handoff plan execution, `/resume <id>`, `/new`) left a pinned binding pointing at the session the switch abandoned, and a later respawn resumed the wrong session.
 - Gateway now drops a headless `status_response` snapshot that a newer push overtook: Chord versions state-carrying envelopes with a monotonic `seq`, and the status copy is taken on a different goroutine than the push emit, so a late snapshot must not roll SessionID, busy, or pending interactions back. Requires a Chord headless build that sends `seq`.
+- Gateway now cancels a pending crash auto-restart and stops the idle-timeout checker as soon as shutdown begins. A crash that happened just before shutdown used to leave a goroutine waiting out the whole restart delay and log a misleading `auto-restart failed ... chord manager is shutting down` error.
 
 ### Breaking changes
 
