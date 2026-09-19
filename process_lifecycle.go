@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/keakon/golog/log"
 )
+
+const defaultAutoRestartDelay = 5 * time.Second
 
 // TerminateGroup attempts to gracefully stop the chord process and, if needed,
 // force-kill its whole process group.
@@ -111,17 +114,39 @@ func (p *ChordProcess) handleExit() {
 
 	if autoRestart {
 		go func() {
-			log.Infof("[%v] auto-restarting crashed chord process in 5s", processLogContext(key, state))
-			time.Sleep(5 * time.Second)
+			log.Infof("[%v] auto-restarting crashed chord process in %v", processLogContext(key, state), defaultAutoRestartDelay)
+			if !p.waitAutoRestart(defaultAutoRestartDelay) {
+				log.Infof("[%v] auto-restart cancelled: gateway is shutting down", processLogContext(key, state))
+				return
+			}
 			// Use the manager to respawn; it handles the procs map.
 			if p.mgr != nil {
 				if _, err := p.mgr.GetOrSpawnForKey(key); err != nil {
-					log.Errorf("[%v] auto-restart failed error=%v", processLogContext(key, state), err)
+					if errors.Is(err, ErrManagerShuttingDown) {
+						log.Debugf("[%v] auto-restart skipped: %v", processLogContext(key, state), err)
+					} else {
+						log.Errorf("[%v] auto-restart failed error=%v", processLogContext(key, state), err)
+					}
 				} else {
 					log.Infof("[%v] auto-restart succeeded", processLogContext(key, state))
 				}
 			}
 		}()
+	}
+}
+
+// waitAutoRestart blocks until delay elapses and reports whether the
+// restart should proceed. Manager shutdown cancels the wait so a crashed
+// process is not respawned and the goroutine does not outlive gateway shutdown
+// by the whole delay.
+func (p *ChordProcess) waitAutoRestart(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-p.mgr.shutdownSignal():
+		return false
 	}
 }
 
@@ -149,12 +174,19 @@ func (p *ChordProcess) transitionToIdle(updatedAt string, expirePending bool) {
 	}
 }
 
-// IdleCheckLoop periodically checks all processes and closes idle ones.
+// IdleCheckLoop periodically checks all processes and closes idle ones. It
+// exits when the manager begins shutting down.
 func (m *ChordManager) IdleCheckLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	shutdown := m.shutdownSignal()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-shutdown:
+			return
+		case <-ticker.C:
+		}
 		timeout := m.cfg.Load().IdleTimeoutDuration()
 		idle := m.collectIdleProcesses(timeout)
 

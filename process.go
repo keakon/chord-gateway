@@ -108,6 +108,8 @@ type ChordManager struct {
 	mu            sync.RWMutex
 	lifecycleGate sync.RWMutex
 	shuttingDown  atomic.Bool
+	shutdownOnce  sync.Once
+	shutdownCh    chan struct{}
 	keyLocksMu    sync.Mutex
 	keyLocks      map[string]*lifecycleKeyLock
 	cfg           atomic.Pointer[config.Config]
@@ -161,8 +163,9 @@ func NewChordManager(cfg *config.Config, paths *config.Paths) *ChordManager {
 	_ = pins.Load()
 
 	m := &ChordManager{
-		procs: make(map[string]*ChordProcess),
-		pins:  pins,
+		procs:      make(map[string]*ChordProcess),
+		pins:       pins,
+		shutdownCh: make(chan struct{}),
 	}
 	m.cfg.Store(cfg)
 	return m
@@ -268,9 +271,35 @@ func (m *ChordManager) removeProcessIfCurrent(key string, p *ChordProcess) {
 	m.mu.Unlock()
 }
 
+// shutdownSignal returns a channel closed when StopAll begins. Background loops
+// select on it to stop promptly during gateway shutdown. A manager built as a
+// struct literal (tests) has a nil channel, and selecting on a nil channel
+// blocks forever, which leaves those managers unaffected.
+func (m *ChordManager) shutdownSignal() <-chan struct{} {
+	if m == nil {
+		return nil
+	}
+	return m.shutdownCh
+}
+
+// requestShutdown closes the shutdown signal exactly once. StopAll may be called
+// repeatedly and struct-literal managers may have no channel, so the close must
+// stay idempotent and nil-safe.
+func (m *ChordManager) requestShutdown() {
+	if m == nil {
+		return
+	}
+	m.shutdownOnce.Do(func() {
+		if m.shutdownCh != nil {
+			close(m.shutdownCh)
+		}
+	})
+}
+
 // StopAll terminates all managed processes (best-effort) and clears the process map.
 func (m *ChordManager) StopAll(grace time.Duration) {
 	m.shuttingDown.Store(true)
+	m.requestShutdown()
 	m.lifecycleGate.Lock()
 	defer m.lifecycleGate.Unlock()
 

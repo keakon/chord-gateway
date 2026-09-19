@@ -607,6 +607,74 @@ func TestChordManagerStopAllPermanentlyRejectsSpawn(t *testing.T) {
 	}
 }
 
+func TestStopAllClosesShutdownSignalOnce(t *testing.T) {
+	mgr := &ChordManager{shutdownCh: make(chan struct{}), procs: make(map[string]*ChordProcess)}
+	mgr.StopAll(0)
+	mgr.StopAll(0)
+	select {
+	case <-mgr.shutdownSignal():
+	default:
+		t.Fatal("shutdown signal was not closed after StopAll")
+	}
+}
+
+func TestStopAllWithoutShutdownChannelIsSafe(t *testing.T) {
+	mgr := &ChordManager{}
+	mgr.StopAll(0)
+	mgr.StopAll(0)
+	if mgr.shutdownSignal() != nil {
+		t.Fatal("struct-literal manager should not report a shutdown signal")
+	}
+}
+
+func TestStopAllCancelsAutoRestartWait(t *testing.T) {
+	mgr := &ChordManager{shutdownCh: make(chan struct{})}
+	p := &ChordProcess{mgr: mgr}
+	done := make(chan bool, 1)
+	go func() { done <- p.waitAutoRestart(time.Hour) }()
+
+	mgr.StopAll(0)
+
+	select {
+	case restarted := <-done:
+		if restarted {
+			t.Fatal("waitAutoRestart returned true after StopAll")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitAutoRestart did not observe manager shutdown")
+	}
+}
+
+func TestAutoRestartWaitElapsesWhenManagerActive(t *testing.T) {
+	for name, mgr := range map[string]*ChordManager{
+		"open channel": {shutdownCh: make(chan struct{})},
+		"nil channel":  {},
+		"nil manager":  nil,
+	} {
+		p := &ChordProcess{mgr: mgr}
+		if !p.waitAutoRestart(10 * time.Millisecond) {
+			t.Fatalf("%s: waitAutoRestart = false, want the delay to elapse", name)
+		}
+	}
+}
+
+func TestIdleCheckLoopStopsOnShutdown(t *testing.T) {
+	mgr := &ChordManager{shutdownCh: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		mgr.IdleCheckLoop()
+		close(done)
+	}()
+
+	mgr.StopAll(0)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("IdleCheckLoop did not exit after StopAll")
+	}
+}
+
 func TestChordManagerLifecycleLocksAreScopedAndReleased(t *testing.T) {
 	mgr := &ChordManager{}
 	key1 := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
