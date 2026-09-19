@@ -164,7 +164,7 @@ For a single Feishu workspace without `chat_bindings`, all chats use that worksp
 Use:
 
 ```text
-/current
+/status
 /sessions
 ```
 

@@ -18,7 +18,7 @@
 - 飞书机器人：长连接模式、owner allowlist、事件去重
 - 支持同时运行多个 IM adapter
 - 按聊天会话和工作区隔离 Chord session
-- 会话 pin 与恢复命令（`/new`、`/resume`、`/sessions`、`/current`）
+- 会话 pin 与恢复命令（`/new`、`/resume`、`/sessions`）
 - 某个 IM 过期时，可通过其他 IM 发送登录通知（例如提示重新登录）
 - 本地 `chord headless` 子进程生命周期管理与清理
 - 可配置可选控制面事件的可见性
@@ -96,7 +96,6 @@ chord-gateway -f config.yaml
 | `/new` | 为当前绑定启动新 session |
 | `/resume <id>` | 恢复并 pin 指定 session |
 | `/sessions` | 列出最近 session |
-| `/current` | 查看当前绑定状态和 pin 的 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 
 完整命令行为和会话语义见 [docs/usage_CN.md](./docs/usage_CN.md)。

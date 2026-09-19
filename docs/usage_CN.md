@@ -58,7 +58,6 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/new` | 优先交给当前 Chord 进程启动新 session；如果没有可用进程，则清除当前 session pin 并启动新的 Chord 进程 |
 | `/resume <id>` | 恢复并 pin 指定 session；如果恢复失败，会清除该 pin 并提示用户 |
 | `/sessions` | 列出最近 session |
-| `/current` | 查看当前聊天 pin 的 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送给 Chord；如果当前有待回答问题，则作为问题答案 |
 
@@ -180,13 +179,6 @@ Gateway: 🔄 Resuming session 2026-04-14-abc123
 
 # 如果 session 不存在或被占用：
 Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may be busy.
-```
-
-查看当前 session：
-
-```text
-You: /current
-Gateway: 📍 Current session: 2026-04-14-abc123
 ```
 
 启动新 session：

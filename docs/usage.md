@@ -58,7 +58,6 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/new` | Ask the current Chord process to start a new session; if no process is available, clear the current session pin and start a fresh Chord process |
 | `/resume <id>` | Resume and pin a specific session; if the session cannot be resumed, the pin is cleared and the user is notified |
 | `/sessions` | List recent sessions from the workspace |
-| `/current` | Show the current binding status, including workspace, IM/chat binding, active session, and pending interaction |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 | any other text | Send the text to Chord, or answer a pending question if one exists |
 
@@ -187,17 +186,6 @@ Gateway: 🔄 Resuming session 2026-04-14-abc123
 
 # If the session no longer exists or is busy:
 Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may be busy.
-```
-
-Check the current binding:
-
-```text
-You: /current
-Gateway: Workspace: default
-IM: feishu
-Chat: oc_xxx
-Session: 2026-04-14-abc123
-State: idle
 ```
 
 Start fresh:

@@ -27,6 +27,10 @@
 - gateway 现在会跟随 Chord 的 `session_switched` 事件。此前 session pin 只在 Chord 进程启动时写入，因此进程内切换会话（handoff plan 执行、`/resume <id>`、`/new`）之后，已 pin 的绑定仍指向被放弃的那个会话，之后重新拉起进程会 resume 错误的会话。
 - gateway 现在会丢掉被更新推送超车的 headless `status_response` 旧快照：Chord 给携带状态的 envelope 按单调 `seq` 编号，而 status 快照与推送分属不同 goroutine 发出，先拷贝的快照可能晚到，因此不能让它把 SessionID、busy 和待决交互回退。需要发送 `seq` 的 Chord headless 版本。
 
+### 不兼容变更
+
+- 移除 IM `/current` 命令。`/status` 已展示活动 session、当前角色、最近一次检查点结果和待处理交互。
+
 ## v0.3.2
 
 ### Added

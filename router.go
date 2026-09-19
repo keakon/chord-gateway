@@ -302,8 +302,6 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 		r.handleResume(ws, chatID, cmd.SessionID, imType)
 	case "sessions":
 		r.handleSessions(ws, chatID)
-	case "current":
-		r.handleCurrent(ws, chatID, imType)
 	case "todos":
 		r.handleTodos(ws, chatID, imType)
 	case "login":
@@ -450,22 +448,6 @@ func (r *NotificationRouter) handleSessions(ws *config.Workspace, chatID string)
 		return
 	}
 	r.sendText(chatID, "📂 Recent sessions:\n"+strings.Join(lines, "\n"))
-}
-
-// handleCurrent shows info about the currently active session.
-func (r *NotificationRouter) handleCurrent(ws *config.Workspace, chatID string, imType string) {
-	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	proc, err := r.mgr.GetOrSpawnForKey(key)
-	if err != nil {
-		r.sendText(chatID, "❌ Failed to connect to chord process.")
-		return
-	}
-	if proc == nil || !proc.Alive() {
-		r.sendText(chatID, formatBindingStatus(ws, imType, chatID, ControlState{}))
-		return
-	}
-	state := proc.State()
-	r.sendText(chatID, formatBindingStatus(ws, imType, chatID, state))
 }
 
 // handleTodos shows the current todo list.

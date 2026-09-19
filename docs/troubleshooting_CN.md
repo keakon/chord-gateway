@@ -164,7 +164,7 @@ chat_bindings:
 使用：
 
 ```text
-/current
+/status
 /sessions
 ```
 

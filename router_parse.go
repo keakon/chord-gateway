@@ -67,8 +67,6 @@ func parseIMCommand(text string) IMCommand {
 		return IMCommand{Type: "resume", SessionID: sessionID}
 	case "/sessions":
 		return IMCommand{Type: "sessions"}
-	case "/current":
-		return IMCommand{Type: "current"}
 	case "/todos":
 		return IMCommand{Type: "todos"}
 	case "/login":

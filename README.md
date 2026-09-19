@@ -18,7 +18,7 @@
 - Feishu bot support with long-lived connection mode, owner allowlist, and event deduplication
 - Multiple IM adapters can run together
 - Per-chat and per-workspace session isolation
-- Session pinning and resume commands (`/new`, `/resume`, `/sessions`, `/current`)
+- Session pinning and resume commands (`/new`, `/resume`, `/sessions`)
 - Cross-IM login notification (for example, when one channel expires, use another channel to prompt re-login)
 - Local `chord headless` subprocess lifecycle management and cleanup
 - Configurable visibility for optional control-plane events
@@ -96,7 +96,6 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 | `/new` | Start a fresh session for the current binding |
 | `/resume <id>` | Resume and pin a session |
 | `/sessions` | List recent sessions |
-| `/current` | Show the current binding status and pinned session |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 
 See [docs/usage.md](./docs/usage.md) for full command behavior and session semantics.

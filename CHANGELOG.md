@@ -27,6 +27,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Gateway now follows Chord's `session_switched` event. The session pin was only written when a Chord process started, so an in-band switch (handoff plan execution, `/resume <id>`, `/new`) left a pinned binding pointing at the session the switch abandoned, and a later respawn resumed the wrong session.
 - Gateway now drops a headless `status_response` snapshot that a newer push overtook: Chord versions state-carrying envelopes with a monotonic `seq`, and the status copy is taken on a different goroutine than the push emit, so a late snapshot must not roll SessionID, busy, or pending interactions back. Requires a Chord headless build that sends `seq`.
 
+### Breaking changes
+
+- Removed the IM `/current` command. `/status` already shows the active session, current role, last context checkpoint, and pending interaction.
+
 ## v0.3.2
 
 ### Added

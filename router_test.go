@@ -1057,29 +1057,17 @@ func TestHandleNewAndResumeErrorPaths(t *testing.T) {
 	})
 }
 
-func TestHandleCurrentAndTodosNoActiveSession(t *testing.T) {
+func TestHandleTodosNoActiveSession(t *testing.T) {
 	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
 	cfg := &config.Config{Workspaces: nil}
 	mgr := newTestChordManager(cfg)
 
-	t.Run("current no active session", func(t *testing.T) {
-		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{mgr: mgr, adapter: sender}
-		r.handleCurrent(ws, "chat-1", "wechat")
-		msg := sender.lastMessage().text
-		if !strings.Contains(msg, "Workspace: ws1") || !strings.Contains(strings.ToLower(msg), "idle") {
-			t.Fatalf("current message = %q", msg)
-		}
-	})
-
-	t.Run("todos no active session", func(t *testing.T) {
-		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{mgr: mgr, adapter: sender}
-		r.handleTodos(ws, "chat-1", "wechat")
-		if got := sender.lastMessage().text; got != "⏸️ No active session." {
-			t.Fatalf("todos message = %q", got)
-		}
-	})
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{mgr: mgr, adapter: sender}
+	r.handleTodos(ws, "chat-1", "wechat")
+	if got := sender.lastMessage().text; got != "⏸️ No active session." {
+		t.Fatalf("todos message = %q", got)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,7 +1109,6 @@ func TestParseIMCommand(t *testing.T) {
 		{name: "new", input: "/new", wantType: "new"},
 		{name: "resume with session_id", input: "/resume 123", wantType: "resume", wantSessionID: "123"},
 		{name: "sessions", input: "/sessions", wantType: "sessions"},
-		{name: "current", input: "/current", wantType: "current"},
 		{name: "todos", input: "/todos", wantType: "todos"},
 		{name: "bind with workspace and path", input: "/bind project-a ~/work/project-a", wantType: "bind", wantWorkspaceID: "project-a", wantPath: "~/work/project-a"},
 		{name: "bind with quoted path", input: "/bind project-a \"~/work/project a\"", wantType: "bind", wantWorkspaceID: "project-a", wantPath: "~/work/project a"},
@@ -3160,24 +3147,6 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		r, _, sender, _, _, ws := newRouterAndProcess(ControlState{})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "mystery"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "Unknown command") {
-			t.Fatalf("message = %q", got)
-		}
-	})
-
-	t.Run("handleCurrent without alive process shows idle binding", func(t *testing.T) {
-		r, proc, sender, _, _, ws := newRouterAndProcess(ControlState{})
-		proc.cmd = nil
-		r.handleCurrent(ws, "chat-1", "wechat")
-		if got := sender.lastMessage().text; !strings.Contains(got, "⏸️ Idle") {
-			t.Fatalf("message = %q", got)
-		}
-	})
-
-	t.Run("handleCurrent with alive process shows state", func(t *testing.T) {
-		r, proc, sender, _, _, ws := newRouterAndProcess(ControlState{Busy: true, SessionID: "sess-1"})
-		proc.cmd = &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}
-		r.handleCurrent(ws, "chat-1", "wechat")
-		if got := sender.lastMessage().text; !strings.Contains(got, "sess-1") {
 			t.Fatalf("message = %q", got)
 		}
 	})
