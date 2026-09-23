@@ -151,9 +151,10 @@ func (r *NotificationRouter) formatBackgroundResultNotification(state ControlSta
 }
 
 // formatContextNoticeNotification reports a durable context-pressure warning.
-// Level mirrors the compaction-gate overlays (pressure, imminent, warning),
-// and each level is delivered at most once per gate cycle, so the notice is
-// forwarded as-is instead of being deduplicated here.
+// Level mirrors the compaction-gate overlays (pressure, imminent, warning). A
+// pressure cycle keeps at most one durable row: later escalations stay internal
+// to Chord and a retracted row is never announced as a withdrawal, so the
+// notice is forwarded as-is instead of being deduplicated here.
 func (r *NotificationRouter) formatContextNoticeNotification(state ControlState) string {
 	payload := state.LastContextNotice
 	if payload == nil {

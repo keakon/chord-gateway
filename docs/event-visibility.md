@@ -71,7 +71,7 @@ event_visibility:
 | `toast` | `toast` | Short transient messages |
 | `todos` | `todos` | Full todo list updates; every event is forwarded without deduplication and counts as an internal event for long-running reminders |
 
-`context_notice` is opt-in because its chat delivery is a product decision rather than a correctness requirement. One compaction cycle can warn at three escalating levels (`pressure`, `imminent`, `warning`); Chord sends each level at most once and suppresses repeats, so the volume is bounded — but the notice is fire-and-forget. When Chord retracts a notice (for example after a model switch moved the effective threshold), the message already sent to the chat is not withdrawn, so a chat that keeps the warnings enabled can hold a stale one until it scrolls away.
+`context_notice` is opt-in because its chat delivery is a product decision rather than a correctness requirement. A pressure cycle keeps at most one durable notice at a time: `level` is the level at which that row was written, and later escalations in the same cycle are not pushed to the chat; they stay inside Chord, injected into the model's request context and recorded in its diagnostics. The notice is fire-and-forget: when Chord retracts one (for example after a model switch moved the effective threshold), nothing is pushed to withdraw the message already sent, so a chat that keeps the warnings enabled can hold a stale one until it scrolls away; a later re-crossing can then push a fresh notice.
 
 ## Long-running reminders
 
