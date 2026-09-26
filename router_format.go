@@ -241,6 +241,9 @@ func (r *NotificationRouter) formatIdleNotification(state ControlState) string {
 	if state.SuppressUserNotification {
 		return ""
 	}
+	if state.RunningJobs > 0 {
+		return fmt.Sprintf("⏳ Chord: Ready for input; background jobs still running: %d", state.RunningJobs)
+	}
 	return "✅ Chord: Ready for input"
 }
 
@@ -609,6 +612,9 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		sb.WriteString("🔄 Busy")
 	} else {
 		sb.WriteString("⏸️ Idle")
+	}
+	if state.RunningJobs > 0 {
+		fmt.Fprintf(&sb, "\n⏳ Background jobs: %d", state.RunningJobs)
 	}
 	if ws != nil {
 		sb.WriteString("\n🗂️ Workspace: ")

@@ -10,6 +10,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Idle notifications and `/status` show running background jobs. Processes reporting active background jobs are excluded from idle-timeout cleanup.
+
 - Added IM `/role` command for switching the main agent role (for example `builder` → `planner`) via Chord headless: `/role` lists the current role and the switchable roles (a Feishu button card, or a numbered list on text platforms), while `/role <number>` / `/role <name>` pick the target. The gateway always subscribes to Chord's `role_change` event and tracks the active role for `/status`. Requires a Chord headless build that supports the `role` control command. Switch request failures or response timeouts resolve the clicked Feishu card as unconfirmed and direct users to `/status` before retrying. A Feishu card click is patched in place and does not also send a duplicate chat line.
 - Gateway now always subscribes to Chord's `compaction_status` event and surfaces the latest context-checkpoint outcome in `/status` (for example `succeeded`, `skipped` with its reason, or `failed`); outcomes are never pushed as chat messages. A skipped checkpoint that never occupied the compaction slot does not overwrite the outcome of a compaction that is still running.
 - Gateway now consumes Chord's `handoff_cancelled` event: when a pending handoff is cancelled without a decision (for example superseded by a new request or session switch), the stale pending request is dropped and the chat receives a cancellation notice. A later `/handoff` or `/handoff-deny` returns the usual no-pending warning instead of routing the reply to the cancelled request.

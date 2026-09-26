@@ -70,6 +70,7 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 func (p *ChordProcess) handleExit() {
 	p.mu.Lock()
 	p.state.Busy = false
+	p.state.RunningJobs = 0
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 	if p.stdin != nil {
 		p.stdin.Close()
@@ -221,7 +222,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	candidates := make([]*ChordProcess, 0)
 	for _, p := range procs {
 		p.mu.RLock()
-		if time.Since(p.lastActivity) > timeout {
+		if p.state.RunningJobs == 0 && time.Since(p.lastActivity) > timeout {
 			candidates = append(candidates, p)
 		}
 		p.mu.RUnlock()
@@ -232,7 +233,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	for _, p := range candidates {
 		p.mu.Lock()
 		m.mu.Lock()
-		if m.procs[p.key] == p && time.Since(p.lastActivity) > timeout {
+		if m.procs[p.key] == p && p.state.RunningJobs == 0 && time.Since(p.lastActivity) > timeout {
 			delete(m.procs, p.key)
 			idle = append(idle, p)
 		}

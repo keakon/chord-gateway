@@ -11,6 +11,7 @@ import (
 type ControlState struct {
 	SessionID   string `json:"session_id"`
 	Busy        bool   `json:"busy"`
+	RunningJobs int    `json:"running_jobs"`
 	Phase       string `json:"phase"`
 	PhaseDetail string `json:"phase_detail"`
 	CurrentRole string `json:"current_role,omitempty"`
@@ -224,6 +225,7 @@ type HeadlessEnvelope struct {
 type StatusResponse struct {
 	SessionID       string           `json:"session_id"`
 	Busy            bool             `json:"busy"`
+	RunningJobs     int              `json:"running_jobs"`
 	Phase           string           `json:"phase"`
 	PhaseDetail     string           `json:"phase_detail"`
 	CurrentRole     string           `json:"current_role,omitempty"`
@@ -353,6 +355,7 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 	}
 	s.SessionID = resp.SessionID
 	s.Busy = resp.Busy
+	s.RunningJobs = resp.RunningJobs
 	s.Phase = resp.Phase
 	s.PhaseDetail = resp.PhaseDetail
 	if resp.CurrentRole != "" {

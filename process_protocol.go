@@ -92,10 +92,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		p.transitionToIdle("", false)
 		p.state.SuppressUserNotification = false
 		var payload struct {
+			RunningJobs              int    `json:"running_jobs"`
 			LastOutcome              string `json:"last_outcome"`
 			SuppressUserNotification bool   `json:"suppress_user_notification"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			p.state.RunningJobs = payload.RunningJobs
 			p.state.LastOutcome = payload.LastOutcome
 			p.state.SuppressUserNotification = payload.SuppressUserNotification
 		}
@@ -294,6 +296,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			if id := strings.TrimSpace(payload.SessionID); id != "" {
+				p.state.RunningJobs = 0
 				p.state.SessionID = id
 				// Compaction outcomes belong to the abandoned session: keep
 				// them and /status would report the old session's checkpoint,
