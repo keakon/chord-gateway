@@ -27,7 +27,9 @@ type ControlState struct {
 	// but a status_response snapshot is copied on its command path and can
 	// arrive after a newer push; a snapshot older than this marker is dropped
 	// instead of rolling the aggregated state back.
-	LastEnvelopeSeq uint64 `json:"-"`
+	LastEnvelopeSeq   uint64              `json:"-"`
+	LastInputResult   *InputResultPayload `json:"-"`
+	UnconfirmedInputs int                 `json:"-"`
 
 	// Pending interactions
 	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`

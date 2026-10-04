@@ -8,6 +8,7 @@
 
 The gateway always subscribes to these events:
 
+- `activity`
 - `assistant_message`
 - `confirm_request`
 - `question_request`
@@ -52,7 +53,6 @@ Optional events are disabled by default. Enable them through `event_visibility`:
 
 ```yaml
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -63,7 +63,6 @@ event_visibility:
 
 | Field | Event type | Typical use |
 |---|---|---|
-| `activity` | `activity` | Lower-level progress details. The gateway records phase state but does not expose phases in long-running reminders. |
 | `agent_started` | `agent_started` | SubAgent delegation start notifications |
 | `agent_notify` | `agent_notify` | Non-blocking owner or targeted delegated-workstream updates |
 | `context_notice` | `context_notice` | Durable context-pressure warnings, pushed as chat messages. `level` is one of `pressure`, `imminent` or `warning`. |
@@ -108,3 +107,7 @@ For observability, gateway logs include routing stages such as:
 - `gateway sending notification`
 
 See [operations.md](./operations.md) for log details.
+
+## Input receipts
+
+Normal messages and late replies carry correlation IDs. Writing to the process does not mean work started. Gateway follows `input_result` receipts and always-subscribed `activity` to update busy state and reminders. `handled` means a local command was consumed, `queued` means input was queued, `started` means a turn was created, and `rejected` means input was rejected. Receipts other than `started` never clear existing active work. Disconnects report unconfirmed inputs; check the session before resending requests with side effects. Requires Chord headless with input receipts.

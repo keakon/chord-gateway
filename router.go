@@ -649,7 +649,18 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
-	if state.PendingQuestion != nil || state.PendingConfirm != nil || state.PendingHandoff != nil {
+	if state.Busy && (eventType == "activity" || eventType == "input_result" && state.LastInputResult != nil && state.LastInputResult.Status == inputStarted) {
+		r.scheduleReminder(key, state.LastPushAt)
+	}
+	// The expired-pending mirror follows what chord still qualifies for a late
+	// answer: a pending dialog supersedes the old expiry, and a state that
+	// reports no expired interaction at all means chord dropped the
+	// qualification (the answer arrived, a newer question retired it, the
+	// session switched, or the process was replaced). Clearing on that signal
+	// keeps the record from being refreshed forever by every push and from
+	// outliving the process state it mirrors.
+	switch {
+	case state.PendingQuestion != nil || state.PendingConfirm != nil || state.PendingHandoff != nil:
 		r.clearExpiredPending(key)
 	}
 	r.recordExpiredPending(key, state)

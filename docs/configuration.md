@@ -155,7 +155,6 @@ This keeps workspace definitions stable while each IM adapter declares how it ma
 
 Optional flags (boolean):
 
-- `activity`
 - `agent_started`
 - `agent_notify`
 - `context_notice`
@@ -165,7 +164,7 @@ Optional flags (boolean):
 
 Essential events are always subscribed and cannot be disabled. This includes `agent_done`, so tool-only SubAgent completions always surface their summary.
 
-`agent_started` and `agent_notify` are opt-in to avoid noisy orchestration updates. `done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` updates phase state for status/debugging, but long-running reminders do not expose low-level phases. `context_notice` is opt-in because pushing durable context-pressure warnings to a chat is a product decision rather than a correctness requirement; see [event-visibility.md](./event-visibility.md) for the volume and retraction caveats.
+`agent_started` and `agent_notify` are opt-in to avoid noisy orchestration updates. `done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` is always subscribed to track active work, but long-running reminders do not expose low-level phases. `context_notice` is opt-in because pushing durable context-pressure warnings to a chat is a product decision rather than a correctness requirement; see [event-visibility.md](./event-visibility.md) for the volume and retraction caveats.
 
 ## Path and State Resolution
 
@@ -238,7 +237,6 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -273,7 +271,6 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false

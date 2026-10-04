@@ -91,7 +91,6 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
 			return
 		}
-		r.beginTurn(procKey)
 		r.resolveFeishuCard(msg, procKey, "confirm", cmd.RequestID, "Confirmation expired", "⌛ The pending confirmation has expired.", "grey")
 		r.sendText(chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
 		return
@@ -161,7 +160,11 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
 			return
 		}
-		r.beginTurn(procKey)
+		// A late reply is consumed as ordinary input; its receipt determines busy state.
+		if q != nil {
+			proc.ConsumeExpiredQuestion(q.RequestID)
+		}
+		r.clearExpiredPending(procKey)
 		r.resolveFeishuCard(msg, procKey, "question", requestID, "Question expired", "⌛ The pending question has expired.", "grey")
 		r.sendText(chatID, "⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.")
 		return
@@ -281,7 +284,6 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 		r.sendText(chatID, "❌ Failed to send message to chord.")
 		return
 	}
-	r.beginTurn(procKey)
 }
 
 func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
@@ -321,7 +323,6 @@ func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatI
 		log.Errorf("failed to send user message to fresh session workspace=%v error=%v", ws.ID, err)
 		return false
 	}
-	r.beginTurn(procKey)
 	r.sendText(chatID, "⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.")
 	return true
 }

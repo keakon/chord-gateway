@@ -125,6 +125,7 @@ For a single Feishu workspace, `chat_bindings` may be omitted and all chats use 
 
 The gateway runs `chord headless` and reads JSONL events from stdout. It subscribes to the required control-plane event set by default:
 
+- `activity`
 - `assistant_message`
 - `confirm_request`
 - `question_request`

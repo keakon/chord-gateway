@@ -19,6 +19,8 @@
 
 ### 变更
 
+- 普通输入的忙碌状态与提醒改为跟随 Chord 消费回执及活动事件，避免本地命令导致错误的忙碌状态。activity 始终订阅，请从配置移除 `event_visibility.activity`。断线会提示未确认输入，不自动重放。需要支持输入回执的 Chord headless。
+
 - 将 Go toolchain 要求更新到 1.27.0，并刷新第三方 Go 依赖（`golog` v0.4.1、飞书 SDK v3.10.0）。
 - SubAgent 的 `agent_notify` 通知现在会带上告警子类型（例如 `blocked/stall_resolved`），便于区分已解除的阻塞与仍在持续的阻塞。
 - 周期性的 `performance queue=...` 指标日志现在还会输出当前最深分片（`max_depth`）及已结束的队列容量等待时长（`blocked_wait_total`、`blocked_wait_max`、`blocked_slow`），帮助诊断通知背压。时长指标不包含仍在持续的等待或分片生产者锁等待。

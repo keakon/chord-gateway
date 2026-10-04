@@ -125,6 +125,7 @@ app_id + chat_id + message_id
 
 gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅必需控制面事件：
 
+- `activity`
 - `assistant_message`
 - `confirm_request`
 - `question_request`

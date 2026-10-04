@@ -1255,20 +1255,19 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
+	wantCore := []string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
 
 	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{
-		Activity:     true,
 		AgentStarted: true,
 		AgentNotify:  true,
 		Info:         true,
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", "activity", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1284,7 +1283,7 @@ func TestConfiguredHeadlessSubscribeEventsContextNoticeIsOptIn(t *testing.T) {
 	}
 
 	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{ContextNotice: true}})
-	want := append([]string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}, "context_notice")
+	want := append([]string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}, "context_notice")
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("context_notice-only subscribe events = %v, want %v", got, want)
 	}

@@ -56,6 +56,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	var deferredLog func(string, ControlState)
 
 	switch env.Type {
+	case "input_result":
+		if p.applyInputResult(env, now) {
+			eventType = "input_result"
+		}
 	case "ready":
 		var payload struct {
 			SessionID string `json:"session_id"`
@@ -73,6 +77,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = ""
 
 	case "activity":
+		if env.Seq < p.state.LastEnvelopeSeq {
+			break
+		}
+		if !p.state.Busy {
+			p.state.LastPushAt = now
+			p.state.InternalEventsSinceLastPush = 0
+		}
 		p.state.Busy = true
 		if p.state.LastPushAt.IsZero() {
 			p.state.LastPushAt = now

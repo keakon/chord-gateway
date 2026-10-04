@@ -20,6 +20,7 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 		// Mark as stopped by gateway to avoid crash restarts.
 		p.mu.Lock()
 		p.stoppedByGateway = true
+		p.abandonPendingInputs()
 		// Close stdin first to let chord exit gracefully.
 		if p.stdin != nil {
 			_ = p.stdin.Close()
@@ -70,6 +71,7 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 func (p *ChordProcess) handleExit() {
 	p.mu.Lock()
 	p.state.Busy = false
+	p.abandonPendingInputs()
 	p.state.RunningJobs = 0
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 	if p.stdin != nil {

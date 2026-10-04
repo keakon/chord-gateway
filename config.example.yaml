@@ -59,7 +59,6 @@ idle_timeout: 30m
 # assistant_message, requests, idle/error, Done reports, local shell results,
 # and SubAgent completion summaries; they are always subscribed.
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false

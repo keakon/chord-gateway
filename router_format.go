@@ -13,6 +13,11 @@ import (
 
 func (r *NotificationRouter) formatNotification(eventType string, state ControlState) string {
 	switch eventType {
+	case "input_result":
+		if result := state.LastInputResult; result != nil && result.Status == inputRejected {
+			return "Input rejected: " + result.Message
+		}
+		return ""
 	case "notification", "done_completion":
 		return r.formatHeadlessNotification(state)
 
@@ -75,6 +80,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 		return ""
 
 	case "exit":
+		if state.UnconfirmedInputs > 0 {
+			return fmt.Sprintf("Chord disconnected with %d unconfirmed inputs. Check the session before sending them again.", state.UnconfirmedInputs)
+		}
 		return r.formatExitNotification(state)
 
 	case "todos":

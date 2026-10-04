@@ -43,6 +43,8 @@ type ChordProcess struct {
 	// by its terminal). Guards state.LastCompaction from being overwritten by
 	// synthetic sync-skip pairs or superseded plans' late outcomes.
 	compactionPlanID string
+	inputSequence    uint64
+	pendingInputs    map[string]struct{}
 
 	// Auto-restart on crash
 	autoRestart      bool
@@ -556,11 +558,11 @@ func (p *ChordProcess) WaitRoleSwitch(ctx context.Context, role string) (RoleRes
 
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
-	// assistant_message, confirm_request, question_request, handoff_request,
-	// handoff_cancelled, idle, error, notification, done_completion,
-	// local_shell_result, agent_done, role_change, compaction_status,
-	// session_switched, and background_result.
-	events := []string{"assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
+	// activity, assistant_message, confirm_request, question_request, question_resolved,
+	// handoff_request, handoff_cancelled, idle, error, notification,
+	// done_completion, local_shell_result, agent_done, role_change,
+	// compaction_status, session_switched, and background_result.
+	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
 	if cfg == nil {
 		return events
 	}
@@ -568,7 +570,6 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 		enabled bool
 		event   string
 	}{
-		{cfg.EventVisibility.Activity, "activity"},
 		{cfg.EventVisibility.AgentStarted, "agent_started"},
 		{cfg.EventVisibility.AgentNotify, "agent_notify"},
 		{cfg.EventVisibility.ContextNotice, "context_notice"},
@@ -626,23 +627,26 @@ func (p *ChordProcess) SendCommand(cmd map[string]any) error {
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.writeCommandLocked(data)
+}
+
+// writeCommandLocked writes one complete JSONL command under p.mu, shared by
+// control commands and inputs that also register a consumption receipt.
+func (p *ChordProcess) writeCommandLocked(data []byte) error {
 	if p.stdin == nil {
 		return io.ErrClosedPipe
 	}
-	_, err = p.stdin.Write(data)
-	return err
-}
-
-// SendUserMessage sends a user message command to the chord process.
-func (p *ChordProcess) SendUserMessage(content string) error {
-	return p.SendCommand(map[string]any{
-		"type":    "send",
-		"content": content,
-	})
+	data = append(data, '\n')
+	n, err := p.stdin.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return fmt.Errorf("write headless command: %w", err)
+	}
+	return nil
 }
 
 // BeginTurn marks the start of a new "user-initiated turn" against the chord

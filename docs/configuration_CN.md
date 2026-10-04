@@ -155,7 +155,6 @@ gateway 使用“IM 自带路由”模型：
 
 可选布尔开关：
 
-- `activity`
 - `agent_started`
 - `agent_notify`
 - `context_notice`
@@ -165,7 +164,7 @@ gateway 使用“IM 自带路由”模型：
 
 核心事件始终订阅，无法关闭。其中包括 `agent_done`，因此只有工具调用、没有 assistant 文本的 SubAgent 完成轮次也一定会展示摘要。
 
-`agent_started` 与 `agent_notify` 为避免编排更新刷屏而默认关闭。`done_completion` 始终订阅，用于非 loop Done 完成报告。`todos` 仅在启用后订阅、计数和转发。`activity` 会更新状态/调试用 phase，但长时间提醒不会直接暴露这些低层 phase。`context_notice` 默认关闭，因为把持久化的上下文压力提示推到聊天里属于产品取舍、而不是正确性要求；推送量与「撤回不生效」的说明见 [event-visibility_CN.md](./event-visibility_CN.md)。
+`agent_started` 与 `agent_notify` 为避免编排更新刷屏而默认关闭。`done_completion` 始终订阅，用于非 loop Done 完成报告。`todos` 仅在启用后订阅、计数和转发。`activity` 始终订阅，用于跟踪实际工作状态，但长时间提醒不会直接暴露低层 phase。`context_notice` 默认关闭，因为把持久化的上下文压力提示推到聊天里属于产品取舍、而不是正确性要求；推送量与「撤回不生效」的说明见 [event-visibility_CN.md](./event-visibility_CN.md)。
 
 ## 配置与状态目录解析
 
@@ -236,7 +235,6 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -271,7 +269,6 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false

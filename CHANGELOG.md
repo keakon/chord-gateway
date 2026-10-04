@@ -19,6 +19,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- Busy state and reminders for normal inputs now follow Chord consumption receipts and activity, avoiding false busy state for local commands. Activity is always subscribed; remove `event_visibility.activity` from configuration. Disconnects report unconfirmed inputs without replaying them. Requires Chord headless with input receipts.
+
 - Updated the Go toolchain requirement to 1.27.0 and refreshed third-party Go dependencies (`golog` v0.4.1, Lark SDK v3.10.0).
 - SubAgent `agent_notify` notifications now include the alert subtype (for example `blocked/stall_resolved`), so a resolved stall is distinguishable from one that is still pending.
 - The periodic `performance queue=...` metrics line now also reports the current deepest shard (`max_depth`) and completed queue-capacity waits (`blocked_wait_total`, `blocked_wait_max`, `blocked_slow`), helping diagnose notification backpressure. Ongoing waits and shard producer-lock waits are not included in the duration metrics.

@@ -8,6 +8,7 @@
 
 gateway 始终订阅以下事件：
 
+- `activity`
 - `assistant_message`
 - `confirm_request`
 - `question_request`
@@ -52,7 +53,6 @@ gateway 始终订阅以下事件：
 
 ```yaml
 event_visibility:
-  activity: false
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -63,7 +63,6 @@ event_visibility:
 
 | 字段 | 事件类型 | 典型用途 |
 |---|---|---|
-| `activity` | `activity` | 较低层进度细节。gateway 会记录 phase 状态，但长时间提醒不会直接暴露这些 phase。 |
 | `agent_started` | `agent_started` | SubAgent 委托开始通知 |
 | `agent_notify` | `agent_notify` | 面向 owner 或指定委派工作流的非阻塞更新 |
 | `context_notice` | `context_notice` | 持久化的上下文压力提示，作为聊天消息推送。`level` 取值为 `pressure`、`imminent` 或 `warning`。 |
@@ -108,3 +107,7 @@ Chord 也可能在未做决策的情况下取消待处理 handoff，例如该请
 - `gateway sending notification`
 
 日志详情见 [operations_CN.md](./operations_CN.md)。
+
+## 输入回执
+
+普通消息和迟到回复带有关联 ID。写入进程并不代表任务开始；Gateway 根据 `input_result` 回执和始终订阅的 `activity` 更新忙碌状态及提醒。`handled` 表示本地命令已处理，`queued` 表示输入已排队，`started` 表示已创建任务，`rejected` 表示输入未被接受。除 `started` 外，其余回执都不会清除已有任务的忙碌状态。断线时未确认的输入会显示为结果未知；请先核对会话，避免重复发送有副作用的请求。需要支持输入回执的 Chord headless。

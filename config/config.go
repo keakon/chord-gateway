@@ -35,7 +35,6 @@ type Config struct {
 
 // EventVisibility controls optional control-plane event subscriptions.
 type EventVisibility struct {
-	Activity      bool `yaml:"activity,omitempty"`
 	AgentStarted  bool `yaml:"agent_started,omitempty"`
 	AgentNotify   bool `yaml:"agent_notify,omitempty"`
 	ContextNotice bool `yaml:"context_notice,omitempty"`
