@@ -98,6 +98,8 @@ SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent 
 
 Chord 也可能在未做决策的情况下取消待处理 handoff，例如该请求被新的请求或会话切换取代。gateway 会消费 `handoff_cancelled` 事件，丢弃已失效的待决 handoff，并发送取消通知。之后再用 `/handoff` 或 `/handoff-deny` 会回到常见的「没有待处理 handoff」提示，而不会把回复路由到已取消的请求。`handoff_cancelled` 事件可能迟到，或携带不匹配的 request ID；gateway 只清理该事件指向的待决 handoff，不会误清更新的待决请求。
 
+Gateway 解析 JSONL 或读取流失败时，会单独向聊天发送提示。无法解析的行会被跳过；读取流失效时会先停止进程，再发送提示，并告知尚未收到消费回执的输入数量。这些 gateway 侧错误不依赖 Chord 的 `notification` 事件。
+
 ## 日志
 
 为便于观测，gateway 日志会包含以下路由阶段：

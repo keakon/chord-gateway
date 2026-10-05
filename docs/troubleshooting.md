@@ -187,7 +187,9 @@ Check:
 - Whether a confirmation or question is pending (`/status`).
 - Whether the process was cancelled or timed out.
 
-### Late `/answer`, `/allow`, or `/deny` is sent as follow-up context
+Headless JSONL frame bodies may contain up to 16 MiB of JSON, excluding the LF or CRLF line ending. This includes shell results that grow during JSON escaping. A malformed JSON line sends a chat warning and reading continues. An oversized frame or a stream read failure stops the Chord process after a two-second graceful-exit window, then sends a chat notice with the error and any unconfirmed-input count. This stop does not schedule a crash restart. Check the session before retrying; inputs are not replayed automatically.
+
+### Late answers and confirmations
 
 A pending question or confirmation can expire when Chord becomes idle or when the gateway removes the idle process after `idle_timeout`. In that case, the original request ID is no longer pending.
 

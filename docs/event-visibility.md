@@ -98,6 +98,8 @@ Global `idle` events normally do not emit fallback completion messages. If one c
 
 Chord may also cancel a pending handoff without a decision, for example when a new request or session switch supersedes it. The gateway consumes the `handoff_cancelled` event, drops the stale pending handoff, and sends a cancellation notice. A later `/handoff` or `/handoff-deny` then falls back to the usual no-pending warning instead of routing the reply to the cancelled request. A `handoff_cancelled` event may arrive late or without a matching request ID; the gateway only clears the pending handoff it targets and leaves a newer pending request untouched.
 
+Gateway JSONL parsing and stream failures produce a separate chat notice. Malformed lines are skipped; a failed stream stops the process before notification delivery, and the notice includes any inputs with no consumption receipt. These gateway-side failures do not wait for a Chord `notification` event.
+
 ## Logs
 
 For observability, gateway logs include routing stages such as:

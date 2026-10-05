@@ -396,6 +396,9 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	chordBinary := cfg.ChordBinary()
 	chordBinaryMeta := buildinfo.MetadataForPath(chordBinary)
 	cmd := exec.Command(chordBinary, args...)
+	// Bound Wait if a descendant keeps the captured stderr pipe open after
+	// the headless leader exits. Stdout is drained by readLoop.
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = loginShellEnv()
 
 	stdinPipe, err := cmd.StdinPipe()

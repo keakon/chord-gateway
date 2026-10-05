@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -11,11 +12,15 @@ import (
 	"github.com/keakon/golog/log"
 )
 
+const headlessMaxEnvelopeBytes = 16 * 1024 * 1024
+
 // readLoop reads stdout from the chord process, parses JSON envelopes,
 // updates state, and calls onEvent for notable events.
 func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// Reserve room for LF or CRLF in addition to the JSON frame body.
+	scanner.Buffer(make([]byte, 0, 64*1024), headlessMaxEnvelopeBytes+2)
+	var readErr error
 
 	for scanner.Scan() {
 		select {
@@ -25,20 +30,43 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 		}
 
 		line := scanner.Bytes()
+		if len(line) > headlessMaxEnvelopeBytes {
+			readErr = fmt.Errorf("headless frame exceeds %d bytes", headlessMaxEnvelopeBytes)
+			break
+		}
 		if len(line) == 0 {
 			continue
 		}
 
 		var env HeadlessEnvelope
 		if err := json.Unmarshal(line, &env); err != nil {
-			log.Warnf("failed to parse headless envelope line=%v error=%v", string(line), err)
+			p.reportTransportError(fmt.Errorf("parse headless envelope: %w", err), false)
 			continue
 		}
 
 		p.processEnvelope(&env)
 	}
 
-	// stdout EOF — chord process has exited.
+	if readErr == nil {
+		readErr = scanner.Err()
+	}
+	if readErr != nil && ctx.Err() == nil {
+		p.mu.RLock()
+		stopped := p.stoppedByGateway
+		p.mu.RUnlock()
+		if !stopped {
+			// Stop before notifying: IM delivery may block, but a failed stdout
+			// stream must not leave the child blocked on its remaining output.
+			p.TerminateGroup(2 * time.Second)
+			p.mu.RLock()
+			cmd := p.cmd
+			p.mu.RUnlock()
+			p.waitAndRecordExit(cmd)
+			p.reportTransportError(fmt.Errorf("read headless envelope stream: %w", readErr), true)
+		}
+	}
+
+	// The stream ended or failed; reap the process and publish its exit.
 	p.handleExit()
 }
 

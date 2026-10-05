@@ -27,6 +27,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Fixed
 
+- Headless JSONL frames now accept up to 16 MiB of JSON, including output expanded by JSON escaping. Malformed lines produce a chat warning and reading continues. Oversized frames and stream failures stop the Chord process within a bounded grace period and report the failure in chat, without replaying inputs or scheduling a crash restart.
+
 - Only a recognized companion `notification` alert is deduplicated after the matching confirmation or handoff prompt is delivered successfully. Stale pending entries no longer hide unrelated alerts, and failed prompt delivery preserves its fallback alert. Alerts without a dedicated prompt, such as a loop-exit decision or a notify-protocol correction, still arrive.
 - Gateway now preserves headless idle state transitions for configuration-only model-pool switches while suppressing the generic ready-for-input message. Pending confirmation, question, and handoff expiry notifications continue to be delivered.
 - Corrected the Feishu setup guide against current Feishu Open Platform behavior: the event page is **Event Subscriptions** (not “Events and callbacks”), `im.message.receive_v1` appears as **Receive message v2.0**, and receive-message scopes are **per scenario** — using both DMs and group chats requires granting both the DM scope and the group scope, not just any one of them. The guide now also documents the **Batch import** JSON flow and clarifies that `im:message:update` is not required because `im:message` / `im:message:send_as_bot` already cover the card update call.

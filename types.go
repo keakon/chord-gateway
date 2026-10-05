@@ -18,10 +18,11 @@ type ControlState struct {
 	// SuppressUserNotification applies only to the most recent idle event. It
 	// does not change the idle state transition; the router uses it to skip a
 	// user-facing completion reminder for configuration-only quiescence.
-	SuppressUserNotification bool   `json:"-"`
-	LastError                string `json:"last_error"`
-	LastOutcome              string `json:"last_outcome"` // "completed" / "cancelled" / "error" / ""
-	UpdatedAt                string `json:"updated_at"`
+	SuppressUserNotification bool                   `json:"-"`
+	LastError                string                 `json:"last_error"`
+	LastTransportError       *TransportErrorPayload `json:"-"`
+	LastOutcome              string                 `json:"last_outcome"` // "completed" / "cancelled" / "error" / ""
+	UpdatedAt                string                 `json:"updated_at"`
 	// LastEnvelopeSeq is the highest seq observed on state-carrying envelopes
 	// (pushes and status_response). chord versions pushed state in seq order,
 	// but a status_response snapshot is copied on its command path and can

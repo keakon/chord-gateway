@@ -42,6 +42,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "error":
 		return ""
 
+	case "transport_error":
+		return r.formatTransportErrorNotification(state)
+
 	case "agent_started":
 		return r.formatAgentStartedNotification(state)
 
@@ -80,6 +83,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 		return ""
 
 	case "exit":
+		if state.LastTransportError != nil && state.LastTransportError.Fatal {
+			return "" // The transport notice already explains the disconnect.
+		}
 		if state.UnconfirmedInputs > 0 {
 			return fmt.Sprintf("Chord disconnected with %d unconfirmed inputs. Check the session before sending them again.", state.UnconfirmedInputs)
 		}
@@ -554,6 +560,21 @@ func (r *NotificationRouter) formatToastNotification(state ControlState) string 
 	default:
 		return ""
 	}
+}
+
+func (r *NotificationRouter) formatTransportErrorNotification(state ControlState) string {
+	failure := state.LastTransportError
+	if failure == nil {
+		return ""
+	}
+	if !failure.Fatal {
+		return "⚠️ Invalid Chord message skipped; reading continues. " + failure.Message
+	}
+	message := "⚠️ Chord connection failed and the process was stopped. " + failure.Message
+	if state.UnconfirmedInputs > 0 {
+		message += fmt.Sprintf("\n%d inputs have no consumption receipt.", state.UnconfirmedInputs)
+	}
+	return message + "\nCheck the session before retrying. Inputs were not replayed."
 }
 
 func (r *NotificationRouter) formatExitNotification(state ControlState) string {

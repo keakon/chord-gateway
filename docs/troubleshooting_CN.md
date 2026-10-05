@@ -187,7 +187,9 @@ chat_bindings:
 - 是否有待确认或待回答问题（`/status`）。
 - 进程是否被取消或超时。
 
-### 迟到的 `/answer`、`/allow` 或 `/deny` 被作为后续上下文发送
+Headless JSONL 帧的 JSON 正文上限为 16 MiB，不含 LF 或 CRLF 换行符；Shell 输出经过 JSON 转义后增大的体积也计入此上限。遇到无法解析的 JSON 行时，gateway 会向聊天发送警告并继续读取。帧超限或读取流失败时，gateway 会先停止 Chord 进程（等待正常退出最多两秒，随后强制结束），再向聊天发送错误和未收到消费回执的输入数量。这种停止不会触发崩溃自动重启。重试前请核对会话；输入不会自动重放。
+
+### 迟到回答与确认
 
 当 Chord 进入 idle，或 gateway 在 `idle_timeout` 后清理空闲进程时，待回答问题或待确认请求可能过期。此时原 request ID 已不再处于 pending 状态。
 
