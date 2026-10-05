@@ -1074,22 +1074,28 @@ func TestProcessEnvelopeBackgroundResultAndContextNotice(t *testing.T) {
 		},
 	}
 
-	p.processEnvelope(&HeadlessEnvelope{Type: "background_result", Payload: json.RawMessage(`{"target_agent_id":"agent-1","content":"job finished"}`)})
+	p.state.SessionID = "active-session"
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "background_result", Payload: json.RawMessage(`{"session_id":"source-session","message_index":42,"target_agent_id":"agent-1","content":"job finished"}`)})
 	state := p.State()
 	if state.LastBackgroundResult == nil {
 		t.Fatal("background_result must be saved to ControlState")
 	}
-	if state.LastBackgroundResult.Content != "job finished" || state.LastBackgroundResult.TargetAgentID != "agent-1" {
+	if state.LastBackgroundResult.Content != "job finished" || state.LastBackgroundResult.TargetAgentID != "agent-1" || state.LastBackgroundResult.SessionID != "source-session" || state.LastBackgroundResult.MessageIndex != 42 {
 		t.Fatalf("LastBackgroundResult = %+v", state.LastBackgroundResult)
 	}
 
-	p.processEnvelope(&HeadlessEnvelope{Type: "context_notice", Payload: json.RawMessage(`{"level":"imminent","message":"Context will be compacted"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "context_notice", Payload: json.RawMessage(`{"session_id":"source-session","message_index":43,"level":"imminent","message":"Context will be compacted"}`)})
 	state = p.State()
 	if state.LastContextNotice == nil {
 		t.Fatal("context_notice must be saved to ControlState")
 	}
-	if state.LastContextNotice.Level != "imminent" || state.LastContextNotice.Message != "Context will be compacted" {
+	if state.LastContextNotice.Level != "imminent" || state.LastContextNotice.Message != "Context will be compacted" || state.LastContextNotice.SessionID != "source-session" || state.LastContextNotice.MessageIndex != 43 {
 		t.Fatalf("LastContextNotice = %+v", state.LastContextNotice)
+	}
+
+	if state.SessionID != "active-session" {
+		t.Fatalf("durable event changed active session: %q", state.SessionID)
 	}
 
 	want := []string{"background_result", "context_notice"}

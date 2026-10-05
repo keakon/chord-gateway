@@ -204,7 +204,11 @@ type LocalShellPayload struct {
 // BackgroundResultPayload is the background_result event payload: the durable
 // result of a finished background job, which is also the only delivery channel
 // for the JOB RESULT card.
+// SessionID and MessageIndex identify the source durable transcript row.
+// They do not change the gateway's active session.
 type BackgroundResultPayload struct {
+	SessionID     string `json:"session_id,omitempty"`
+	MessageIndex  int    `json:"message_index"`
 	TargetAgentID string `json:"target_agent_id,omitempty"`
 	Content       string `json:"content"`
 }
@@ -213,8 +217,10 @@ type BackgroundResultPayload struct {
 // context-pressure warning. Level mirrors the three compaction-gate overlays
 // (pressure, imminent, warning).
 type ContextNoticePayload struct {
-	Level   string `json:"level"`
-	Message string `json:"message"`
+	SessionID    string `json:"session_id,omitempty"`
+	MessageIndex int    `json:"message_index"`
+	Level        string `json:"level"`
+	Message      string `json:"message"`
 }
 
 // HeadlessEnvelope is the JSON envelope from chord headless stdout.

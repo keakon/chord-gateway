@@ -72,6 +72,8 @@ event_visibility:
 
 `context_notice` is opt-in because its chat delivery is a product decision rather than a correctness requirement. A pressure cycle keeps at most one durable notice at a time: `level` is the level at which that row was written, and later escalations in the same cycle are not pushed to the chat; they stay inside Chord, injected into the model's request context and recorded in its diagnostics. The notice is fire-and-forget: when Chord retracts one (for example after a model switch moved the effective threshold), nothing is pushed to withdraw the message already sent, so a chat that keeps the warnings enabled can hold a stale one until it scrolls away; a later re-crossing can then push a fresh notice.
 
+The gateway preserves `session_id` and `message_index` from `background_result` and `context_notice` alongside their content. They identify the source session and durable transcript row; the active session still follows `ready` and `session_switched`.
+
 ## Long-running reminders
 
 While a turn remains busy, the gateway sends a compact reminder every 5 minutes. Any user-visible output resets the next 5-minute reminder window. The reminder does not include low-level phases such as `connecting`. If tracked internal progress occurred, it includes the number of internal events observed since the previous visible output or reminder:
