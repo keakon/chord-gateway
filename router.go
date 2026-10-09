@@ -37,6 +37,7 @@ type NotificationRouter struct {
 	lastKeyChatIDSnapshot atomic.Pointer[map[string]string]
 	reminders             map[string]*time.Timer
 	expiredPending        map[string]expiredPendingState
+	deliveredPrompts      map[string]deliveredPrompt
 	cardHandles           map[string]cardHandleEntry
 	outbound              *outboundDispatcher
 }
@@ -699,9 +700,19 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 }
 
 func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType string, state ControlState, msg string) {
+	if eventType == "notification" && r.duplicatePromptNotification(key, state) {
+		return
+	}
+	delivered := false
+	defer func() {
+		if delivered {
+			r.recordDeliveredPrompt(key, eventType, state)
+		}
+	}()
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
 			if r.sendFeishuConfirmCard(chatID, key, state) {
+				delivered = true
 				r.markVisibleOutput(key)
 				return
 			}
@@ -714,8 +725,10 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 		}
 	}
 
-	r.sendText(chatID, msg)
-	r.markVisibleOutput(key)
+	delivered = r.sendText(chatID, msg)
+	if delivered {
+		r.markVisibleOutput(key)
+	}
 }
 
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a
@@ -794,16 +807,18 @@ func (r *NotificationRouter) lookupProcessByKey(key string) (*ChordProcess, bool
 }
 
 // sendText sends a text message via the IM adapter, logging errors.
-func (r *NotificationRouter) sendText(chatID, text string) {
+func (r *NotificationRouter) sendText(chatID, text string) bool {
 	a := r.currentAdapter()
 	if a == nil {
 		log.Debugf("adapter not set, skipping notification chatID=%v", chatID)
-		return
+		return false
 	}
 	log.Infof("gateway sending notification chatID=%v text_len=%v", chatID, len(text))
 	if err := a.SendText(chatID, text); err != nil {
 		log.Errorf("failed to send notification chatID=%v text_len=%v error=%v", chatID, len(text), err)
+		return false
 	}
+	return true
 }
 
 // sendTextAll sends a notification to all active channels for a workspace.

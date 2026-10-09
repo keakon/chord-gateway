@@ -231,8 +231,9 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - context-pressure warnings, only when `event_visibility.context_notice` is enabled
 - long-running reminders every 5 minutes while a turn is still busy
 
-Long-running reminders intentionally do not expose low-level phases such as `connecting`. Any user-visible output resets the next 5-minute reminder window. When internal progress events were observed in the current reminder window, the reminder includes a compact count, for example:
+After a confirmation or handoff prompt is delivered successfully, its recognized companion `notification` alert is dropped. Other alerts remain visible even while an earlier confirmation or handoff remains in the gateway cache. Failed prompt delivery leaves the companion alert available. Alerts that have no prompt of their own, such as a loop-exit decision, still arrive.
 
+Long-running reminders intentionally do not expose low-level phases such as `connecting`. Any user-visible output resets the next 5-minute reminder window. When internal progress events were observed in the current reminder window, the reminder includes a compact count, for example:
 ```text
 ⏳ Still working (4 internal events)
 ```

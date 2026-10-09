@@ -134,6 +134,10 @@ type HandoffAgentOption struct {
 	CurrentModelPool string   `json:"current_model_pool,omitempty"`
 }
 
+// notificationReasonUserInputRequired is the reason chord reports when the
+// agent is blocked on the user; it is the only reason chord emits today.
+const notificationReasonUserInputRequired = "user_input_required"
+
 // NotificationPayload is the notification event payload.
 type NotificationPayload struct {
 	Message string `json:"message"`

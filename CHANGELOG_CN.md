@@ -23,6 +23,7 @@
 
 ### 修复
 
+- 确认或 handoff 提示成功投递后，只有对应请求的已识别伴随 `notification` 提醒会被去重。旧的待处理缓存不再遮蔽无关告警；提示投递失败时仍保留伴随提醒。本身没有专用提示的提醒（如 loop 退出决策、notify 协议纠正）仍会照常送达。
 - 对于仅由配置操作（例如手动切换 model pool）导致的静默状态，gateway 现在仍会正确收口 headless idle 状态，但不再发送通用的“可输入”提示。待确认、问题和 handoff 的过期通知仍会正常发送。
 - 按飞书开放平台当前行为修正了飞书接入指南：事件页面是 **事件订阅**（不是“事件与回调”），`im.message.receive_v1` 在控制台显示为 **接收消息 v2.0**；接收消息权限是**按场景分别生效**的——私聊和群聊都用，必须同时开私聊权限和群聊权限，而不是任选其一。指南同时补充了 **批量导入** JSON 的方式，并说明 `im:message:update` 不是必需项，因为 `im:message` / `im:message:send_as_bot` 已覆盖卡片更新调用。
 - gateway 现在会跟随 Chord 的 `session_switched` 事件。此前 session pin 只在 Chord 进程启动时写入，因此进程内切换会话（handoff plan 执行、`/resume <id>`、`/new`）之后，已 pin 的绑定仍指向被放弃的那个会话，之后重新拉起进程会 resume 错误的会话。

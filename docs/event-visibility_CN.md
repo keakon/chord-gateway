@@ -89,7 +89,7 @@ event_visibility:
 
 SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent ID）和任务 ID。`agent_done` 始终订阅并发送权威完成摘要，因此也能覆盖只有工具调用、没有 assistant 文本的完成轮次。
 
-`notification` 是用户提醒的标准事件，包括权限请求、问题请求、blocked 错误和完全停止后的完成通知。
+`notification` 是用户提醒的标准事件，覆盖 blocked 错误、完全停止后的完成通知，以及本身没有提示的提醒（loop 退出决策、notify 协议纠正，Chord 统一用 `user_input_required` 作为 reason）。只有确认或 handoff 的提示已成功投递后，对应请求的已识别伴随 `user_input_required` 提醒才会被去重。即使缓存仍保留旧请求，无关告警也会照常送达。
 
 `idle` 表示全局空闲：主 agent 与所有 SubAgent 都已停止活跃工作。单个 agent 的 idle 状态变化不会作为协议 `idle` 事件暴露，因此只要仍有任何 agent 在工作，gateway 就会保持 busy，不会停止长时间提醒，也不会发送 idle 通知。
 

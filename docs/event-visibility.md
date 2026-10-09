@@ -89,7 +89,7 @@ Internal-event counts are currently based on gateway-tracked progress events suc
 
 SubAgent `assistant_message` events are labeled with their agent type (falling back to agent ID) and task ID. `agent_done` is always subscribed and sends the authoritative completion summary; this also covers tool-only completion turns that have no assistant text.
 
-`notification` is the canonical event for user alerts, including permission requests, question requests, blocked errors, and fully stopped completion.
+`notification` is the canonical event for user alerts, including blocked errors, fully stopped completion, and the requests that have no prompt of their own (loop-exit decisions and notify-protocol corrections, all reported with Chord's `user_input_required` reason). Only a recognized companion `user_input_required` alert for a matching confirmation or handoff is dropped after its prompt has been delivered successfully. Other alerts remain visible even if the pending cache still contains an earlier request.
 
 `idle` represents global idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
 

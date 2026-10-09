@@ -1337,18 +1337,16 @@ func TestTakeCardHandleDropsExpiredEntries(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFormatNotification_NotificationEvent(t *testing.T) {
+	// chord emits a single notification reason today; any other value is
+	// forwarded as a plain message instead of being given a wrong icon.
 	tests := []struct {
 		name   string
 		reason string
 		msg    string
 		emoji  string
 	}{
-		{name: "idle", reason: "idle", msg: "Chord: Ready for input", emoji: "✅"},
-		{name: "error", reason: "error", msg: "something failed", emoji: "⚠️"},
-		{name: "cancelled", reason: "cancelled", msg: "Chord: Ready for input", emoji: "⚠️"},
-		{name: "confirm", reason: "confirm_request", msg: "Chord: Permission confirmation required", emoji: "🔧"},
-		{name: "question", reason: "question_request", msg: "Chord: Question requires your input", emoji: "❓"},
-		{name: "plain", reason: "other", msg: "plain text", emoji: "plain text"},
+		{name: "user input required", reason: notificationReasonUserInputRequired, msg: "Chord: Loop requires your decision", emoji: "❓"},
+		{name: "other reason", reason: "other", msg: "plain text", emoji: "plain text"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

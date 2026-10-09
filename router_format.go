@@ -244,6 +244,10 @@ func (r *NotificationRouter) formatIdleNotification(state ControlState) string {
 	return "✅ Chord: Ready for input"
 }
 
+// formatHeadlessNotification renders the notification event. chord reports
+// user_input_required as an alert that the agent is blocked on the user; the
+// Delivery deduplicates a known companion alert only after its matching prompt
+// was sent successfully. A pending cache entry alone cannot identify an alert.
 func (r *NotificationRouter) formatHeadlessNotification(state ControlState) string {
 	if state.LastNotification == nil {
 		return ""
@@ -252,18 +256,10 @@ func (r *NotificationRouter) formatHeadlessNotification(state ControlState) stri
 	if msg == "" {
 		return ""
 	}
-	switch state.LastNotification.Reason {
-	case "confirm_request":
-		return truncate("🔧 " + msg)
-	case "question_request":
-		return truncate("❓ " + msg)
-	case "error", "cancelled":
-		return truncate("⚠️ " + msg)
-	case "idle":
-		return truncate("✅ " + msg)
-	default:
+	if state.LastNotification.Reason != notificationReasonUserInputRequired {
 		return truncate(msg)
 	}
+	return truncate("❓ " + msg)
 }
 
 func (r *NotificationRouter) formatConfirmNotification(state ControlState) string {
