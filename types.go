@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"time"
 )
 
@@ -33,12 +34,13 @@ type ControlState struct {
 	UnconfirmedInputs int                 `json:"-"`
 
 	// Pending interactions
-	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
-	PendingQuestion *QuestionPayload `json:"pending_question,omitempty"`
-	PendingHandoff  *HandoffPayload  `json:"pending_handoff,omitempty"`
-	ExpiredConfirm  *ConfirmPayload  `json:"-"`
-	ExpiredQuestion *QuestionPayload `json:"-"`
-	ExpiredHandoff  *HandoffPayload  `json:"-"`
+	PendingConfirm *ConfirmPayload             `json:"pending_confirm,omitempty"`
+	Questions      map[string]*QuestionPayload `json:"questions,omitempty"`
+	PendingHandoff *HandoffPayload             `json:"pending_handoff,omitempty"`
+	ExpiredConfirm *ConfirmPayload             `json:"-"`
+	ExpiredHandoff *HandoffPayload             `json:"-"`
+
+	LastQuestion *QuestionPayload `json:"-"`
 
 	// Todos from chord process
 	Todos []TodoItem `json:"todos,omitempty"`
@@ -71,6 +73,9 @@ type ControlState struct {
 	ToastLevel                  string    `json:"-"` // from toast event
 	// Last notification emitted by chord headless for guaranteed user-facing alerts.
 	LastNotification *NotificationPayload `json:"-"`
+	// LastQuestionResolved is the most recent question_resolved event, used to
+	// format the close notification without re-deriving the reason.
+	LastQuestionResolved *QuestionPayload `json:"-"`
 	// LastCompaction is the most recent compaction_status terminal outcome
 	// forwarded by chord headless. Progress events are filtered headless-side;
 	// the gateway only ever sees started and terminal outcomes, and never
@@ -111,15 +116,41 @@ type ConfirmPayload struct {
 
 // QuestionPayload is the question_request event payload.
 type QuestionPayload struct {
-	ToolName      string   `json:"tool_name"`
-	Header        string   `json:"header,omitempty"`
-	Question      string   `json:"question"`
-	Options       []string `json:"options"`
-	OptionDetails []string `json:"option_details,omitempty"`
-	DefaultAnswer string   `json:"default_answer"`
-	Multiple      bool     `json:"multiple"`
-	RequestID     string   `json:"request_id"`
+	BindingID       string   `json:"binding_id"`
+	OptionIDs       []string `json:"option_ids"`
+	Version         uint64   `json:"version"`
+	TaskID          string   `json:"task_id"`
+	ScopeID         string   `json:"request_scope_id"`
+	ResponsePolicy  string   `json:"response_policy"`
+	DefaultOptionID string   `json:"default_option_id,omitempty"`
+	Timer           string   `json:"timer"`
+	Outcome         string   `json:"reason,omitempty"`
+	ResultID        string   `json:"result_id,omitempty"`
+	Selected        []string `json:"selected,omitempty"`
+	SelectedIDs     []string `json:"selected_ids,omitempty"`
+
+	ToolName       string            `json:"tool_name"`
+	Header         string            `json:"header,omitempty"`
+	Question       string            `json:"question"`
+	Options        []string          `json:"options"`
+	OptionDetails  []string          `json:"option_details,omitempty"`
+	Multiple       bool              `json:"multiple"`
+	RequestID      string            `json:"request_id"`
+	Deadline       *time.Time        `json:"deadline,omitempty"`
+	RevisionResult *QuestionRevision `json:"revision_result,omitempty"`
 }
+
+// Question resolved reasons mirror the Chord headless terminal outcomes.
+// Historical answers append revisions without changing these outcomes.
+const (
+	QuestionResolvedDefaulted  = "defaulted"
+	QuestionResolvedAnswered   = "answered"
+	QuestionResolvedDeclined   = "declined"
+	QuestionResolvedNoResponse = "no_response"
+	QuestionResolvedSuperseded = "superseded"
+	QuestionResolvedCancelled  = "cancelled"
+	QuestionResolvedError      = "error"
+)
 
 // HandoffPayload is the handoff_request event payload.
 type HandoffPayload struct {
@@ -232,18 +263,18 @@ type HeadlessEnvelope struct {
 
 // StatusResponse is the payload for type="status_response".
 type StatusResponse struct {
-	SessionID       string           `json:"session_id"`
-	Busy            bool             `json:"busy"`
-	RunningJobs     int              `json:"running_jobs"`
-	Phase           string           `json:"phase"`
-	PhaseDetail     string           `json:"phase_detail"`
-	CurrentRole     string           `json:"current_role,omitempty"`
-	PendingConfirm  *ConfirmPayload  `json:"pending_confirm,omitempty"`
-	PendingQuestion *QuestionPayload `json:"pending_question,omitempty"`
-	PendingHandoff  *HandoffPayload  `json:"pending_handoff,omitempty"`
-	LastError       string           `json:"last_error"`
-	LastOutcome     string           `json:"last_outcome"`
-	UpdatedAt       string           `json:"updated_at"`
+	SessionID      string             `json:"session_id"`
+	Busy           bool               `json:"busy"`
+	RunningJobs    int                `json:"running_jobs"`
+	Phase          string             `json:"phase"`
+	PhaseDetail    string             `json:"phase_detail"`
+	CurrentRole    string             `json:"current_role,omitempty"`
+	PendingConfirm *ConfirmPayload    `json:"pending_confirm,omitempty"`
+	Questions      []*QuestionPayload `json:"questions"`
+	PendingHandoff *HandoffPayload    `json:"pending_handoff,omitempty"`
+	LastError      string             `json:"last_error"`
+	LastOutcome    string             `json:"last_outcome"`
+	UpdatedAt      string             `json:"updated_at"`
 }
 
 // RoleInfo describes one switchable main-agent role in a role list.
@@ -308,7 +339,11 @@ type InternalAction struct {
 	Action    string
 	RequestID string
 	Value     string
-	Handle    InteractiveCardHandle
+	// Values carries the answers of a multi-select question card form: the
+	// checked option numbers, in option order. Value stays empty on that path,
+	// and vice versa for a single-select button click.
+	Values []string
+	Handle InteractiveCardHandle
 }
 
 // MessageRouter is the interface for routing incoming messages.
@@ -325,11 +360,60 @@ func (s *ControlState) applyPendingConfirm(c *ConfirmPayload) {
 	s.ExpiredConfirm = nil
 }
 
-// applyPendingQuestion records a freshly-received question_request payload and
-// clears any prior expired-question marker.
-func (s *ControlState) applyPendingQuestion(q *QuestionPayload) {
-	s.PendingQuestion = q
-	s.ExpiredQuestion = nil
+// applyQuestionState uses copy-on-write so outbound event snapshots remain
+// immutable while later answers update the process state.
+func (s *ControlState) applyQuestionState(q *QuestionPayload) bool {
+	if q == nil || q.RequestID == "" {
+		return false
+	}
+	if !newerQuestionState(q, s.Questions[q.RequestID]) {
+		return false
+	}
+	next := make(map[string]*QuestionPayload, len(s.Questions)+1)
+	for id, old := range s.Questions {
+		next[id] = old
+	}
+	next[q.RequestID] = q
+	s.Questions = next
+	s.LastQuestion = q
+	if q.Outcome != "" {
+		s.LastQuestionResolved = q
+	}
+	return true
+}
+
+func newerQuestionState(q, old *QuestionPayload) bool {
+	return old == nil || old.Version < q.Version ||
+		(old.Version == q.Version && old.RevisionResult == nil && q.RevisionResult != nil)
+}
+
+func (s ControlState) uniquePendingQuestion() *QuestionPayload {
+	var result *QuestionPayload
+	for _, q := range s.Questions {
+		if q.Outcome != "" {
+			continue
+		}
+		if result != nil {
+			return nil
+		}
+		result = q
+	}
+	return result
+}
+func (s ControlState) pendingQuestionCount() int {
+	n := 0
+	for _, q := range s.Questions {
+		if q.Outcome == "" {
+			n++
+		}
+	}
+	return n
+}
+func (s ControlState) questionForNotification() *QuestionPayload {
+	if s.LastQuestion != nil {
+		return s.LastQuestion
+	}
+	return s.uniquePendingQuestion()
 }
 
 func (s *ControlState) applyPendingHandoff(h *HandoffPayload) {
@@ -362,6 +446,11 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 	if resp == nil {
 		return
 	}
+	if s.SessionID != resp.SessionID {
+		s.Questions = nil
+		s.LastQuestion = nil
+		s.LastQuestionResolved = nil
+	}
 	s.SessionID = resp.SessionID
 	s.Busy = resp.Busy
 	s.RunningJobs = resp.RunningJobs
@@ -371,14 +460,44 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 		s.CurrentRole = resp.CurrentRole
 	}
 	s.PendingConfirm = resp.PendingConfirm
-	s.PendingQuestion = resp.PendingQuestion
+	questions := resp.Questions
+	// A full snapshot merges the history in one copy instead of cloning it
+	// once for each question, which would make restoration quadratic.
+	if len(questions) > 0 {
+		next := s.Questions
+		copied := false
+		for _, q := range questions {
+			if q == nil || q.RequestID == "" || !newerQuestionState(q, next[q.RequestID]) {
+				continue
+			}
+			if !copied {
+				next = maps.Clone(s.Questions)
+				if next == nil {
+					next = make(map[string]*QuestionPayload, len(questions))
+				}
+				copied = true
+			}
+			next[q.RequestID] = q
+			s.LastQuestion = q
+			if q.Outcome != "" {
+				s.LastQuestionResolved = q
+			}
+		}
+		s.Questions = next
+	}
 	s.PendingHandoff = resp.PendingHandoff
-	if resp.PendingConfirm != nil || resp.PendingQuestion != nil || resp.PendingHandoff != nil {
+	if resp.PendingConfirm != nil || s.pendingQuestionCount() > 0 || resp.PendingHandoff != nil {
 		s.ExpiredConfirm = nil
-		s.ExpiredQuestion = nil
 		s.ExpiredHandoff = nil
 	}
 	s.LastError = resp.LastError
 	s.UpdatedAt = resp.UpdatedAt
 	s.LastOutcome = resp.LastOutcome
+}
+
+type QuestionRevision struct {
+	QuestionID string   `json:"question_id"`
+	ResultID   string   `json:"result_id"`
+	Selected   []string `json:"selected"`
+	Outcome    string   `json:"outcome"`
 }

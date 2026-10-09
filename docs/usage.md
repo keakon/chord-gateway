@@ -49,7 +49,7 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/cancel` | Cancel the current turn |
 | `/allow` | Approve the pending confirmation |
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
-| `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
+| `/answer @<id> <text>` | Answer or revise an explicit question ID; numeric shortcuts are supported |
 | `/handoff <agent> [model_pool]` | Forward an acceptance for a pending Chord handoff request; omit arguments to let Chord use its default agent |
 | `/handoff-deny <reason>` | Forward a rejection for a pending Chord handoff request with a reason |
 | `/role [number\|name]` | Show the current main-agent role and the switchable roles, or switch to a target role by list number or name |
@@ -59,7 +59,7 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/resume <id>` | Resume and pin a specific session; if the session cannot be resumed, the pin is cleared and the user is notified |
 | `/sessions` | List recent sessions from the workspace |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
-| any other text | Send the text to Chord, or answer a pending question if one exists |
+| any other text | Send new instructions to Chord; pending questions remain available |
 
 Notes:
 
@@ -70,34 +70,26 @@ Notes:
 
 ## Question interaction
 
-When Chord sends a `question_request`, the gateway sends a numbered question to the IM chat. In Feishu, supported single-select questions are shown as interactive cards with option buttons; users can click an option or reply with text. Single-select questions with up to 10 options use button cards only when the option text and rendered body stay short enough. Multi-select, free-answer, too many options, or option/detail content that would make the card too long fall back to the text form.
+Questions remain available by ID. You can answer later and continue ordinary chat. `/status` lists all pending questions; ordinary text supplies new instructions and is never automatically treated as an answer.
 
-After a Feishu button click is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
+- `/answer @<id> 1` selects an option; use `1,3` for multiple choices or `/answer @<id> <text>` for a custom answer. Omit the ID only when exactly one question is pending.
+- Feishu option buttons and multi-select forms answer their associated question ID.
+- `/question-interact <id>` disables timing; `/question-decline <id>` declines without withdrawing a required decision.
+- `/question-withdraw <id>` withdraws a requirement; `/question-replace <old> <new>` associates a replacement. `/new-task <text>` starts an independent task; `/question cancel-task` cancels the current task.
 
-When a Feishu question is still pending, users can also send a text reply instead of clicking a button. The gateway submits that text as a free-text answer and, if the card update succeeds, relies on the updated card state instead of sending an extra duplicate `💬 Answered` text confirmation.
+IM cannot reliably detect text entry, so the gateway asks Chord to disable timing before offering an answer entry and waits for the committed update. Required decisions already wait indefinitely. System defaults are labeled as adoption by the system and do not mean user consent.
 
-```text
-❓ Continue?
-  1. yes — Yes, proceed
-  2. no — No, stop
-Reply /answer 1 / 1,2 / or type your answer
-```
+If an explicit question ID is missing from the local cache, the gateway synchronizes with Chord before answering, including historical questions restored after a process restart. Synchronization failures and IDs absent from the current session are reported separately.
 
-You can answer in these ways:
+After submitting, the gateway waits for a correlated `question_receipt` and reports `✅ Answer accepted` only on explicit acceptance. Failure retains the question. Timeouts or disconnects leave the outcome unknown; check `/status` before retrying. Queue admission is not acceptance. Terminal notices include the question ID, and answered Feishu cards retain the accepted selection. Feishu cards follow Chord's terminal outcome, and disconnects do not invent outcomes.
 
-- Click a Feishu option button when an interactive question card is shown.
-- Use `/answer`, for example `/answer 1` or `/answer 1,3` for a multi-select question.
-- Send a text message while a question is pending. The gateway treats it as a free-text answer.
+If the presentation command cannot be sent or is rejected, the gateway reports the problem; send `/status` to retry presentation. Status synchronization also closes cards when it observes the result before the corresponding push.
 
-Invalid numeric shortcuts are sent as custom text instead of being silently accepted.
+For an unknown answer outcome, check `/status` and explicitly retry the same answer as the same user. While the gateway remains running, it retains up to 128 uncertain question operations for 14 days and reuses their original operation IDs and parameters, including across Chord process restarts. A new Feishu click is accepted; only redelivery of the same callback event is deduplicated. Restarting the gateway clears this retry cache: check the restored session before submitting again. Inputs are never replayed automatically.
 
-If the pending question expires because Chord becomes idle or the gateway removes the idle process, the gateway sends an expiry notice. A later `/answer` is not sent as the original structured answer because the request ID is no longer pending. Instead, the gateway forwards it to Chord as a normal follow-up message, including the expired question when it is still available.
+An accepted historical revision does not by itself mean Chord started work. Open asynchronous questions do not suppress reminders or unrelated alerts while Chord continues other work.
 
-The user-facing notice is in English, for example:
-
-```text
-⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.
-```
+Always target historical revisions by ID, for example `/answer @q-1 revised text`. A new pending question does not prevent correcting an older one. Revisions append a separate result, retain the original outcome and task, and do not change an unrelated current task. Session switches select a different question collection.
 
 ## Confirmation interaction
 
@@ -231,7 +223,7 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - context-pressure warnings, only when `event_visibility.context_notice` is enabled
 - long-running reminders every 5 minutes while a turn is still busy
 
-After a confirmation or handoff prompt is delivered successfully, its recognized companion `notification` alert is dropped. Other alerts remain visible even while an earlier confirmation or handoff remains in the gateway cache. Failed prompt delivery leaves the companion alert available. Alerts that have no prompt of their own, such as a loop-exit decision, still arrive.
+After a confirmation or handoff prompt is delivered successfully, its recognized companion `notification` alert is dropped. Other alerts remain visible even while an earlier confirmation or handoff remains in the gateway cache. Failed prompt delivery leaves the companion alert available. Durable questions have no companion alert and do not suppress notifications. Alerts that have no prompt of their own, such as a loop-exit decision, still arrive.
 
 Long-running reminders intentionally do not expose low-level phases such as `connecting`. Any user-visible output resets the next 5-minute reminder window. When internal progress events were observed in the current reminder window, the reminder includes a compact count, for example:
 ```text

@@ -20,9 +20,9 @@ gateway 会按需为每个活跃绑定启动 `chord headless` 子进程。
 
 ## 空闲超时
 
-`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。
+`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。报告有活跃后台任务的进程会继续保留，直到这些任务不再计入运行数量；可通过 `/status` 查看。
 
-如果 gateway 清理空闲进程时仍存在待回答问题、待确认请求或待处理 handoff 请求，会先记录该已过期交互，向 IM 聊天发送英文失效提示，然后再终止进程。之后的 `/answer`、`/allow`、`/deny`、`/handoff` 或 `/handoff-deny` 不能继续使用旧的结构化 request ID；router 会把问题和确认回复作为后续上下文转发。
+清理空闲进程会关闭该 Core 并暂停题目计时，不编造问答终态。重新连接并恢复会话后按原 ID 回答；先检查 `/status`，以 Chord 回执确定结果。权限与 Handoff 请求继续按各自的取消规则处理。
 
 使用 Go duration 语法，例如：
 
@@ -99,7 +99,7 @@ gateway 会记录关键路由阶段：
 - 实际路由到 `chord headless` 的操作通过进程内有界队列完成。
 - 重复投递会由轻量去重存储过滤。
 
-去重 key 基于：
+聊天消息的去重 key 基于：
 
 ```text
 app_id + chat_id + message_id
@@ -111,7 +111,9 @@ app_id + chat_id + message_id
 <state_dir>/dedupe.json
 ```
 
-当前 TTL 为 24 小时。
+卡片回调改用 `app_id + card + event_id` 去重。同一回调的重复投递会被忽略，用户再次点击相同答案仍可重试结果未知的提交。操作重试行为见[问题交互](./usage_CN.md#问答交互)。
+
+当前去重 TTL 为 24 小时。
 
 ## 工作区路由
 
@@ -129,6 +131,8 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `question_updated`
+- `question_resolved`
 - `handoff_request`
 - `handoff_cancelled`
 - `idle`

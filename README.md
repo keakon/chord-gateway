@@ -10,7 +10,7 @@
 - Chinese version: [README_CN.md](./README_CN.md)
 - Documentation site: <https://keakon.github.io/chord-gateway/>
 - Full documentation: [docs/index.md](./docs/index.md)
-- Requires: Go 1.27.0+ and a working `chord` binary
+- Requires: Go 1.27.0+ and a `chord` build supporting the [current headless contract](./docs/compatibility.md)
 
 ## Features
 
@@ -90,7 +90,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 | `/status` | Show current Chord state |
 | `/cancel` | Cancel the current turn |
 | `/allow` / `/deny [reason]` | Approve or deny a pending confirmation |
-| `/answer <text>` | Answer a pending question; numeric shortcuts are supported |
+| `/answer @<id> <text>` | Answer or revise a question by ID; numeric shortcuts are supported |
 | `/role [number\|name]` | Show the current main-agent role and the switchable roles, or switch to a target role by list number or name |
 | `/todos` | Show the current todo list |
 | `/new` | Start a fresh session for the current binding |

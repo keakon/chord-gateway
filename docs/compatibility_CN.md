@@ -2,17 +2,23 @@
 
 Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**的少量兼容路径，以及后续移除这些兼容路径时应遵守的规则。
 
-## 最低 `chord headless` 版本
+## 所需的 `chord headless` 协议能力
 
-Gateway 面向当前配置的 `chord headless` 构建运行，较新的 gateway 功能在较旧的构建上会降级而不是直接失败：
+使用的 Chord 构建必须支持以下全部能力：
 
-- `chord headless` v0.8.0 及之后支持 `/role` 命令，并发出 `role_change`、`handoff_cancelled`、`compaction_status` 事件。
-- 新于 v0.8.1 的构建额外发出 `session_switched`、`background_result`、`context_notice` 事件，并给携带状态的 envelope 附上单调递增的 `seq`。Gateway 依赖 `seq` 丢弃已被更新推送超车的 `status_response` 快照；没有 `seq` 时，迟到的快照仍可能被应用。
+- 带单调递增 `seq` 的状态事件，以及 `input_result` 输入消费回执。
+- `status_response.questions` 持久化问题集合、稳定的 `option_ids`，以及 `question_request`、`question_updated`、`question_resolved` 事件。
+- 带 `action` / `operation_id` 的问题命令、关联的 `question_receipt` 回执，以及带 `version`、`binding_id`、`supports_interaction` 的展示确认命令。
+- `idle` 和 `status_response` 中的后台任务数量。
 
-较旧的构建不会发送这些新事件，未知的订阅项会被忽略而不是报错。
+旧的单问题协议及不支持输入回执的构建不受支持，网关不会转换这些旧协议。部署时固定已经验证的 Chord 构建，升级时对照 [Chord headless 文档](https://github.com/keakon/chord/blob/main/docs/headless_CN.md)。能够忽略未知订阅项，并不代表协议兼容。
+
+升级网关后，发送 `/status` 刷新问题集合和答题入口，使用新的入口作答，不再使用旧网关发出的选项按钮。
 
 ## 当前保留的兼容路径
 
+- 读取已有状态目录时，会话 pin 仍接受早期的 `workspaceID|imType|chatID` 存储键；新键使用编码形式。
+- YAML 中未知字段会被忽略。因此已移除的 `event_visibility.activity` 字段不再生效，活动状态跟踪始终启用。
 - 仍接受 Chord headless 对外发出的 `todos` 事件。虽然 Chord 内部也存在名为 `todos_updated` 的协议事件，但当前 headless 对外协议仍暴露 `todos`，gateway 会继续按该外部事件名处理。
 
 ## 已移除的兼容路径

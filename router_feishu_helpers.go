@@ -6,28 +6,6 @@ import (
 	"github.com/keakon/golog/log"
 )
 
-// buildExpiredQuestionFollowup formats a follow-up message for the chord
-// process when a user replies to an already-expired question. The text makes
-// it explicit that the response should not be parsed as a structured answer.
-func buildExpiredQuestionFollowup(answers []string, q *QuestionPayload) string {
-	answer := strings.TrimSpace(strings.Join(answers, " "))
-	var sb strings.Builder
-	sb.WriteString("The previous pending question has expired, so this cannot be submitted as a structured answer. Treat the user's response below as a follow-up message and continue from the existing context if applicable.")
-	if q != nil && strings.TrimSpace(q.Question) != "" {
-		sb.WriteString("\n\nExpired question:\n")
-		sb.WriteString(strings.TrimSpace(q.Question))
-		if len(q.Options) > 0 {
-			sb.WriteString("\nOptions: ")
-			sb.WriteString(strings.Join(q.Options, ", "))
-		}
-	}
-	if answer != "" {
-		sb.WriteString("\n\nUser response:\n")
-		sb.WriteString(answer)
-	}
-	return sb.String()
-}
-
 // buildExpiredConfirmFollowup formats a follow-up message for the chord
 // process when a user replies to an already-expired confirmation request.
 func buildExpiredConfirmFollowup(cmd IMCommand, c *ConfirmPayload) string {

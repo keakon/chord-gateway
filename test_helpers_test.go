@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"sync"
@@ -116,15 +117,28 @@ func (w *errorWriteCloser) Close() error {
 }
 
 type captureWriteCloser struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	closed bool
+	questionProcess *ChordProcess
+	mu              sync.Mutex
+	buf             bytes.Buffer
+	closed          bool
 }
 
 func (w *captureWriteCloser) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.buf.Write(p)
+	n, err := w.buf.Write(p)
+	if w.questionProcess != nil {
+		var cmd map[string]any
+		if json.Unmarshal(p, &cmd) == nil && cmd["type"] == "question" {
+			proc := w.questionProcess
+			go func() {
+				receipt := QuestionReceipt{OperationID: cmd["operation_id"].(string), RequestID: cmd["request_id"].(string), Accepted: true, Status: "answered"}
+				data, _ := json.Marshal(receipt)
+				proc.processEnvelope(&HeadlessEnvelope{Type: "question_receipt", Payload: data})
+			}()
+		}
+	}
+	return n, err
 }
 
 func (w *captureWriteCloser) Close() error {
@@ -196,5 +210,11 @@ func requireContains(t testingT, got, want string) {
 	t.Helper()
 	if !bytes.Contains([]byte(got), []byte(want)) {
 		t.Fatalf("got %q, want to contain %q", got, want)
+	}
+}
+
+func attachQuestionTestReceipts(p *ChordProcess) {
+	if writer, ok := p.stdin.(*captureWriteCloser); ok {
+		writer.questionProcess = p
 	}
 }

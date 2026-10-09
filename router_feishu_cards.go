@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,7 +23,7 @@ func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state Con
 }
 
 func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state ControlState) bool {
-	if state.PendingQuestion == nil || !shouldSendFeishuQuestionCard(state.PendingQuestion) {
+	if state.questionForNotification() == nil || !shouldSendFeishuQuestionCard(state.questionForNotification()) {
 		return false
 	}
 	feishu := r.findFeishuAdapter()
@@ -30,9 +31,9 @@ func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state Co
 		return false
 	}
 	workspaceID, _, _ := parseProcessKey(key)
-	card := buildFeishuQuestionCard(chatID, state.PendingQuestion, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
+	card := buildFeishuQuestionCard(chatID, state.questionForNotification(), feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
 	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
-	r.recordCardHandle(key, "question", state.PendingQuestion.RequestID, handle)
+	r.recordCardHandle(key, "question", state.questionForNotification().RequestID, handle)
 	return err == nil
 }
 
@@ -105,22 +106,17 @@ type feishuCardContext struct {
 	ProcessKey  string
 }
 
+// maxFeishuQuestionOptions caps how many options a question card carries.
+// Beyond that the chat text form is easier to answer and to read.
+const maxFeishuQuestionOptions = 10
+
+// shouldSendFeishuQuestionCard reports whether a question becomes an
+// interactive card. Only free-answer questions and questions with too many
+// options fall back to chat text: option length does not decide the form
+// anymore, because a long label switches the card to numbered buttons instead
+// of dropping the interaction.
 func shouldSendFeishuQuestionCard(q *QuestionPayload) bool {
-	if q == nil || q.Multiple || len(q.Options) == 0 || len(q.Options) > 10 {
-		return false
-	}
-	for i, opt := range q.Options {
-		if len([]rune(strings.TrimSpace(opt))) > 24 {
-			return false
-		}
-		if i < len(q.OptionDetails) {
-			detail := strings.TrimSpace(q.OptionDetails[i])
-			if detail != "" && detail != opt && len([]rune(detail)) > 120 {
-				return false
-			}
-		}
-	}
-	return true
+	return q != nil && len(q.Options) > 0 && len(q.Options) <= maxFeishuQuestionOptions
 }
 
 func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishuCardContext) map[string]any {
@@ -246,37 +242,114 @@ func buildFeishuQuestionCard(chatID string, q *QuestionPayload, cardCtx feishuCa
 	if len(contextLines) > 0 {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": strings.Join(contextLines, "\n")})
 	}
-	for i, opt := range q.Options {
-		opt = strings.TrimSpace(opt)
-		detail := ""
-		if i < len(q.OptionDetails) {
-			detail = strings.TrimSpace(q.OptionDetails[i])
-		}
-		switch {
-		case detail != "" && detail != opt:
-			elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("**%d. %s**\n%s", i+1, opt, detail)})
-		case opt != "":
-			elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("%d. %s", i+1, opt)})
-		}
-	}
-	if q.DefaultAnswer != "" {
-		elements = append(elements, map[string]any{"tag": "markdown", "content": "Default: " + q.DefaultAnswer})
-	}
-	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click an option, or reply with the option number/text. `/answer 1` also works."})
-	actions := make([]any, 0, len(q.Options))
 	baseValue := map[string]any{"type": "question", "action": "answer", "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
-	for _, opt := range q.Options {
-		value := cloneCardValue(baseValue)
-		value["value"] = opt
-		actions = append(actions, feishuCardButton(truncateButtonLabel(opt), "default", value))
+	if q.Multiple {
+		elements = append(elements, buildFeishuQuestionForm(q, baseValue))
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "Check one or more options, then click Submit. You can also reply /answer @" + q.RequestID + " 1,3."})
+	} else {
+		for i, opt := range q.Options {
+			text := feishuQuestionOptionText(i+1, opt, questionOptionDetail(q, i))
+			if text != "" {
+				elements = append(elements, map[string]any{"tag": "markdown", "content": text})
+			}
+		}
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "Click an option, or reply /answer @" + q.RequestID + " 1."})
+		elements = append(elements, feishuQuestionOptionButtons(q, baseValue)...)
 	}
-	elements = append(elements, actions...)
 	return map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{"update_multi": true},
 		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": "Question"}, "template": "blue"},
 		"body":   map[string]any{"elements": elements},
 	}
+}
+
+// feishuQuestionOptionButtons renders one button per option. The button value
+// carries the stable option ID; when any label exceeds the button budget the
+// whole card switches to numbered buttons so the numbers match the option list
+// in the card body and the /answer numbers.
+func feishuQuestionOptionButtons(q *QuestionPayload, baseValue map[string]any) []any {
+	numbered := feishuQuestionLabelsTooLong(q.Options)
+	actions := make([]any, 0, len(q.Options))
+	for i, opt := range q.Options {
+		if i >= len(q.OptionIDs) {
+			continue
+		}
+		opt = strings.TrimSpace(opt)
+		value := cloneCardValue(baseValue)
+		value["value"] = q.OptionIDs[i]
+		label := opt
+		if numbered {
+			label = strconv.Itoa(i + 1)
+		}
+		actions = append(actions, feishuCardButton(label, "default", value))
+	}
+	return actions
+}
+
+// buildFeishuQuestionForm renders the multi-select form: one checker per option
+// plus a submit button. Submitting the form is the only card callback that
+// carries several answers at once; the checked option numbers are mapped back
+// to labels in the router, where the question payload is available.
+func buildFeishuQuestionForm(q *QuestionPayload, baseValue map[string]any) map[string]any {
+	formElements := make([]any, 0, len(q.Options)+1)
+	for i, opt := range q.Options {
+		text := feishuQuestionOptionText(i+1, opt, questionOptionDetail(q, i))
+		if text == "" {
+			continue
+		}
+		formElements = append(formElements, map[string]any{
+			"tag":     "checker",
+			"name":    feishuQuestionOptionName(i + 1),
+			"checked": false,
+			"text":    map[string]any{"tag": "lark_md", "content": text},
+		})
+	}
+	submit := feishuCardButton("Submit", "primary", baseValue)
+	submit["name"] = feishuQuestionSubmitName
+	submit["form_action_type"] = "submit"
+	formElements = append(formElements, submit)
+	return map[string]any{
+		"tag":      "form",
+		"name":     feishuQuestionFormName,
+		"elements": formElements,
+	}
+}
+
+// feishuQuestionLabelsTooLong reports whether any option label exceeds the
+// button label budget, which is when the card uses numbered buttons.
+func feishuQuestionLabelsTooLong(options []string) bool {
+	for _, opt := range options {
+		if len([]rune(strings.TrimSpace(opt))) > maxFeishuButtonLabelRunes {
+			return true
+		}
+	}
+	return false
+}
+
+// feishuQuestionOptionText renders one option as markdown. The option number
+// keeps the card aligned with the chat text form and with /answer numbers, and
+// a detail that adds information goes on its own line.
+func feishuQuestionOptionText(number int, option, detail string) string {
+	option = strings.TrimSpace(option)
+	detail = strings.TrimSpace(detail)
+	switch {
+	case option == "":
+		return ""
+	case detail != "" && detail != option:
+		return fmt.Sprintf("**%d. %s**\n%s", number, option, detail)
+	default:
+		return fmt.Sprintf("%d. %s", number, option)
+	}
+}
+
+// questionOptionDetail returns the detail for an option index, or "" when the
+// payload carries none.
+func questionOptionDetail(q *QuestionPayload, index int) string {
+	if q == nil || index < 0 || index >= len(q.OptionDetails) {
+		return ""
+	}
+	return q.OptionDetails[index]
 }
 
 type feishuRiskLevel struct {

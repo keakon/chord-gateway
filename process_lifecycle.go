@@ -71,6 +71,8 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 func (p *ChordProcess) handleExit() {
 	p.mu.Lock()
 	p.state.Busy = false
+	// Disconnection leaves Core outcomes unknown. Retain questions for explicit
+	// retry after resynchronization rather than inventing answer outcomes.
 	p.abandonPendingInputs()
 	p.state.RunningJobs = 0
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -159,15 +161,12 @@ func (p *ChordProcess) transitionToIdle(updatedAt string, expirePending bool) {
 	p.state.PhaseDetail = ""
 	if expirePending {
 		p.state.ExpiredConfirm = p.state.PendingConfirm
-		p.state.ExpiredQuestion = p.state.PendingQuestion
 		p.state.ExpiredHandoff = p.state.PendingHandoff
 	} else {
 		p.state.ExpiredConfirm = nil
-		p.state.ExpiredQuestion = nil
 		p.state.ExpiredHandoff = nil
 	}
 	p.state.PendingConfirm = nil
-	p.state.PendingQuestion = nil
 	p.state.PendingHandoff = nil
 	p.state.LastError = ""
 	if strings.TrimSpace(updatedAt) == "" {
@@ -197,7 +196,7 @@ func (m *ChordManager) IdleCheckLoop() {
 		// Then, if they don't exit quickly, terminate the whole process group.
 		for _, p := range idle {
 			p.mu.Lock()
-			if p.state.PendingConfirm != nil || p.state.PendingQuestion != nil || p.state.PendingHandoff != nil {
+			if p.state.PendingConfirm != nil || p.state.pendingQuestionCount() > 0 || p.state.PendingHandoff != nil {
 				p.transitionToIdle(time.Now().Format(time.RFC3339), true)
 				state := p.state
 				p.mu.Unlock()

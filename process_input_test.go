@@ -90,3 +90,23 @@ func TestInputAdmissionBoundAndWriteFailure(t *testing.T) {
 		t.Fatal("disconnect lost unconfirmed count")
 	}
 }
+
+func TestInputIDsStayDistinctAcrossProcesses(t *testing.T) {
+	ids := map[string]bool{}
+	for range 2 {
+		stdin := &captureWriteCloser{}
+		p := &ChordProcess{stdin: stdin}
+		if err := p.SendUserMessage("/new-task Start another task"); err != nil {
+			t.Fatal(err)
+		}
+		var cmd map[string]string
+		if err := json.Unmarshal([]byte(stdin.String()), &cmd); err != nil {
+			t.Fatal(err)
+		}
+		id := cmd["request_id"]
+		if id == "" || ids[id] {
+			t.Fatal("resuming a session reused an input ID")
+		}
+		ids[id] = true
+	}
+}

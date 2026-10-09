@@ -170,8 +170,8 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 		workspaceID: "ws1",
 		stdin:       stdin,
 		state: ControlState{
-			PendingConfirm:  &ConfirmPayload{RequestID: "req-confirm"},
-			PendingQuestion: &QuestionPayload{RequestID: "req-question", Options: []string{"yes", "no"}},
+			PendingConfirm: &ConfirmPayload{RequestID: "req-confirm"},
+			Questions:      map[string]*QuestionPayload{"req-question": {RequestID: "req-question", Options: []string{"yes", "no"}, OptionIDs: []string{"yes", "no"}, Version: 1}},
 		},
 	}
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
@@ -198,6 +198,7 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 
 	stdin = &captureWriteCloser{}
 	mgr.procs[key].stdin = stdin
+	attachQuestionTestReceipts(mgr.procs[key])
 	r.HandleIncomingMessage(IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
@@ -228,6 +229,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		stdin := &captureWriteCloser{}
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
 		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-1", Agents: []HandoffAgentOption{{Name: "builder", Default: true}}}
+		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
@@ -253,6 +255,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		stdin := &captureWriteCloser{}
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
 		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-2", Agents: []HandoffAgentOption{{Name: "reviewer"}, {Name: "builder", Default: true}}}
+		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
@@ -278,6 +281,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		stdin := &captureWriteCloser{}
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
 		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-3"}
+		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
@@ -332,6 +336,7 @@ func TestHandleLocalShellCommand(t *testing.T) {
 		r.SetAdapter(sender)
 		stdin := &captureWriteCloser{}
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin}
+		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
@@ -1219,8 +1224,8 @@ func TestFormatStatus(t *testing.T) {
 
 	t.Run("pending question shows question mark", func(t *testing.T) {
 		s := formatBindingStatus(nil, "", "", ControlState{
-			Busy:            false,
-			PendingQuestion: &QuestionPayload{Question: "Continue?", RequestID: "r2"},
+			Busy:      false,
+			Questions: map[string]*QuestionPayload{"r2": {Question: "Continue?", RequestID: "r2", Version: 1}},
 		})
 		if !containsEmoji(s, "❓") {
 			t.Errorf("expected ❓ with pending question, got: %s", s)
@@ -1255,7 +1260,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
+	wantCore := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1267,7 +1272,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1283,7 +1288,7 @@ func TestConfiguredHeadlessSubscribeEventsContextNoticeIsOptIn(t *testing.T) {
 	}
 
 	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{ContextNotice: true}})
-	want := append([]string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}, "context_notice")
+	want := append([]string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}, "context_notice")
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("context_notice-only subscribe events = %v, want %v", got, want)
 	}
@@ -1381,7 +1386,7 @@ func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 	if msg := r.formatNotification("confirm_request", ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Shell"}}); msg == "" {
 		t.Fatal("confirm_request should push")
 	}
-	if msg := r.formatNotification("question_request", ControlState{PendingQuestion: &QuestionPayload{Question: "Continue?"}}); msg == "" {
+	if msg := r.formatNotification("question_request", ControlState{Questions: map[string]*QuestionPayload{"q-test": {Question: "Continue?", RequestID: "q-test", Version: 1}}}); msg == "" {
 		t.Fatal("question_request should push")
 	}
 	if msg := r.formatNotification("handoff_request", ControlState{PendingHandoff: &HandoffPayload{PlanPath: ".chord/plans/plan-001.md", PlanText: "# Plan", Agents: []HandoffAgentOption{{Name: "builder", Default: true, ModelPools: []string{"fast"}, CurrentModelPool: "fast"}}}}); !strings.Contains(msg, "# Plan") || !strings.Contains(msg, "/handoff") || !strings.Contains(msg, "builder") {
@@ -1407,13 +1412,13 @@ func TestFormatNotification_StateEventsDoNotDuplicate(t *testing.T) {
 func TestFormatBindingStatus(t *testing.T) {
 	ws := &config.Workspace{ID: "project-a", Path: "/tmp/project-a"}
 	msg := formatBindingStatus(ws, "feishu", "oc_chat_a", ControlState{
-		Busy:            true,
-		SessionID:       "sess-1",
-		Phase:           "planning",
-		PhaseDetail:     "writing plan",
-		LastOutcome:     "completed",
-		PendingConfirm:  &ConfirmPayload{ToolName: "Shell"},
-		PendingQuestion: &QuestionPayload{Question: "Continue?"},
+		Busy:           true,
+		SessionID:      "sess-1",
+		Phase:          "planning",
+		PhaseDetail:    "writing plan",
+		LastOutcome:    "completed",
+		PendingConfirm: &ConfirmPayload{ToolName: "Shell"},
+		Questions:      map[string]*QuestionPayload{"q-test": {Question: "Continue?", RequestID: "q-test", Version: 1}},
 		Todos: []TodoItem{
 			{ID: "1", Content: "A", Status: "completed"},
 			{ID: "2", Content: "B", Status: "pending"},
@@ -1607,7 +1612,7 @@ func TestFormatQuestionNotification(t *testing.T) {
 
 	t.Run("shows question text", func(t *testing.T) {
 		msg := r.formatQuestionNotification(ControlState{
-			PendingQuestion: &QuestionPayload{Question: "Continue?", RequestID: "req-1"},
+			Questions: map[string]*QuestionPayload{"req-1": {Question: "Continue?", RequestID: "req-1", Version: 1}},
 		})
 		if !strings.Contains(msg, "Continue?") {
 			t.Errorf("expected question text, got: %s", msg)
@@ -1616,12 +1621,12 @@ func TestFormatQuestionNotification(t *testing.T) {
 
 	t.Run("shows options with details", func(t *testing.T) {
 		msg := r.formatQuestionNotification(ControlState{
-			PendingQuestion: &QuestionPayload{
+			Questions: map[string]*QuestionPayload{"req-2": {
 				Question:      "How to proceed?",
 				Options:       []string{"yes", "no"},
 				OptionDetails: []string{"Yes, proceed", "No, stop"},
 				RequestID:     "req-2",
-			},
+				OptionIDs:     []string{"yes", "no"}, Version: 1}},
 		})
 		if !strings.Contains(msg, "yes — Yes, proceed") {
 			t.Errorf("expected option with detail, got: %s", msg)
@@ -1631,30 +1636,32 @@ func TestFormatQuestionNotification(t *testing.T) {
 		}
 	})
 
-	t.Run("shows header default and multi-select", func(t *testing.T) {
+	t.Run("shows header and multi-select without a default answer", func(t *testing.T) {
 		msg := r.formatQuestionNotification(ControlState{
-			PendingQuestion: &QuestionPayload{
-				Header:        "Pick",
-				Question:      "Select files",
-				Options:       []string{"A", "B"},
-				DefaultAnswer: "A",
-				Multiple:      true,
-			},
+			Questions: map[string]*QuestionPayload{"q-test": {
+				Header:    "Pick",
+				Question:  "Select files",
+				Options:   []string{"A", "B"},
+				Multiple:  true,
+				RequestID: "q-test", OptionIDs: []string{"A", "B"}, Version: 1}},
 		})
-		for _, want := range []string{"Pick: Select files", "Default: A", "multi-select"} {
+		for _, want := range []string{"Pick: Select files", "multi-select"} {
 			if !strings.Contains(msg, want) {
 				t.Fatalf("expected %q in %q", want, msg)
 			}
+		}
+		if strings.Contains(msg, "Default:") {
+			t.Fatalf("a question must not advertise a default answer: %q", msg)
 		}
 	})
 
 	t.Run("skips option detail when same as label", func(t *testing.T) {
 		msg := r.formatQuestionNotification(ControlState{
-			PendingQuestion: &QuestionPayload{
+			Questions: map[string]*QuestionPayload{"q-test": {
 				Question:      "Pick one",
 				Options:       []string{"A", "B"},
 				OptionDetails: []string{"A", "B"},
-			},
+				RequestID:     "q-test", OptionIDs: []string{"A", "B"}, Version: 1}},
 		})
 		if strings.Contains(msg, "A — A") {
 			t.Errorf("should not repeat label as detail, got: %s", msg)
@@ -1677,7 +1684,7 @@ func TestFormatIdleNotification(t *testing.T) {
 	if got := r.formatNotification("idle", ControlState{SuppressUserNotification: true}); got != "" {
 		t.Fatalf("suppressed idle = %q, want empty", got)
 	}
-	if got := r.formatNotification("idle", ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env"}}); !strings.Contains(got, "pending question has expired") {
+	if got := r.formatNotification("idle", ControlState{Questions: map[string]*QuestionPayload{"q-test": {Question: "Choose env", RequestID: "q-test", Version: 1, Outcome: "no_response"}}}); got != "✅ Chord: Ready for input" {
 		t.Fatalf("expired question notification = %q", got)
 	}
 	if got := r.formatNotification("idle", ControlState{SuppressUserNotification: true, ExpiredConfirm: &ConfirmPayload{RequestID: "req-c"}}); !strings.Contains(got, "pending confirmation has expired") {
@@ -1701,18 +1708,8 @@ func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T)
 	}
 
 	r.HandleChordEvent(key, "confirm_request", ControlState{PendingConfirm: &ConfirmPayload{RequestID: "new-confirm"}})
-	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil {
+	if got := r.lookupExpiredPending(key); got.Confirm != nil {
 		t.Fatalf("expired pending was not cleared by new confirm: %#v", got)
-	}
-
-	r.HandleChordEvent(key, "idle", ControlState{ExpiredQuestion: &QuestionPayload{RequestID: "old-question"}})
-	if got := r.lookupExpiredPending(key).Question; got == nil || got.RequestID != "old-question" {
-		t.Fatalf("expired question was not recorded: %#v", got)
-	}
-
-	r.HandleChordEvent(key, "question_request", ControlState{PendingQuestion: &QuestionPayload{RequestID: "new-question", Question: "Continue?"}})
-	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil {
-		t.Fatalf("expired pending was not cleared by new question: %#v", got)
 	}
 
 	r.HandleChordEvent(key, "idle", ControlState{ExpiredHandoff: &HandoffPayload{RequestID: "old-handoff"}})
@@ -1721,8 +1718,21 @@ func TestHandleChordEventClearsExpiredPendingWhenNewPendingArrives(t *testing.T)
 	}
 
 	r.HandleChordEvent(key, "handoff_request", ControlState{PendingHandoff: &HandoffPayload{RequestID: "new-handoff"}})
-	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Question != nil || got.Handoff != nil {
+	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Handoff != nil {
 		t.Fatalf("expired pending was not cleared by new handoff: %#v", got)
+	}
+}
+
+func TestHandleChordEventClearsExpiredConfirmWhenChordDropsIt(t *testing.T) {
+	r := &NotificationRouter{mgr: newTestChordManager(&config.Config{}), lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat1"}).String()
+	r.HandleChordEvent(key, "idle", ControlState{ExpiredConfirm: &ConfirmPayload{RequestID: "c-1"}})
+	if r.lookupExpiredPending(key).Confirm == nil {
+		t.Fatal("missing expired confirmation")
+	}
+	r.HandleChordEvent(key, "idle", ControlState{})
+	if got := r.lookupExpiredPending(key); got.Confirm != nil || got.Handoff != nil {
+		t.Fatalf("stale expired pending: %#v", got)
 	}
 }
 
@@ -1759,8 +1769,8 @@ func TestHandoffCommandAfterCancelledFallsBackToNoPending(t *testing.T) {
 	r := &NotificationRouter{adapter: sender}
 	proc := &ChordProcess{key: key, workspaceID: "ws1"}
 
-	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_request", Payload: json.RawMessage(`{"request_id":"handoff-1","plan_path":"plan.md"}`)})
-	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: json.RawMessage(`{"request_id":"handoff-1","reason":"superseded"}`)})
+	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_request", Payload: json.RawMessage(`{"request_id":"handoff-1","plan_path":"plan.md","version":1}`)})
+	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: json.RawMessage(`{"request_id":"handoff-1","reason":"superseded","version":2}`)})
 
 	for _, cmd := range []IMCommand{
 		{Type: "handoff", Action: "accept"},
@@ -1771,76 +1781,6 @@ func TestHandoffCommandAfterCancelledFallsBackToNoPending(t *testing.T) {
 			t.Fatalf("action %q after cancellation = %q", cmd.Action, got)
 		}
 	}
-}
-
-func TestResolveQuestionAnswers(t *testing.T) {
-	opts := []string{"yes", "no", "maybe"}
-	q := &QuestionPayload{Options: opts}
-
-	t.Run("single valid index", func(t *testing.T) {
-		got := resolveQuestionAnswers("1", q)
-		if len(got) != 1 || got[0] != "yes" {
-			t.Errorf("got %v, want [yes]", got)
-		}
-	})
-
-	t.Run("comma-separated indices for multi-select", func(t *testing.T) {
-		q := &QuestionPayload{Options: opts, Multiple: true}
-		got := resolveQuestionAnswers("1,3", q)
-		if len(got) != 2 || got[0] != "yes" || got[1] != "maybe" {
-			t.Errorf("got %v, want [yes maybe]", got)
-		}
-	})
-
-	t.Run("non-numeric content becomes custom text", func(t *testing.T) {
-		got := resolveQuestionAnswers("yes, please", q)
-		if len(got) != 1 || got[0] != "yes, please" {
-			t.Errorf("got %v, want [yes, please]", got)
-		}
-	})
-
-	t.Run("out-of-range index becomes custom text", func(t *testing.T) {
-		got := resolveQuestionAnswers("5", q)
-		if len(got) != 1 || got[0] != "5" {
-			t.Errorf("got %v, want [5]", got)
-		}
-	})
-
-	t.Run("mixed numeric and non-numeric becomes custom text", func(t *testing.T) {
-		got := resolveQuestionAnswers("1,yes", q)
-		if len(got) != 1 || got[0] != "1,yes" {
-			t.Errorf("got %v, want [1,yes]", got)
-		}
-	})
-
-	t.Run("single-select with multiple indices becomes custom text", func(t *testing.T) {
-		q := &QuestionPayload{Options: opts, Multiple: false}
-		got := resolveQuestionAnswers("1,3", q)
-		if len(got) != 1 || got[0] != "1,3" {
-			t.Errorf("got %v, want [1,3]", got)
-		}
-	})
-
-	t.Run("nil question passes through", func(t *testing.T) {
-		got := resolveQuestionAnswers("hello", nil)
-		if len(got) != 1 || got[0] != "hello" {
-			t.Errorf("got %v, want [hello]", got)
-		}
-	})
-
-	t.Run("empty options passes through", func(t *testing.T) {
-		got := resolveQuestionAnswers("1", &QuestionPayload{Options: nil})
-		if len(got) != 1 || got[0] != "1" {
-			t.Errorf("got %v, want [1]", got)
-		}
-	})
-
-	t.Run("free text /answer becomes custom text", func(t *testing.T) {
-		got := resolveQuestionAnswers("yes", q)
-		if len(got) != 1 || got[0] != "yes" {
-			t.Errorf("got %v, want [yes]", got)
-		}
-	})
 }
 
 func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
@@ -2244,7 +2184,6 @@ func TestBuildFeishuCardsAndButton(t *testing.T) {
 		Question:      "Continue?",
 		Options:       []string{"yes", "no"},
 		OptionDetails: []string{"Proceed", "Stop"},
-		DefaultAnswer: "yes",
 		RequestID:     "req-2",
 	}, feishuCardContext{})
 	qBody := question["body"].(map[string]any)
@@ -2253,10 +2192,13 @@ func TestBuildFeishuCardsAndButton(t *testing.T) {
 		t.Fatalf("question card elements = %v", qElements)
 	}
 	questionText := fmt.Sprint(qElements)
-	for _, want := range []string{"Choose: Continue?", "Proceed", "Default: yes", "`/answer 1`"} {
+	for _, want := range []string{"Choose: Continue?", "Proceed", "/answer @req-2 1"} {
 		if !strings.Contains(questionText, want) {
 			t.Fatalf("question card missing %q: %v", want, qElements)
 		}
+	}
+	if strings.Contains(questionText, "Default:") {
+		t.Fatalf("question card must not advertise a default answer: %v", qElements)
 	}
 	if strings.Contains(questionText, "tag:action") || strings.Contains(questionText, "\"action\"") {
 		t.Fatalf("question card should not use legacy action tag: %v", qElements)
@@ -2343,7 +2285,10 @@ func TestProcessEnvelopeDoneCompletion(t *testing.T) {
 }
 
 func TestWaitStatus_DeliversResponse(t *testing.T) {
-	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: &captureWriteCloser{}}
+	capture := &captureWriteCloser{}
+	p := &ChordProcess{key: "ws|wechat|chat", workspaceID: "ws", stdin: capture, state: ControlState{Questions: map[string]*QuestionPayload{
+		"open": {RequestID: "open"}, "closed": {RequestID: "closed", Outcome: "answered"},
+	}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
@@ -2383,6 +2328,14 @@ func TestWaitStatus_DeliversResponse(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("WaitStatus did not return after status_response")
 	}
+	var command struct {
+		Type        string   `json:"type"`
+		QuestionIDs []string `json:"question_ids"`
+	}
+	if err := json.Unmarshal([]byte(capture.String()), &command); err != nil || command.Type != "status" || len(command.QuestionIDs) != 1 || command.QuestionIDs[0] != "open" {
+		t.Fatalf("status did not request the unknown decision: %+v %v", command, err)
+	}
+
 }
 
 // A status_response snapshot is copied on chord's command path while pushes
@@ -2884,17 +2837,34 @@ func TestCommandFromInternalActionRole(t *testing.T) {
 }
 
 func TestValidFeishuRoleCardAction(t *testing.T) {
-	if !isValidFeishuCardAction("role", "switch", "planner") {
+	if !isValidFeishuCardAction("role", "switch", "planner", nil) {
 		t.Fatal("role/switch/name should be valid")
 	}
-	if isValidFeishuCardAction("role", "switch", "") {
+	if isValidFeishuCardAction("role", "switch", "", nil) {
 		t.Fatal("role switch without a role name must be invalid")
 	}
-	if isValidFeishuCardAction("role", "allow", "planner") {
+	if isValidFeishuCardAction("role", "allow", "planner", nil) {
 		t.Fatal("role/allow must be invalid")
 	}
-	if isValidFeishuCardAction("confirm", "switch", "planner") {
+	if isValidFeishuCardAction("confirm", "switch", "planner", nil) {
 		t.Fatal("confirm/switch must stay invalid")
+	}
+}
+
+func TestValidFeishuQuestionCardAction(t *testing.T) {
+	// A single-select button carries the exact option label.
+	if !isValidFeishuCardAction("question", "answer", "yes", nil) {
+		t.Fatal("question/answer with a label should be valid")
+	}
+	// A form submission carries option numbers instead of a label.
+	if !isValidFeishuCardAction("question", "answer", "", []string{"1", "3"}) {
+		t.Fatal("question/answer with form answers should be valid")
+	}
+	if isValidFeishuCardAction("question", "answer", "", nil) {
+		t.Fatal("question/answer without a value or form answers must be invalid")
+	}
+	if isValidFeishuCardAction("question", "allow", "yes", []string{"1"}) {
+		t.Fatal("question/allow must be invalid even with form answers")
 	}
 }
 
@@ -2948,6 +2918,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: state}
+		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 		return r, proc, sender, stdin, key, &cfg.Workspaces[0]
@@ -3035,51 +3006,65 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 	})
 
 	t.Run("question maps numeric answers", func(t *testing.T) {
-		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingQuestion: &QuestionPayload{RequestID: "req-q", Options: []string{"yes", "no"}}})
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Options: []string{"yes", "no"}, OptionIDs: []string{"yes", "no"}, Version: 1}}})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"1"}}, "wechat", nil)
-		if got := sender.lastMessage().text; got != "💬 Answered: yes" {
+		if got := sender.lastMessage().text; got != "✅ Answer accepted (req-q): yes" {
 			t.Fatalf("message = %q", got)
 		}
-		if !strings.Contains(stdin.String(), `"answers":["yes"]`) {
-			t.Fatalf("stdin = %q", stdin.String())
+		if out := stdin.String(); !strings.Contains(out, `"answers":["yes"]`) || !strings.Contains(out, `"action":"answer"`) {
+			t.Fatalf("stdin = %q", out)
 		}
 	})
 
-	t.Run("question without pending sends follow-up", func(t *testing.T) {
-		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{ExpiredQuestion: &QuestionPayload{Question: "Choose env", Options: []string{"dev", "prod"}}})
+	t.Run("historical question requires explicit target", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Question: "Choose environment", Options: []string{"dev", "prod"}, OptionIDs: []string{"dev", "prod"}, Version: 1, Outcome: "no_response"}}})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
-		if got := sender.lastMessage().text; !strings.Contains(got, "sent as a follow-up message") || strings.Contains(got, "No pending question") {
-			t.Fatalf("message = %q", got)
+		if !strings.Contains(sender.lastMessage().text, "No pending question") || stdin.String() != "" {
+			t.Fatal("historical question guessed without target")
 		}
-		out := stdin.String()
-		for _, want := range []string{`"type":"send"`, "Expired question", "Choose env", "User response", "prod"} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("stdin missing %q in %q", want, out)
-			}
-		}
-		if strings.Contains(out, `"type":"question"`) {
-			t.Fatalf("should not send structured question response: %q", out)
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", RequestID: "req-q", Answers: []string{"prod"}}, "wechat", nil)
+		if !strings.Contains(sender.lastMessage().text, "Answer accepted") || !strings.Contains(stdin.String(), `"action":"revise"`) {
+			t.Fatalf("historical revision: %s %s", sender.lastMessage().text, stdin.String())
 		}
 	})
 
-	t.Run("plain send with pending question auto-redirects to answer", func(t *testing.T) {
-		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingQuestion: &QuestionPayload{RequestID: "req-auto"}})
+	t.Run("session switch drops the expired question follow-up", func(t *testing.T) {
+		expired := ControlState{Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Question: "Choose env", Version: 1, Outcome: "no_response"}}}
+		r, proc, sender, _, key, ws := newRouterAndProcess(expired)
+		proc.onEvent = r.HandleChordEvent
+		// The expired question was pushed to the chat, so the router mirrors it.
+		r.HandleChordEvent(key, "question_resolved", expired)
+
+		proc.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"sess-b"}`)})
+
+		if got := proc.State().Questions["req-q"]; got != nil {
+			t.Fatalf("ExpiredQuestion after switch = %+v, want nil", got)
+		}
+		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
+		if got := sender.lastMessage().text; !strings.Contains(got, "No pending question") {
+			t.Fatalf("late answer after a session switch = %q, want it rejected", got)
+		}
+	})
+
+	t.Run("plain send keeps pending question", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{Questions: map[string]*QuestionPayload{"req-auto": {RequestID: "req-auto", Version: 1}}})
 		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "wechat", nil)
-		if got := sender.lastMessage().text; got != "💬 Answered: free text answer" {
+		if got := sender.lastMessage().text; got != "" {
 			t.Fatalf("message = %q", got)
 		}
-		if !strings.Contains(stdin.String(), `"type":"question"`) || !strings.Contains(stdin.String(), `"free text answer"`) {
+		if !strings.Contains(stdin.String(), `"type":"send"`) || strings.Contains(stdin.String(), `"type":"question"`) || !strings.Contains(stdin.String(), `"free text answer"`) {
 			t.Fatalf("stdin = %q", stdin.String())
 		}
 	})
 
-	t.Run("feishu plain send with pending question updates card", func(t *testing.T) {
+	t.Run("feishu plain send keeps question card", func(t *testing.T) {
 		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 		paths := &config.Paths{StateDir: t.TempDir(), DedupeDir: t.TempDir()}
 		mgr := NewChordManager(cfg, paths)
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
-		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: ControlState{PendingQuestion: &QuestionPayload{RequestID: "req-auto", ToolName: "QuestionTool"}}}
+		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: ControlState{Questions: map[string]*QuestionPayload{"req-auto": {RequestID: "req-auto", ToolName: "QuestionTool", Version: 1}}}}
+		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}})
 		defer feishu.dedupe.Close()
@@ -3106,10 +3091,12 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		r.recordCardHandle(key, "question", "req-auto", &InteractiveCardHandle{MessageID: "om_sent_1"})
 		msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
 		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", &msg)
-		if patchedPath != "/open-apis/im/v1/messages/om_sent_1" {
-			t.Fatalf("patched path = %q", patchedPath)
+		// Submitting an answer must not patch the card: only the core
+		// question_resolved(answered) event proves the answer was accepted.
+		if patchedPath != "" {
+			t.Fatalf("card must not be patched on submit, patched path = %q", patchedPath)
 		}
-		if !strings.Contains(stdin.String(), `"type":"question"`) || !strings.Contains(stdin.String(), `"free text answer"`) {
+		if !strings.Contains(stdin.String(), `"type":"send"`) || strings.Contains(stdin.String(), `"type":"question"`) || !strings.Contains(stdin.String(), `"free text answer"`) {
 			t.Fatalf("stdin = %q", stdin.String())
 		}
 	})
@@ -3179,7 +3166,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 	})
 }
 
-func TestFeishuCardRiskLevelsAndQuestionFallbackPolicy(t *testing.T) {
+func TestFeishuCardRiskLevelsAndQuestionCardShape(t *testing.T) {
 	for _, tt := range []struct {
 		tool     string
 		template string
@@ -3200,24 +3187,29 @@ func TestFeishuCardRiskLevelsAndQuestionFallbackPolicy(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestShouldSendFeishuQuestionCard(t *testing.T) {
 	if !shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"1", "2", "3", "4", "5", "6"}}) {
 		t.Fatal("short 6-option single-select should use a card")
 	}
-	if shouldSendFeishuQuestionCard(&QuestionPayload{Multiple: true, Options: []string{"1", "2"}}) {
-		t.Fatal("multi-select should fallback to text")
+	if !shouldSendFeishuQuestionCard(&QuestionPayload{Multiple: true, Options: []string{"1", "2"}}) {
+		t.Fatal("multi-select should use a card with a checkable form")
 	}
 	if shouldSendFeishuQuestionCard(&QuestionPayload{}) {
-		t.Fatal("free-answer question should fallback to text in this implementation")
+		t.Fatal("free-answer question should fallback to text")
 	}
-	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"1", "2", "3", "4", "5", "this option label is intentionally too long for mobile buttons"}}) {
-		t.Fatal("long option label should fallback to text when there are more than five options")
+	if !shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"1", "2", "3", "4", "5", "this option label is intentionally too long for mobile buttons"}}) {
+		t.Fatal("a long option label should switch the card to numbered buttons, not fallback to text")
 	}
-	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"this option label is intentionally too long for mobile buttons", "no"}}) {
-		t.Fatal("long option label should fallback to text even when there are at most five options")
+	if !shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"this option label is intentionally too long for mobile buttons", "no"}}) {
+		t.Fatal("a long option label should stay a card even with few options")
 	}
-	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"yes", "no"}, OptionDetails: []string{"this detail is intentionally made very long so the interactive card would become too tall on mobile clients and should fallback to plain text instead of rendering a card", "short"}}) {
-		t.Fatal("long option detail should fallback to text")
+	if !shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"yes", "no"}, OptionIDs: []string{"yes", "no"}, OptionDetails: []string{"this detail is intentionally made very long so the detail no longer decides whether the interactive card is used", "short"}}) {
+		t.Fatal("a long option detail should stay a card: details are card body text, not button labels")
+	}
+	if shouldSendFeishuQuestionCard(&QuestionPayload{Options: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}}) {
+		t.Fatal("more than ten options should fallback to text")
 	}
 }
 
@@ -3249,7 +3241,7 @@ func TestSummarizeToolArgsTruncatesLongPathsAndURLs(t *testing.T) {
 }
 
 func TestBuildFeishuQuestionCardListsPlainOptions(t *testing.T) {
-	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Pick", Options: []string{"yes", "no"}, RequestID: "req"}, feishuCardContext{})
+	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Pick", Options: []string{"yes", "no"}, OptionIDs: []string{"yes", "no"}, RequestID: "req"}, feishuCardContext{})
 	text := fmt.Sprint(card["body"])
 	for _, want := range []string{"1. yes", "2. no"} {
 		if !strings.Contains(text, want) {
@@ -3259,12 +3251,261 @@ func TestBuildFeishuQuestionCardListsPlainOptions(t *testing.T) {
 }
 
 func TestFeishuCardJSONRoundTrip(t *testing.T) {
-	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Q?", Options: []string{"A"}, RequestID: "req"}, feishuCardContext{})
+	card := buildFeishuQuestionCard("chat", &QuestionPayload{Question: "Q?", Options: []string{"A"}, OptionIDs: []string{"A"}, RequestID: "req"}, feishuCardContext{})
 	data, err := json.Marshal(card)
 	if err != nil {
 		t.Fatalf("marshal card: %v", err)
 	}
 	if !strings.Contains(string(data), `"schema":"2.0"`) {
 		t.Fatalf("unexpected card json: %s", data)
+	}
+}
+
+func TestApplyQuestionResolvedLifecycle(t *testing.T) {
+	state := ControlState{}
+	state.applyQuestionState(&QuestionPayload{RequestID: "q-1", Version: 1})
+	state.applyQuestionState(&QuestionPayload{RequestID: "q-2", Version: 1})
+	state.applyQuestionState(&QuestionPayload{RequestID: "q-1", Version: 2, Outcome: QuestionResolvedAnswered})
+	if state.uniquePendingQuestion() == nil || state.uniquePendingQuestion().RequestID != "q-2" || state.Questions["q-1"].Outcome != QuestionResolvedAnswered {
+		t.Fatal("targeted close lost state")
+	}
+	if state.applyQuestionState(&QuestionPayload{RequestID: "q-1", Version: 1}) {
+		t.Fatal("stale state reopened question")
+	}
+
+}
+
+func TestTransitionToIdleQuestionLifecycle(t *testing.T) {
+	p := &ChordProcess{}
+	p.state.applyQuestionState(&QuestionPayload{RequestID: "q-1", Version: 1})
+	p.state.applyQuestionState(&QuestionPayload{RequestID: "q-2", Version: 2, Outcome: QuestionResolvedNoResponse})
+	p.transitionToIdle("", true)
+	if p.State().pendingQuestionCount() != 1 || p.State().Questions["q-2"].Outcome != QuestionResolvedNoResponse {
+		t.Fatal("idle removed question state")
+	}
+	p.state.PendingConfirm = &ConfirmPayload{RequestID: "c-1"}
+	p.state.PendingHandoff = &HandoffPayload{RequestID: "h-1"}
+	p.transitionToIdle("", true)
+	if p.state.ExpiredConfirm == nil || p.state.ExpiredHandoff == nil {
+		t.Fatal("confirm/handoff expiry changed")
+	}
+
+}
+
+func TestProcessEnvelopeQuestionResolvedClearsPending(t *testing.T) {
+	proc := &ChordProcess{}
+	proc.processEnvelope(&HeadlessEnvelope{Type: "question_request", Payload: json.RawMessage(`{"request_id":"q-1","version":1}`)})
+	proc.processEnvelope(&HeadlessEnvelope{Type: "question_resolved", Payload: json.RawMessage(`{"request_id":"q-9","reason":"no_response","version":2}`)})
+	if proc.State().uniquePendingQuestion() == nil {
+		t.Fatal("unrelated close removed pending")
+	}
+	proc.processEnvelope(&HeadlessEnvelope{Type: "question_resolved", Payload: json.RawMessage(`{"request_id":"q-1","reason":"no_response","version":2}`)})
+	if proc.State().uniquePendingQuestion() != nil || proc.State().Questions["q-1"].Outcome != QuestionResolvedNoResponse {
+		t.Fatal("terminal record lost")
+	}
+
+}
+
+func TestQuestionCommandRevisesDeclinedWhileNewQuestionPending(t *testing.T) {
+	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
+	sender := &stubIMAdapter{typ: "wechat"}
+	r := &NotificationRouter{adapter: sender}
+	stdin := &captureWriteCloser{}
+	proc := &ChordProcess{stdin: stdin}
+	attachQuestionTestReceipts(proc)
+	proc.state.applyQuestionState(&QuestionPayload{RequestID: "old", Version: 2, Outcome: QuestionResolvedDeclined})
+	proc.state.applyQuestionState(&QuestionPayload{RequestID: "new", Version: 1})
+	r.handleQuestionCommand(ws, "chat-1", IMCommand{Type: "question", RequestID: "old", Answers: []string{"yes"}}, IncomingMessage{IMType: "wechat", MessageID: "input-1"}, "ws1|wechat|chat-1", proc)
+	if !strings.Contains(stdin.String(), `"action":"revise"`) || !strings.Contains(sender.lastMessage().text, "accepted") {
+		t.Fatal("historical answer failed with a new pending question")
+	}
+	if proc.State().Questions["old"].Outcome != QuestionResolvedDeclined || proc.State().pendingQuestionCount() != 1 {
+		t.Fatal("revision rewrote original outcome or affected new question")
+	}
+}
+
+func TestFormatQuestionResolvedNotification(t *testing.T) {
+	r := &NotificationRouter{}
+	for _, tc := range []struct {
+		reason string
+		want   string
+	}{
+		{QuestionResolvedAnswered, "accepted"},
+		{QuestionResolvedDeclined, "declined"},
+		{QuestionResolvedNoResponse, "deadline"},
+		{QuestionResolvedSuperseded, "superseded"},
+		{QuestionResolvedCancelled, "cancelled"},
+		{QuestionResolvedError, "error"},
+	} {
+		got := r.formatNotification("question_resolved", ControlState{LastQuestionResolved: &QuestionPayload{RequestID: "q", Outcome: tc.reason}})
+		if !strings.Contains(strings.ToLower(got), tc.want) {
+			t.Errorf("reason %q notification = %q, want to mention %q", tc.reason, got, tc.want)
+		}
+	}
+	if got := r.formatNotification("question_resolved", ControlState{}); got != "" {
+		t.Fatalf("question_resolved without a payload = %q, want empty", got)
+	}
+}
+
+func TestCommandFromInternalActionQuestion(t *testing.T) {
+	cmd := commandFromInternalAction(&InternalAction{Type: "question", Action: "answer", RequestID: "q-1", Value: "yes"})
+	if cmd.Type != "question" || cmd.RequestID != "q-1" || strings.Join(cmd.Answers, ",") != "yes" {
+		t.Fatalf("button click command = %#v", cmd)
+	}
+	cmd = commandFromInternalAction(&InternalAction{Type: "question", Action: "answer", RequestID: "q-1", Values: []string{"1", "3"}})
+	if strings.Join(cmd.Answers, ",") != "1,3" {
+		t.Fatalf("form submit command = %#v", cmd)
+	}
+}
+
+func TestFeishuQuestionFormAnswersFromCallback(t *testing.T) {
+	answers, err := feishuQuestionFormAnswers(map[string]interface{}{
+		"option_2": true, "option_3": false, "option_1": true,
+		"unrelated": "kept out of the answers",
+	})
+	if err != nil || strings.Join(answers, ",") != "1,2" {
+		t.Fatalf("answers=%v err=%v", answers, err)
+	}
+	if got, err := feishuQuestionFormAnswers(map[string]interface{}{"option_1": false}); err != nil || len(got) != 0 {
+		t.Fatalf("unchecked options selected: %v err=%v", got, err)
+	}
+	for _, value := range []any{nil, "true", "false", "unknown", []any{true}, map[string]any{"checked": false}, 1} {
+		if answers, err := feishuQuestionFormAnswers(map[string]interface{}{"option_1": true, "option_2": value}); err == nil || len(answers) != 0 {
+			t.Fatalf("unknown checker shape accepted: %v answers=%v", value, answers)
+		}
+	}
+}
+
+func TestBuildFeishuQuestionCardNumberedButtonsForLongLabels(t *testing.T) {
+	longLabel := "enable detail TTL cleanup behind a flag, default off (recommended)"
+	card := buildFeishuQuestionCard("oc_chat1", &QuestionPayload{Question: "Pick", Options: []string{longLabel, "no"}, OptionIDs: []string{"long-option", "no-option"}, RequestID: "req"}, feishuCardContext{})
+	data, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("marshal question card: %v", err)
+	}
+	raw := string(data)
+	requireContains(t, raw, "1. "+longLabel)
+	requireContains(t, raw, `"content":"1"`)
+	requireContains(t, raw, `"content":"2"`)
+	// The button value carries the stable option ID.
+	requireContains(t, raw, `"value":"long-option"`)
+	if strings.Contains(raw, `"content":"`+longLabel+`"`) {
+		t.Fatalf("a long label must not become a button label: %s", raw)
+	}
+}
+
+func TestBuildFeishuQuestionCardKeepsShortLabelsOnButtons(t *testing.T) {
+	card := buildFeishuQuestionCard("oc_chat1", &QuestionPayload{Question: "Pick", Options: []string{"yes", "no"}, OptionIDs: []string{"yes", "no"}, RequestID: "req"}, feishuCardContext{})
+	data, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("marshal question card: %v", err)
+	}
+	raw := string(data)
+	requireContains(t, raw, `"content":"yes"`)
+	requireContains(t, raw, `"content":"no"`)
+}
+
+func TestBuildFeishuQuestionCardMultiSelectForm(t *testing.T) {
+	card := buildFeishuQuestionCard("oc_chat1", &QuestionPayload{Question: "Pick", Multiple: true, Options: []string{"one", "two"}, OptionIDs: []string{"one", "two"}, RequestID: "req"}, feishuCardContext{})
+	data, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("marshal question card: %v", err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"tag":"form"`,
+		`"name":"question_form"`,
+		`"tag":"checker"`,
+		`"name":"option_1"`,
+		`"name":"option_2"`,
+		`"name":"question_submit"`,
+		`"form_action_type":"submit"`,
+		`"action":"answer"`,
+		`"request_id":"req"`,
+	} {
+		requireContains(t, raw, want)
+	}
+	if count := strings.Count(raw, `"tag":"checker"`); count != 2 {
+		t.Fatalf("expected one checker per option, got %d: %s", count, raw)
+	}
+}
+
+func TestHandleIncomingMessageQuestionFormSubmit(t *testing.T) {
+	cfg := &config.Config{
+		IMs:        []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", ChatBindings: map[string]string{"oc_chat": "ws1"}}}},
+		Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
+	}
+	mgr := newTestChordManager(cfg)
+	sender := &stubIMAdapter{typ: "feishu"}
+	stdin := &captureWriteCloser{}
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "oc_chat"}).String()
+	mgr.procs[key] = &ChordProcess{
+		key:         key,
+		workspaceID: "ws1",
+		stdin:       stdin,
+		state: ControlState{
+			Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Multiple: true, Options: []string{"yes, always", "no"}, OptionIDs: []string{"yes, always", "no"}, Version: 1}},
+		},
+	}
+	attachQuestionTestReceipts(mgr.procs[key])
+	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	defer r.stopReminder(key)
+
+	r.HandleIncomingMessage(IncomingMessage{
+		IMType: "feishu",
+		ChatID: "oc_chat",
+		InternalAction: &InternalAction{
+			Type:      "question",
+			Action:    "answer",
+			RequestID: "req-q",
+			Values:    []string{"1", "2"},
+		},
+	})
+	out := stdin.String()
+	if !strings.Contains(out, `"answers":["yes, always","no"]`) {
+		t.Fatalf("form answers were sent as option numbers: %q", out)
+	}
+	if got := sender.lastMessage().text; !strings.Contains(got, "yes, always, no") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestHandleIncomingMessageQuestionNumericLabelButton(t *testing.T) {
+	cfg := &config.Config{
+		IMs:        []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", ChatBindings: map[string]string{"oc_chat": "ws1"}}}},
+		Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
+	}
+	mgr := newTestChordManager(cfg)
+	sender := &stubIMAdapter{typ: "feishu"}
+	stdin := &captureWriteCloser{}
+	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "oc_chat"}).String()
+	mgr.procs[key] = &ChordProcess{
+		key:         key,
+		workspaceID: "ws1",
+		stdin:       stdin,
+		state: ControlState{
+			Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Options: []string{"0", "1"}, OptionIDs: []string{"opt-0", "opt-1"}, Version: 1}},
+		},
+	}
+	attachQuestionTestReceipts(mgr.procs[key])
+	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
+	defer r.stopReminder(key)
+
+	r.HandleIncomingMessage(IncomingMessage{
+		IMType: "feishu",
+		ChatID: "oc_chat",
+		InternalAction: &InternalAction{
+			Type:      "question",
+			Action:    "answer",
+			RequestID: "req-q",
+			Value:     "opt-1",
+		},
+	})
+	out := stdin.String()
+	if !strings.Contains(out, `"answers":["opt-1"],"custom":false`) {
+		t.Fatalf("clicking the option labeled 1 sent %q", out)
+	}
+	if got := sender.lastMessage().text; !strings.Contains(got, "Answer accepted (req-q): 1") {
+		t.Fatalf("message = %q", got)
 	}
 }

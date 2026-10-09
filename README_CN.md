@@ -10,7 +10,7 @@
 - English: [README.md](./README.md)
 - 文档站: <https://keakon.github.io/chord-gateway/zh/>
 - 完整文档: [docs/index_CN.md](./docs/index_CN.md)
-- 运行要求：Go 1.27.0+，并且本机可用 `chord` 可执行文件
+- 运行要求：Go 1.27.0+，以及支持[当前 headless 协议](./docs/compatibility_CN.md)的 `chord` 构建
 
 ## 功能特性
 
@@ -90,7 +90,7 @@ chord-gateway -f config.yaml
 | `/status` | 查看当前 Chord 状态 |
 | `/cancel` | 取消当前 turn |
 | `/allow` / `/deny [reason]` | 批准或拒绝待确认请求 |
-| `/answer <text>` | 回答待处理问题；支持数字快捷选择 |
+| `/answer @<id> <text>` | 按 ID 回答或修正问题；支持数字快捷选择 |
 | `/role [编号\|角色名]` | 显示当前主角色与可切换角色；不带参数时展示菜单，带编号或角色名时切换到目标角色 |
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 为当前绑定启动新 session |

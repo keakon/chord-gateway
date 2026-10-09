@@ -796,6 +796,37 @@ func TestChordManagerGetOrSpawnForKeyReplacesExitedProcess(t *testing.T) {
 	}
 }
 
+func TestChordManagerPublishesProcessBeforeRestorationEvents(t *testing.T) {
+	// A startup event must be able to send its presented command immediately,
+	// even before GetOrSpawnForKey has returned to its caller.
+	path := filepath.Join(t.TempDir(), "fake-chord.sh")
+	script := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"question_request\",\"seq\":1,\"payload\":{\"request_id\":\"q-1\",\"version\":1}}'\nwhile IFS= read -r line; do :; done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mgr := newTestChordManager(&config.Config{ChordPath: path, Workspaces: []config.Workspace{{ID: "ws1", Path: t.TempDir()}}})
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat1"}).String()
+	observed := make(chan bool, 1)
+	mgr.SetOnEvent(func(key, kind string, _ ControlState) {
+		if kind == "question_request" {
+			p := mgr.GetProcessForKey(key)
+			observed <- p != nil && p.SendCommand(map[string]any{"type": "question", "action": "presented"}) == nil
+		}
+	})
+	if _, err := mgr.GetOrSpawnForKey(key); err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.StopAll(time.Millisecond)
+	select {
+	case ok := <-observed:
+		if !ok {
+			t.Fatal("restoration callback could not find its process")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup question was not delivered")
+	}
+}
+
 func TestChordManagerConcurrentGetOrSpawnForKeyReturnsSameProcess(t *testing.T) {
 	chordBinary := makeFakeChordBinary(t, "")
 	cfg := &config.Config{
@@ -990,10 +1021,25 @@ func TestProcessEnvelopeSessionSwitchedFollowsActiveSession(t *testing.T) {
 	if got := pins.Get(key); got != "new-session" {
 		t.Fatalf("pin = %q, want new-session", got)
 	}
-	// The command that caused the switch already answered the user; a switch
-	// must not add a second chat message.
-	if len(events) != 0 {
-		t.Fatalf("session_switched must not push an event, got %v", events)
+	// The switch is pushed so the router can drop the state it mirrors (the
+	// late-answer qualification), but it renders no chat message: the command
+	// that caused the switch already answered the user.
+	if len(events) != 1 || events[0] != "session_switched" {
+		t.Fatalf("session_switched events = %v, want exactly one state-sync push", events)
+	}
+}
+
+func TestProcessEnvelopeSessionSwitchedDropsExpiredQuestion(t *testing.T) {
+	pins := newTestPinStore()
+	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
+	p := &ChordProcess{key: key, mgr: &ChordManager{pins: pins}}
+	p.state.SessionID = "old-session"
+	p.state.applyQuestionState(&QuestionPayload{RequestID: "req-q", Question: "Choose env", Version: 1, Outcome: QuestionResolvedNoResponse})
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)})
+
+	if got := p.State().Questions["req-q"]; got != nil {
+		t.Fatalf("ExpiredQuestion after switch = %+v, want nil (it belongs to the abandoned session)", got)
 	}
 }
 

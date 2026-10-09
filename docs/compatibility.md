@@ -3,24 +3,23 @@
 Chord Gateway is pre-1.0. This page records the small number of compatibility paths
 that are intentionally retained, plus the rule for cleaning them up.
 
-## Minimum `chord headless` versions
+## Required `chord headless` contract
 
-Gateway runs against whatever `chord headless` build is configured, and newer
-gateway features degrade on older builds instead of failing:
+Use a Chord build that supports all of the following:
 
-- `chord headless` v0.8.0 and later supports the `/role` command and emits the
-  `role_change`, `handoff_cancelled`, and `compaction_status` events.
-- Builds newer than v0.8.1 additionally emit the `session_switched`,
-  `background_result`, and `context_notice` events, and add a monotonic `seq` to
-  state-carrying envelopes. Gateway uses `seq` to drop a `status_response`
-  snapshot that a newer push has already overtaken; without it, a late snapshot
-  can still be applied.
+- Versioned envelopes with monotonic `seq` and `input_result` consumption receipts.
+- Durable question collections in `status_response.questions`, stable `option_ids`, and `question_request`, `question_updated`, and `question_resolved` events.
+- Question commands with `action` / `operation_id`, correlated `question_receipt`, and presentation commands with `version`, `binding_id`, and `supports_interaction`.
+- Background-job counts in `idle` and `status_response`.
 
-Older builds never send the newer events, and unknown subscription entries are
-ignored rather than treated as errors.
+Older single-question protocols and builds without input receipts are unsupported; the gateway does not translate them. Pin the Chord build tested with your deployment and follow the [Chord headless documentation](https://github.com/keakon/chord/blob/main/docs/headless.md) when upgrading. A build accepting unknown subscription names does not establish protocol compatibility.
+
+After upgrading the gateway, send `/status` to refresh the question collection and answer entries. Use those entries rather than question buttons issued by an older gateway.
 
 ## Kept compatibility paths
 
+- Session pins still accept the earlier `workspaceID|imType|chatID` storage keys when loading an existing state directory. New keys use the encoded form.
+- Unknown YAML fields are ignored. The removed `event_visibility.activity` key therefore has no effect; activity tracking is always enabled.
 - The Chord headless `todos` event is supported. Although Chord also emits an internal
   protocol event named `todos_updated`, the current headless command still surfaces
   `todos` externally — gateway accepts it as-is.

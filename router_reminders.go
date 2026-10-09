@@ -98,5 +98,7 @@ func (r *NotificationRouter) fireReminder(key string) {
 		task()
 		return
 	}
-	r.scheduleReminder(key, state.LastPushAt)
+	// Waiting for input can last longer than a reminder interval. Reusing the
+	// old output timestamp here would rearm immediately and spin continuously.
+	r.scheduleReminder(key, time.Now())
 }

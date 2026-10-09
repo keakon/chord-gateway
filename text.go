@@ -41,10 +41,16 @@ func truncateLine(s string, maxRunes int) string {
 	return truncateRunes(s, maxRunes, ellipsis)
 }
 
+// maxFeishuButtonLabelRunes bounds a Feishu card button label. Feishu defines
+// no hard limit for button text, but longer labels are truncated by the
+// client, so this is the gateway's readability budget: a question card hides
+// long option labels behind numbered buttons instead of clipping them.
+const maxFeishuButtonLabelRunes = 24
+
 // truncateButtonLabel returns label trimmed and truncated to fit a Feishu card
-// button (24 runes max).
+// button (maxFeishuButtonLabelRunes runes max).
 func truncateButtonLabel(label string) string {
-	return truncateRunes(strings.TrimSpace(label), 24, ellipsis)
+	return truncateRunes(strings.TrimSpace(label), maxFeishuButtonLabelRunes, ellipsis)
 }
 
 // shortID renders an opaque identifier as <head>…<tail>, falling back to the

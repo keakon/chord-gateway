@@ -142,43 +142,63 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 }
 
 func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
-	state := proc.State()
-	pq := state.PendingQuestion
-	requestID := cmd.RequestID
-	if requestID == "" && pq != nil {
-		requestID = pq.RequestID
+	if cmd.Invalid {
+		r.sendText(chatID, "⚠️ Use /question-replace <old-id> <new-id>.")
+		return
 	}
-	if requestID == "" || pq == nil {
-		expired := r.lookupExpiredPending(procKey)
-		q := state.ExpiredQuestion
-		if q == nil {
-			q = expired.Question
-		}
-		content := buildExpiredQuestionFollowup(cmd.Answers, q)
-		if err := proc.SendUserMessage(content); err != nil {
-			log.Errorf("failed to send expired question follow-up workspace=%v error=%v", ws.ID, err)
-			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
+	state := proc.State()
+	if cmd.RequestID != "" && state.Questions[cmd.RequestID] == nil {
+		// Restored terminal questions are only available through a snapshot;
+		// open-question pushes may also still be draining during process startup.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var err error
+		state, err = proc.WaitStatus(ctx, cmd.RequestID)
+		cancel()
+		if err != nil {
+			r.sendText(chatID, "⚠️ Could not synchronize questions. Check /status before retrying.")
 			return
 		}
-		// A late reply is consumed as ordinary input; its receipt determines busy state.
-		if q != nil {
-			proc.ConsumeExpiredQuestion(q.RequestID)
+	}
+	q := state.Questions[cmd.RequestID]
+	if cmd.RequestID == "" {
+		q = state.uniquePendingQuestion()
+	}
+	if q == nil {
+		switch {
+		case cmd.RequestID != "":
+			r.sendText(chatID, "⚠️ Question "+cmd.RequestID+" was not found in the current session. Check /status and the session ID.")
+		case state.pendingQuestionCount() == 0:
+			r.sendText(chatID, "⚠️ No pending question. Use /answer @<id> <answer> to revise a historical answer.")
+		default:
+			r.sendText(chatID, "⚠️ Specify a question ID when several questions are available: /answer @<id> <answer>.")
 		}
-		r.clearExpiredPending(procKey)
-		r.resolveFeishuCard(msg, procKey, "question", requestID, "Question expired", "⌛ The pending question has expired.", "grey")
-		r.sendText(chatID, "⚠️ The pending question has expired. Your response was sent as a follow-up message, not as a structured answer.")
 		return
 	}
-	if requestID != pq.RequestID {
-		r.resolveFeishuCard(msg, procKey, "question", requestID, "No matching question", "⚠️ This question has already been handled or no longer matches the current request.", "grey")
-		r.sendText(chatID, "⚠️ No matching pending question to answer.")
+	if cmd.Action == "interact" || cmd.Action == "decline" || cmd.Action == "withdraw_requirement" || cmd.Action == "replace_requirement" {
+		action := map[string]any{"type": "question", "action": cmd.Action, "request_id": q.RequestID, "operation_id": questionUserOperationID(msg, q.RequestID, cmd.Action), "user_text": cmd.Content, "replacement_id": cmd.Reason}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		receipt, err := r.waitQuestionOperation(ctx, procKey, msg.SenderID, proc, action)
+		if err != nil {
+			r.sendText(chatID, "⚠️ Question outcome unknown; check /status before retrying.")
+			return
+		}
+		if !receipt.Accepted {
+			r.sendText(chatID, "⚠️ "+receipt.Error)
+			return
+		}
+		r.sendText(chatID, "✅ Question updated.")
 		return
 	}
-	answers := resolveQuestionAnswers(strings.Join(cmd.Answers, " "), pq)
-	if !r.submitQuestionAnswer(ws, chatID, msg, procKey, proc, pq, requestID, answers, false) {
-		return
+	r.submitQuestionAnswer(chatID, msg, procKey, proc, q, cmd.Answers)
+}
+
+func questionUserOperationID(msg IncomingMessage, id, action string) string {
+	source := msg.MessageID
+	if source == "" {
+		source = fmt.Sprint(time.Now().UnixNano())
 	}
-	r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
+	return "gateway:" + msg.IMType + ":" + msg.ChatID + ":" + source + ":" + id + ":" + action
 }
 
 func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
@@ -246,27 +266,9 @@ func defaultHandoffAgentName(options []HandoffAgentOption) string {
 }
 
 func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
-	// If a pending question exists (and no pending confirm),
-	// reinterpret plain text as an answer. This allows the user
-	// to simply type their response without /answer prefix.
-	// Unlike /answer which supports numeric shortcuts, direct
-	// replies are always sent as custom text — no comma splitting
-	// or index mapping, because natural language may contain commas.
 	state := proc.State()
 	if state.PendingConfirm != nil && isDoneTool(state.PendingConfirm.ToolName) && !strings.HasPrefix(strings.TrimSpace(cmd.Content), "/") {
 		r.handleConfirmCommand(ws, chatID, IMCommand{Type: "confirm", Action: "deny", Reason: cmd.Content}, msg, procKey, proc)
-		return
-	}
-	if state.PendingQuestion != nil && state.PendingConfirm == nil && !strings.HasPrefix(cmd.Content, "/") {
-		pq := state.PendingQuestion
-		answers := []string{cmd.Content}
-		if !r.submitQuestionAnswer(ws, chatID, msg, procKey, proc, pq, pq.RequestID, answers, true) {
-			return
-		}
-		// Feishu users see the answer reflected on the updated card; avoid duplicating it as a text reply.
-		if config.NormalizeIMType(msg.IMType) != "feishu" {
-			r.sendText(chatID, fmt.Sprintf("💬 Answered: %s", strings.Join(answers, ", ")))
-		}
 		return
 	}
 	// Filter slash commands that are only supported in local TUI.
@@ -327,28 +329,32 @@ func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatI
 	return true
 }
 
-// submitQuestionAnswer forwards an answer to chord, resolves the Feishu card,
-// and logs the event. Returns true on success. autoRedirect tags the log line
-// to distinguish /answer vs plain-text auto-redirect paths.
-func (r *NotificationRouter) submitQuestionAnswer(ws *config.Workspace, chatID string, msg IncomingMessage, procKey string, proc *ChordProcess, pq *QuestionPayload, requestID string, answers []string, autoRedirect bool) bool {
-	cmd := map[string]any{
-		"type":       "question",
-		"request_id": requestID,
-		"answers":    answers,
-	}
-	logSuffix := ""
-	if autoRedirect {
-		logSuffix = " (auto-redirect)"
-	}
-	if err := proc.SendCommand(cmd); err != nil {
-		log.Errorf("failed to send question response%s workspace=%v error=%v", logSuffix, ws.ID, err)
-		r.sendText(chatID, "❌ Failed to send answer.")
+// submitQuestionAnswer reports acceptance only after a correlated Core receipt.
+func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg IncomingMessage, procKey string, proc *ChordProcess, q *QuestionPayload, answers []string) bool {
+	// User text is always custom, even if it matches an option ID or label.
+	// Only numeric selections or trusted option/form callbacks select IDs.
+	answer := parseQuestionAnswer(answers, q, msg.InternalAction)
+	if len(answer.values) == 0 {
+		r.sendText(chatID, "⚠️ This selection no longer matches the question. Check /status and try again.")
 		return false
 	}
-	r.beginTurn(procKey)
-	answerText := strings.Join(answers, ", ")
-	r.resolveFeishuCard(msg, procKey, "question", requestID, "Question answered", "✅ Answered by "+displaySender(msg)+": "+answerText, "green")
-	log.Infof("question.answered workspace=%v chat_id=%v sender_id=%v request_id=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, pq.ToolName)
+	action := "answer"
+	if q.Outcome != "" {
+		action = "revise"
+	}
+	cmd := map[string]any{"type": "question", "request_id": q.RequestID, "answers": answer.values, "custom": answer.custom, "action": action, "operation_id": questionUserOperationID(msg, q.RequestID, action)}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	receipt, err := r.waitQuestionOperation(ctx, procKey, msg.SenderID, proc, cmd)
+	if err != nil {
+		r.sendText(chatID, "⚠️ Answer outcome unknown; check /status before retrying.")
+		return false
+	}
+	if !receipt.Accepted {
+		r.sendText(chatID, "⚠️ Answer not accepted: "+receipt.Error)
+		return false
+	}
+	r.sendText(chatID, truncate("✅ Answer accepted ("+q.RequestID+"): "+strings.Join(answer.labels, ", ")))
 	return true
 }
 

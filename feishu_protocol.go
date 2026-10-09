@@ -3,6 +3,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -40,19 +43,74 @@ func parseFeishuMessageText(messageType, contentRaw string) (string, error) {
 }
 
 // isValidFeishuCardAction reports whether a card action callback carries a
-// known (action_type, action, value) triple. Unknown combinations are rejected
-// before being enqueued.
-func isValidFeishuCardAction(actionType, action, value string) bool {
+// known (action_type, action, value) triple. formAnswers carries the option
+// numbers of a multi-select form submission, which is a valid answer even
+// though the submit button itself binds no option value. Unknown combinations
+// are rejected before being enqueued.
+func isValidFeishuCardAction(actionType, action, value string, formAnswers []string) bool {
 	switch actionType {
 	case "confirm":
 		return action == "allow" || action == "deny"
 	case "question":
-		return action == "answer" && strings.TrimSpace(value) != ""
+		return action == "answer" && (strings.TrimSpace(value) != "" || len(formAnswers) > 0)
 	case "role":
 		return action == "switch" && strings.TrimSpace(value) != ""
 	default:
 		return false
 	}
+}
+
+// Multi-select question cards identify form fields by name; the card builder
+// and the callback parser share these so the two sides cannot drift.
+const (
+	feishuQuestionFormName     = "question_form"
+	feishuQuestionSubmitName   = "question_submit"
+	feishuQuestionOptionPrefix = "option_"
+)
+
+// feishuQuestionOptionName is the form field name of the checker for a 1-based
+// option number.
+func feishuQuestionOptionName(number int) string {
+	return feishuQuestionOptionPrefix + strconv.Itoa(number)
+}
+
+// feishuQuestionOptionNumber parses a form field name back into its 1-based
+// option number.
+func feishuQuestionOptionNumber(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, feishuQuestionOptionPrefix)
+	if !ok {
+		return 0, false
+	}
+	number, err := strconv.Atoi(rest)
+	if err != nil || number < 1 {
+		return 0, false
+	}
+	return number, true
+}
+
+// feishuQuestionFormAnswers reads checker values from form_value[name].
+// Only booleans represent a selection; unknown shapes must not invent answers.
+func feishuQuestionFormAnswers(formValue map[string]interface{}) ([]string, error) {
+	numbers := make([]int, 0, len(formValue))
+	for name, value := range formValue {
+		number, ok := feishuQuestionOptionNumber(name)
+		if !ok {
+			continue
+		}
+		checked, ok := value.(bool)
+		if !ok {
+			return nil, fmt.Errorf("invalid checker value for %s", name)
+		}
+		if checked {
+			numbers = append(numbers, number)
+		}
+	}
+	sort.Ints(numbers)
+	answers := make([]string, 0, len(numbers))
+	for _, number := range numbers {
+		answers = append(answers, strconv.Itoa(number))
+	}
+	return answers, nil
 }
 
 // derefString returns the pointed-to value, or "" if nil. Used for the many

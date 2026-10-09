@@ -10,12 +10,15 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Questions use ID-based collections and support historical revisions while another question is pending. Ordinary chat keeps questions open; answer acceptance waits for a durable Chord receipt. IM answer entries disable timing before opening, and defaults never appear as user consent.
+
 - Idle notifications and `/status` show running background jobs. Processes reporting active background jobs are excluded from idle-timeout cleanup.
 
 - Added IM `/role` command for switching the main agent role (for example `builder` → `planner`) via Chord headless: `/role` lists the current role and the switchable roles (a Feishu button card, or a numbered list on text platforms), while `/role <number>` / `/role <name>` pick the target. The gateway always subscribes to Chord's `role_change` event and tracks the active role for `/status`. Requires a Chord headless build that supports the `role` control command. Switch request failures or response timeouts resolve the clicked Feishu card as unconfirmed and direct users to `/status` before retrying. A Feishu card click is patched in place and does not also send a duplicate chat line.
 - Gateway now always subscribes to Chord's `compaction_status` event and surfaces the latest context-checkpoint outcome in `/status` (for example `succeeded`, `skipped` with its reason, or `failed`); outcomes are never pushed as chat messages. A skipped checkpoint that never occupied the compaction slot does not overwrite the outcome of a compaction that is still running.
 - Gateway now consumes Chord's `handoff_cancelled` event: when a pending handoff is cancelled without a decision (for example superseded by a new request or session switch), the stale pending request is dropped and the chat receives a cancellation notice. A later `/handoff` or `/handoff-deny` returns the usual no-pending warning instead of routing the reply to the cancelled request.
 - Gateway now always subscribes to Chord's `background_result` event and pushes a finished background job's durable result to the chat; Chord has no other delivery channel for it, so it was previously invisible to IM. Durable context-pressure warnings (`context_notice`) are also consumed, but pushing them to a chat is opt-in through the new `event_visibility.context_notice` flag (default `false`), because that delivery is a product decision rather than a correctness requirement.
+- Multi-select questions are now interactive Feishu cards: the options become checkboxes inside a form with a `Submit` button, and the checked options are submitted as the answer. Submitting the form with nothing checked shows a hint instead of sending an empty answer. Unrecognized checkbox values are rejected rather than interpreted as selections.
 
 ### Changed
 
@@ -24,8 +27,14 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Updated the Go toolchain requirement to 1.27.0 and refreshed third-party Go dependencies (`golog` v0.4.1, Lark SDK v3.10.0).
 - SubAgent `agent_notify` notifications now include the alert subtype (for example `blocked/stall_resolved`), so a resolved stall is distinguishable from one that is still pending.
 - The periodic `performance queue=...` metrics line now also reports the current deepest shard (`max_depth`) and completed queue-capacity waits (`blocked_wait_total`, `blocked_wait_max`, `blocked_slow`), helping diagnose notification backpressure. Ongoing waits and shard producer-lock waits are not included in the duration metrics.
+- Feishu question cards no longer fall back to plain text because an option label is long: when any label exceeds the button budget the card switches to numbered buttons (`1`, `2`, …) while the card body still lists every label in full, and option details no longer decide the card form. Only free-answer questions and questions with more than ten options still use the text form.
 
 ### Fixed
+
+- Question cards now settle even when a status snapshot cleared pending first. Timeout notices are no longer repeated on later idle events, and Feishu question submissions keep the original card until the outcome arrives.
+- Feishu question buttons use stable option IDs, so repeated or numeric labels select the option clicked. A failed or uncertain submission can be explicitly retried; redelivery is deduplicated by callback event ID. System defaults are shown as system decisions in both cards and text. Failed answer-entry presentation can be retried with `/status`. Answering an ID missing from the local cache automatically synchronizes restored questions; terminal notices identify the question and answered cards retain the selection.
+
+- Input IDs remain unique across Chord process restarts, preventing restored question transactions from colliding. Historical answer acceptance no longer invents busy state. Reminders do not spin while waiting for input, and open asynchronous questions do not suppress reminders during other work.
 
 - Headless JSONL frames now accept up to 16 MiB of JSON, including output expanded by JSON escaping. Malformed lines produce a chat warning and reading continues. Oversized frames and stream failures stop the Chord process within a bounded grace period and report the failure in chat, without replaying inputs or scheduling a crash restart.
 
@@ -37,6 +46,9 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Gateway now cancels a pending crash auto-restart and stops the idle-timeout checker as soon as shutdown begins. A crash that happened just before shutdown used to leave a goroutine waiting out the whole restart delay and log a misleading `auto-restart failed ... chord manager is shutting down` error.
 
 ### Breaking changes
+
+- Requires Chord headless with input receipts and durable question collections; older single-question protocols are unsupported. Ordinary chat no longer answers pending questions: use `/answer @<id> <answer>` or a current Feishu answer entry.
+- Removed `event_visibility.activity`; delete it from configuration. Activity tracking is always enabled; unknown YAML fields are ignored.
 
 - Removed the IM `/current` command. `/status` already shows the active session, current role, last context checkpoint, and pending interaction.
 

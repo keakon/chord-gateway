@@ -191,16 +191,11 @@ Headless JSONL frame bodies may contain up to 16 MiB of JSON, excluding the LF o
 
 ### Late answers and confirmations
 
-A pending question or confirmation can expire when Chord becomes idle or when the gateway removes the idle process after `idle_timeout`. In that case, the original request ID is no longer pending.
+A question that Chord has closed stays addressable by ID in its session, whatever its terminal outcome (including `no_response`): `/answer @<id> <answer>` appends a historical revision, and the original outcome and task stay unchanged. Plain text is always a new instruction, never an answer to an older question. Idle and idle-timeout cleanup do not close questions, and a timeout is announced once, not on every later idle event.
 
-Expected behavior:
+If the process disconnects before an outcome arrives, the gateway keeps the known question without inventing an outcome; check `/status` and the session before explicitly retrying the same answer. The gateway reuses the uncertain operation while its retry cache remains available; see [Question interaction](./usage.md#question-interaction) for cache limits and restart behavior. If the answer entry could not open, `/status` retries presentation before displaying it.
 
-- The gateway sends an expiry notice when it clears a pending question or confirmation.
-- A late `/answer` is forwarded as a normal follow-up message, not as the original structured answer.
-- A late `/allow` or `/deny` is forwarded only as follow-up context, not as an approval or denial.
-- If the gateway still has the expired question or confirmation cached, it includes that context in the follow-up message sent to Chord.
-
-If you need the original operation to proceed, ask Chord to retry or reissue the request so a fresh question or confirmation can be created.
+Confirmations retain a separate behavior: after a confirmation expires, `/allow` or `/deny` is sent only as follow-up context, never as approval or denial. Ask Chord to reissue the operation if confirmation is still needed.
 
 ### A task appears stuck
 

@@ -20,9 +20,9 @@ A Chord process that crashes (exits while the gateway did not stop it) is respaw
 
 ## Idle timeout
 
-`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request.
+`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request. Processes reporting active background jobs are retained until those jobs no longer count as running; `/status` shows the count.
 
-If the gateway removes an idle process while a question, confirmation, or handoff request is still pending, it first records the expired interaction, sends an expiry notification to the IM chat, and then terminates the process. A later `/answer`, `/allow`, `/deny`, `/handoff`, or `/handoff-deny` cannot use the old structured request ID; the router forwards question and confirmation responses as follow-up context instead.
+Idle cleanup stops Core and suspends question timing without inventing outcomes. Reconnect and restore the session to answer by its original ID; check `/status` and rely on Chord receipts. Confirmation and handoff requests follow their own cancellation rules.
 
 Use Go duration syntax, for example:
 
@@ -99,7 +99,7 @@ Feishu event handling uses long connection mode plus async dispatch:
 - Incoming events are routed to `chord headless` through an in-process bounded queue.
 - Duplicate deliveries are filtered by a lightweight dedupe store.
 
-The dedupe key is based on:
+For chat messages, the dedupe key is based on:
 
 ```text
 app_id + chat_id + message_id
@@ -111,7 +111,9 @@ Deduplication data is persisted to:
 <state_dir>/dedupe.json
 ```
 
-The current TTL is 24 hours.
+Card callbacks use `app_id + card + event_id` instead. Redelivery of one callback is ignored, while a new click with the same answer can retry an uncertain submission. See [Question interaction](./usage.md#question-interaction) for operation retry behavior.
+
+The current dedupe TTL is 24 hours.
 
 ## Workspace routing
 
@@ -129,6 +131,8 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `question_updated`
+- `question_resolved`
 - `handoff_request`
 - `handoff_cancelled`
 - `idle`

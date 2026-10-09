@@ -749,22 +749,43 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 		log.Warnf("feishu: stale/wrong-context card action ignored request_id=%v chat_id=%v context_chat_id=%v action_type=%v", requestID, chatID, contextChatID, actionType)
 		return nil, nil
 	}
-	if !isValidFeishuCardAction(actionType, action, value) {
+	formAnswers, err := feishuQuestionFormAnswers(event.Event.Action.FormValue)
+	if err != nil {
+		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "error", Content: "Could not read your selection. Please reply with /answer instead."}}, nil
+	}
+	if event.Event.Action.Name == feishuQuestionSubmitName && len(formAnswers) == 0 {
+		// The submit button was clicked with nothing checked. Answer the click
+		// directly instead of dispatching an empty answer, so the user gets
+		// immediate feedback; no state changed, so nothing is deduped.
+		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "warning", Content: "Select at least one option, then submit."}}, nil
+	}
+	if !isValidFeishuCardAction(actionType, action, value, formAnswers) {
 		log.Warnf("feishu: invalid card action ignored request_id=%v chat_id=%v action_type=%v action=%v", requestID, chatID, actionType, action)
 		return nil, nil
 	}
 
-	dedupeKey := compositeKey(fc.AppID, "card", chatID, requestID, actionType, action, value)
+	// Deduplicate transport redelivery, not a later deliberate click. Question
+	// retries are correlated with their original Core operation by the router.
+	if event.EventV2Base == nil || event.EventV2Base.Header == nil || event.EventV2Base.Header.EventID == "" {
+		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "error", Content: "Could not identify this interaction. Please try again."}}, nil
+	}
+	eventID := event.EventV2Base.Header.EventID
+	dedupeKey := compositeKey(fc.AppID, "card", eventID)
 	if !a.dedupe.TryBegin(dedupeKey) {
 		log.Debugf("feishu: duplicate card action, skipping request_id=%v action_type=%v chat_id=%v", requestID, actionType, chatID)
 		return nil, nil
 	}
 
-	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: requestID + ":" + actionType + ":" + action + ":" + value, AppID: fc.AppID, InternalAction: &InternalAction{Type: actionType, Action: action, RequestID: requestID, Value: value, Handle: InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
+	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: eventID, AppID: fc.AppID, InternalAction: &InternalAction{Type: actionType, Action: action, RequestID: requestID, Value: value, Values: formAnswers, Handle: InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
 	if a.enqueueIncomingMessage(msg) {
 		a.dedupe.Commit(dedupeKey)
 	} else {
 		a.dedupe.Release(dedupeKey)
+		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "error", Content: "Could not queue your response. Please try again."}}, nil
+	}
+	if actionType == "question" {
+		// Keep the question usable until Chord publishes its terminal event.
+		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "Received. Processing..."}}, nil
 	}
 	return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "Received. Processing..."}, Card: &larkcallback.Card{Type: "raw", Data: buildFeishuResolvedCard("Processing", "⌛ Your response was received and is being processed.", "blue")}}, nil
 }

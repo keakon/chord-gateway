@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,9 +43,9 @@ type ChordProcess struct {
 	// owns the single compaction slot (set by a non-synthetic started, cleared
 	// by its terminal). Guards state.LastCompaction from being overwritten by
 	// synthetic sync-skip pairs or superseded plans' late outcomes.
-	compactionPlanID string
-	inputSequence    uint64
-	pendingInputs    map[string]struct{}
+	compactionPlanID      string
+	pendingInputs         map[string]struct{}
+	questionEventVersions map[string]uint64
 
 	// Auto-restart on crash
 	autoRestart      bool
@@ -63,7 +64,8 @@ type ChordProcess struct {
 	// request id, and roleWaiters wakes every waiter with the same payload, so
 	// two concurrent waits could consume each other's response. It is held only
 	// for the Chord round-trip, not for IM card/text I/O.
-	roleMu sync.Mutex
+	roleMu          sync.Mutex
+	questionWaiters map[string]chan QuestionReceipt
 }
 
 var ErrManagerShuttingDown = errors.New("chord manager is shutting down")
@@ -381,9 +383,6 @@ func (m *ChordManager) spawnWithArgsForKeyLocked(key string, extraArgs ...string
 		return nil, err
 	}
 
-	m.mu.Lock()
-	m.procs[key] = p
-	m.mu.Unlock()
 	return p, nil
 }
 
@@ -450,13 +449,18 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 		chordBinaryMeta.MTime,
 	)
 
+	// Restored questions can arrive immediately; their presentation commands
+	// must be able to find this process before stdout callbacks start.
+	m.mu.Lock()
+	m.procs[key] = p
+	m.mu.Unlock()
 	go p.readLoop(ctx, stdoutPipe)
 
 	// Send subscribe to limit events to control-plane essentials.
 	// Core delivery guarantees stay enabled for assistant messages,
 	// confirmation flows, idle state, and SubAgent completion summaries.
 	// Optional visibility is configured in gateway.
-	// If chord headless is too old, it may emit an error; ignore.
+	// Subscription errors are surfaced through the headless error event.
 	if err := p.SendCommand(map[string]any{
 		"type":   "subscribe",
 		"events": configuredHeadlessSubscribeEvents(cfg),
@@ -538,8 +542,21 @@ func waitForEnvelope[T any](ctx context.Context, p *ChordProcess, waiters *envel
 
 // WaitStatus sends a status command and waits for the next status_response.
 // Returns the resulting ControlState, or ctx.Err() if the context expires first.
-func (p *ChordProcess) WaitStatus(ctx context.Context) (ControlState, error) {
-	return waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status"})
+func (p *ChordProcess) WaitStatus(ctx context.Context, questionIDs ...string) (ControlState, error) {
+	p.mu.Lock()
+	var ids []string
+	for id, question := range p.state.Questions {
+		if question != nil && question.Outcome == "" && !slices.Contains(questionIDs, id) {
+			ids = append(ids, id)
+		}
+	}
+	p.mu.Unlock()
+	slices.Sort(ids)
+	ids = append(slices.Clone(questionIDs), ids...)
+	if len(ids) > 32 {
+		ids = ids[:32]
+	}
+	return waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status", "question_ids": ids})
 }
 
 // WaitRoleList sends a role list command and waits for the role_response.
@@ -561,11 +578,11 @@ func (p *ChordProcess) WaitRoleSwitch(ctx context.Context, role string) (RoleRes
 
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default events always subscribed (per docs/event-visibility.md):
-	// activity, assistant_message, confirm_request, question_request, question_resolved,
+	// activity, assistant_message, confirm_request, question_request, question_updated, question_resolved,
 	// handoff_request, handoff_cancelled, idle, error, notification,
 	// done_completion, local_shell_result, agent_done, role_change,
 	// compaction_status, session_switched, and background_result.
-	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
+	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
 	if cfg == nil {
 		return events
 	}

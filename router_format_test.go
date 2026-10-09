@@ -21,8 +21,9 @@ func TestFormatLongRunningNotificationSuppressesPendingInput(t *testing.T) {
 		{
 			name: "pending question",
 			state: ControlState{
-				Busy:            true,
-				PendingQuestion: &QuestionPayload{Question: "Continue?"},
+				Phase:     "waiting_input",
+				Busy:      true,
+				Questions: map[string]*QuestionPayload{"q-test": {Question: "Continue?", RequestID: "q-test", Version: 1}},
 			},
 		},
 	}
@@ -33,6 +34,25 @@ func TestFormatLongRunningNotificationSuppressesPendingInput(t *testing.T) {
 				t.Fatalf("formatLongRunningNotification() = %q, want empty", got)
 			}
 		})
+	}
+}
+
+func TestAsynchronousQuestionsDoNotSuppressActiveWork(t *testing.T) {
+	r := &NotificationRouter{}
+	state := ControlState{Busy: true, Phase: "thinking", Questions: map[string]*QuestionPayload{"q-1": {RequestID: "q-1", Version: 1}}, LastNotification: &NotificationPayload{Reason: notificationReasonUserInputRequired, Message: "Chord: notify needs your correction"}}
+	if r.formatLongRunningNotification(state) == "" || r.formatHeadlessNotification(state) == "" {
+		t.Fatal("an asynchronous question suppressed unrelated work")
+	}
+	state.Phase = "waiting_input"
+	if r.formatLongRunningNotification(state) != "" || r.formatHeadlessNotification(state) == "" {
+		t.Fatal("waiting for a question should pause reminders without hiding unrelated alerts")
+	}
+}
+
+func TestDefaultedQuestionCardIsASystemDecision(t *testing.T) {
+	title, message, template := questionResolvedCardStatus(QuestionResolvedDefaulted)
+	if title != "Question defaulted" || template != "grey" || !strings.Contains(message, "system decision") {
+		t.Fatalf("defaulted card = %q, %q, %q", title, message, template)
 	}
 }
 

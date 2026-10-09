@@ -37,7 +37,9 @@ type NotificationRouter struct {
 	lastKeyChatIDSnapshot atomic.Pointer[map[string]string]
 	reminders             map[string]*time.Timer
 	expiredPending        map[string]expiredPendingState
+	shownQuestions        map[string]map[string]bool
 	deliveredPrompts      map[string]deliveredPrompt
+	questionOperations    map[string]pendingQuestionOperation
 	cardHandles           map[string]cardHandleEntry
 	outbound              *outboundDispatcher
 }
@@ -55,7 +57,6 @@ type cardHandleEntry struct {
 const interactiveCardHandleTTL = 14 * 24 * time.Hour
 
 type expiredPendingState struct {
-	Question  *QuestionPayload
 	Confirm   *ConfirmPayload
 	Handoff   *HandoffPayload
 	ExpiresAt time.Time
@@ -125,7 +126,7 @@ func (r *NotificationRouter) recordChatID(key, chatID string) {
 }
 
 func (r *NotificationRouter) recordExpiredPending(key string, state ControlState) {
-	if state.ExpiredQuestion == nil && state.ExpiredConfirm == nil && state.ExpiredHandoff == nil {
+	if state.ExpiredConfirm == nil && state.ExpiredHandoff == nil {
 		return
 	}
 	r.mu.Lock()
@@ -133,7 +134,7 @@ func (r *NotificationRouter) recordExpiredPending(key string, state ControlState
 		r.expiredPending = make(map[string]expiredPendingState)
 	}
 	r.expiredPending[key] = expiredPendingState{
-		Question:  state.ExpiredQuestion,
+
 		Confirm:   state.ExpiredConfirm,
 		Handoff:   state.ExpiredHandoff,
 		ExpiresAt: time.Now().Add(r.expiredPendingTTL()),
@@ -649,6 +650,42 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
+	if eventType == "session_switched" || eventType == "exit" {
+		r.mu.Lock()
+		delete(r.shownQuestions, key)
+		r.mu.Unlock()
+	}
+	if eventType == "question_request" || eventType == "question_updated" {
+		q := state.questionForNotification()
+		if q == nil {
+			return
+		}
+		if eventType == "question_updated" && q.Outcome != "" {
+			if q.RevisionResult != nil {
+				eventType = "question_revision"
+			} else {
+				return
+			}
+		}
+		// IM does not expose the start of text entry. Disable the Core timer before
+		// opening this answer channel; only the committed update permits display.
+		if q.Outcome == "" && (q.Timer == "armed" || q.Timer == "awaiting_presentation" || q.Timer == "suspended") {
+			if r.mgr != nil {
+				if proc := r.mgr.GetProcessForKey(key); proc != nil {
+					if err := proc.SendCommand(map[string]any{"type": "question", "action": "presented", "operation_id": fmt.Sprintf("gateway:presented:%s:%d", q.RequestID, q.Version), "request_id": q.RequestID, "version": q.Version, "binding_id": q.BindingID, "supports_interaction": false}); err != nil {
+						log.Warnf("failed to disable IM question timer error=%v", err)
+						state.LastError = "Could not open question " + q.RequestID + ". Check /status to retry."
+						r.HandleChordEvent(key, "question_presentation_error", state)
+					}
+				}
+			}
+			return
+		}
+		if eventType == "question_updated" {
+			eventType = "question_request"
+		}
+	}
+
 	if state.Busy && (eventType == "activity" || eventType == "input_result" && state.LastInputResult != nil && state.LastInputResult.Status == inputStarted) {
 		r.scheduleReminder(key, state.LastPushAt)
 	}
@@ -660,10 +697,13 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	// keeps the record from being refreshed forever by every push and from
 	// outliving the process state it mirrors.
 	switch {
-	case state.PendingQuestion != nil || state.PendingConfirm != nil || state.PendingHandoff != nil:
+	case state.pendingQuestionCount() > 0 || state.PendingConfirm != nil || state.PendingHandoff != nil:
 		r.clearExpiredPending(key)
+	case state.ExpiredConfirm == nil && state.ExpiredHandoff == nil:
+		r.clearExpiredPending(key)
+	default:
+		r.recordExpiredPending(key, state)
 	}
-	r.recordExpiredPending(key, state)
 	workspaceID, imType, chatID := parseProcessKey(key)
 	if workspaceID == "" || imType == "" || chatID == "" {
 		log.Warnf("gateway event has invalid process key event=%v key=%v", eventType, key)
@@ -715,11 +755,40 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 		return
 	}
 	delivered := false
+	questionID := ""
 	defer func() {
 		if delivered {
 			r.recordDeliveredPrompt(key, eventType, state)
 		}
+		if questionID != "" && !delivered {
+			r.mu.Lock()
+			delete(r.shownQuestions[key], questionID)
+			r.mu.Unlock()
+		}
 	}()
+	if eventType == "question_request" {
+		q := state.questionForNotification()
+		if q == nil {
+			return
+		}
+		r.mu.Lock()
+		if r.shownQuestions == nil {
+			r.shownQuestions = map[string]map[string]bool{}
+		}
+		if r.shownQuestions[key] == nil {
+			r.shownQuestions[key] = map[string]bool{}
+		}
+		shown := r.shownQuestions[key][q.RequestID]
+		if !shown {
+			r.shownQuestions[key][q.RequestID] = true
+		}
+		r.mu.Unlock()
+		if shown {
+			return
+		}
+		questionID = q.RequestID
+	}
+
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
 			if r.sendFeishuConfirmCard(chatID, key, state) {
@@ -730,6 +799,13 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 		}
 		if eventType == "question_request" {
 			if r.sendFeishuQuestionCard(chatID, key, state) {
+				delivered = true
+				r.markVisibleOutput(key)
+				return
+			}
+		}
+		if eventType == "question_resolved" {
+			if r.resolveQuestionCard(key, state) {
 				r.markVisibleOutput(key)
 				return
 			}
@@ -740,6 +816,23 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 	if delivered {
 		r.markVisibleOutput(key)
 	}
+}
+
+// resolveQuestionCard patches the interactive question card for a request that
+// chord just closed. It reports whether a card was actually updated; when the
+// question was delivered as text (no stored handle) the caller falls back to
+// sending the close notification as text.
+func (r *NotificationRouter) resolveQuestionCard(key string, state ControlState) bool {
+	p := state.LastQuestionResolved
+	if p == nil {
+		return false
+	}
+	title, message, template := questionResolvedCardStatus(p.Outcome)
+	if p.Outcome == QuestionResolvedDefaulted || p.Outcome == QuestionResolvedAnswered {
+		message += "\n" + strings.Join(p.Selected, ", ")
+	}
+	message += "\nQuestion: " + p.RequestID
+	return r.resolveFeishuCard(IncomingMessage{IMType: "feishu"}, key, "question", p.RequestID, title, message, template)
 }
 
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a

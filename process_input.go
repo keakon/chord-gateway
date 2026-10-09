@@ -1,10 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"time"
 )
 
@@ -35,8 +35,9 @@ func (p *ChordProcess) SendUserMessage(content string) error {
 	if len(p.pendingInputs) >= maxPendingInputs {
 		return fmt.Errorf("too many unconfirmed inputs; wait for Chord to respond")
 	}
-	p.inputSequence++
-	id := "input-" + strconv.FormatUint(p.inputSequence, 10)
+	// Chord also uses input IDs for durable question lifecycle operations.
+	// They must stay unique when this process resumes an existing session.
+	id := "input-" + rand.Text()
 	data, err := json.Marshal(map[string]string{"type": "send", "content": content, "request_id": id})
 	if err != nil {
 		return err
@@ -83,14 +84,4 @@ func (p *ChordProcess) applyInputResult(env *HeadlessEnvelope, now time.Time) bo
 func (p *ChordProcess) abandonPendingInputs() {
 	p.state.UnconfirmedInputs += len(p.pendingInputs)
 	p.pendingInputs = nil
-}
-
-// ConsumeExpiredQuestion removes the late-answer qualification after a
-// follow-up has been written, without clearing a newer expired question.
-func (p *ChordProcess) ConsumeExpiredQuestion(requestID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if q := p.state.ExpiredQuestion; q != nil && q.RequestID == requestID {
-		p.state.ExpiredQuestion = nil
-	}
 }

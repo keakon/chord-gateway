@@ -16,6 +16,7 @@ func parseIMCommand(text string) IMCommand {
 
 	parts := strings.SplitN(text, " ", 3)
 	cmd := strings.ToLower(parts[0])
+	rest := strings.TrimSpace(text[len(parts[0]):])
 
 	switch cmd {
 	case "/status":
@@ -37,11 +38,26 @@ func parseIMCommand(text string) IMCommand {
 		}
 		return IMCommand{Type: "confirm", Action: "deny", Reason: reason}
 	case "/answer":
-		answer := ""
-		if len(parts) > 1 {
-			answer = strings.Join(parts[1:], " ")
+		id := ""
+		if strings.HasPrefix(rest, "@") {
+			id, rest, _ = strings.Cut(rest, " ")
+			id = strings.TrimPrefix(id, "@")
 		}
-		return IMCommand{Type: "question", Answers: []string{answer}}
+		return IMCommand{Type: "question", RequestID: id, Answers: []string{rest}}
+	case "/question-interact", "/question-decline", "/question-withdraw":
+		action := map[string]string{"/question-interact": "interact", "/question-decline": "decline", "/question-withdraw": "withdraw_requirement"}[cmd]
+		id, text, _ := strings.Cut(rest, " ")
+		if text == "" && action == "withdraw_requirement" {
+			text = "Withdraw the requirement for question " + id
+		}
+		return IMCommand{Type: "question", RequestID: strings.TrimPrefix(id, "@"), Action: action, Content: text}
+	case "/question-replace":
+		pieces := strings.Fields(rest)
+		if len(pieces) < 2 {
+			return IMCommand{Type: "question", Invalid: true}
+		}
+		return IMCommand{Type: "question", RequestID: strings.TrimPrefix(pieces[0], "@"), Action: "replace_requirement", Reason: strings.TrimPrefix(pieces[1], "@"), Content: "Replace the requirement for question " + pieces[0] + " with " + pieces[1]}
+
 	case "/handoff":
 		agent, pool, ok := parseHandoffArgs(strings.TrimSpace(strings.TrimPrefix(text, parts[0])))
 		return IMCommand{Type: "handoff", Action: "accept", Agent: agent, Pool: pool, Invalid: !ok}
@@ -91,12 +107,22 @@ func commandFromInternalAction(action *InternalAction) IMCommand {
 	case "confirm":
 		return IMCommand{Type: "confirm", Action: action.Action, RequestID: action.RequestID}
 	case "question":
+		if action.questionFormSubmit() {
+			return IMCommand{Type: "question", RequestID: action.RequestID, Answers: action.Values}
+		}
 		return IMCommand{Type: "question", RequestID: action.RequestID, Answers: []string{action.Value}}
 	case "role":
 		return IMCommand{Type: "role", Content: action.Value}
 	default:
 		return IMCommand{Type: "send"}
 	}
+}
+
+// questionFormSubmit reports whether the action came from a multi-select
+// question card's form: it carries the checked option numbers instead of an
+// stable option ID.
+func (a *InternalAction) questionFormSubmit() bool {
+	return a != nil && a.Type == "question" && len(a.Values) > 0
 }
 
 func parseBindArgs(rest string) (workspaceID, path string, ok bool) {

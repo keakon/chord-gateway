@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -24,8 +25,19 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "confirm_request":
 		return r.formatConfirmNotification(state)
 
+	case "question_revision":
+		q := state.questionForNotification()
+		if q == nil || q.RevisionResult == nil {
+			return ""
+		}
+		return truncate("✅ Historical answer updated (" + q.RequestID + "): " + strings.Join(q.RevisionResult.Selected, ", "))
 	case "question_request":
 		return r.formatQuestionNotification(state)
+
+	case "question_resolved":
+		return r.formatQuestionResolvedNotification(state)
+	case "question_presentation_error":
+		return "⚠️ " + state.LastError
 
 	case "handoff_request":
 		return r.formatHandoffNotification(state)
@@ -225,9 +237,6 @@ func (r *NotificationRouter) formatLocalShellNotification(state ControlState) st
 }
 
 func (r *NotificationRouter) formatExpiredPendingNotification(state ControlState) string {
-	if state.ExpiredQuestion != nil {
-		return "⌛ The pending question has expired. You can still reply, and I will send it as a follow-up message instead of a structured answer."
-	}
 	if state.ExpiredConfirm != nil {
 		return "⌛ The pending confirmation has expired. It was not approved or denied. Please retry the original request if confirmation is still needed."
 	}
@@ -481,10 +490,10 @@ func (r *NotificationRouter) formatHandoffNotification(state ControlState) strin
 }
 
 func (r *NotificationRouter) formatQuestionNotification(state ControlState) string {
-	if state.PendingQuestion == nil {
+	if state.questionForNotification() == nil {
 		return ""
 	}
-	q := state.PendingQuestion
+	q := state.questionForNotification()
 	var sb strings.Builder
 	sb.WriteString("❓ ")
 	if q.Header != "" {
@@ -504,42 +513,58 @@ func (r *NotificationRouter) formatQuestionNotification(state ControlState) stri
 			}
 		}
 	}
-	if q.DefaultAnswer != "" {
-		sb.WriteString("\nDefault: ")
-		sb.WriteString(q.DefaultAnswer)
-	}
 	if q.Multiple {
 		sb.WriteString(" (multi-select)")
 	}
-	sb.WriteString("\nReply /answer 1 / 1,2 / or type your answer")
+	if len(q.Options) == 0 {
+		sb.WriteString("\nReply /answer @" + q.RequestID + " <answer>")
+	} else if q.Multiple {
+		sb.WriteString("\nReply /answer @" + q.RequestID + " 1,2")
+	} else {
+		sb.WriteString("\nReply /answer @" + q.RequestID + " 1")
+	}
 	return truncate(sb.String())
 }
 
-// resolveQuestionAnswers interprets the /answer input against the question's
-// options. If the input is purely comma-separated numeric indices within range
-// (e.g. "1" or "1,3"), they are mapped to option labels. Otherwise the entire
-// input is returned as a single custom-text answer for the model. Single-select
-// questions with multiple indices also fall back to custom text.
-func resolveQuestionAnswers(input string, q *QuestionPayload) []string {
-	if q == nil || len(q.Options) == 0 {
-		return []string{input}
+// formatQuestionResolvedNotification reports a pending question that chord
+// closed. Only answered means the submitted answer was accepted; the rest are
+// terminal states where no answer was recorded.
+func (r *NotificationRouter) formatQuestionResolvedNotification(state ControlState) string {
+	p := state.LastQuestionResolved
+	if p == nil {
+		return ""
 	}
-	parts := strings.Split(input, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		n, err := strconv.Atoi(part)
-		if err != nil || n < 1 || n > len(q.Options) {
-			// Non-numeric or out of range: treat entire input as custom text.
-			return []string{input}
-		}
-		result = append(result, q.Options[n-1])
+	_, message, _ := questionResolvedCardStatus(p.Outcome)
+	switch p.Outcome {
+	case QuestionResolvedDefaulted:
+		message = "⌛ No answer received. Core adopted: " + strings.Join(p.Selected, ", ") + " (system decision, not user consent)."
+	case QuestionResolvedAnswered:
+		message = "✅ The answer was accepted: " + strings.Join(p.Selected, ", ")
+	case QuestionResolvedNoResponse:
+		message = "⌛ No answer before the deadline. You can still revise this question by ID, for example /answer @" + p.RequestID + " <answer>; the original outcome stays."
 	}
-	// Single-select with multiple indices is ambiguous; treat as custom text.
-	if !q.Multiple && len(result) > 1 {
-		return []string{input}
+	return truncate("Question: " + p.RequestID + "\n" + message)
+}
+
+// questionResolvedCardStatus maps a close reason to the card title, status
+// text, and template used when patching the question card.
+func questionResolvedCardStatus(reason string) (title, message, template string) {
+	switch reason {
+	case QuestionResolvedDefaulted:
+		return "Question defaulted", "⌛ Core adopted the default (system decision, not user consent).", "grey"
+	case QuestionResolvedAnswered:
+		return "Question answered", "✅ Answer accepted by chord.", "green"
+	case QuestionResolvedDeclined:
+		return "Question declined", "🚫 Declined; no answer was recorded.", "grey"
+	case QuestionResolvedNoResponse:
+		return "Question expired", "⌛ No answer before the deadline.", "grey"
+	case QuestionResolvedSuperseded:
+		return "Question superseded", "🔁 Superseded by a newer message.", "grey"
+	case QuestionResolvedCancelled:
+		return "Question cancelled", "⚠️ Cancelled before an answer was recorded.", "grey"
+	default:
+		return "Question closed", "⚠️ Closed after an execution error.", "red"
 	}
-	return result
 }
 
 func (r *NotificationRouter) formatInfoNotification(state ControlState) string {
@@ -614,7 +639,7 @@ func (r *NotificationRouter) formatTodosNotification(state ControlState) string 
 }
 
 func (r *NotificationRouter) formatLongRunningNotification(state ControlState) string {
-	if state.PendingConfirm != nil || state.PendingQuestion != nil {
+	if state.PendingConfirm != nil || state.Phase == "waiting_input" && state.pendingQuestionCount() > 0 {
 		return ""
 	}
 	msg := "⏳ Still working"
@@ -682,9 +707,18 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		sb.WriteString("\n🔧 Pending confirm: ")
 		sb.WriteString(state.PendingConfirm.ToolName)
 	}
-	if state.PendingQuestion != nil {
-		sb.WriteString("\n❓ Pending question: ")
-		sb.WriteString(state.PendingQuestion.Question)
+	if state.pendingQuestionCount() > 0 {
+		sb.WriteString(fmt.Sprintf("\n❓ Pending questions: %d", state.pendingQuestionCount()))
+		ids := make([]string, 0, len(state.Questions))
+		for id, q := range state.Questions {
+			if q.Outcome == "" {
+				ids = append(ids, id)
+			}
+		}
+		slices.Sort(ids)
+		for _, id := range ids {
+			sb.WriteString("\n  " + id + ": " + state.Questions[id].Question)
+		}
 	}
 	if state.LastOutcome != "" {
 		sb.WriteString("\n📋 Last outcome: ")

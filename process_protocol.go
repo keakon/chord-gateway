@@ -82,6 +82,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	var eventType string
 	var sessionPin string
 	var deferredLog func(string, ControlState)
+	var questionEvents []questionEvent
 
 	switch env.Type {
 	case "input_result":
@@ -149,13 +150,36 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "confirm_request"
 
-	case "question_request":
+	case "question_request", "question_updated", "question_resolved":
 		var payload QuestionPayload
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.applyPendingQuestion(&payload)
+		if json.Unmarshal(env.Payload, &payload) == nil && payload.RequestID != "" {
+			old := p.state.Questions[payload.RequestID]
+			if old == nil && env.Seq < p.state.LastEnvelopeSeq || old != nil && old.BindingID != payload.BindingID {
+				break
+			}
+			// A newer snapshot must not swallow committed terminal/revision
+			// events, but older open states must never reopen the question.
+			if old != nil && old.Version > payload.Version && (old.Outcome == "" || payload.Outcome == "") {
+				break
+			}
+			p.state.applyQuestionState(&payload)
+			if p.markQuestionEvent(env.Type, &payload) {
+				questionEvents = append(questionEvents, p.questionEvent(env.Type, &payload))
+			}
 		}
-		eventType = "question_request"
-
+	case "question_receipt":
+		var receipt QuestionReceipt
+		if json.Unmarshal(env.Payload, &receipt) == nil {
+			if ch := p.questionWaiters[receipt.OperationID]; ch != nil {
+				select {
+				case ch <- receipt:
+				default:
+				}
+			} else if !receipt.Accepted && strings.HasPrefix(receipt.OperationID, "gateway:presented:") {
+				p.state.LastError = "Could not open question " + receipt.RequestID + ": " + receipt.Error + ". Check /status to retry."
+				eventType = "question_presentation_error"
+			}
+		}
 	case "handoff_request":
 		var payload HandoffPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
@@ -301,12 +325,18 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 					log.Debugf("[%v] gateway dropped stale status_response seq=%v last_seq=%v", processLogContext(key, state), env.Seq, state.LastEnvelopeSeq)
 				}
 			} else {
+				previous := p.state.Questions
+				if resp.SessionID != p.state.SessionID {
+					previous = nil
+					p.questionEventVersions = nil
+				}
 				p.state.applyStatusResponse(&resp)
+				questionEvents = p.reconcileQuestionEvents(previous)
 			}
 			// Wake any goroutines blocked in WaitStatus.
 			p.statusWaiters.notify(p.state)
 		}
-		// No onEvent — solicited response.
+		// The solicited response also reconciles question presentation/closure.
 
 	case "role_response":
 		var resp RoleResponse
@@ -337,12 +367,19 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			if id := strings.TrimSpace(payload.SessionID); id != "" {
 				p.state.RunningJobs = 0
 				p.state.SessionID = id
+				p.state.Questions = nil
+				p.state.LastQuestion = nil
+				p.state.LastQuestionResolved = nil
+				p.questionEventVersions = nil
 				// Compaction outcomes belong to the abandoned session: keep
 				// them and /status would report the old session's checkpoint,
 				// while the old plan's slot owner would drop the new
 				// session's terminals (or vice versa). Reset both.
 				p.state.LastCompaction = nil
 				p.compactionPlanID = ""
+				// A late answer qualifies only for the session that asked the
+				// question, so the switch drops that record along with the
+				// abandoned session's compaction outcome.
 				// chord pushes this only for an in-band switch that replaced
 				// the session without restarting the process (handoff plan
 				// execution, /resume <id>, /new). The pin is otherwise written
@@ -355,9 +392,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				sessionPin = id
 			}
 		}
-		// No onEvent: the command that triggered the switch already answered
-		// the user, and the state cache keeps /status and later spawns on the
-		// session the runtime actually runs.
+		// The switch carries no user-visible message — the command that
+		// triggered it already answered the user, and the state cache keeps
+		// /status and later spawns on the session the runtime actually runs.
+		// It is still pushed so the router re-syncs the state it mirrors from
+		// this one, including the late-answer qualification dropped above.
+		eventType = "session_switched"
 
 	case "background_result":
 		var payload BackgroundResultPayload
@@ -456,7 +496,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		deferredLog(key, state)
 	}
 
-	if eventType != "" {
+	logEvent := func(eventType string, state ControlState) {
 		format := "[%v] gateway event event=%v raw_type=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v assistant_tool_calls=%v pending_confirm=%v pending_question=%v last_error=%v"
 		args := []any{processLogContext(key, state),
 			eventType,
@@ -467,7 +507,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			len(state.LastAssistantText),
 			state.LastAssistantToolCalls,
 			state.PendingConfirm != nil,
-			state.PendingQuestion != nil,
+			state.pendingQuestionCount() > 0,
 			state.LastError,
 		}
 		if p.eventLogf != nil {
@@ -475,6 +515,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		} else {
 			log.Infof(format, args...)
 		}
+	}
+	if eventType != "" {
+		logEvent(eventType, state)
+	}
+	for _, event := range questionEvents {
+		logEvent(event.kind, event.state)
 	}
 
 	if sessionPin != "" && p.mgr != nil && p.mgr.pins != nil {
@@ -485,5 +531,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	if eventType != "" && onEvent != nil {
 		onEvent(key, eventType, state)
+	}
+	if onEvent != nil {
+		for _, event := range questionEvents {
+			onEvent(key, event.kind, event.state)
+		}
 	}
 }

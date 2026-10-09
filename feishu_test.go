@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	larkdispatcher "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -157,6 +159,7 @@ func makeFeishuNonTextMessageEvent(openID, chatID, messageID string) *larkim.P2M
 
 func makeFeishuCardActionEvent(openID, chatID, requestID, action string) *larkcallback.CardActionTriggerEvent {
 	return &larkcallback.CardActionTriggerEvent{
+		EventV2Base: &larkevent.EventV2Base{Header: &larkevent.EventHeader{EventID: "event-" + rand.Text()}},
 		Event: &larkcallback.CardActionTriggerRequest{
 			Operator: &larkcallback.Operator{OpenID: openID},
 			Action: &larkcallback.CallBackAction{
@@ -397,13 +400,137 @@ func TestFeishuCardActionEvent_QueueFullRelease(t *testing.T) {
 	if _, err := a.handleCardActionEvent(context.Background(), makeFeishuCardActionEvent("ou_owner", "oc_chat1", "req_1", "allow")); err != nil {
 		t.Fatalf("first handleCardActionEvent() error = %v", err)
 	}
-	if _, err := a.handleCardActionEvent(context.Background(), makeFeishuCardActionEvent("ou_owner", "oc_chat1", "req_2", "allow")); err != nil {
+	retry := makeFeishuCardActionEvent("ou_owner", "oc_chat1", "req_2", "allow")
+	if _, err := a.handleCardActionEvent(context.Background(), retry); err != nil {
 		t.Fatalf("second handleCardActionEvent() error = %v", err)
 	}
 
-	dedupeKey := fmt.Sprintf("%s|card|%s|%s", fc.AppID, "oc_chat1", "req_2|confirm|allow|")
+	dedupeKey := compositeKey(fc.AppID, "card", retry.EventV2Base.Header.EventID)
 	if !a.dedupe.TryBegin(dedupeKey) {
 		t.Fatal("card-action dedupe should be released after queue full")
+	}
+}
+
+func makeFeishuQuestionFormEvent(openID, chatID, requestID string, formValue map[string]interface{}) *larkcallback.CardActionTriggerEvent {
+	event := makeFeishuCardActionEvent(openID, chatID, requestID, "answer")
+	event.Event.Action.Value["type"] = "question"
+	event.Event.Action.Name = feishuQuestionSubmitName
+	event.Event.Action.FormValue = formValue
+	return event
+}
+
+func TestFeishuCardActionEvent_FormSubmitCarriesCheckedOptions(t *testing.T) {
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	a := testFeishuAdapter(t, fc)
+	defer a.dedupe.Close()
+
+	event := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]interface{}{
+		"option_2": true,
+		"option_3": false,
+		"option_1": true,
+	})
+	if _, err := a.handleCardActionEvent(context.Background(), event); err != nil {
+		t.Fatalf("handleCardActionEvent() error = %v", err)
+	}
+	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	select {
+	case msg := <-feishuTestQueue(a, queued):
+		action := msg.InternalAction
+		if action == nil || action.Type != "question" || action.Action != "answer" || action.RequestID != "req_q" {
+			t.Fatalf("InternalAction = %#v", action)
+		}
+		if got := strings.Join(action.Values, ","); got != "1,2" {
+			t.Fatalf("InternalAction.Values = %v, want option order 1,2", action.Values)
+		}
+		if msg.MessageID != event.EventV2Base.Header.EventID {
+			t.Fatalf("MessageID = %q, want callback event ID", msg.MessageID)
+		}
+	default:
+		t.Fatal("expected the form submission to be enqueued")
+	}
+}
+
+func TestFeishuCardActionEvent_DistinctFormSelectionsAreNotDuplicates(t *testing.T) {
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
+	defer a.dedupe.Close()
+	defer cancel()
+
+	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]interface{}{"option_1": true})
+	if _, err := a.handleCardActionEvent(context.Background(), first); err != nil {
+		t.Fatalf("handleCardActionEvent() error = %v", err)
+	}
+	// Answering the same request with a different selection is a new answer,
+	// not a retry of the first callback.
+	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]interface{}{"option_2": true})
+	if _, err := a.handleCardActionEvent(context.Background(), second); err != nil {
+		t.Fatalf("handleCardActionEvent() error = %v", err)
+	}
+	// Retrying the first submission is still deduped.
+	if _, err := a.handleCardActionEvent(context.Background(), first); err != nil {
+		t.Fatalf("handleCardActionEvent() error = %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := dispatched.Load(); got != 2 {
+		t.Fatalf("dispatched = %d, want the two distinct selections", got)
+	}
+}
+
+func TestFeishuCardActionEvent_SameAnswerNewClickCanRetry(t *testing.T) {
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	a := testFeishuAdapter(t, fc)
+	defer a.dedupe.Close()
+	queue := a.messageQueues[feishuMessageShard(IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"})]
+	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{"option_1": true})
+	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{"option_1": true})
+	for _, event := range []*larkcallback.CardActionTriggerEvent{first, first, second} {
+		if _, err := a.handleCardActionEvent(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(queue) != 2 {
+		t.Fatalf("queued %d events, want two deliberate clicks", len(queue))
+	}
+	if a, b := <-queue, <-queue; a.MessageID == b.MessageID || strings.Join(a.InternalAction.Values, ",") != strings.Join(b.InternalAction.Values, ",") {
+		t.Fatal("identical answers did not keep distinct event identities")
+	}
+}
+
+func TestFeishuCardActionEvent_MissingEventIDCannotSubmit(t *testing.T) {
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	a := testFeishuAdapter(t, fc)
+	defer a.dedupe.Close()
+	event := makeFeishuCardActionEvent("ou_owner", "oc_chat1", "q-1", "answer")
+	event.Event.Action.Value["type"] = "question"
+	event.Event.Action.Value["value"] = "first"
+	event.EventV2Base.Header.EventID = ""
+	response, err := a.handleCardActionEvent(context.Background(), event)
+	if err != nil || response == nil || response.Toast == nil || response.Toast.Type != "error" {
+		t.Fatalf("missing ID did not report an error: response=%+v err=%v", response, err)
+	}
+	for _, queue := range a.messageQueues {
+		if len(queue) != 0 {
+			t.Fatal("unidentified callback was submitted")
+		}
+	}
+}
+
+func TestFeishuCardActionEvent_EmptyFormSubmitToasts(t *testing.T) {
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
+	defer a.dedupe.Close()
+	defer cancel()
+
+	resp, err := a.handleCardActionEvent(context.Background(), makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", nil))
+	if err != nil {
+		t.Fatalf("handleCardActionEvent() error = %v", err)
+	}
+	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "Select at least one option") {
+		t.Fatalf("response = %#v, want a selection hint toast", resp)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := dispatched.Load(); got != 0 {
+		t.Fatalf("an empty selection must not be submitted, dispatched = %d", got)
 	}
 }
 
@@ -424,7 +551,7 @@ func TestFeishuMessageEvent_InvalidJSONIgnored(t *testing.T) {
 	}
 }
 
-func TestFeishuCardActionEvent_UsesRequestIDAndInternalActionAsMessageID(t *testing.T) {
+func TestFeishuCardActionEvent_UsesEventIDAsMessageID(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
 	a := testFeishuAdapter(t, fc)
 	defer a.dedupe.Close()
@@ -436,7 +563,7 @@ func TestFeishuCardActionEvent_UsesRequestIDAndInternalActionAsMessageID(t *test
 	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
-		if msg.MessageID != "req_9:confirm:allow:" {
+		if msg.MessageID != event.EventV2Base.Header.EventID {
 			t.Fatalf("MessageID = %q", msg.MessageID)
 		}
 		if msg.InternalAction == nil || msg.InternalAction.Type != "confirm" || msg.InternalAction.Action != "allow" || msg.InternalAction.RequestID != "req_9" {

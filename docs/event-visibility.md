@@ -12,6 +12,8 @@ The gateway always subscribes to these events:
 - `assistant_message`
 - `confirm_request`
 - `question_request`
+- `question_updated`
+- `question_resolved`
 - `handoff_request`
 - `handoff_cancelled`
 - `idle`
@@ -30,6 +32,7 @@ These events provide the minimum behavior required for IM control:
 - final assistant responses
 - permission confirmations
 - user questions
+- question close events, labeled by question ID and showing accepted selections
 - handoff requests and responses
 - handoff cancellation notices
 - busy/idle state aggregation
@@ -43,7 +46,7 @@ These events provide the minimum behavior required for IM control:
 - in-band session switches, so a pinned binding follows the session the runtime actually runs
 - finished background job results, which have no other delivery channel
 
-`session_switched` is state-only: the command that caused the switch already answers the user, so no extra chat message is sent. It does re-point the binding's session pin at the newly active session, so later spawns resume the session the runtime actually runs.
+`session_switched` is state-only: the command that caused the switch already answers the user, so no extra chat message is sent. It re-points the binding's session pin at the newly active session, so later spawns resume the session the runtime actually runs.
 
 `background_result` is pushed to IM as a chat message, because Chord has no other channel for it: a background job usually finishes after the turn went idle, so no later `assistant_message` summarizes it.
 
@@ -74,6 +77,10 @@ event_visibility:
 
 The gateway preserves `session_id` and `message_index` from `background_result` and `context_notice` alongside their content. They identify the source session and durable transcript row; the active session still follows `ready` and `session_switched`.
 
+Status queries include IDs of questions whose outcomes the gateway has not observed, so Core returns those decisions even when they fall outside the bounded history page. Complete historical browsing uses Core's question cursor; an omitted historical record does not imply a terminal outcome.
+
+A session switch rebuilds the question collection. Historical replies belong to their original session and task. Disconnects retain known questions with an unknown outcome; resynchronize against Core snapshots and receipts instead of inventing outcomes.
+
 ## Long-running reminders
 
 While a turn remains busy, the gateway sends a compact reminder every 5 minutes. Any user-visible output resets the next 5-minute reminder window. The reminder does not include low-level phases such as `connecting`. If tracked internal progress occurred, it includes the number of internal events observed since the previous visible output or reminder:
@@ -90,13 +97,13 @@ Internal-event counts are currently based on gateway-tracked progress events suc
 
 SubAgent `assistant_message` events are labeled with their agent type (falling back to agent ID) and task ID. `agent_done` is always subscribed and sends the authoritative completion summary; this also covers tool-only completion turns that have no assistant text.
 
-`notification` is the canonical event for user alerts, including blocked errors, fully stopped completion, and the requests that have no prompt of their own (loop-exit decisions and notify-protocol corrections, all reported with Chord's `user_input_required` reason). Only a recognized companion `user_input_required` alert for a matching confirmation or handoff is dropped after its prompt has been delivered successfully. Other alerts remain visible even if the pending cache still contains an earlier request.
+`notification` is the canonical event for user alerts, including blocked errors, fully stopped completion, and the requests that have no prompt of their own (loop-exit decisions and notify-protocol corrections, all reported with Chord's `user_input_required` reason). Only a recognized companion `user_input_required` alert for a matching confirmation or handoff is dropped after its prompt has been delivered successfully. Other alerts remain visible even if the pending cache still contains an earlier request. Durable questions have no companion alert, so open questions never suppress these notifications.
 
 `idle` and `status_response` carry `running_jobs`, the number of active background jobs whose completion will notify the current session. Idle notifications and `/status` show a nonzero count; the gateway keeps such processes out of idle-timeout cleanup. Completion wakes an agent, and its next `idle` updates the count. Services and watchers may run indefinitely. A job stopped without a completion notification leaves the count when the stop is requested: tool-driven stops are reflected in the active work's next `idle`, while `session_switched` clears the gateway's count for the previous session.
 
 `idle` represents agent idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
 
-Global `idle` events normally do not emit fallback completion messages. If one clears a pending question, confirmation, or handoff request, the gateway sends a targeted expiry notification instead of a generic completion message. The gateway also emits the same expiry notification before removing an idle process that still has a pending question, confirmation, or handoff request. Chord may include `suppress_user_notification: true` for configuration-only quiescence, such as a manual model-pool switch; the gateway still records the process as idle and stops reminders, but skips the generic idle message. Pending-interaction expiry notifications still take precedence.
+`idle` and `idle_timeout` do not close questions. Questions settle through durable ID-based outcomes; historical revisions use an explicit ID and retain the original outcome. `question_updated` pushes timer, interaction, requirement, and revision changes instead of silently updating a cache. A status snapshot can also restore missing answer entries or close a known open question; caching a snapshot does not consume a later revision notification.
 
 Chord may also cancel a pending handoff without a decision, for example when a new request or session switch supersedes it. The gateway consumes the `handoff_cancelled` event, drops the stale pending handoff, and sends a cancellation notice. A later `/handoff` or `/handoff-deny` then falls back to the usual no-pending warning instead of routing the reply to the cancelled request. A `handoff_cancelled` event may arrive late or without a matching request ID; the gateway only clears the pending handoff it targets and leaves a newer pending request untouched.
 
