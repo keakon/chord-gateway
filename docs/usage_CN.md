@@ -211,6 +211,7 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 - 后台任务结果：后台任务结束时推送，通常在 turn 已进入 idle 之后
 - 错误或 blocked 状态
 - 工具失败
+- 生成图片：Chord 产出后转发到来源会话
 - 上下文压力提示：仅在启用 `event_visibility.context_notice` 时推送
 - 任务长时间仍在处理时，每 5 分钟发送一次提醒
 

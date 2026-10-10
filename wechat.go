@@ -121,8 +121,9 @@ type ilinkMessage struct {
 
 // ilinkItem represents an item in a message.
 type ilinkItem struct {
-	Type     int            `json:"type,omitempty"`
-	TextItem *ilinkTextItem `json:"text_item,omitempty"`
+	ImageItem *ilinkImageItem `json:"image_item,omitempty"`
+	Type      int             `json:"type,omitempty"`
+	TextItem  *ilinkTextItem  `json:"text_item,omitempty"`
 }
 
 // ilinkTextItem holds the text content.
@@ -137,8 +138,8 @@ type ilinkSendMessageRequest struct {
 
 // ilinkAPIResponse is a generic API response.
 type ilinkAPIResponse struct {
-	Ret     int    `json:"ret,omitempty"`
-	ErrCode int    `json:"errcode,omitempty"`
+	Ret     *int   `json:"ret,omitempty"`
+	ErrCode *int   `json:"errcode,omitempty"`
 	ErrMsg  string `json:"errmsg,omitempty"`
 }
 
@@ -448,6 +449,9 @@ func (a *WechatAdapter) apiPost(path string, body any) (*http.Response, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header = a.buildHeaders()
+	if path == "ilink/bot/sendmessage" {
+		return messageHTTPClient(a.httpClient).Do(req)
+	}
 	return a.httpClient.Do(req)
 }
 
@@ -801,26 +805,38 @@ func (a *WechatAdapter) sendILinkText(chatID, text string) error {
 func (a *WechatAdapter) sendMessage(body ilinkSendMessageRequest) error {
 	resp, err := a.apiPost("ilink/bot/sendmessage", body)
 	if err != nil {
-		return fmt.Errorf("HTTP request: %w", err)
+		return fmt.Errorf("%w: HTTP request: %w", errDeliveryOutcomeUnknown, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		if !isAmbiguousDeliveryStatus(resp.StatusCode) {
+			return fmt.Errorf("wechat ilink send rejected: HTTP %d", resp.StatusCode)
+		}
+		return fmt.Errorf("%w: HTTP %d", errDeliveryOutcomeUnknown, resp.StatusCode)
 	}
 
 	var result ilinkAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		// Non-JSON response — treat as success if HTTP 200.
-		return nil
+		return fmt.Errorf("%w: decode send response: %w", errDeliveryOutcomeUnknown, err)
 	}
 
-	if result.ErrCode != 0 {
-		if result.ErrCode == ilinkSessionExpired {
+	if result.ErrCode == nil && result.Ret == nil {
+		return fmt.Errorf("%w: send response is missing status", errDeliveryOutcomeUnknown)
+	}
+	ret := 0
+	if result.Ret != nil {
+		ret = *result.Ret
+	}
+	code := 0
+	if result.ErrCode != nil {
+		code = *result.ErrCode
+	}
+	if code != 0 || ret != 0 {
+		if code == ilinkSessionExpired || ret == ilinkSessionExpired {
 			log.Warnf("wechat ilink: send failed with session expired")
 		}
-		return fmt.Errorf("send error: errcode=%d errmsg=%s", result.ErrCode, result.ErrMsg)
+		return fmt.Errorf("send error: ret=%d errcode=%d errmsg=%s", ret, code, result.ErrMsg)
 	}
 
 	return nil

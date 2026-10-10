@@ -17,6 +17,7 @@ const headlessMaxEnvelopeBytes = 16 * 1024 * 1024
 // readLoop reads stdout from the chord process, parses JSON envelopes,
 // updates state, and calls onEvent for notable events.
 func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
+	defer p.images.reset()
 	scanner := bufio.NewScanner(stdout)
 	// Reserve room for LF or CRLF in addition to the JSON frame body.
 	scanner.Buffer(make([]byte, 0, 64*1024), headlessMaxEnvelopeBytes+2)
@@ -72,6 +73,19 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 
 // processEnvelope updates ControlState based on the envelope type and calls onEvent.
 func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
+	if env.Type == imageResultEvent || env.Type == imageArtifactEvent {
+		p.processImageEnvelope(env)
+		return
+	}
+	if env.Type == "idle" {
+		// Chord emits the aggregate idle after all image result chunks.
+		if err := p.images.finish(); err != nil {
+			p.reportTransportError(err, false)
+		}
+	}
+	if env.Type == "session_switched" {
+		p.images.reset()
+	}
 	p.mu.Lock()
 	now := time.Now()
 	updatedAt := now.Format(time.RFC3339)

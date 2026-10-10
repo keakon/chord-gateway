@@ -634,8 +634,8 @@ func TestFeishuSendInteractiveWithHandleParsesMessageID(t *testing.T) {
 	var sawSend bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/open-apis/auth/v3/app_access_token/internal":
-			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"token","expire":7200}`))
 		case "/open-apis/im/v1/messages":
 			sawSend = true
 			if r.URL.Query().Get("receive_id_type") != "chat_id" {
@@ -671,8 +671,8 @@ func TestFeishuUpdateInteractiveCardPatchesMessageCardContent(t *testing.T) {
 	var sawPatch bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/open-apis/auth/v3/app_access_token/internal":
-			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"token","expire":7200}`))
 		case "/open-apis/im/v1/messages/om_msg_1":
 			sawPatch = true
 			if r.Method != http.MethodPatch {
@@ -719,8 +719,8 @@ func TestUpdateFeishuCardStatusPrefersStoredMessageID(t *testing.T) {
 	var patchedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/open-apis/auth/v3/app_access_token/internal":
-			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"token","expire":7200}`))
 		case "/open-apis/im/v1/messages/om_sent_1":
 			patchedPath = r.URL.Path
 			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
@@ -965,7 +965,7 @@ func TestFeishuGetAccessTokenCoalescesConcurrentRefreshes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		time.Sleep(50 * time.Millisecond)
-		_, _ = w.Write([]byte(`{"code":0,"app_access_token":"shared-token","expire":3600}`))
+		_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"shared-token","expire":3600}`))
 	}))
 	defer server.Close()
 
@@ -983,7 +983,7 @@ func TestFeishuGetAccessTokenCoalescesConcurrentRefreshes(t *testing.T) {
 	for range callers {
 		go func() {
 			<-start
-			token, err := a.getAccessToken()
+			token, err := a.getAccessToken(t.Context())
 			results <- token
 			errs <- err
 		}()
@@ -1024,7 +1024,7 @@ func TestFeishuGetAccessTokenSharesRefreshFailure(t *testing.T) {
 	for range callers {
 		go func() {
 			<-start
-			_, err := a.getAccessToken()
+			_, err := a.getAccessToken(t.Context())
 			errs <- err
 		}()
 	}

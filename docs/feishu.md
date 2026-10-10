@@ -53,7 +53,7 @@ In the Feishu console under **Event Subscriptions**:
 Notes:
 
 - In group chats, make sure the bot is actually **added to the group**, otherwise it will not receive messages there.
-- The gateway currently only processes **text** (including `text` and `post`); images/files are ignored.
+- The gateway currently only processes **text** (including `text` and `post`); inbound images/files are ignored. Generated images are delivered outbound as described in [Event visibility](./event-visibility.md#generated-images).
 
 ## Step 2: Enable interactive cards (recommended)
 
@@ -90,19 +90,22 @@ one by one, click **Batch import** and paste the JSON below.
 > If you use both DMs and group chats, grant **both** the DM scope and the group
 > scope. A DM-only app silently receives nothing in group chats.
 
-Smallest DM-only setup:
+DM-only setup, including generated-image delivery:
 
 ```json
 {
   "scopes": {
     "tenant": [
       "im:message:send_as_bot",
+      "im:resource",
       "im:message.p2p_msg:readonly"
     ],
     "user": []
   }
 }
 ```
+
+The `im:resource` scope permits uploading generated images. You may omit it if you do not use image delivery. After adding this permission to an existing app, publish a new app version. Image generation must be enabled in Chord, and the Chord build must support the image delivery contract in [Compatibility](./compatibility.md).
 
 If you also use group chats, add `im:message.group_at_msg:readonly` (or
 `im:message.group_msg`) to the `tenant` array.

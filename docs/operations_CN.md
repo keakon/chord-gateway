@@ -145,5 +145,10 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `compaction_status`
 - `session_switched`
 - `background_result`
+- `image_result`
 
 可选事件由 `event_visibility` 控制。各事件的行为以及哪些只更新状态、不发消息，详见 [event-visibility_CN.md](./event-visibility_CN.md)。
+
+飞书卡片发送结果未确认时，Gateway 发送提示，不再把原提示重复转为文本。请先检查聊天记录；未收到问题入口时可发送 `/status`，角色菜单可发送 `/role` 重新查看。消息请求不会跟随重定向，非预期 HTTP 状态按结果未确认处理。平台明确拒绝卡片时，仍会发送文本入口。`/status` 展示 Chord 状态并可重新打开问题入口，不会查询平台投递回执。
+
+图片转发需要 Chord 已启用内置生图，或对话模型已配置获准的服务端生图工具。Gateway 无需额外启用生图配置。飞书机器人需要图片上传（`im:resource`）与机器人消息发送（`im:message:send_as_bot`）权限。平台上传失败或发送结果未确认时会分别提示，不自动重发或重新生图。结果未确认时请先检查聊天记录，原图仍可在 Chord 中查看。

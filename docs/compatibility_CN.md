@@ -10,6 +10,7 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 - `status_response.questions` 持久化问题集合、稳定的 `option_ids`，以及 `question_request`、`question_updated`、`question_resolved` 事件。
 - 带 `action` / `operation_id` 的问题命令、关联的 `question_receipt` 回执，以及带 `version`、`binding_id`、`supports_interaction` 的展示确认命令。
 - `idle` 和 `status_response` 中的后台任务数量。
+- 带 SHA-256 校验信息的 `image_result` 已保存图片摘要，以及带字节偏移和末块标记的有序 `image_artifact` 分块；全部生成图片分块输出后才发送整体 `idle` 事件。
 
 旧的单问题协议及不支持输入回执的构建不受支持，网关不会转换这些旧协议。部署时固定已经验证的 Chord 构建，升级时对照 [Chord headless 文档](https://github.com/keakon/chord/blob/main/docs/headless_CN.md)。能够忽略未知订阅项，并不代表协议兼容。
 

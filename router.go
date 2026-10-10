@@ -75,6 +75,7 @@ func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 	}
 	if mgr != nil {
 		mgr.SetOnEvent(r.HandleChordEvent)
+		mgr.SetOnImage(r.HandleChordImage)
 	}
 	return r
 }
@@ -791,16 +792,24 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
-			if r.sendFeishuConfirmCard(chatID, key, state) {
-				delivered = true
-				r.markVisibleOutput(key)
+			if handled, err := r.sendFeishuConfirmCard(chatID, key, state); handled {
+				delivered = err == nil
+				if delivered {
+					r.markVisibleOutput(key)
+				} else {
+					r.reportFeishuCardFailure(chatID, key, err)
+				}
 				return
 			}
 		}
 		if eventType == "question_request" {
-			if r.sendFeishuQuestionCard(chatID, key, state) {
-				delivered = true
-				r.markVisibleOutput(key)
+			if handled, err := r.sendFeishuQuestionCard(chatID, key, state); handled {
+				delivered = err == nil
+				if delivered {
+					r.markVisibleOutput(key)
+				} else {
+					r.reportFeishuCardFailure(chatID, key, err)
+				}
 				return
 			}
 		}

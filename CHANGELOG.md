@@ -10,6 +10,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Forward generated images to the source WeChat or Feishu chat in order. Feishu sends a smaller preview for images at or above its upload limit while Chord keeps the original. Image processing limits transient memory, and failed transfers do not flood the chat with chunk errors. WeChat CDN uploads retry transient failures up to three attempts; Feishu uploads only retry an explicit expired-token rejection once; a failed or unconfirmed image delivery never triggers generation again. Requires Chord headless with image summaries and artifact chunks.
+
 - Questions use ID-based collections and support historical revisions while another question is pending. Ordinary chat keeps questions open; answer acceptance waits for a durable Chord receipt. IM answer entries disable timing before opening, and defaults never appear as user consent.
 
 - Idle notifications and `/status` show running background jobs. Processes reporting active background jobs are excluded from idle-timeout cleanup.
@@ -29,7 +31,13 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - The periodic `performance queue=...` metrics line now also reports the current deepest shard (`max_depth`) and completed queue-capacity waits (`blocked_wait_total`, `blocked_wait_max`, `blocked_slow`), helping diagnose notification backpressure. Ongoing waits and shard producer-lock waits are not included in the duration metrics.
 - Feishu question cards no longer fall back to plain text because an option label is long: when any label exceeds the button budget the card switches to numbered buttons (`1`, `2`, …) while the card body still lists every label in full, and option details no longer decide the card form. Only free-answer questions and questions with more than ten options still use the text form.
 
+- Message sends now require an explicit successful platform receipt; Feishu also requires a message ID. Missing receipts, transport failures and server errors are reported as unconfirmed instead of successful, without automatic resending, and a non-JSON response is no longer treated as delivered. Previously such a send could be reported as delivered.
+
 ### Fixed
+
+- Message requests no longer follow redirects that could replay a send; unexpected HTTP statuses are reported as unconfirmed. A platform rejection (4xx, except 408/429) is reported as a definite failure instead of an unknown outcome, so a rejected Feishu card still uses its text fallback while an unconfirmed card does not repeat its prompt as text.
+
+- Feishu requests now use a tenant access token instead of an app access token; the token is still refreshed automatically from the configured app credentials, including explicit expired-token rejections returned with ordinary 4xx responses.
 
 - Question cards now settle even when a status snapshot cleared pending first. Timeout notices are no longer repeated on later idle events, and Feishu question submissions keep the original card until the outcome arrives.
 - Feishu question buttons use stable option IDs, so repeated or numeric labels select the option clicked. A failed or uncertain submission can be explicitly retried; redelivery is deduplicated by callback event ID. System defaults are shown as system decisions in both cards and text. Failed answer-entry presentation can be retried with `/status`. Answering an ID missing from the local cache automatically synchronizes restored questions; terminal notices identify the question and answered cards retain the selection.

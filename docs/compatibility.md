@@ -11,6 +11,7 @@ Use a Chord build that supports all of the following:
 - Durable question collections in `status_response.questions`, stable `option_ids`, and `question_request`, `question_updated`, and `question_resolved` events.
 - Question commands with `action` / `operation_id`, correlated `question_receipt`, and presentation commands with `version`, `binding_id`, and `supports_interaction`.
 - Background-job counts in `idle` and `status_response`.
+- `image_result` saved-image summaries with SHA-256 integrity metadata, and ordered `image_artifact` chunks with byte offsets and final markers. The aggregate `idle` event follows all generated-image chunks.
 
 Older single-question protocols and builds without input receipts are unsupported; the gateway does not translate them. Pin the Chord build tested with your deployment and follow the [Chord headless documentation](https://github.com/keakon/chord/blob/main/docs/headless.md) when upgrading. A build accepting unknown subscription names does not establish protocol compatibility.
 

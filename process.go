@@ -21,6 +21,7 @@ import (
 
 // ChordProcess manages a single chord headless child process.
 type ChordProcess struct {
+	images imageReceiver
 	mu     sync.RWMutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -109,6 +110,7 @@ func (t *tailBuffer) String() string {
 
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
+	onImage       func(string, *ReceivedImage)
 	mu            sync.RWMutex
 	lifecycleGate sync.RWMutex
 	shuttingDown  atomic.Bool
@@ -190,6 +192,12 @@ func (m *ChordManager) SetOnEvent(fn func(key, eventType string, state ControlSt
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onEvent = fn
+}
+
+func (m *ChordManager) SetOnImage(fn func(string, *ReceivedImage)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onImage = fn
 }
 
 // GetProcessForKey returns the active process for a process key, or nil if none exists.
@@ -581,8 +589,8 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// activity, assistant_message, confirm_request, question_request, question_updated, question_resolved,
 	// handoff_request, handoff_cancelled, idle, error, notification,
 	// done_completion, local_shell_result, agent_done, role_change,
-	// compaction_status, session_switched, and background_result.
-	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
+	// compaction_status, session_switched, background_result, and image_result.
+	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}
 	if cfg == nil {
 		return events
 	}

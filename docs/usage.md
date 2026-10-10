@@ -220,6 +220,7 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - background job results, sent when a background job finishes — usually after the turn already went idle
 - error or blocked state
 - tool failure
+- generated images, forwarded to the source chat as Chord produces them
 - context-pressure warnings, only when `event_visibility.context_notice` is enabled
 - long-running reminders every 5 minutes while a turn is still busy
 

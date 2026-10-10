@@ -207,6 +207,20 @@ Use `/status` first. If the task should stop, send:
 
 If the process remains stuck, restart the gateway and check for orphan Chord processes.
 
+### Generated images do not arrive
+
+Images are forwarded only when Chord produces them: the model must actually generate an image, and the Chord build must support `image_result` summaries and `image_artifact` chunks (see [Compatibility](./compatibility.md)). The gateway subscribes to `image_result` itself, so no gateway setting enables or disables forwarding.
+
+Check:
+
+- Chord configuration enables image generation, or the model has an authorized server-side image tool.
+- A Feishu app needs the `im:resource` scope to upload images; after adding it, publish a new app version.
+- A Feishu image at or above the platform limit is sent as a reduced PNG preview with a short note; the original stays in the Chord session.
+- The chat reports `image delivery failed` or an unconfirmed notice, and the gateway log records the failing artifact reference.
+- A reported failure never regenerates the image and never resends automatically. Open the saved original in the Chord session instead.
+
+WeChat image forwarding has protocol tests, but real-device decryption and display have not yet been verified. When validating a deployment, generate a small image and confirm that it opens in the WeChat client; a successful API receipt alone does not prove that the image renders.
+
 ### Where are logs and state files?
 
 State directory priority:

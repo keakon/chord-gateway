@@ -22,6 +22,7 @@
 - Cross-IM login notification (for example, when one channel expires, use another channel to prompt re-login)
 - Local `chord headless` subprocess lifecycle management and cleanup
 - Configurable visibility for optional control-plane events
+- Generated images are forwarded to the originating chat; images at or above Feishu's upload limit are sent as a reduced preview while Chord keeps the original
 
 ## Install
 

@@ -309,7 +309,7 @@ func TestWechatAdapter_MessageHandling(t *testing.T) {
 }
 
 func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
-	t.Run("sendMessage accepts non-JSON 200 and reports session expiry", func(t *testing.T) {
+	t.Run("sendMessage rejects non-JSON 200 and reports session expiry", func(t *testing.T) {
 		var hit int
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			hit++
@@ -323,8 +323,8 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 
 		a := newTestWechatAdapter(t)
 		a.imCfg.Wechat.BaseURL = ts.URL
-		if err := a.sendMessage(ilinkSendMessageRequest{}); err != nil {
-			t.Fatalf("sendMessage non-JSON error = %v", err)
+		if err := a.sendMessage(ilinkSendMessageRequest{}); err == nil {
+			t.Fatal("sendMessage accepted an unknown non-JSON outcome")
 		}
 		err := a.sendMessage(ilinkSendMessageRequest{})
 		if err == nil || !strings.Contains(err.Error(), "errcode=-14") {

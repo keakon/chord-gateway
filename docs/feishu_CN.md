@@ -53,7 +53,7 @@
 补充说明：
 
 - 群聊场景下请确认机器人已经 **加入目标群聊**，否则群里发消息不会触发事件。
-- gateway 目前只处理 **文本消息**（包括 `text` 和 `post`）；图片/文件等非文本消息会被忽略。
+- gateway 目前只处理 **文本消息**（包括 `text` 和 `post`）；入站的图片/文件等非文本消息会被忽略。生成图片的出站转发见[事件可见性](./event-visibility_CN.md#生成图片)。
 
 ## 第 2 步：启用交互卡片回调（强烈建议）
 
@@ -88,19 +88,22 @@
 
 > 如果私聊和群聊都要用，**两种权限都要开**。只开私聊权限时，群里 @ 机器人会静默收不到任何消息。
 
-最小（仅私聊）配置：
+仅私聊配置（包含生成图片转发）：
 
 ```json
 {
   "scopes": {
     "tenant": [
       "im:message:send_as_bot",
+      "im:resource",
       "im:message.p2p_msg:readonly"
     ],
     "user": []
   }
 }
 ```
+
+`im:resource` 用于上传生成图片；不用图片转发时可以省略。已有应用新增此权限后，需要发布新的应用版本。生图能力在 Chord 中启用，Chord 构建还须支持[兼容策略](./compatibility_CN.md)中的图片传输协议。
 
 如果还要用群聊，往 `tenant` 数组里追加 `im:message.group_at_msg:readonly`
 （或 `im:message.group_msg`）。

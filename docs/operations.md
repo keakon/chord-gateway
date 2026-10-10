@@ -145,5 +145,10 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `compaction_status`
 - `session_switched`
 - `background_result`
+- `image_result`
 
 Optional events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md) for what each event does and which ones are state-only.
+
+If a Feishu card send is unconfirmed, the gateway sends a diagnostic instead of repeating its prompt as text. Check the chat first; use `/status` to reopen a missing question entry, or `/role` to request a role menu. Message requests do not follow redirects; unexpected HTTP statuses are unconfirmed. Explicitly rejected cards still use the text fallback. `/status` shows Chord state and can reopen question entries; it does not query platform delivery receipts.
+
+Generated image delivery requires a Chord configuration with image generation enabled or an authorized native image tool. No separate gateway image-generation setting is required. Feishu bot permissions must include image upload (`im:resource`) and bot message sending (`im:message:send_as_bot`). A failed platform upload or unconfirmed send is reported without automatic resending or image regeneration. If a send is unconfirmed, check the chat before taking further action; the original remains available in Chord.

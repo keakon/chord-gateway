@@ -1,40 +1,59 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/keakon/golog/log"
 )
 
-func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state ControlState) bool {
+func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state ControlState) (bool, error) {
 	if state.PendingConfirm == nil {
-		return false
+		return false, nil
 	}
 	feishu := r.findFeishuAdapter()
 	if feishu == nil {
-		return false
+		return false, nil
 	}
 	workspaceID, _, _ := parseProcessKey(key)
 	card := buildFeishuConfirmCard(chatID, state.PendingConfirm, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
 	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
 	r.recordCardHandle(key, "confirm", state.PendingConfirm.RequestID, handle)
-	return err == nil
+	return true, err
 }
 
-func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state ControlState) bool {
+func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state ControlState) (bool, error) {
 	if state.questionForNotification() == nil || !shouldSendFeishuQuestionCard(state.questionForNotification()) {
-		return false
+		return false, nil
 	}
 	feishu := r.findFeishuAdapter()
 	if feishu == nil {
-		return false
+		return false, nil
 	}
 	workspaceID, _, _ := parseProcessKey(key)
 	card := buildFeishuQuestionCard(chatID, state.questionForNotification(), feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
 	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
 	r.recordCardHandle(key, "question", state.questionForNotification().RequestID, handle)
-	return err == nil
+	return true, err
+}
+
+// Only a diagnostic may follow an uncertain card send. The original prompt
+// must not be repeated as text by this helper or its caller.
+func (r *NotificationRouter) reportFeishuCardFailure(chatID, key string, err error) {
+	log.Warnf("feishu card delivery failed error=%v", err)
+	if errors.Is(err, errDeliveryOutcomeUnknown) {
+		feishu := r.findFeishuAdapter()
+		if feishu != nil {
+			if err := feishu.SendText(chatID, "Message delivery is unconfirmed; check the chat first. If the question entry is missing, send /status to view it; send /role to view the role menu. The prompt is not resent as text automatically."); err != nil {
+				log.Warnf("feishu card delivery notice failed error=%v", err)
+			} else {
+				r.markVisibleOutput(key)
+			}
+		}
+	}
 }
 
 // sendFeishuRoleMenu presents the role list as an interactive Feishu card.
@@ -48,6 +67,9 @@ func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string,
 	reqID := newRoleMenuRequestID()
 	card := buildFeishuRoleCard(chatID, reqID, current, roles)
 	handle, err := feishu.sendCardOrFallback(chatID, card, buildRoleMenuText(current, roles))
+	if err != nil {
+		r.reportFeishuCardFailure(chatID, procKey, err)
+	}
 	if err == nil && handle != nil {
 		r.recordCardHandle(procKey, "role", reqID, handle)
 	}

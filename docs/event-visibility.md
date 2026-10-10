@@ -26,6 +26,7 @@ The gateway always subscribes to these events:
 - `compaction_status`
 - `session_switched`
 - `background_result`
+- `image_result`
 
 These events provide the minimum behavior required for IM control:
 
@@ -45,6 +46,7 @@ These events provide the minimum behavior required for IM control:
 - last context-checkpoint outcome for `/status`
 - in-band session switches, so a pinned binding follows the session the runtime actually runs
 - finished background job results, which have no other delivery channel
+- generated-image forwarding through bounded artifact chunks
 
 `session_switched` is state-only: the command that caused the switch already answers the user, so no extra chat message is sent. It re-points the binding's session pin at the newly active session, so later spawns resume the session the runtime actually runs.
 
@@ -122,3 +124,15 @@ See [operations.md](./operations.md) for log details.
 ## Input receipts
 
 Normal messages and late replies carry correlation IDs. Writing to the process does not mean work started. Gateway follows `input_result` receipts and always-subscribed `activity` to update busy state and reminders. `handled` means a local command was consumed, `queued` means input was queued, `started` means a turn was created, and `rejected` means input was rejected. Receipts other than `started` never clear existing active work. Disconnects report unconfirmed inputs; check the session before resending requests with side effects. Requires Chord headless with input receipts.
+
+## Generated images
+
+The gateway subscribes to `image_result` and receives bounded `image_artifact` chunks. Images go to the source chat in order: WeChat uploads encrypted media; Feishu uploads message images with a tenant access token. All returned images are forwarded. Feishu images at or above 10 MB use a reduced PNG preview preserving transparency; originals remain in the Chord session.
+
+When Chord finishes processing, remaining incomplete transfers are discarded and reported. Session switches and process shutdown also discard partial transfers. Corrupt or incomplete data is never uploaded. Each failed transfer is reported once; its remaining chunks are discarded without repeated notices.
+
+Image processing is serialized across chats to limit transient memory, and queued originals stay on disk. Waiting for image-processing capacity is limited to 40 seconds; a timeout is reported as a delivery failure while the original remains in Chord. Previews preserve transparency and use a faster resize that may soften fine detail; originals are unchanged. Concurrent agents can deliver images independently.
+
+WeChat CDN uploads retry network errors, 5xx responses and missing upload receipts up to three attempts total, using the same upload URL and ciphertext; 4xx and redirects are not retried. Feishu uploads do not retry transient failures; only an explicit expired-token response (HTTP 200 or an ordinary 4xx, excluding 408/429) triggers one refresh and retry. Feishu image processing, token waits, upload and final sending share a two-minute budget that ends when the adapter disconnects. Preview processing checks cancellation between decoding, resizing and encoding; a codec call already running finishes before cancellation is observed.
+
+An exhausted upload, a platform rejection or an unconfirmed send is reported without replaying the send or regenerating the image. Check the chat first when delivery is unconfirmed, or view the saved original in Chord. A confirmed image or delivery notice resets the long-running reminder window. The gateway does not import local paths from Chord or expose original image bytes in `/status`.

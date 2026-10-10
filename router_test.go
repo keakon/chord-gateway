@@ -1260,7 +1260,7 @@ func containsEmoji(s, emoji string) bool {
 
 func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 	got := configuredHeadlessSubscribeEvents(&config.Config{})
-	wantCore := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}
+	wantCore := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}
 	if strings.Join(got, ",") != strings.Join(wantCore, ",") {
 		t.Fatalf("default subscribe events = %v, want %v", got, wantCore)
 	}
@@ -1272,7 +1272,7 @@ func TestConfiguredHeadlessSubscribeEvents(t *testing.T) {
 		Toast:        true,
 		Todos:        true,
 	}})
-	wantAll := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", "agent_started", "agent_notify", "info", "toast", "todos"}
+	wantAll := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, "agent_started", "agent_notify", "info", "toast", "todos"}
 	if strings.Join(got, ",") != strings.Join(wantAll, ",") {
 		t.Fatalf("configured subscribe events = %v, want %v", got, wantAll)
 	}
@@ -1288,7 +1288,7 @@ func TestConfiguredHeadlessSubscribeEventsContextNoticeIsOptIn(t *testing.T) {
 	}
 
 	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{ContextNotice: true}})
-	want := append([]string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result"}, "context_notice")
+	want := append([]string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}, "context_notice")
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("context_notice-only subscribe events = %v, want %v", got, want)
 	}
@@ -2701,8 +2701,8 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 			var patchedPath, patchedBody, sentText string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
-				case r.URL.Path == "/open-apis/auth/v3/app_access_token/internal":
-					_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+				case r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+					_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"token","expire":7200}`))
 				case r.URL.Path == "/open-apis/im/v1/messages/om_role_1" && r.Method == http.MethodPatch:
 					patchedPath = r.URL.Path
 					body, _ := io.ReadAll(r.Body)
@@ -2774,8 +2774,8 @@ func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
 	var patchedPath, patchedBody, sentText string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/open-apis/auth/v3/app_access_token/internal":
-			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+		case r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"token","expire":7200}`))
 		case r.URL.Path == "/open-apis/im/v1/messages/om_role_1" && r.Method == http.MethodPatch:
 			patchedPath = r.URL.Path
 			body, _ := io.ReadAll(r.Body)
@@ -3071,8 +3071,8 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		var patchedPath string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/open-apis/auth/v3/app_access_token/internal":
-				_, _ = w.Write([]byte(`{"code":0,"msg":"ok","app_access_token":"token","expire":7200}`))
+			case "/open-apis/auth/v3/tenant_access_token/internal":
+				_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"token","expire":7200}`))
 			case "/open-apis/im/v1/messages/om_sent_1":
 				patchedPath = r.URL.Path
 				_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
