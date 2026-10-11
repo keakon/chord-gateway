@@ -6,7 +6,7 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
-## 未发布
+## v0.3.3 – 2026-10-12
 
 ### 新功能
 

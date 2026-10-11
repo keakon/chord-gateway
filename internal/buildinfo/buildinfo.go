@@ -69,7 +69,7 @@ type BinaryMetadata struct {
 
 const (
 	unknown           = "unknown"
-	DefaultDevVersion = "v0.3.2-dev"
+	DefaultDevVersion = "v0.3.3-dev"
 )
 
 // current is the cached result of [computeCurrent]. The build identity does

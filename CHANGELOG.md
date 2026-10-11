@@ -6,7 +6,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
-## Unreleased
+## v0.3.3 – 2026-10-12
 
 ### Added
 
