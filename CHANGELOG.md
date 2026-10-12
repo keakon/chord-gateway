@@ -14,7 +14,13 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- Completion notifications now append a compact summary of the turn that just ended (duration, tool calls, retries), including the `⏳ Chord: Ready for input; background jobs still running: N` variant. Long-running reminders now report the elapsed turn time, a coarse stage such as `running tools` or `retrying`, and the tool and retry counts observed since the work cycle started. Confirmations, handoffs, and cancellation requests preserve the accumulated progress within the same session. Local shell work is tracked separately and does not reset agent progress; completion notifications show any shell commands still running. Transport-level phases such as `connecting` stay hidden.
+
 - Unsupported YAML config keys are now reported in the gateway log with their line and ignored instead of doing nothing silently: typos and removed options such as `event_visibility.activity` are visible at startup while the rest of the file still loads.
+
+### Fixed
+
+- Requesting cancellation while idle no longer marks the process busy or starts repeated working reminders. Pending local shell commands remain busy across agent idle events and status snapshots, and are excluded from idle-timeout cleanup.
 
 ## v0.3.3 – 2026-10-12
 

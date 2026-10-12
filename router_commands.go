@@ -76,7 +76,7 @@ func (r *NotificationRouter) handleCancelCommand(ws *config.Workspace, chatID, p
 		r.sendText(chatID, "❌ Failed to cancel.")
 		return
 	}
-	r.beginTurn(procKey)
+	r.scheduleCommandReminder(procKey)
 	r.sendText(chatID, "🛑 Cancel requested.")
 }
 
@@ -122,7 +122,7 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		r.sendText(chatID, "❌ Failed to send confirmation.")
 		return
 	}
-	r.beginTurn(procKey)
+	r.scheduleCommandReminder(procKey)
 	sender := displaySender(msg)
 	if cmd.Action == "deny" {
 		text := "✅ denied"
@@ -231,7 +231,7 @@ func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID s
 		r.sendText(chatID, "❌ Failed to send handoff response.")
 		return
 	}
-	r.beginTurn(procKey)
+	r.scheduleCommandReminder(procKey)
 	if cmd.Action == "deny" {
 		if strings.TrimSpace(cmd.Reason) != "" {
 			r.sendText(chatID, "✅ handoff denied: "+strings.TrimSpace(cmd.Reason))
@@ -299,7 +299,7 @@ func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatI
 		r.sendText(chatID, "❌ Failed to run local shell command.")
 		return
 	}
-	r.beginTurn(procKey)
+	r.scheduleCommandReminder(procKey)
 }
 
 func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatID, procKey, content string) bool {

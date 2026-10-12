@@ -70,7 +70,10 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 // handleExit cleans up when the chord process exits.
 func (p *ChordProcess) handleExit() {
 	p.mu.Lock()
-	p.state.Busy = false
+	p.state.PendingLocalShells = 0
+	p.state.LocalShellStartedAt = time.Time{}
+	p.state.setAgentBusy(false)
+	p.state.resetTurnWindow()
 	// Disconnection leaves Core outcomes unknown. Retain questions for explicit
 	// retry after resynchronization rather than inventing answer outcomes.
 	p.abandonPendingInputs()
@@ -156,10 +159,11 @@ func (p *ChordProcess) waitAutoRestart(delay time.Duration) bool {
 }
 
 func (p *ChordProcess) transitionToIdle(updatedAt string, expirePending bool) {
-	p.state.Busy = false
+	p.state.setAgentBusy(false)
 	p.state.Phase = ""
 	p.state.PhaseDetail = ""
 	if expirePending {
+		p.state.resetTurnWindow()
 		p.state.ExpiredConfirm = p.state.PendingConfirm
 		p.state.ExpiredHandoff = p.state.PendingHandoff
 	} else {
@@ -223,7 +227,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	candidates := make([]*ChordProcess, 0)
 	for _, p := range procs {
 		p.mu.RLock()
-		if p.state.RunningJobs == 0 && time.Since(p.lastActivity) > timeout {
+		if p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
 			candidates = append(candidates, p)
 		}
 		p.mu.RUnlock()
@@ -234,7 +238,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	for _, p := range candidates {
 		p.mu.Lock()
 		m.mu.Lock()
-		if m.procs[p.key] == p && p.state.RunningJobs == 0 && time.Since(p.lastActivity) > timeout {
+		if m.procs[p.key] == p && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
 			delete(m.procs, p.key)
 			idle = append(idle, p)
 		}

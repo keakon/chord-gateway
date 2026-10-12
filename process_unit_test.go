@@ -124,6 +124,46 @@ func TestProcessEnvelopeUsesConsistentEventTimestamp(t *testing.T) {
 	}
 }
 
+func TestProcessEnvelopeTurnSummaryLifecycle(t *testing.T) {
+	p := &ChordProcess{key: "ws|wechat|chat"}
+
+	// An activity after idle opens a new turn window.
+	p.processEnvelope(&HeadlessEnvelope{Type: "activity", Payload: json.RawMessage(`{"agent_id":"agent-1","type":"streaming"}`)})
+	if p.state.TurnStartedAt.IsZero() {
+		t.Fatal("activity after idle must open a turn window")
+	}
+
+	// Tool calls accumulate across every agent's rounds; each retry activity,
+	// including a switch to the next API key, counts one retry decision.
+	p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: json.RawMessage(`{"text":"first","agent_id":"agent-1","tool_calls":3}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "activity", Payload: json.RawMessage(`{"agent_id":"agent-1","type":"retrying","detail":"round 2"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "activity", Payload: json.RawMessage(`{"agent_id":"agent-1","type":"retrying_key","detail":"2/3"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: json.RawMessage(`{"text":"","agent_id":"agent-2","tool_calls":2}`)})
+	if state := p.State(); state.TurnToolCalls != 5 || state.TurnRetries != 2 {
+		t.Fatalf("live turn counters = tools %d retries %d, want 5/2", state.TurnToolCalls, state.TurnRetries)
+	}
+
+	// The idle transition snapshots the summary and clears the live window.
+	p.state.TurnStartedAt = time.Now().Add(-95 * time.Second)
+	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: json.RawMessage(`{"last_outcome":"completed"}`)})
+	state := p.State()
+	if state.LastTurnToolCalls != 5 || state.LastTurnRetries != 2 {
+		t.Fatalf("snapshot counters = tools %d retries %d, want 5/2", state.LastTurnToolCalls, state.LastTurnRetries)
+	}
+	if state.LastTurnDuration < 90*time.Second || state.LastTurnDuration > 2*time.Minute {
+		t.Fatalf("LastTurnDuration = %v, want about 95s", state.LastTurnDuration)
+	}
+	if !state.TurnStartedAt.IsZero() || state.TurnToolCalls != 0 || state.TurnRetries != 0 {
+		t.Fatalf("idle must clear the live window: %#v", state)
+	}
+
+	// An idle that produced no work must not resurface the previous summary.
+	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Seq: 1, Payload: json.RawMessage(`{"last_outcome":"completed","suppress_user_notification":true}`)})
+	if state := p.State(); state.LastTurnDuration != 0 || state.LastTurnToolCalls != 0 || state.LastTurnRetries != 0 {
+		t.Fatalf("work-free idle resurfaced the previous summary: %#v", state)
+	}
+}
+
 func TestProcessEnvelopeOnlyGlobalIdleStopsGatewayNotifications(t *testing.T) {
 	events := make([]string, 0, 2)
 	p := &ChordProcess{
@@ -944,7 +984,7 @@ func TestChordProcessSendCommandClosedPipe(t *testing.T) {
 	}
 }
 
-func TestChordProcessLocalShellResultEndsTurn(t *testing.T) {
+func TestChordProcessLocalShellResultPreservesAgentState(t *testing.T) {
 	payload, err := json.Marshal(LocalShellPayload{Command: "pwd", Output: "/tmp", Failed: false})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -962,8 +1002,8 @@ func TestChordProcessLocalShellResultEndsTurn(t *testing.T) {
 	p.processEnvelope(&HeadlessEnvelope{Type: "local_shell_result", Payload: payload})
 	state := p.State()
 
-	if state.Busy {
-		t.Fatal("local_shell_result should mark process idle")
+	if !state.Busy {
+		t.Fatal("unsolicited local_shell_result cleared agent busy state")
 	}
 	if state.LastLocalShell == nil || state.LastLocalShell.Command != "pwd" || state.LastLocalShell.Output != "/tmp" {
 		t.Fatalf("LastLocalShell = %#v", state.LastLocalShell)

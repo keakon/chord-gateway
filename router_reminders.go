@@ -36,12 +36,13 @@ func (r *NotificationRouter) scheduleReminder(key string, lastPush time.Time) {
 	r.mu.Unlock()
 }
 
-func (r *NotificationRouter) beginTurn(key string) {
-	now := time.Now()
+func (r *NotificationRouter) scheduleCommandReminder(key string) {
 	if proc, ok := r.lookupProcessByKey(key); ok {
-		proc.BeginTurn(now)
+		state := proc.State()
+		if state.Busy {
+			r.scheduleReminder(key, state.LastPushAt)
+		}
 	}
-	r.scheduleReminder(key, now)
 }
 
 func (r *NotificationRouter) markVisibleOutput(key string) {
@@ -82,7 +83,7 @@ func (r *NotificationRouter) fireReminder(key string) {
 		r.stopReminder(key)
 		return
 	}
-	msg := r.formatLongRunningNotification(state)
+	msg := r.formatLongRunningNotification(state, time.Now())
 	if msg != "" {
 		task := func() {
 			r.sendText(chatID, msg)

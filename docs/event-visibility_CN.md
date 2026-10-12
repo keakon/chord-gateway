@@ -87,13 +87,17 @@ Gateway 在保留 `background_result` 和 `context_notice` 正文的同时，也
 
 ## 长时间提醒
 
-当一个 turn 仍处于 busy 状态时，gateway 会每 5 分钟发送一次简短提醒。只要有新的用户可见输出，下一次 5 分钟提醒窗口就会重新计时。提醒不会包含 `connecting` 这类低层 phase。如果期间观察到已跟踪的内部进展，会显示自上次用户可见输出或提醒以来的内部事件数：
+当一个 turn 仍处于 busy 状态时，gateway 会每 5 分钟发送一次提醒。只要有新的用户可见输出，下一次 5 分钟提醒窗口就会重新计时。提醒会显示当前 turn 已运行多久、开始以来观察到的工具调用数与模型重试数，以及自上次用户可见输出或提醒以来的已跟踪内部事件数；当前活动有意义时还会给出粗粒度阶段（`preparing`、`receiving reply`、`running tools`、`checkpointing context`、`retrying`、`cooling down`），`connecting` 这类传输层 phase 仍然不会暴露：
 
 ```text
-⏳ Still working (4 internal events)
+⏳ Still working (12m03s · running tools · 7 tools · 1 retry · 4 internal events)
 ```
 
-内部事件数目前基于 gateway 已跟踪的进展事件，例如 `todos`。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重，即使列表未变化或为空也会推送。
+重试数统计 Chord 在该 turn 内宣告的每次重试决策（包括回退切换），是压力信号而非精确的失败次数。摘要统计从观察到工作开始到全局 idle 的整个工作周期；同一会话内的确认、交接和取消操作不会重置开始时间或累计次数。空闲时请求取消不会启动工作计时或提醒。排队消息从 Chord 报告开始工作时计时，不包含工作周期之间的空闲时间。
+
+本地 shell 命令单独跟踪：结果返回不会重置正在运行的 agent 进度；所有已请求的 shell 命令返回前，gateway 会保持 busy。只剩 shell 工作时，提醒显示 shell 的已运行时长和 `running local shell` 阶段。
+
+内部事件数目前基于 gateway 已跟踪的进展事件，例如 `todos`，并在每次用户可见输出或提醒后重置。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重，即使列表未变化或为空也会推送。
 
 ## 完成通知
 
@@ -103,7 +107,9 @@ SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent 
 
 `notification` 是用户提醒的标准事件，覆盖 blocked 错误、完全停止后的完成通知，以及本身没有提示的提醒（loop 退出决策、notify 协议纠正，Chord 统一用 `user_input_required` 作为 reason）。只有确认或 handoff 的提示已成功投递后，对应请求的已识别伴随 `user_input_required` 提醒才会被去重。即使缓存仍保留旧请求，无关告警也会照常送达。持久化问题没有伴随的重复提醒，因此未回答的问题不会屏蔽此类通知。
 
-`idle` 和 `status_response` 的 `running_jobs` 表示仍在运行、结束时会通知当前会话的后台任务数。数量不为零时，空闲提醒和 `/status` 都会展示，gateway 也不会因空闲超时回收该进程。完成通知会唤醒 agent，随后一轮工作的 `idle` 会更新计数。服务或监听任务可能长期运行。停止时不发完成通知的任务从发起停止起就不再计入：工具触发的停止会在当前工作下一次 `idle` 时体现，`session_switched` 则会清除 gateway 缓存的上一会话计数。
+`idle` 和 `status_response` 的 `running_jobs` 表示仍在运行、结束时会通知当前会话的后台任务数。数量不为零时，空闲提醒和 `/status` 都会展示，gateway 也不会因空闲超时回收该进程。完成通知会唤醒 agent，随后一轮工作的 `idle` 会更新计数。服务或监听任务可能长期运行。停止时不发完成通知的任务从发起停止起就不再计入：工具触发的停止会在当前工作下一次 `idle` 时体现，`session_switched` 则会清除 gateway 缓存的上一会话计数。若 gateway 在该 `idle` 前跟踪过一个 turn，`✅ Chord: Ready for input`（或后台任务变体）会附带该 turn 的紧凑摘要：时长、主 agent 与 SubAgent 报告的工具调用数、以及观察到的重试次数；没有可量化工作的 turn 保持原有简短确认。
+
+若 agent 空闲时还有本地 shell 命令未返回，完成通知也会显示 `local shell commands still running: N`，并继续 shell 提醒。
 
 `idle` 表示 agent 空闲：主 agent 与所有 SubAgent 都已停止活跃工作。单个 agent 的 idle 状态变化不会作为协议 `idle` 事件暴露，因此只要仍有任何 agent 在工作，gateway 就会保持 busy，不会停止长时间提醒，也不会发送 idle 通知。
 

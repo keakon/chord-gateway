@@ -1852,7 +1852,7 @@ func TestFormatNotification_AssistantInfoToastAndLongRunning(t *testing.T) {
 	if msg := r.formatNotification("toast", ControlState{ToastMessage: "just info", ToastLevel: "info"}); msg != "" {
 		t.Fatalf("info toast = %q, want empty", msg)
 	}
-	if msg := r.formatLongRunningNotification(ControlState{Phase: "thinking", PhaseDetail: "analyzing", InternalEventsSinceLastPush: 2}); !strings.Contains(msg, "Still working") || !strings.Contains(msg, "2 internal events") || strings.Contains(msg, "thinking") {
+	if msg := r.formatLongRunningNotification(ControlState{Phase: "thinking", PhaseDetail: "analyzing", InternalEventsSinceLastPush: 2}, time.Now()); !strings.Contains(msg, "Still working") || !strings.Contains(msg, "2 internal events") || strings.Contains(msg, "thinking") {
 		t.Fatalf("long_running = %q", msg)
 	}
 }

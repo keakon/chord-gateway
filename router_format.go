@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/keakon/chord-gateway/config"
 )
@@ -264,10 +265,21 @@ func (r *NotificationRouter) formatIdleNotification(state ControlState) string {
 	if state.SuppressUserNotification {
 		return ""
 	}
-	if state.RunningJobs > 0 {
-		return fmt.Sprintf("⏳ Chord: Ready for input; background jobs still running: %d", state.RunningJobs)
+	summary := formatTurnSummary(state.LastTurnDuration, state.LastTurnToolCalls, state.LastTurnRetries)
+	msg := "✅ Chord: Ready for input"
+	if state.RunningJobs > 0 || state.PendingLocalShells > 0 {
+		msg = "⏳ Chord: Ready for input"
 	}
-	return "✅ Chord: Ready for input"
+	if state.RunningJobs > 0 {
+		msg += fmt.Sprintf("; background jobs still running: %d", state.RunningJobs)
+	}
+	if state.PendingLocalShells > 0 {
+		msg += fmt.Sprintf("; local shell commands still running: %d", state.PendingLocalShells)
+	}
+	if summary != "" {
+		msg += " (" + summary + ")"
+	}
+	return msg
 }
 
 // formatHeadlessNotification renders the notification event. chord reports
@@ -638,13 +650,103 @@ func (r *NotificationRouter) formatTodosNotification(state ControlState) string 
 	return formatTodoList(state.Todos)
 }
 
-func (r *NotificationRouter) formatLongRunningNotification(state ControlState) string {
-	if state.PendingConfirm != nil || state.Phase == "waiting_input" && state.pendingQuestionCount() > 0 {
+// formatTurnSummary renders the compact progress summary for a completed turn.
+// Empty parts are omitted, so a turn that did no measurable work keeps the
+// plain completion message.
+func formatTurnSummary(duration time.Duration, toolCalls, retries int) string {
+	var parts []string
+	if duration >= time.Second {
+		parts = append(parts, formatTurnDuration(duration))
+	}
+	if toolCalls > 0 {
+		parts = append(parts, formatCount(toolCalls, "tool", "tools"))
+	}
+	if retries > 0 {
+		parts = append(parts, formatCount(retries, "retry", "retries"))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// formatTurnDuration renders a duration for a chat line: seconds under a
+// minute, minutes and seconds under an hour, hours and minutes above.
+func formatTurnDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		if s := int(d.Seconds()) % 60; s > 0 {
+			return fmt.Sprintf("%dm%02ds", int(d.Minutes()), s)
+		}
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
+func formatCount(n int, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return fmt.Sprintf("%d %s", n, plural)
+}
+
+// formatTurnStage maps a chord activity type to a coarse, user-facing stage for
+// long-running reminders. Transport-level phases (connecting, waiting for
+// headers or tokens) stay hidden: they are brief, internal, and the earlier
+// product decision keeps them out of IM updates.
+func formatTurnStage(phase string) string {
+	if isRetryPhase(phase) {
+		return "retrying"
+	}
+	switch phase {
+	case "preparing":
+		return "preparing"
+	case "streaming":
+		return "receiving reply"
+	case "executing":
+		return "running tools"
+	case "compacting":
+		return "checkpointing context"
+	case "cooling":
+		return "cooling down"
+	default:
 		return ""
 	}
-	msg := "⏳ Still working"
+}
+
+func (r *NotificationRouter) formatLongRunningNotification(state ControlState, now time.Time) string {
+	waitingForInput := state.PendingConfirm != nil || state.Phase == "waiting_input" && state.pendingQuestionCount() > 0
+	if state.PendingLocalShells == 0 && waitingForInput {
+		return ""
+	}
+	var parts []string
+	started := state.TurnStartedAt
+	stage := formatTurnStage(state.Phase)
+	showShell := state.PendingLocalShells > 0 && (started.IsZero() || waitingForInput)
+	if showShell {
+		started = state.LocalShellStartedAt
+		stage = "running local shell"
+	}
+	if !started.IsZero() {
+		if elapsed := now.Sub(started); elapsed >= time.Second {
+			parts = append(parts, formatTurnDuration(elapsed))
+		}
+	}
+	if stage != "" {
+		parts = append(parts, stage)
+	}
+	if !showShell && state.TurnToolCalls > 0 {
+		parts = append(parts, formatCount(state.TurnToolCalls, "tool", "tools"))
+	}
+	if !showShell && state.TurnRetries > 0 {
+		parts = append(parts, formatCount(state.TurnRetries, "retry", "retries"))
+	}
 	if state.InternalEventsSinceLastPush > 0 {
-		msg += fmt.Sprintf(" (%d internal events)", state.InternalEventsSinceLastPush)
+		parts = append(parts, fmt.Sprintf("%d internal events", state.InternalEventsSinceLastPush))
+	}
+	msg := "⏳ Still working"
+	if len(parts) > 0 {
+		msg += " (" + strings.Join(parts, " · ") + ")"
 	}
 	return truncate(msg)
 }

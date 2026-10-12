@@ -74,9 +74,10 @@ func (p *ChordProcess) applyInputResult(env *HeadlessEnvelope, now time.Time) bo
 	}
 	p.state.LastInputResult = &result
 	if result.Status == inputStarted {
-		p.state.Busy = true
+		p.state.setAgentBusy(true)
 		p.state.LastPushAt = now
 		p.state.InternalEventsSinceLastPush = 0
+		p.state.ensureTurnWindow(now)
 	}
 	return true
 }

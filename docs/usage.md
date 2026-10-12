@@ -157,7 +157,7 @@ Gateway: ✅ Local shell: pwd
 /path/to/workspace
 ```
 
-The gateway only forwards the command and displays Chord's result. Execution semantics and availability belong to Chord headless. Treat this as local command execution in the bound workspace environment: use it only in trusted IM chats and avoid sending secrets in command text or output.
+The gateway forwards the command and displays Chord's result. Shell commands have their own timer; agent turn summaries report only observed agent work. A shell request keeps the process busy until its result arrives; long-running shell commands receive reminders and are excluded from idle-timeout cleanup. Execution semantics and availability belong to Chord headless. Treat this as local command execution in the bound workspace environment: use it only in trusted IM chats and avoid sending secrets in command text or output.
 
 ## Session examples
 
@@ -226,11 +226,13 @@ The gateway pushes important control-plane notifications to active IM channels, 
 
 After a confirmation or handoff prompt is delivered successfully, its recognized companion `notification` alert is dropped. Other alerts remain visible even while an earlier confirmation or handoff remains in the gateway cache. Failed prompt delivery leaves the companion alert available. Durable questions have no companion alert and do not suppress notifications. Alerts that have no prompt of their own, such as a loop-exit decision, still arrive.
 
-Long-running reminders intentionally do not expose low-level phases such as `connecting`. Any user-visible output resets the next 5-minute reminder window. When internal progress events were observed in the current reminder window, the reminder includes a compact count, for example:
+Long-running reminders intentionally do not expose low-level phases such as `connecting`; they do report the elapsed turn time, a coarse stage, and the tool and retry counts observed since the turn started. Any user-visible output resets the next 5-minute reminder window. For example:
 ```text
-⏳ Still working (4 internal events)
+⏳ Still working (12m03s · running tools · 7 tools · 1 retry · 4 internal events)
 ```
 
-The internal-event count currently comes from gateway-tracked progress events such as `todos`; it is reset after each user-visible output or reminder. If `event_visibility.todos` is enabled, every `todos` event is sent as the full current todo list without deduplication.
+A retry counts every retry decision Chord announced during the turn, including fallback switches, so it is a pressure signal rather than an exact failure count. The internal-event count currently comes from gateway-tracked progress events such as `todos`; it is reset after each user-visible output or reminder. If `event_visibility.todos` is enabled, every `todos` event is sent as the full current todo list without deduplication.
+
+Completion notifications also carry a compact summary of the turn that just ended: its duration, the tool calls reported across the main agent and SubAgents, and the retry decisions observed, for example `✅ Chord: Ready for input (1m42s · 12 tools)`. The same summary is appended to the `⏳ Chord: Ready for input; background jobs still running: N` variant. Within the same session, confirmations, handoffs, and cancellation requests preserve the progress accumulated during the active work cycle. An idle cancellation request does not start a work cycle or reminders. Local shell results do not reset agent progress; if shell commands are still pending when agents become idle, the completion notification reports their count and shell reminders continue.
 
 Optional lower-level events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).

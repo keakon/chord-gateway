@@ -87,13 +87,17 @@ A session switch rebuilds the question collection. Historical replies belong to 
 
 ## Long-running reminders
 
-While a turn remains busy, the gateway sends a compact reminder every 5 minutes. Any user-visible output resets the next 5-minute reminder window. The reminder does not include low-level phases such as `connecting`. If tracked internal progress occurred, it includes the number of internal events observed since the previous visible output or reminder:
+While a turn remains busy, the gateway sends a reminder every 5 minutes. Any user-visible output resets the next 5-minute reminder window. The reminder reports how long the current turn has been running, the tool calls and model retries observed since it started, and the tracked internal events since the previous visible output or reminder. It also names a coarse stage when the current activity is meaningful (`preparing`, `receiving reply`, `running tools`, `checkpointing context`, `retrying`, or `cooling down`); transport-level phases such as `connecting` stay hidden:
 
 ```text
-⏳ Still working (4 internal events)
+⏳ Still working (12m03s · running tools · 7 tools · 1 retry · 4 internal events)
 ```
 
-Internal-event counts are currently based on gateway-tracked progress events such as `todos`. When `event_visibility.todos` is enabled, each `todos` event is pushed as the full current todo list without deduplication, even if it is unchanged or empty.
+A retry counts every retry decision Chord announced during the turn, including fallback switches, so it is a pressure signal rather than an exact failure count. The summary covers the work observed since it started until global idle. Within the same session, confirmations, handoffs, and cancellation requests preserve that start time and the accumulated counts. An idle cancellation request does not start work or reminders. Queued messages start counting when Chord reports active work; time spent idle between work cycles is excluded.
+
+Local shell commands are tracked separately: their results do not reset an active agent turn, and they remain busy until all requested shell commands have returned. When only shell work remains, reminders show its elapsed time and the `running local shell` stage.
+
+Internal-event counts are currently based on gateway-tracked progress events such as `todos` and reset after each user-visible output or reminder. When `event_visibility.todos` is enabled, each `todos` event is pushed as the full current todo list without deduplication, even if it is unchanged or empty.
 
 ## Completion notifications
 
@@ -103,7 +107,9 @@ SubAgent `assistant_message` events are labeled with their agent type (falling b
 
 `notification` is the canonical event for user alerts, including blocked errors, fully stopped completion, and the requests that have no prompt of their own (loop-exit decisions and notify-protocol corrections, all reported with Chord's `user_input_required` reason). Only a recognized companion `user_input_required` alert for a matching confirmation or handoff is dropped after its prompt has been delivered successfully. Other alerts remain visible even if the pending cache still contains an earlier request. Durable questions have no companion alert, so open questions never suppress these notifications.
 
-`idle` and `status_response` carry `running_jobs`, the number of active background jobs whose completion will notify the current session. Idle notifications and `/status` show a nonzero count; the gateway keeps such processes out of idle-timeout cleanup. Completion wakes an agent, and its next `idle` updates the count. Services and watchers may run indefinitely. A job stopped without a completion notification leaves the count when the stop is requested: tool-driven stops are reflected in the active work's next `idle`, while `session_switched` clears the gateway's count for the previous session.
+`idle` and `status_response` carry `running_jobs`, the number of active background jobs whose completion will notify the current session. Idle notifications and `/status` show a nonzero count; the gateway keeps such processes out of idle-timeout cleanup. Completion wakes an agent, and its next `idle` updates the count. Services and watchers may run indefinitely. A job stopped without a completion notification leaves the count when the stop is requested: tool-driven stops are reflected in the active work's next `idle`, while `session_switched` clears the gateway's count for the previous session. When the gateway tracked a turn before this `idle`, `✅ Chord: Ready for input` (or the background-jobs variant) appends a compact summary of it: duration, tool calls reported across the main agent and SubAgents, and retry decisions. A turn with nothing measurable keeps the plain confirmation.
+
+If local shell commands are still pending when agents become idle, the completion notification also reports `local shell commands still running: N`; shell reminders continue.
 
 `idle` represents agent idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
 

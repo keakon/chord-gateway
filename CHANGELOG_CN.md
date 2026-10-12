@@ -14,7 +14,13 @@
 
 ### 变更
 
+- 完成通知现在附带刚结束 turn 的紧凑摘要（时长、工具调用数、重试次数），`⏳ Chord: Ready for input; background jobs still running: N` 变体同样适用。长时间提醒现在显示已运行的 turn 时长、`running tools` / `retrying` 等粗粒度阶段，以及当前工作周期内观察到的工具与重试次数。同一会话内的确认、交接和取消操作不会清零累计进度。本地 shell 工作单独跟踪，不会重置 agent 进度；完成通知会显示仍在运行的 shell 命令数量。`connecting` 这类传输层 phase 仍然不会暴露。
+
 - 配置中不支持或已移除的 YAML 字段现在会在 gateway 日志中带行号报告并被忽略，不再静默失效：拼写错误或 `event_visibility.activity` 这类已移除选项在启动时即可发现，文件其余部分仍正常加载。
+
+### 修复
+
+- 空闲时请求取消不再把进程标记为 busy 或反复发送工作提醒。尚未返回的本地 shell 命令会在 agent 空闲事件和状态快照到达后继续保持 busy，也不会因空闲超时而被回收。
 
 ## v0.3.3 – 2026-10-12
 

@@ -81,6 +81,23 @@ type ControlState struct {
 	// the gateway only ever sees started and terminal outcomes, and never
 	// turns them into chat messages.
 	LastCompaction *CompactionStatusPayload `json:"-"`
+
+	// Turn progress summary. The live counters accumulate while a turn runs;
+	// the idle transition snapshots them into the Last* fields the completion
+	// notification reports, so a later idle that produced no work cannot
+	// resurface the previous turn's numbers.
+	TurnStartedAt     time.Time     `json:"-"`
+	TurnToolCalls     int           `json:"-"`
+	TurnRetries       int           `json:"-"`
+	LastTurnDuration  time.Duration `json:"-"`
+	LastTurnToolCalls int           `json:"-"`
+	LastTurnRetries   int           `json:"-"`
+
+	// Shell commands run independently of agent turns. Busy includes both
+	// sources; agentBusy retains the Core state while shell results are pending.
+	agentBusy           bool      `json:"-"`
+	PendingLocalShells  int       `json:"-"`
+	LocalShellStartedAt time.Time `json:"-"`
 }
 
 // CompactionStatusPayload is the compaction_status envelope payload.
@@ -452,7 +469,7 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 		s.LastQuestionResolved = nil
 	}
 	s.SessionID = resp.SessionID
-	s.Busy = resp.Busy
+	s.setAgentBusy(resp.Busy)
 	s.RunningJobs = resp.RunningJobs
 	s.Phase = resp.Phase
 	s.PhaseDetail = resp.PhaseDetail
@@ -493,6 +510,69 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 	s.LastError = resp.LastError
 	s.UpdatedAt = resp.UpdatedAt
 	s.LastOutcome = resp.LastOutcome
+}
+
+// ensureTurnWindow starts a window on the first indication of agent work. Controls
+// that continue or cancel active work keep its start time and counters until
+// the terminal event, independently of status snapshots changing Busy.
+func (s *ControlState) ensureTurnWindow(now time.Time) {
+	if s.TurnStartedAt.IsZero() {
+		s.TurnStartedAt = now
+		s.TurnToolCalls = 0
+		s.TurnRetries = 0
+	}
+}
+
+func (s *ControlState) setAgentBusy(busy bool) {
+	s.agentBusy = busy
+	s.Busy = busy || s.PendingLocalShells > 0
+}
+
+func (s *ControlState) beginLocalShell(now time.Time) {
+	if s.PendingLocalShells == 0 {
+		s.agentBusy = s.Busy
+		s.LocalShellStartedAt = now
+	}
+	s.PendingLocalShells++
+	s.Busy = true
+}
+
+func (s *ControlState) finishLocalShell() {
+	if s.PendingLocalShells == 0 {
+		return
+	}
+	s.PendingLocalShells--
+	if s.PendingLocalShells == 0 {
+		s.LocalShellStartedAt = time.Time{}
+	}
+	s.Busy = s.agentBusy || s.PendingLocalShells > 0
+}
+
+// resetTurnWindow drops progress belonging to an abandoned session or process.
+func (s *ControlState) resetTurnWindow() {
+	s.TurnStartedAt = time.Time{}
+	s.TurnToolCalls = 0
+	s.TurnRetries = 0
+	s.LastTurnDuration = 0
+	s.LastTurnToolCalls = 0
+	s.LastTurnRetries = 0
+}
+
+// finishTurnWindow snapshots the counters for the completion notification and
+// clears them. A window that was never opened leaves the summary empty instead
+// of re-reporting an earlier turn.
+func (s *ControlState) finishTurnWindow(now time.Time) {
+	s.LastTurnDuration = 0
+	if !s.TurnStartedAt.IsZero() {
+		if elapsed := now.Sub(s.TurnStartedAt); elapsed > 0 {
+			s.LastTurnDuration = elapsed
+		}
+	}
+	s.LastTurnToolCalls = s.TurnToolCalls
+	s.LastTurnRetries = s.TurnRetries
+	s.TurnStartedAt = time.Time{}
+	s.TurnToolCalls = 0
+	s.TurnRetries = 0
 }
 
 type QuestionRevision struct {

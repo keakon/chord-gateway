@@ -662,7 +662,26 @@ func (p *ChordProcess) SendCommand(cmd map[string]any) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.writeCommandLocked(data)
+	if err := p.writeCommandLocked(data); err != nil {
+		return err
+	}
+	// Update command state before releasing the lock: stdout may already
+	// contain its terminal event. Only observed agent work opens a turn window;
+	// cancellation preserves the current busy state, including accepted inputs
+	// that Core has not yet started. Shell work is tracked independently.
+	switch cmd["type"] {
+	case "confirm", "handoff", "cancel", "local_shell":
+		now := time.Now()
+		switch cmd["type"] {
+		case "confirm", "handoff":
+			p.state.setAgentBusy(true)
+		case "local_shell":
+			p.state.beginLocalShell(now)
+		}
+		p.state.LastPushAt = now
+		p.state.InternalEventsSinceLastPush = 0
+	}
+	return nil
 }
 
 // writeCommandLocked writes one complete JSONL command under p.mu, shared by
@@ -680,17 +699,6 @@ func (p *ChordProcess) writeCommandLocked(data []byte) error {
 		return fmt.Errorf("write headless command: %w", err)
 	}
 	return nil
-}
-
-// BeginTurn marks the start of a new "user-initiated turn" against the chord
-// process: sets Busy=true, resets the reminder counters, and stamps LastPushAt.
-// Used by the router whenever it dispatches a user command to chord.
-func (p *ChordProcess) BeginTurn(now time.Time) {
-	p.mu.Lock()
-	p.state.Busy = true
-	p.state.LastPushAt = now
-	p.state.InternalEventsSinceLastPush = 0
-	p.mu.Unlock()
 }
 
 // MarkVisibleOutput records that the user just received an IM-visible message

@@ -20,7 +20,7 @@ A Chord process that crashes (exits while the gateway did not stop it) is respaw
 
 ## Idle timeout
 
-`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request. Processes reporting active background jobs are retained until those jobs no longer count as running; `/status` shows the count.
+`idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request. Processes reporting active background jobs are retained until those jobs no longer count as running; `/status` shows the count. Processes with pending local shell commands are also retained until their results arrive.
 
 Idle cleanup stops Core and suspends question timing without inventing outcomes. Reconnect and restore the session to answer by its original ID; check `/status` and rely on Chord receipts. Confirmation and handoff requests follow their own cancellation rules.
 

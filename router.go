@@ -729,7 +729,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		willSend,
 	)
 	if msg == "" {
-		if eventType == "idle" || eventType == "idle_timeout" || eventType == "exit" {
+		if !state.Busy && (eventType == "idle" || eventType == "idle_timeout" || eventType == "exit") {
 			r.stopReminder(key)
 		}
 		return

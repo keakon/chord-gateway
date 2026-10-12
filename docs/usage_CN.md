@@ -148,7 +148,7 @@ Gateway: ✅ Local shell: pwd
 /path/to/workspace
 ```
 
-gateway 只负责转发命令并展示 Chord 返回的结果；执行语义和可用性属于 Chord headless。请把它视为绑定工作区中的本地命令执行能力：只在可信 IM 聊天中使用，避免在命令文本或输出中暴露敏感信息。
+gateway 转发命令并展示 Chord 返回的结果；执行语义和可用性属于 Chord headless。本地 shell 与 agent turn 分别计时，agent 摘要只统计观察到的 agent 工作。Shell 请求从发出到结果返回期间保持 busy；长时间运行的 shell 命令会收到提醒，也不会因空闲超时而被回收。请把它视为绑定工作区中的本地命令执行能力：只在可信 IM 聊天中使用，避免在命令文本或输出中暴露敏感信息。
 
 ## Session 示例
 
@@ -217,12 +217,14 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 
 确认或 handoff 的提示成功投递后，只有对应请求的已识别伴随 `notification` 提醒会被去重。即使网关缓存仍保留旧请求，无关告警也会照常送达；提示投递失败时，仍会发送伴随提醒。持久化问题没有伴随的重复提醒，也不会屏蔽通知。本身没有专用提示的提醒（例如 loop 需要用户决策）仍会照常送达。
 
-长时间提醒不会直接暴露 `connecting` 这类低层 phase。只要有新的用户可见输出，下一次 5 分钟提醒窗口就会重新计时。如果当前提醒窗口内观察到内部进展事件，提醒会附带简短计数，例如：
+长时间提醒不会直接暴露 `connecting` 这类低层 phase，但会显示已运行的 turn 时长、粗粒度阶段，以及 turn 开始以来观察到的工具与重试次数。只要有新的用户可见输出，下一次 5 分钟提醒窗口就会重新计时。例如：
 
 ```text
-⏳ Still working (4 internal events)
+⏳ Still working (12m03s · running tools · 7 tools · 1 retry · 4 internal events)
 ```
 
-内部事件数目前来自 gateway 已跟踪的进展事件，例如 `todos`；每次用户可见输出或提醒后会重置。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重。
+重试数统计 Chord 在该 turn 内宣告的每次重试决策（包括回退切换），是压力信号而非精确的失败次数。内部事件数目前来自 gateway 已跟踪的进展事件，例如 `todos`；每次用户可见输出或提醒后会重置。启用 `event_visibility.todos` 后，每个 `todos` 事件都会以完整的当前 todo 列表推送，不做去重。
+
+完成通知也会附带刚结束 turn 的紧凑摘要：时长、主 agent 与 SubAgent 报告的工具调用数、以及观察到的重试次数，例如 `✅ Chord: Ready for input (1m42s · 12 tools)`；`⏳ Chord: Ready for input; background jobs still running: N` 变体同样会附加该摘要。同一会话内的确认、交接和取消操作会保留当前工作周期内已经累计的进度。空闲时请求取消不会启动工作周期或提醒。本地 shell 的结果不会重置 agent 进度；若 agent 空闲时仍有 shell 命令未返回，完成通知会显示其数量，并继续 shell 提醒。
 
 可选的低层事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。

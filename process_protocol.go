@@ -71,6 +71,14 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 	p.handleExit()
 }
 
+// isRetryPhase reports whether a chord activity type announces a retry decision
+// for the current turn: a provider round, a same-key stream retry, a fallback
+// model switch, or a switch to the next API key. The turn summary counts each
+// one and long-running reminders label them all "retrying".
+func isRetryPhase(phase string) bool {
+	return phase == "retrying" || phase == "retrying_key"
+}
+
 // processEnvelope updates ControlState based on the envelope type and calls onEvent.
 func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	if env.Type == imageResultEvent || env.Type == imageArtifactEvent {
@@ -127,7 +135,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			p.state.LastPushAt = now
 			p.state.InternalEventsSinceLastPush = 0
 		}
-		p.state.Busy = true
+		p.state.ensureTurnWindow(now)
+		p.state.setAgentBusy(true)
 		if p.state.LastPushAt.IsZero() {
 			p.state.LastPushAt = now
 		}
@@ -139,6 +148,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.Phase = payload.Type
 			p.state.PhaseDetail = payload.Detail
+			// Each retry activity is one retry decision Chord announced for
+			// this turn. It is a pressure signal for reminders, not an exact
+			// failure count.
+			if isRetryPhase(payload.Type) {
+				p.state.TurnRetries++
+			}
 		}
 		eventType = "activity"
 
@@ -155,6 +170,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			p.state.LastOutcome = payload.LastOutcome
 			p.state.SuppressUserNotification = payload.SuppressUserNotification
 		}
+		p.state.finishTurnWindow(now)
 		eventType = "idle"
 
 	case "confirm_request":
@@ -245,7 +261,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		var payload LocalShellPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			p.state.LastLocalShell = &payload
-			p.state.Busy = false
+			p.state.finishLocalShell()
 		}
 		eventType = "local_shell_result"
 
@@ -343,8 +359,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				if resp.SessionID != p.state.SessionID {
 					previous = nil
 					p.questionEventVersions = nil
+					p.state.resetTurnWindow()
 				}
 				p.state.applyStatusResponse(&resp)
+				if resp.Busy {
+					p.state.ensureTurnWindow(now)
+				}
 				questionEvents = p.reconcileQuestionEvents(previous)
 			}
 			// Wake any goroutines blocked in WaitStatus.
@@ -379,6 +399,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			if id := strings.TrimSpace(payload.SessionID); id != "" {
+				p.state.resetTurnWindow()
 				p.state.RunningJobs = 0
 				p.state.SessionID = id
 				p.state.Questions = nil
@@ -450,6 +471,9 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				}
 			}
 			p.state.LastAssistantToolCalls = payload.ToolCalls
+			// Sum every agent's rounds so the turn summary counts the whole
+			// turn, not just its last message.
+			p.state.TurnToolCalls += payload.ToolCalls
 			p.state.LastAssistantAgentID = payload.AgentID
 			p.state.LastAssistantTaskID = payload.TaskID
 			p.state.LastAssistantAgentType = payload.AgentType
