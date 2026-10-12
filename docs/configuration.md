@@ -10,7 +10,7 @@ This document is the field-by-field reference for `chord-gateway` configuration.
 | `workspaces` | object | yes | - | Workspace map keyed by workspace ID. Values define only the workspace path. |
 | `chord_path` | string | no | `chord` | Path to the Chord binary. Supports `~` expansion. |
 | `idle_timeout` | string | no | `30m` | Idle process timeout (Go duration format). |
-| `event_visibility` | object | no | all `false` | Optional control-plane event visibility flags. |
+| `event_visibility` | object | no | all `false` except `background_result` (`true`) | Control-plane event visibility flags. |
 | `session_pins_file` | string | no | `<state_dir>/session-pins.json` | Custom session pin storage path. |
 
 Preferred config shape:
@@ -153,16 +153,19 @@ This keeps workspace definitions stable while each IM adapter declares how it ma
 
 ## `event_visibility`
 
-Optional flags (boolean):
+Control-plane event flags:
 
 - `agent_started`
 - `agent_notify`
+- `background_result`
 - `context_notice`
 - `info`
 - `toast`
 - `todos`
 
 Essential events are always subscribed and cannot be disabled. This includes `agent_done`, so tool-only SubAgent completions always surface their summary.
+
+Most flags are opt-in and default to `false`. `background_result` is the exception: finished background job results are pushed to the chat by default, and setting `background_result: false` turns those pushes off; the result stays in the Chord session.
 
 `agent_started` and `agent_notify` are opt-in to avoid noisy orchestration updates. `done_completion` is always subscribed for non-loop Done reports. `todos` is subscribed, counted, and forwarded only when enabled. `activity` is always subscribed to track active work, but long-running reminders do not expose low-level phases. `context_notice` is opt-in because pushing durable context-pressure warnings to a chat is a product decision rather than a correctness requirement; see [event-visibility.md](./event-visibility.md) for the volume and retraction caveats.
 
@@ -189,6 +192,7 @@ Additional path behavior:
 - The default log file is `<state_dir>/gateway.log`; it rotates at 10 MiB, keeps 3 backups, and does not gzip-compress rotated logs.
 - `session_pins_file`, `ims.wechat.token_path`, `chord_path`, and `workspaces.<id>.path` support `~` expansion.
 - The gateway does not watch for external config file changes. Config is loaded at startup.
+- Unsupported or removed YAML keys, including fields inherited through anchors and merges, are reported in the gateway log with their source line and ignored; the file still loads.
 - `/bind` is the only built-in path that updates Feishu `chat_bindings` and `workspaces` in memory and writes those same sections back to the YAML config file immediately. Other config changes still require a restart. `/bind` requires an existing directory path and may normalize YAML formatting while preserving common comments.
 
 State data includes:
@@ -237,6 +241,7 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
+  background_result: true
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -271,6 +276,7 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
+  background_result: true
   agent_started: false
   agent_notify: false
   context_notice: false

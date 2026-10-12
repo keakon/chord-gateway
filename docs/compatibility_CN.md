@@ -19,7 +19,7 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 ## 当前保留的兼容路径
 
 - 读取已有状态目录时，会话 pin 仍接受早期的 `workspaceID|imType|chatID` 存储键；新键使用编码形式。
-- YAML 中未知字段会被忽略。因此已移除的 `event_visibility.activity` 字段不再生效，活动状态跟踪始终启用。
+- YAML 中未知字段会被忽略，但会在 gateway 日志中带行号报告，便于发现拼写错误或已移除的字段。已移除的 `event_visibility.activity` 字段不再生效，活动状态跟踪始终启用。
 - 仍接受 Chord headless 对外发出的 `todos` 事件。虽然 Chord 内部也存在名为 `todos_updated` 的协议事件，但当前 headless 对外协议仍暴露 `todos`，gateway 会继续按该外部事件名处理。
 
 ## 已移除的兼容路径

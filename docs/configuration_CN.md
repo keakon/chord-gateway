@@ -10,7 +10,7 @@
 | `workspaces` | object | 是 | - | 以 workspace ID 为 key 的工作区映射。value 只定义工作区路径。 |
 | `chord_path` | string | 否 | `chord` | chord 可执行文件路径，支持 `~` 展开。 |
 | `idle_timeout` | string | 否 | `30m` | 空闲超时（Go duration 格式）。 |
-| `event_visibility` | object | 否 | 全部 `false` | 可选控制面事件可见性。 |
+| `event_visibility` | object | 否 | 除 `background_result`（`true`）外全部 `false` | 控制面事件可见性。 |
 | `session_pins_file` | string | 否 | `<state_dir>/session-pins.json` | 自定义会话 pin 文件路径。 |
 
 推荐配置结构：
@@ -153,16 +153,19 @@ gateway 使用“IM 自带路由”模型：
 
 ## `event_visibility`
 
-可选布尔开关：
+控制面事件开关：
 
 - `agent_started`
 - `agent_notify`
+- `background_result`
 - `context_notice`
 - `info`
 - `toast`
 - `todos`
 
 核心事件始终订阅，无法关闭。其中包括 `agent_done`，因此只有工具调用、没有 assistant 文本的 SubAgent 完成轮次也一定会展示摘要。
+
+大部分开关默认关闭。`background_result` 是例外：后台任务完成结果默认推送到聊天，设置 `background_result: false` 可关闭推送；结果仍保留在 Chord 会话中。
 
 `agent_started` 与 `agent_notify` 为避免编排更新刷屏而默认关闭。`done_completion` 始终订阅，用于非 loop Done 完成报告。`todos` 仅在启用后订阅、计数和转发。`activity` 始终订阅，用于跟踪实际工作状态，但长时间提醒不会直接暴露低层 phase。`context_notice` 默认关闭，因为把持久化的上下文压力提示推到聊天里属于产品取舍、而不是正确性要求；推送量与「撤回不生效」的说明见 [event-visibility_CN.md](./event-visibility_CN.md)。
 
@@ -187,6 +190,7 @@ gateway 使用“IM 自带路由”模型：
 - 默认日志文件为 `<state_dir>/gateway.log`；达到 10 MiB 后轮转，保留 3 个备份，轮转后的日志不会 gzip 压缩。
 - `session_pins_file`、`ims.wechat.token_path`、`chord_path` 和 `workspaces.<id>.path` 支持 `~` 展开。
 - gateway 不会监听外部配置文件变更；配置只在启动时加载。
+- 配置中不支持或已移除的 YAML 字段（包括通过锚点和合并继承的字段）会带源字段行号记录到 gateway 日志并被忽略；文件其余部分仍会正常加载。
 - `/bind` 是当前内置的唯一会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`、并把这两个部分同步写回 YAML 配置文件的入口；其他配置变更仍需要重启。`/bind` 要求路径是已存在的目录，并可能在保留常见注释的同时规范化 YAML 格式。
 
 状态目录包含：
@@ -235,6 +239,7 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
+  background_result: true
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -269,6 +274,7 @@ workspaces:
 chord_path: chord
 idle_timeout: 30m
 event_visibility:
+  background_result: true
   agent_started: false
   agent_notify: false
   context_notice: false

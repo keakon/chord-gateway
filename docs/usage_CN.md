@@ -208,7 +208,7 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 - 需要回答问题
 - 任务开始
 - 任务完成
-- 后台任务结果：后台任务结束时推送，通常在 turn 已进入 idle 之后
+- 后台任务结果：后台任务结束时推送，通常在 turn 已进入 idle 之后；可用 `event_visibility.background_result: false` 关闭
 - 错误或 blocked 状态
 - 工具失败
 - 生成图片：Chord 产出后转发到来源会话

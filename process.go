@@ -585,14 +585,19 @@ func (p *ChordProcess) WaitRoleSwitch(ctx context.Context, role string) (RoleRes
 }
 
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
-	// Default events always subscribed (per docs/event-visibility.md):
+	// Default subscribed events (per docs/event-visibility.md):
 	// activity, assistant_message, confirm_request, question_request, question_updated, question_resolved,
 	// handoff_request, handoff_cancelled, idle, error, notification,
 	// done_completion, local_shell_result, agent_done, role_change,
 	// compaction_status, session_switched, background_result, and image_result.
+	// background_result is subscribed by default but can be opted out, because
+	// finished job results are pushed as chat messages.
 	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}
 	if cfg == nil {
 		return events
+	}
+	if !cfg.EventVisibility.BackgroundResultEnabled() {
+		events = slices.DeleteFunc(events, func(event string) bool { return event == "background_result" })
 	}
 	for _, optional := range []struct {
 		enabled bool

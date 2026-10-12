@@ -217,7 +217,7 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - question required
 - task started
 - task completed
-- background job results, sent when a background job finishes — usually after the turn already went idle
+- background job results, sent when a background job finishes — usually after the turn already went idle; disable with `event_visibility.background_result: false`
 - error or blocked state
 - tool failure
 - generated images, forwarded to the source chat as Chord produces them

@@ -20,7 +20,7 @@ After upgrading the gateway, send `/status` to refresh the question collection a
 ## Kept compatibility paths
 
 - Session pins still accept the earlier `workspaceID|imType|chatID` storage keys when loading an existing state directory. New keys use the encoded form.
-- Unknown YAML fields are ignored. The removed `event_visibility.activity` key therefore has no effect; activity tracking is always enabled.
+- Unknown YAML fields are ignored, but each one is reported in the gateway log with its line, so a typo or a removed option is noticed. The removed `event_visibility.activity` key therefore has no effect; activity tracking is always enabled.
 - The Chord headless `todos` event is supported. Although Chord also emits an internal
   protocol event named `todos_updated`, the current headless command still surfaces
   `todos` externally — gateway accepts it as-is.

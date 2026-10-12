@@ -1294,6 +1294,28 @@ func TestConfiguredHeadlessSubscribeEventsContextNoticeIsOptIn(t *testing.T) {
 	}
 }
 
+// background_result is subscribed by default because finished job results have
+// no other delivery channel; an explicit false opts that push out.
+func TestConfiguredHeadlessSubscribeEventsBackgroundResultOptOut(t *testing.T) {
+	base := configuredHeadlessSubscribeEvents(&config.Config{})
+	if !slices.Contains(base, "background_result") {
+		t.Fatalf("background_result must be subscribed by default, got %v", base)
+	}
+
+	disabled := false
+	got := configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{BackgroundResult: &disabled}})
+	want := slices.DeleteFunc(slices.Clone(base), func(event string) bool { return event == "background_result" })
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("opt-out subscribe events = %v, want %v", got, want)
+	}
+
+	enabled := true
+	got = configuredHeadlessSubscribeEvents(&config.Config{EventVisibility: config.EventVisibility{BackgroundResult: &enabled}})
+	if strings.Join(got, ",") != strings.Join(base, ",") {
+		t.Fatalf("explicit true subscribe events = %v, want %v", got, base)
+	}
+}
+
 func TestRecordCardHandlePrunesExpiredEntries(t *testing.T) {
 	r := &NotificationRouter{cardHandles: make(map[string]cardHandleEntry)}
 	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()

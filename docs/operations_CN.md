@@ -125,7 +125,7 @@ app_id + chat_id + message_id
 
 ## 事件协议
 
-gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅必需控制面事件：
+gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅以下控制面事件：
 
 - `activity`
 - `assistant_message`
@@ -147,7 +147,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `background_result`
 - `image_result`
 
-可选事件由 `event_visibility` 控制。各事件的行为以及哪些只更新状态、不发消息，详见 [event-visibility_CN.md](./event-visibility_CN.md)。
+可选事件由 `event_visibility` 控制；`background_result` 默认订阅，可用 `event_visibility.background_result: false` 关闭。各事件的行为以及哪些只更新状态、不发消息，详见 [event-visibility_CN.md](./event-visibility_CN.md)。
 
 飞书卡片发送结果未确认时，Gateway 发送提示，不再把原提示重复转为文本。请先检查聊天记录；未收到问题入口时可发送 `/status`，角色菜单可发送 `/role` 重新查看。消息请求不会跟随重定向，非预期 HTTP 状态按结果未确认处理。平台明确拒绝卡片时，仍会发送文本入口。`/status` 展示 Chord 状态并可重新打开问题入口，不会查询平台投递回执。
 

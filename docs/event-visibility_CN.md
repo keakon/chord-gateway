@@ -1,12 +1,12 @@
 # Gateway 控制面事件可见性
 
-`chord-gateway` 从 `chord headless` 读取 JSONL 事件。必需控制面事件始终订阅并路由；可选事件由 `event_visibility` 控制。
+`chord-gateway` 从 `chord headless` 读取 JSONL 事件。必需控制面事件始终订阅并路由。`background_result` 默认订阅、可显式关闭；其余可选事件通过 `event_visibility` 选择启用。
 
 - English: [event-visibility.md](./event-visibility.md)
 
-## 必需事件
+## 默认事件
 
-gateway 始终订阅以下事件：
+gateway 默认订阅以下事件：
 
 - `activity`
 - `assistant_message`
@@ -28,7 +28,7 @@ gateway 始终订阅以下事件：
 - `background_result`
 - `image_result`
 
-这些事件提供 IM 控制所需的最小行为：
+这些事件覆盖 IM 控制所需的最小行为，其中 `background_result` 可以关闭：
 
 - 最终 assistant 回复
 - 权限确认
@@ -50,14 +50,15 @@ gateway 始终订阅以下事件：
 
 `session_switched` 只更新状态：触发切换的命令本身已经回复了用户，不再额外发消息。它会把绑定的 session pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
 
-`background_result` 会作为聊天消息推送到 IM，因为 Chord 侧没有其它通道：后台任务通常在 turn 进入 idle 之后才完成，之后不会有 `assistant_message` 再总结它。
+`background_result` 会作为聊天消息推送到 IM，因为 Chord 侧没有其它通道：后台任务通常在 turn 进入 idle 之后才完成，之后不会有 `assistant_message` 再总结它。觉得刷屏的聊天可设置 `event_visibility.background_result: false` 关闭推送；持久化结果仍保留在 Chord 会话中。
 
 ## 可选可见事件
 
-可选事件默认关闭。通过 `event_visibility` 启用：
+可选事件默认关闭，通过 `event_visibility` 启用。`background_result` 是例外：默认开启，只有显式设为 `false` 才关闭。
 
 ```yaml
 event_visibility:
+  background_result: true
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -70,6 +71,7 @@ event_visibility:
 |---|---|---|
 | `agent_started` | `agent_started` | SubAgent 委托开始通知 |
 | `agent_notify` | `agent_notify` | 面向 owner 或指定委派工作流的非阻塞更新 |
+| `background_result` | `background_result` | 后台任务完成结果。默认开启；设为 `false` 可关闭聊天推送。 |
 | `context_notice` | `context_notice` | 持久化的上下文压力提示，作为聊天消息推送。`level` 取值为 `pressure`、`imminent` 或 `warning`。 |
 | `info` | `info` | 信息类消息 |
 | `toast` | `toast` | 短暂提示消息 |

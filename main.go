@@ -54,16 +54,6 @@ func newRootCmd(paths *config.Paths, flagConfig *string) *cobra.Command {
 
 func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error {
-		cfg, err := config.Load(*flagConfig)
-		if err != nil {
-			return fmt.Errorf("load config: %w", err)
-		}
-
-		// Validate configuration before starting any adapters/processes.
-		if err := cfg.Validate(); err != nil {
-			return fmt.Errorf("config validation: %w", err)
-		}
-
 		if err := os.MkdirAll(paths.StateDir, privateDirMode); err != nil {
 			return fmt.Errorf("create state dir: %w", err)
 		}
@@ -71,7 +61,8 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			return fmt.Errorf("restrict state dir permissions: %w", err)
 		}
 
-		// Set up golog to write to stderr and to a rotating log file.
+		// Set up golog before loading the config so config warnings (for
+		// example unsupported keys) reach both stderr and the rotating log.
 		logFile, err := newPrivateRotatingLogWriter(paths.LogFile, 10*1024*1024, 3)
 		if err != nil {
 			return fmt.Errorf("create rotating log writer: %w", err)
@@ -84,6 +75,16 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		logger.AddHandler(handler)
 		defer logger.Close()
 		log.SetDefaultLogger(logger)
+
+		cfg, err := config.Load(*flagConfig)
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+
+		// Validate configuration before starting any adapters/processes.
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("config validation: %w", err)
+		}
 
 		activeIMs := cfg.ActiveIMs()
 		log.Infof("chord-gateway starting %s config=%v state_dir=%v ims=%v workspaces=%v idle_timeout=%v", buildinfo.Current().LogString(), *flagConfig,

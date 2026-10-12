@@ -300,6 +300,34 @@ event_visibility:
 	}
 }
 
+func TestLoad_EventVisibilityBackgroundResult(t *testing.T) {
+	load := func(t *testing.T, eventVisibility string) EventVisibility {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		content := "ims:\n  wechat: {}\nworkspaces:\n  ws1:\n    path: ~/project\n" + eventVisibility
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		return cfg.EventVisibility
+	}
+
+	// background_result is an opt-out flag: omitted means enabled.
+	if v := load(t, ""); !v.BackgroundResultEnabled() || v.BackgroundResult != nil {
+		t.Fatalf("omitted background_result = %#v, want enabled", v)
+	}
+	if v := load(t, "event_visibility:\n  background_result: false\n"); v.BackgroundResultEnabled() {
+		t.Fatalf("background_result: false = %#v, want disabled", v)
+	}
+	if v := load(t, "event_visibility:\n  background_result: true\n"); !v.BackgroundResultEnabled() {
+		t.Fatalf("background_result: true = %#v, want enabled", v)
+	}
+}
+
 func TestLoad_ExampleConfig(t *testing.T) {
 	path := filepath.Join("..", "config.example.yaml")
 	cfg, err := Load(path)

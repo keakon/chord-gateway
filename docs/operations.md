@@ -125,7 +125,7 @@ For a single Feishu workspace, `chat_bindings` may be omitted and all chats use 
 
 ## Event contract
 
-The gateway runs `chord headless` and reads JSONL events from stdout. It subscribes to the required control-plane event set by default:
+The gateway runs `chord headless` and reads JSONL events from stdout. It subscribes to the default control-plane event set:
 
 - `activity`
 - `assistant_message`
@@ -147,7 +147,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `background_result`
 - `image_result`
 
-Optional events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md) for what each event does and which ones are state-only.
+Optional events are controlled by `event_visibility`. `background_result` is subscribed by default and can be turned off with `event_visibility.background_result: false`. See [event-visibility.md](./event-visibility.md) for what each event does and which ones are state-only.
 
 If a Feishu card send is unconfirmed, the gateway sends a diagnostic instead of repeating its prompt as text. Check the chat first; use `/status` to reopen a missing question entry, or `/role` to request a role menu. Message requests do not follow redirects; unexpected HTTP statuses are unconfirmed. Explicitly rejected cards still use the text fallback. `/status` shows Chord state and can reopen question entries; it does not query platform delivery receipts.
 

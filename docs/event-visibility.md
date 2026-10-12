@@ -1,12 +1,12 @@
 # Gateway control-plane event visibility
 
-`chord-gateway` reads JSONL events from `chord headless`. Required control-plane events are always subscribed and routed; optional events are controlled by `event_visibility`.
+`chord-gateway` reads JSONL events from `chord headless`. Required control-plane events are always subscribed and routed. `background_result` is subscribed by default and can be disabled; the remaining optional events are opt-in through `event_visibility`.
 
 - Chinese version: [event-visibility_CN.md](./event-visibility_CN.md)
 
-## Required events
+## Default events
 
-The gateway always subscribes to these events:
+The gateway subscribes to these events by default:
 
 - `activity`
 - `assistant_message`
@@ -28,7 +28,7 @@ The gateway always subscribes to these events:
 - `background_result`
 - `image_result`
 
-These events provide the minimum behavior required for IM control:
+These events cover the minimum behavior for IM control, except that `background_result` can be turned off:
 
 - final assistant responses
 - permission confirmations
@@ -50,14 +50,15 @@ These events provide the minimum behavior required for IM control:
 
 `session_switched` is state-only: the command that caused the switch already answers the user, so no extra chat message is sent. It re-points the binding's session pin at the newly active session, so later spawns resume the session the runtime actually runs.
 
-`background_result` is pushed to IM as a chat message, because Chord has no other channel for it: a background job usually finishes after the turn went idle, so no later `assistant_message` summarizes it.
+`background_result` is pushed to IM as a chat message, because Chord has no other channel for it: a background job usually finishes after the turn went idle, so no later `assistant_message` summarizes it. Set `event_visibility.background_result: false` to stop these pushes in a noisy chat; the durable result stays in the Chord session.
 
 ## Optional visible events
 
-Optional events are disabled by default. Enable them through `event_visibility`:
+Optional events are disabled by default and enabled through `event_visibility`. `background_result` is the exception: it is enabled by default, and only an explicit `false` turns it off.
 
 ```yaml
 event_visibility:
+  background_result: true
   agent_started: false
   agent_notify: false
   context_notice: false
@@ -70,6 +71,7 @@ event_visibility:
 |---|---|---|
 | `agent_started` | `agent_started` | SubAgent delegation start notifications |
 | `agent_notify` | `agent_notify` | Non-blocking owner or targeted delegated-workstream updates |
+| `background_result` | `background_result` | Finished background job results. Enabled by default; set `false` to disable the chat pushes. |
 | `context_notice` | `context_notice` | Durable context-pressure warnings, pushed as chat messages. `level` is one of `pressure`, `imminent` or `warning`. |
 | `info` | `info` | Informational messages |
 | `toast` | `toast` | Short transient messages |

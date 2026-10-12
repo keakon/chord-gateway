@@ -6,6 +6,16 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
+## Unreleased
+
+### Added
+
+- `event_visibility.background_result` can now turn off the chat pushes for finished background job results. They remain enabled by default, and the durable result stays in the Chord session when disabled.
+
+### Changed
+
+- Unsupported YAML config keys are now reported in the gateway log with their line and ignored instead of doing nothing silently: typos and removed options such as `event_visibility.activity` are visible at startup while the rest of the file still loads.
+
 ## v0.3.3 – 2026-10-12
 
 ### Added

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keakon/golog/log"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,14 +35,26 @@ type Config struct {
 	SessionPinsFile string            `yaml:"session_pins_file,omitempty"`
 }
 
-// EventVisibility controls optional control-plane event subscriptions.
+// EventVisibility controls control-plane event visibility. Most flags are
+// opt-in booleans that default to false. BackgroundResult is an opt-out
+// pointer instead: an omitted value keeps background results enabled, and only
+// an explicit false turns them off.
 type EventVisibility struct {
-	AgentStarted  bool `yaml:"agent_started,omitempty"`
-	AgentNotify   bool `yaml:"agent_notify,omitempty"`
-	ContextNotice bool `yaml:"context_notice,omitempty"`
-	Info          bool `yaml:"info,omitempty"`
-	Toast         bool `yaml:"toast,omitempty"`
-	Todos         bool `yaml:"todos,omitempty"`
+	AgentStarted     bool  `yaml:"agent_started,omitempty"`
+	AgentNotify      bool  `yaml:"agent_notify,omitempty"`
+	BackgroundResult *bool `yaml:"background_result,omitempty"`
+	ContextNotice    bool  `yaml:"context_notice,omitempty"`
+	Info             bool  `yaml:"info,omitempty"`
+	Toast            bool  `yaml:"toast,omitempty"`
+	Todos            bool  `yaml:"todos,omitempty"`
+}
+
+// BackgroundResultEnabled reports whether finished background job results are
+// pushed to IM. They are delivered by default because a job usually finishes
+// after the chat went idle and Chord has no other delivery channel for it;
+// event_visibility.background_result: false opts a noisy chat out.
+func (v EventVisibility) BackgroundResultEnabled() bool {
+	return v.BackgroundResult == nil || *v.BackgroundResult
 }
 
 // IMAdapterConfig describes one IM adapter in the gateway config.
@@ -490,11 +504,19 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	var cfg Config
+	var doc yaml.Node
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	// Unknown fields are intentionally tolerated for compatibility with older
-	// configs. Validation still rejects unsupported structural forms.
-	if err := dec.Decode(&cfg); err != nil {
+	// configs, but each one is reported so a typo or a removed option does not
+	// silently do nothing. Validation still rejects unsupported structural forms.
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if err := doc.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	for _, issue := range unsupportedConfigFields(&doc) {
+		log.Warnf("config %s: unsupported field ignored: %s", path, issue)
 	}
 	cfg.ExpandPath(Expand)
 	return &cfg, nil

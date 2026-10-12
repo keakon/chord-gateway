@@ -73,14 +73,18 @@ func TestDocumentedRequiredEventsMatchCode(t *testing.T) {
 }
 
 func TestDocumentedOptionalEventsMatchConfig(t *testing.T) {
-	flags := docOptionalFlagEvents(t)
+	flags := docEventVisibilityFlags(t)
 	wantFlags := docSortedKeys(flags)
 	wantFlagSet := docStringSet(wantFlags)
 
 	required := docStringSet(configuredHeadlessSubscribeEvents(&config.Config{}))
-	for flag, event := range flags {
-		if required[event] {
-			t.Errorf("optional flag %q maps to %q, which is also always subscribed; an event must be one or the other", flag, event)
+	for flag, spec := range flags {
+		if spec.optOut {
+			// The opt-out flag's event is subscribed by default by design.
+			continue
+		}
+		if required[spec.event] {
+			t.Errorf("optional flag %q maps to %q, which is also always subscribed; an event must be one or the other", flag, spec.event)
 		}
 	}
 
@@ -113,26 +117,26 @@ func TestDocumentedOptionalEventsMatchConfig(t *testing.T) {
 	}
 }
 
-// docOptionalFlagEvents maps each event_visibility flag (its YAML key, which is
-// what users write in a config) to the event it subscribes to. The mapping is
-// resolved behaviourally — enable one flag, see which event appears — instead of
-// assuming a field's YAML tag matches its event name.
-func docOptionalFlagEvents(t *testing.T) map[string]string {
+// docEventVisibilityFlag describes one event_visibility flag: the event it
+// controls, and whether it is an opt-in bool (enabling adds the event) or the
+// opt-out background_result pointer (disabling removes the event).
+type docEventVisibilityFlag struct {
+	event  string
+	optOut bool
+}
+
+// docEventVisibilityFlags maps each event_visibility flag (its YAML key, which
+// is what users write in a config) to the event it controls. The mapping is
+// resolved behaviourally — enable or disable one flag, see which event appears
+// or disappears — instead of assuming a field's YAML tag matches its event name.
+func docEventVisibilityFlags(t *testing.T) map[string]docEventVisibilityFlag {
 	t.Helper()
 	typ := reflect.TypeOf(config.EventVisibility{})
-	base := docStringSet(configuredHeadlessSubscribeEvents(&config.Config{}))
-	events := make(map[string]string, typ.NumField())
+	base := configuredHeadlessSubscribeEvents(&config.Config{})
+	baseSet := docStringSet(base)
+	events := make(map[string]docEventVisibilityFlag, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if field.Type.Kind() != reflect.Bool {
-			t.Fatalf("EventVisibility.%s is not a bool; this helper assumes one bool per flag", field.Name)
-		}
-		cfg := &config.Config{}
-		reflect.ValueOf(&cfg.EventVisibility).Elem().Field(i).SetBool(true)
-		added := docNotIn(configuredHeadlessSubscribeEvents(cfg), base)
-		if len(added) != 1 {
-			t.Fatalf("enabling EventVisibility.%s subscribes to %v, want exactly one new event", field.Name, added)
-		}
 		name, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
 		if name == "" || name == "-" {
 			t.Fatalf("EventVisibility.%s has no yaml tag to document", field.Name)
@@ -140,7 +144,30 @@ func docOptionalFlagEvents(t *testing.T) map[string]string {
 		if _, exists := events[name]; exists {
 			t.Fatalf("two EventVisibility fields share the yaml key %q", name)
 		}
-		events[name] = added[0]
+		cfg := &config.Config{}
+		value := reflect.ValueOf(&cfg.EventVisibility).Elem().Field(i)
+		switch field.Type.Kind() {
+		case reflect.Bool:
+			value.SetBool(true)
+			added := docNotIn(configuredHeadlessSubscribeEvents(cfg), baseSet)
+			if len(added) != 1 {
+				t.Fatalf("enabling EventVisibility.%s subscribes to %v, want exactly one new event", field.Name, added)
+			}
+			events[name] = docEventVisibilityFlag{event: added[0]}
+		case reflect.Pointer:
+			disabled := false
+			value.Set(reflect.ValueOf(&disabled))
+			removed := docNotIn(base, docStringSet(configuredHeadlessSubscribeEvents(cfg)))
+			if len(removed) != 1 {
+				t.Fatalf("disabling EventVisibility.%s unsubscribes %v, want exactly one event", field.Name, removed)
+			}
+			if !baseSet[removed[0]] {
+				t.Fatalf("EventVisibility.%s removes %q, which is not in the default set", field.Name, removed[0])
+			}
+			events[name] = docEventVisibilityFlag{event: removed[0], optOut: true}
+		default:
+			t.Fatalf("EventVisibility.%s has kind %s; teach this helper about the new flag shape", field.Name, field.Type.Kind())
+		}
 	}
 	return events
 }

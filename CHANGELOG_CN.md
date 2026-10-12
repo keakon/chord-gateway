@@ -6,6 +6,16 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
+## 未发布
+
+### 新功能
+
+- 新增 `event_visibility.background_result` 开关，可关闭后台任务完成结果到聊天窗口的推送。该推送默认开启；关闭后持久化结果仍保留在 Chord 会话中。
+
+### 变更
+
+- 配置中不支持或已移除的 YAML 字段现在会在 gateway 日志中带行号报告并被忽略，不再静默失效：拼写错误或 `event_visibility.activity` 这类已移除选项在启动时即可发现，文件其余部分仍正常加载。
+
 ## v0.3.3 – 2026-10-12
 
 ### 新功能
