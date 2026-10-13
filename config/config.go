@@ -29,6 +29,7 @@ import (
 type Config struct {
 	IMs             []IMAdapterConfig `yaml:"ims"`
 	Workspaces      []Workspace       `yaml:"workspaces"`
+	ChordStateDir   string            `yaml:"chord_state_dir,omitempty"`
 	ChordPath       string            `yaml:"chord_path,omitempty"`
 	IdleTimeout     string            `yaml:"idle_timeout,omitempty"`
 	EventVisibility EventVisibility   `yaml:"event_visibility,omitempty"`
@@ -122,6 +123,7 @@ type Workspace struct {
 type rawConfig struct {
 	IMs             yaml.Node       `yaml:"ims"`
 	Workspaces      yaml.Node       `yaml:"workspaces"`
+	ChordStateDir   string          `yaml:"chord_state_dir,omitempty"`
 	ChordPath       string          `yaml:"chord_path,omitempty"`
 	IdleTimeout     string          `yaml:"idle_timeout,omitempty"`
 	EventVisibility EventVisibility `yaml:"event_visibility,omitempty"`
@@ -153,6 +155,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		IMs:             ims,
 		Workspaces:      workspaces,
 		ChordPath:       raw.ChordPath,
+		ChordStateDir:   raw.ChordStateDir,
 		IdleTimeout:     raw.IdleTimeout,
 		EventVisibility: raw.EventVisibility,
 		SessionPinsFile: raw.SessionPinsFile,
@@ -481,6 +484,7 @@ func (c *Config) Validate() error {
 // adapter-specific state paths using XDG paths.
 func (c *Config) ExpandPath(pathsResolve func(string) string) {
 	c.ChordPath = pathsResolve(c.ChordPath)
+	c.ChordStateDir = pathsResolve(c.ChordStateDir)
 	c.SessionPinsFile = pathsResolve(c.SessionPinsFile)
 	for i := range c.Workspaces {
 		c.Workspaces[i].Path = pathsResolve(c.Workspaces[i].Path)

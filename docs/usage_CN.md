@@ -35,17 +35,19 @@ gateway 不使用 `chord headless --continue`，而是为每个绑定保存一�
 - 如果当前绑定已有 pinned session ID，gateway 会用 `--resume <sid>` 启动 Chord。
 - 如果 pinned session 已被清理或被占用导致 resume 失败，普通文本消息会自动改用新 session 重试，并提示用户。
 - 如果没有 pinned session ID，gateway 会启动一个新 session。
-- `/new` 会清除当前绑定的 pin 并启动新 session。
+- `/new` 会启动新 session；运行中的绑定会保留原 pin，直到 Chord 确认会话已切换。
 - `/resume <sid>` 会把指定 session ID pin 到当前绑定。
 - 进程内会话切换（`session_switched`）会把 pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
 
 Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `session_pins_file` 配置。
 
+进行中或已经完成的会话移交优先于 pin：普通消息不能重新拉起该绑定，也不会改用新会话。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功；失败时保留阻断。
+
 ## IM 命令
 
 | 命令 | 说明 |
 |---|---|
-| `/status` | 查看当前 Chord 状态：busy/idle、session、当前角色、phase、最近一次上下文检查点结果、待处理交互 |
+| `/status` | 查看当前 Chord 状态：busy/idle、session、当前角色、phase、最近一次上下文检查点结果、待处理交互及恢复的排队输入 |
 | `/cancel` | 取消当前 turn |
 | `/allow` | 批准待确认请求 |
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
@@ -57,9 +59,40 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 优先交给当前 Chord 进程启动新 session；如果没有可用进程，则清除当前 session pin 并启动新的 Chord 进程 |
 | `/resume <id>` | 恢复并 pin 指定 session；如果恢复失败，会清除该 pin 并提示用户 |
+| `/takeover <id> [--timeout <duration>]` | 将运行中的 TUI 会话接管到当前聊天，并保持暂停 |
+| `/takeover status` | 查询当前绑定的移交状态，不发起新的接管 |
 | `/sessions` | 列出最近 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送新要求给 Chord，待答问题继续保留 |
+
+## 会话接管
+
+接管支持同一台 macOS 或 Linux 主机、同一 OS 用户、同一规范化工作区下，TUI 与 gateway 管理的 headless 双向移交。需要支持 takeover CLI 和 managed-headless 标志的 Chord 构建；较早的 Chord 仍可用于普通聊天绑定，但不能接管。普通 headless、ACP、其他工作区及 Windows 不在支持范围内。离线会话请使用 `/resume <id>`。
+
+在当前绑定没有存活 Chord 进程的 IM 聊天中，接管运行中的 TUI 会话：
+
+```text
+/takeover <session-id> --timeout 30s
+/takeover status
+```
+
+如果聊天已经绑定了存活进程，需要先显式处理该绑定。从 gateway 移交到新 TUI 时，在 gateway 所在主机的同一工作区运行：
+
+```sh
+chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
+```
+
+工作区身份由 Chord 确认，因此 linked worktree 可以在所属主仓库内移交，同时保留会话保存的执行目录。预检拒绝不会阻断普通聊天；若准备在源端冻结前失败，状态查询只有确认仍是同一个存活源进程后才重新开放路由。结果不明时，绑定继续保持阻断。
+
+源端停止接纳新的执行，等待已经开始的请求、工具和后台工作结束并保存结果，不会取消这些操作，也不会派发下一次模型请求。已经接纳的排队输入，包括通过 TUI 提交的附件，随会话保留。gateway 从 IM 接收文本；接管不增加入站图片或文件上传能力，生成图片仍可转发到 IM。服务进程或等待输入的工具可能让移交持续等待；状态查询会显示具体阻塞项。
+
+接管通知优先保留错误、超时和恢复操作提示，显示阻塞项总数和最多三条简短预览，并在省略时标明数量。完整详情请使用[宿主机状态查询命令](./operations_CN.md#会话移交恢复)。
+
+`--timeout` 只限制观察时间。`0` 表示立即返回移交 ID 和当前状态，不指定时持续观察。超时或断线后，源端继续自然收口并持有会话锁。用 `/takeover status` 查询原移交；绑定被阻断时，`/status` 也会显示移交状态。再次发起接管会返回 `transfer_busy`，没有撤销移交命令。
+
+目标端恢复同一个会话并保持暂停。用 `/status` 核对暂停状态和排队输入总数：最多展示八项，每项包含所属任务、简短的单行预览及附件数，并提示还有多少项未展示。完整正文及附件保留在 Chord 会话中。核对后明确发送继续指令或新的普通消息，才会开始模型工作；接管本身不会创建 turn。移交期间，普通消息、旧卡回调和提醒不能拉起替代进程，也不能把工作发给另一个绑定实例。
+
+保存失败时，源端保留会话锁，执行继续冻结。如果会话已经保存但目标加载失败，不会自动改用新会话：先查询状态，确认源端释放锁后显式 `/resume <id>`。如果要放弃当前聊天绑定，可用 `/new` 启动独立会话。移交阻断在 gateway 重启后仍保留。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功；失败时保留阻断。终端查询与保存重试见[运维说明](./operations_CN.md#会话移交恢复)。
 
 ## 问答交互
 

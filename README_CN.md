@@ -19,6 +19,7 @@
 - 支持同时运行多个 IM adapter
 - 按聊天会话和工作区隔离 Chord session
 - 会话 pin 与恢复命令（`/new`、`/resume`、`/sessions`）
+- 用 `/takeover` 在 TUI 与 IM 间移交运行中的会话，保留排队输入，新端保持暂停（macOS/Linux，需要 Chord 支持接管）。
 - 某个 IM 过期时，可通过其他 IM 发送登录通知（例如提示重新登录）
 - 本地 `chord headless` 子进程生命周期管理与清理
 - 可配置可选控制面事件的可见性
@@ -96,6 +97,8 @@ chord-gateway -f config.yaml
 | `/todos` | 查看当前 todo 列表 |
 | `/new` | 为当前绑定启动新 session |
 | `/resume <id>` | 恢复并 pin 指定 session |
+| `/takeover <id> [--timeout <duration>]` | 将 TUI 会话接管到当前聊天，并保持暂停 |
+| `/takeover status` | 查询当前会话的移交状态 |
 | `/sessions` | 列出最近 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 

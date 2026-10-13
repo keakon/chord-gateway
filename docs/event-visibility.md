@@ -25,6 +25,10 @@ The gateway subscribes to these events by default:
 - `agent_done`
 - `compaction_status`
 - `session_switched`
+- `session_transfer_preparing`
+- `session_transfer_status`
+- `session_transfer_saved`
+- `session_transfer_released`
 - `background_result`
 - `image_result`
 
@@ -45,10 +49,15 @@ These events cover the minimum behavior for IM control, except that `background_
 - SubAgent completion summaries
 - last context-checkpoint outcome for `/status`
 - in-band session switches, so a pinned binding follows the session the runtime actually runs
+- session-transfer preparation, save, and release, so a transferred binding stays blocked across restarts
 - finished background job results, which have no other delivery channel
 - generated-image forwarding through bounded artifact chunks
 
 `session_switched` is state-only: the command that caused the switch already answers the user, so no extra chat message is sent. It re-points the binding's session pin at the newly active session, so later spawns resume the session the runtime actually runs.
+
+The `session_transfer_*` events are required and cannot be disabled by `event_visibility`. Preparation closes new input admission and records a persistent guard before acknowledging the source. Status events report draining, blocker changes, saving, and save failures without clearing the source pin. Save/release update transfer status and conditionally clear the source pin. Existing accepted input remains part of the source session; new messages and reminders stay blocked. Old card callbacks cannot target a replacement binding instance. Use `/takeover status`, or `/status` while blocked, to inspect progress and blockers. Missing final events do not permit automatic restart; see [operations.md](./operations.md#session-transfer-recovery).
+
+Paused readiness and status snapshots also carry the restored queue summary. `/status` shows the pause state and total pending count, then up to eight entries with owner task, a short single-line preview, and attachment count; remaining entries are counted separately. These summaries do not start work. The full content and attachments remain in Chord. Missing queue data is not reported as zero. The takeover target's binding stays blocked until Chord confirms paused readiness with a valid summary. See [compatibility.md](./compatibility.md#session-takeover-capability) for the headless contract.
 
 `background_result` is pushed to IM as a chat message, because Chord has no other channel for it: a background job usually finishes after the turn went idle, so no later `assistant_message` summarizes it. Set `event_visibility.background_result: false` to stop these pushes in a noisy chat; the durable result stays in the Chord session.
 
@@ -136,6 +145,8 @@ Normal messages and late replies carry correlation IDs. Writing to the process d
 ## Generated images
 
 The gateway subscribes to `image_result` and receives bounded `image_artifact` chunks. Images go to the source chat in order: WeChat uploads encrypted media; Feishu uploads message images with a tenant access token. All returned images are forwarded. Feishu images at or above 10 MB use a reduced PNG preview preserving transparency; originals remain in the Chord session.
+
+This is outbound image delivery. The gateway accepts text input from IM; it does not upload incoming images or files to Chord. Attachments already accepted through TUI remain part of the transferred session and are restored by Chord.
 
 When Chord finishes processing, remaining incomplete transfers are discarded and reported. Session switches and process shutdown also discard partial transfers. Corrupt or incomplete data is never uploaded. Each failed transfer is reported once; its remaining chunks are discarded without repeated notices.
 

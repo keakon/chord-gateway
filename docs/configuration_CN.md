@@ -9,6 +9,7 @@
 | `ims` | object | 是 | - | IM 适配器映射。支持的 key 为 `wechat` 和 `feishu`。 |
 | `workspaces` | object | 是 | - | 以 workspace ID 为 key 的工作区映射。value 只定义工作区路径。 |
 | `chord_path` | string | 否 | `chord` | chord 可执行文件路径，支持 `~` 展开。 |
+| `chord_state_dir` | string | 否 | Chord 默认状态目录 | managed headless 与 takeover CLI 共用的 Chord 状态目录；TUI 使用自定义 `--state-dir` 时设置相同路径。支持 `~` 展开。 |
 | `idle_timeout` | string | 否 | `30m` | 空闲超时（Go duration 格式）。 |
 | `event_visibility` | object | 否 | 除 `background_result`（`true`）外全部 `false` | 控制面事件可见性。 |
 | `session_pins_file` | string | 否 | `<state_dir>/session-pins.json` | 自定义会话 pin 文件路径。 |
@@ -188,7 +189,7 @@ gateway 使用“IM 自带路由”模型：
 
 - `CHORD_GATEWAY_LOG_FILE` 可以覆盖默认日志文件位置。
 - 默认日志文件为 `<state_dir>/gateway.log`；达到 10 MiB 后轮转，保留 3 个备份，轮转后的日志不会 gzip 压缩。
-- `session_pins_file`、`ims.wechat.token_path`、`chord_path` 和 `workspaces.<id>.path` 支持 `~` 展开。
+- `session_pins_file`、`ims.wechat.token_path`、`chord_path`、`chord_state_dir` 和 `workspaces.<id>.path` 支持 `~` 展开。
 - gateway 不会监听外部配置文件变更；配置只在启动时加载。
 - 配置中不支持或已移除的 YAML 字段（包括通过锚点和合并继承的字段）会带源字段行号记录到 gateway 日志并被忽略；文件其余部分仍会正常加载。
 - `/bind` 是当前内置的唯一会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`、并把这两个部分同步写回 YAML 配置文件的入口；其他配置变更仍需要重启。`/bind` 要求路径是已存在的目录，并可能在保留常见注释的同时规范化 YAML 格式。
@@ -199,6 +200,9 @@ gateway 使用“IM 自带路由”模型：
 - 微信 token 文件（默认 `<state_dir>/wechat/token.json`）
 - 飞书去重存储（`<state_dir>/dedupe.json`）
 - 会话 pin（默认 `<state_dir>/session-pins.json`）
+- 会话移交阻断（`<state_dir>/session-transfers.json`）
+
+`chord_state_dir` 指向 Chord 自己的状态目录，与上面的 gateway 状态目录不同。不设置时沿用 Chord 默认值；如果源 TUI 使用自定义目录，应填写相同路径，让接管查询与目标恢复访问同一份会话和运行时记录。它不会改变 IM 或工作区授权。
 
 ## Session pin 行为
 
@@ -211,6 +215,8 @@ workspaceID | imType | chatID
 这意味着即使指向同一个 workspace，不同群聊和不同 IM 也会保留各自独立的 pinned session。
 
 如果未设置 `session_pins_file`，默认路径为 `<state_dir>/session-pins.json`。
+
+移交阻断优先于 pin。移交开始后，普通输入和自动重启都不能恢复该 pin，也不会自动改用新会话。阻断在 gateway 重启后仍然保留。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功；失败时保留阻断。详见[会话接管](./usage_CN.md#会话接管)。
 
 ## 飞书绑定流程
 

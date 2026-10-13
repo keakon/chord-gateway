@@ -10,12 +10,15 @@ import (
 // ControlState is the aggregated state of a chord headless process,
 // maintained by the gateway from stdout event stream.
 type ControlState struct {
-	SessionID   string `json:"session_id"`
-	Busy        bool   `json:"busy"`
-	RunningJobs int    `json:"running_jobs"`
-	Phase       string `json:"phase"`
-	PhaseDetail string `json:"phase_detail"`
-	CurrentRole string `json:"current_role,omitempty"`
+	BindingInstanceID string          `json:"-"`
+	Transfer          *TransferStatus `json:"-"`
+	SessionID         string          `json:"session_id"`
+	Busy              bool            `json:"busy"`
+	RunningJobs       int             `json:"running_jobs"`
+	Phase             string          `json:"phase"`
+	PhaseDetail       string          `json:"phase_detail"`
+	CurrentRole       string          `json:"current_role,omitempty"`
+	PausedInputs      *PausedInputs   `json:"paused_inputs,omitempty"`
 	// SuppressUserNotification applies only to the most recent idle event. It
 	// does not change the idle state transition; the router uses it to skip a
 	// user-facing completion reminder for configuration-only quiescence.
@@ -280,7 +283,9 @@ type HeadlessEnvelope struct {
 
 // StatusResponse is the payload for type="status_response".
 type StatusResponse struct {
+	Workspace      string             `json:"workspace"`
 	SessionID      string             `json:"session_id"`
+	PausedInputs   *PausedInputs      `json:"paused_inputs,omitempty"`
 	Busy           bool               `json:"busy"`
 	RunningJobs    int                `json:"running_jobs"`
 	Phase          string             `json:"phase"`
@@ -312,6 +317,7 @@ type RoleResponse struct {
 
 // IMCommand is a parsed command from IM user.
 type IMCommand struct {
+	Timeout     *time.Duration
 	Type        string   // "local_shell", "send", "status", "cancel", "confirm", "question", "handoff", "role", "new", "resume", "sessions", "todos", "login", "bind"
 	Content     string   // for send/login target
 	RequestID   string   // for confirm/question/handoff
@@ -352,10 +358,11 @@ type IncomingMessage struct {
 }
 
 type InternalAction struct {
-	Type      string
-	Action    string
-	RequestID string
-	Value     string
+	BindingInstanceID string
+	Type              string
+	Action            string
+	RequestID         string
+	Value             string
 	// Values carries the answers of a multi-select question card form: the
 	// checked option numbers, in option order. Value stays empty on that path,
 	// and vice versa for a single-select button click.
@@ -469,6 +476,7 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 		s.LastQuestionResolved = nil
 	}
 	s.SessionID = resp.SessionID
+	s.PausedInputs = resp.PausedInputs
 	s.setAgentBusy(resp.Busy)
 	s.RunningJobs = resp.RunningJobs
 	s.Phase = resp.Phase

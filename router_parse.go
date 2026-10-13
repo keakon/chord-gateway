@@ -19,6 +19,8 @@ func parseIMCommand(text string) IMCommand {
 	rest := strings.TrimSpace(text[len(parts[0]):])
 
 	switch cmd {
+	case "/takeover":
+		return parseTakeoverCommand(rest)
 	case "/status":
 		return IMCommand{Type: "status"}
 	case "/summary":

@@ -35,17 +35,19 @@ The gateway does not use `chord headless --continue`. Instead, it stores a pinne
 - If a binding has a pinned session ID, the gateway starts Chord with `--resume <sid>`.
 - If resume fails because the pinned session was removed or is busy, a normal text message is retried in a fresh session and the user is notified.
 - If no session ID is pinned, the gateway starts a fresh session.
-- `/new` clears the current binding's pin and starts fresh.
+- `/new` starts fresh. A live binding retains its pin until Chord confirms the session switch.
 - `/resume <sid>` pins the specified session ID for the current binding.
 - An in-band session switch (`session_switched`) re-points the pin at the newly active session, so later spawns resume the session the runtime actually runs.
 
 Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pins_file` is configured.
 
+A pending or completed session transfer takes precedence over a pin. Ordinary messages cannot restart that binding or fall back to a fresh session. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard.
+
 ## IM commands
 
 | Command | Description |
 |---|---|
-| `/status` | Show current Chord state: busy/idle, session, current role, phase, last context checkpoint, and pending interaction |
+| `/status` | Show current Chord state: busy/idle, session, current role, phase, last context checkpoint, pending interaction, and restored queued input |
 | `/cancel` | Cancel the current turn |
 | `/allow` | Approve the pending confirmation |
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
@@ -57,6 +59,8 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 | `/todos` | Show the current todo list |
 | `/new` | Ask the current Chord process to start a new session; if no process is available, clear the current session pin and start a fresh Chord process |
 | `/resume <id>` | Resume and pin a specific session; if the session cannot be resumed, the pin is cleared and the user is notified |
+| `/takeover <id> [--timeout <duration>]` | Take over a running TUI session into this chat and leave it paused |
+| `/takeover status` | Query the current binding's transfer without starting a new request |
 | `/sessions` | List recent sessions from the workspace |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 | any other text | Send new instructions to Chord; pending questions remain available |
@@ -67,6 +71,35 @@ Notes:
 - `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
 - Unrecognized slash commands are forwarded to Chord as normal text.
 - `/summary` is not part of the documented gateway command set.
+
+## Session takeover
+
+Takeover moves a running session between TUI and gateway-managed headless on the same macOS or Linux host, under the same OS user and canonical workspace. It requires a Chord build with the takeover CLI and managed-headless flags. An older Chord can still serve ordinary chat bindings, but cannot perform takeover. Ordinary headless, ACP, another workspace, and Windows are outside this feature's scope. For an offline session, use `/resume <id>`.
+
+To move a TUI session into an IM chat whose current binding has no live Chord process:
+
+```text
+/takeover <session-id> --timeout 30s
+/takeover status
+```
+
+If the chat already owns a process, explicitly handle that binding first. To move the gateway session to a new TUI, run Chord from the same workspace on the gateway host:
+
+```sh
+chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
+```
+
+Chord provides the canonical workspace identity, so a linked worktree can transfer within its parent repository while retaining the saved execution directory. A rejected preflight leaves ordinary chat available. When preparation fails before the source freezes, a status query reopens routing only after confirming the same live source; uncertain outcomes keep the binding blocked.
+
+The source stops admitting new execution and waits for requests, tools, and background work that already started to finish and save their results. It does not cancel those operations or start the next model request. Accepted queued input, including attachments submitted through TUI, stays with the session. The gateway accepts text from IM; takeover does not add inbound image or file uploads. Generated-image forwarding to IM remains available. A service or tool waiting for input can keep the transfer pending; status reports the blockers.
+
+Transfer notifications prioritize errors, timeouts, and recovery actions. They show the total blocker count and at most three short previews, with the omitted count when needed. For full details, use the [host status command](./operations.md#session-transfer-recovery).
+
+`--timeout` limits observation only. `0` returns the transfer ID and current state immediately; omitting it keeps observing. Expiry or disconnection leaves the source draining with its session lock. Query the existing transfer with `/takeover status`; `/status` also shows transfer status while the binding is blocked. A repeated start returns `transfer_busy`. There is no cancel-transfer command.
+
+The target resumes the same session in a paused state. Use `/status` to check the pause state and total queued-input count. It shows up to eight entries with their owner task, a short single-line preview, and attachment count, and reports how many additional entries remain. Full input content and attachments stay in the Chord session. Then explicitly send a continuation or a new normal message to begin model work. Taking over does not itself start a turn. During the transfer, ordinary messages, old card callbacks, and reminders cannot create a replacement process or send work into another binding instance.
+
+If saving fails, the source keeps its lock and execution stays frozen. If the session is saved but the target fails to load, there is no fresh-session fallback: query status and explicitly `/resume <id>` once the source has released the lock. `/new` starts a separate session when you want to abandon this chat binding. Transfer guards survive gateway restarts. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard. See [operations.md](./operations.md#session-transfer-recovery) for terminal queries and save retries.
 
 ## Question interaction
 

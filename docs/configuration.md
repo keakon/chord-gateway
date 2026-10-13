@@ -9,6 +9,7 @@ This document is the field-by-field reference for `chord-gateway` configuration.
 | `ims` | object | yes | - | IM adapter map. Supported keys are `wechat` and `feishu`. |
 | `workspaces` | object | yes | - | Workspace map keyed by workspace ID. Values define only the workspace path. |
 | `chord_path` | string | no | `chord` | Path to the Chord binary. Supports `~` expansion. |
+| `chord_state_dir` | string | no | Chord's default state directory | Chord state directory shared by managed headless and takeover CLI; set it to match a TUI using custom `--state-dir`. Supports `~` expansion. |
 | `idle_timeout` | string | no | `30m` | Idle process timeout (Go duration format). |
 | `event_visibility` | object | no | all `false` except `background_result` (`true`) | Control-plane event visibility flags. |
 | `session_pins_file` | string | no | `<state_dir>/session-pins.json` | Custom session pin storage path. |
@@ -190,7 +191,7 @@ Additional path behavior:
 
 - `CHORD_GATEWAY_LOG_FILE` overrides the default log file location.
 - The default log file is `<state_dir>/gateway.log`; it rotates at 10 MiB, keeps 3 backups, and does not gzip-compress rotated logs.
-- `session_pins_file`, `ims.wechat.token_path`, `chord_path`, and `workspaces.<id>.path` support `~` expansion.
+- `session_pins_file`, `ims.wechat.token_path`, `chord_path`, `chord_state_dir`, and `workspaces.<id>.path` support `~` expansion.
 - The gateway does not watch for external config file changes. Config is loaded at startup.
 - Unsupported or removed YAML keys, including fields inherited through anchors and merges, are reported in the gateway log with their source line and ignored; the file still loads.
 - `/bind` is the only built-in path that updates Feishu `chat_bindings` and `workspaces` in memory and writes those same sections back to the YAML config file immediately. Other config changes still require a restart. `/bind` requires an existing directory path and may normalize YAML formatting while preserving common comments.
@@ -201,6 +202,9 @@ State data includes:
 - WeChat token files (`<state_dir>/wechat/token.json` by default)
 - Feishu dedupe store (`<state_dir>/dedupe.json`)
 - session pins (`<state_dir>/session-pins.json` by default)
+- session transfer guards (`<state_dir>/session-transfers.json`)
+
+`chord_state_dir` refers to Chord's state, not the gateway's state directory above. Leave it unset for Chord's normal default; when the source TUI uses a custom directory, set the same path so takeover queries and target resume find the same session and runtime. It does not change IM or workspace authorization.
 
 ## Session pin behavior
 
@@ -213,6 +217,8 @@ workspaceID | imType | chatID
 That means different chats and different IMs keep separate pinned sessions, even when they point at the same workspace.
 
 If `session_pins_file` is not set, the store defaults to `<state_dir>/session-pins.json`.
+
+A transfer guard takes precedence over the pin. After a transfer starts, neither ordinary input nor automatic restart can resume that pin or fall back to a fresh session. The guard survives gateway restarts. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard. See [usage.md](./usage.md#session-takeover).
 
 ## Feishu binding workflow
 

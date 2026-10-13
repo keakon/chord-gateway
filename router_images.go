@@ -21,6 +21,12 @@ func (r *NotificationRouter) HandleChordImage(key string, image *ReceivedImage) 
 	}
 	task := func() {
 		defer image.Close()
+		if image.BindingInstanceID != "" {
+			p := r.mgr.GetProcessForKey(key)
+			if p == nil || p.State().BindingInstanceID != image.BindingInstanceID {
+				return
+			}
+		}
 		if err := sender.SendImage(chatID, image); err != nil {
 			log.Errorf("image delivery failed session=%v call=%v reference=%v error=%v", image.SessionID, image.CallID, image.Reference, err)
 			notice := "Image delivery failed. The original is saved in the Chord session and can be viewed there; do not regenerate."

@@ -81,6 +81,10 @@ func isRetryPhase(phase string) bool {
 
 // processEnvelope updates ControlState based on the envelope type and calls onEvent.
 func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
+	if env.Type == "session_transfer_preparing" || env.Type == "session_transfer_status" || env.Type == "session_transfer_saved" || env.Type == "session_transfer_released" {
+		p.processTransferEnvelope(env)
+		return
+	}
 	if env.Type == imageResultEvent || env.Type == imageArtifactEvent {
 		p.processImageEnvelope(env)
 		return
@@ -111,14 +115,54 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		if p.applyInputResult(env, now) {
 			eventType = "input_result"
 		}
-	case "ready":
+	case "ready", "ready_paused":
 		var payload struct {
-			SessionID string `json:"session_id"`
+			SessionID         string        `json:"session_id"`
+			RuntimeID         string        `json:"runtime_id"`
+			SessionEpoch      *uint64       `json:"session_epoch"`
+			Workspace         string        `json:"workspace"`
+			TransferID        string        `json:"transfer_id"`
+			BindingInstanceID string        `json:"binding_instance_id"`
+			State             string        `json:"state"`
+			PausedInputs      *PausedInputs `json:"paused_inputs,omitempty"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			inputs, err := normalizePausedInputs(payload.PausedInputs)
+			if err != nil {
+				deferredLog = func(string, ControlState) { log.Warnf("invalid ready paused input projection: %v", err) }
+				break
+			}
+			if strings.TrimSpace(payload.SessionID) == "" {
+				break
+			}
+			if p.expectedSessionID != "" && payload.SessionID != p.expectedSessionID {
+				break
+			}
+			if p.restoringTransferID != "" && (payload.TransferID != p.restoringTransferID || payload.BindingInstanceID != p.bindingInstanceID || env.Type != "ready_paused" && payload.State != "ready_paused") {
+				break
+			}
+			if p.restoringTransferID != "" && (payload.RuntimeID == "" || payload.SessionEpoch == nil || inputs == nil || !inputs.Paused) {
+				break
+			}
+			p.runtimeID = payload.RuntimeID
+			if payload.Workspace != "" {
+				p.workspacePath = payload.Workspace
+			}
+			p.sessionEpoch = 0
+			if payload.SessionEpoch != nil {
+				p.sessionEpoch = *payload.SessionEpoch
+			}
+			p.state.BindingInstanceID = p.bindingInstanceID
+			p.state.PausedInputs = inputs
+			p.readyPaused = env.Type == "ready_paused" || payload.State == "ready_paused"
+			if p.readySignal != nil {
+				p.readyOnce.Do(func() { close(p.readySignal) })
+			}
 			if strings.TrimSpace(payload.SessionID) != "" {
 				p.state.SessionID = payload.SessionID
-				sessionPin = payload.SessionID
+				if p.restoringTransferID == "" && !p.inputBlockedLocked() {
+					sessionPin = payload.SessionID
+				}
 			}
 		}
 		deferredLog = func(key string, state ControlState) {
@@ -344,6 +388,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	case "status_response":
 		var resp StatusResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
+			inputs, err := normalizePausedInputs(resp.PausedInputs)
+			if err != nil {
+				deferredLog = func(string, ControlState) { log.Warnf("invalid status paused input projection: %v", err) }
+				break
+			}
+			resp.PausedInputs = inputs
 			if env.Seq < p.state.LastEnvelopeSeq {
 				// Stale snapshot: a newer push already moved the aggregated
 				// state past what this copy holds (the status copy and the
@@ -362,6 +412,9 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 					p.state.resetTurnWindow()
 				}
 				p.state.applyStatusResponse(&resp)
+				if resp.Workspace != "" {
+					p.workspacePath = resp.Workspace
+				}
 				if resp.Busy {
 					p.state.ensureTurnWindow(now)
 				}
@@ -395,13 +448,28 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "session_switched":
 		var payload struct {
-			SessionID string `json:"session_id"`
+			SessionID    string `json:"session_id"`
+			RuntimeID    string `json:"runtime_id"`
+			SessionEpoch uint64 `json:"session_epoch"`
+			Workspace    string `json:"workspace"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			if id := strings.TrimSpace(payload.SessionID); id != "" {
+				if p.inputBlockedLocked() {
+					break
+				}
+				p.expectedSessionID = ""
+				if payload.RuntimeID != "" {
+					p.runtimeID = payload.RuntimeID
+				}
+				p.sessionEpoch = payload.SessionEpoch
+				if payload.Workspace != "" {
+					p.workspacePath = payload.Workspace
+				}
 				p.state.resetTurnWindow()
 				p.state.RunningJobs = 0
 				p.state.SessionID = id
+				p.state.PausedInputs = nil
 				p.state.Questions = nil
 				p.state.LastQuestion = nil
 				p.state.LastQuestionResolved = nil
@@ -561,8 +629,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		logEvent(event.kind, event.state)
 	}
 
-	if sessionPin != "" && p.mgr != nil && p.mgr.pins != nil {
-		if err := p.mgr.pins.Set(key, sessionPin); err != nil {
+	if sessionPin != "" && p.mgr != nil && p.mgr.pins != nil && !p.mgr.transferBlocked(key) {
+		if err := p.mgr.publishSessionPin(p, sessionPin); err != nil {
 			log.Warnf("[%v] persist session pin failed error=%v", processLogContext(key, state), err)
 		}
 	}

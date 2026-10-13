@@ -15,6 +15,11 @@ import (
 
 func (r *NotificationRouter) formatNotification(eventType string, state ControlState) string {
 	switch eventType {
+	case "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released":
+		if state.Transfer != nil {
+			return formatTransferStatus(*state.Transfer)
+		}
+		return ""
 	case "input_result":
 		if result := state.LastInputResult; result != nil && result.Status == inputRejected {
 			return "Input rejected: " + result.Message
@@ -764,7 +769,9 @@ func workspaceDisplayName(ws *config.Workspace) string {
 
 func formatBindingStatus(ws *config.Workspace, imType, chatID string, state ControlState) string {
 	var sb strings.Builder
-	if state.Busy {
+	if state.PausedInputs != nil && state.PausedInputs.Paused {
+		sb.WriteString("⏸️ Paused")
+	} else if state.Busy {
 		sb.WriteString("🔄 Busy")
 	} else {
 		sb.WriteString("⏸️ Idle")
@@ -850,5 +857,5 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		}
 		fmt.Fprintf(&sb, "\n📋 Todos: %d/%d completed", completed, len(state.Todos))
 	}
-	return truncate(sb.String())
+	return appendPausedInputProjection(sb.String(), formatPausedInputs(state.PausedInputs))
 }

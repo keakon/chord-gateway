@@ -59,6 +59,7 @@ func TestProcessEnvelopeReadyPersistsPinOutsideProcessLock(t *testing.T) {
 	}
 	mgr := &ChordManager{pins: pins}
 	p := &ChordProcess{key: "ws|wechat|chat", mgr: mgr}
+	mgr.procs = map[string]*ChordProcess{p.key: p}
 	payload, err := json.Marshal(map[string]string{"session_id": "session-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -1049,6 +1050,7 @@ func TestProcessEnvelopeSessionSwitchedFollowsActiveSession(t *testing.T) {
 			events = append(events, eventType)
 		},
 	}
+	p.mgr.procs = map[string]*ChordProcess{p.key: p}
 	p.state.SessionID = "old-session"
 
 	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)})
@@ -1087,6 +1089,7 @@ func TestProcessEnvelopeSessionSwitchedRepinsClearedBinding(t *testing.T) {
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
 	pins := newTestPinStore()
 	p := &ChordProcess{key: key, mgr: &ChordManager{pins: pins}}
+	p.mgr.procs = map[string]*ChordProcess{p.key: p}
 	p.state.SessionID = "old-session"
 
 	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)})

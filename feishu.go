@@ -791,7 +791,8 @@ func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcall
 		return nil, nil
 	}
 
-	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: eventID, AppID: fc.AppID, InternalAction: &InternalAction{Type: actionType, Action: action, RequestID: requestID, Value: value, Values: formAnswers, Handle: InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
+	bindingInstanceID, _ := event.Event.Action.Value["binding_instance_id"].(string)
+	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: eventID, AppID: fc.AppID, InternalAction: &InternalAction{BindingInstanceID: bindingInstanceID, Type: actionType, Action: action, RequestID: requestID, Value: value, Values: formAnswers, Handle: InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
 	if a.enqueueIncomingMessage(msg) {
 		a.dedupe.Commit(dedupeKey)
 	} else {

@@ -7,7 +7,7 @@
 #   3. $XDG_CONFIG_HOME/chord-gateway/config.yaml
 #   4. ~/.config/chord-gateway/config.yaml
 #
-# Runtime state (logs, WeChat QR-login tokens, dedupe, session pins) goes to:
+# Runtime state (logs, WeChat QR-login tokens, dedupe, session pins, transfer guards) goes to:
 #   1. $CHORD_GATEWAY_STATE_DIR
 #   2. $XDG_STATE_HOME/chord-gateway
 #   3. ~/.local/state/chord-gateway
@@ -51,6 +51,11 @@ workspaces:
 # use an absolute/~/path or add the binary's directory to your PATH.
 chord_path: chord
 
+# Optional Chord state directory, shared by managed headless and takeover CLI.
+# This is separate from the gateway state directory above. Leave unset for
+# Chord's default; set it to the same directory as a TUI using --state-dir.
+# chord_state_dir: ~/.local/state/chord
+
 # --- Session Idle Timeout ---
 # How long to wait before terminating an idle chord process.
 idle_timeout: 30m
@@ -58,7 +63,7 @@ idle_timeout: 30m
 # --- Optional: Control-Plane Event Subscriptions ---
 # Only non-essential events are controllable here. Essential events include
 # assistant_message, requests, idle/error, Done reports, local shell results,
-# and SubAgent completion summaries; they are always subscribed.
+# SubAgent completion summaries, and session transfer events; they are always subscribed.
 # background_result is enabled by default; set it to false to stop pushing
 # finished background job results to the chat.
 event_visibility:

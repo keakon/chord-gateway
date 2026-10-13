@@ -298,7 +298,16 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	r.recordChatID(key, chatID)
 
+	if r.rejectStaleCard(key, msg) {
+		r.sendText(chatID, "⚠️ This card belongs to a previous process. Use /status to get current entries.")
+		return
+	}
+	if r.routeTransferGuard(ws, chatID, key, cmd, msg) {
+		return
+	}
 	switch cmd.Type {
+	case "takeover":
+		r.handleTakeover(ws, chatID, key, cmd)
 	case "new":
 		r.handleNew(ws, chatID, imType)
 	case "resume":
@@ -325,11 +334,6 @@ func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID, imType stri
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	proc := r.mgr.GetProcessForKey(key)
 	if proc != nil && (proc.Alive() || proc.cmd == nil && proc.stdin != nil) {
-		if r.mgr.pins != nil {
-			if err := r.mgr.clearSessionPinForKey(key); err != nil {
-				log.Warnf("clear session pin failed key=%v error=%v", key, err)
-			}
-		}
 		if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err == nil {
 			r.sendText(chatID, "🆕 /new sent to chord process.")
 			return
@@ -358,21 +362,7 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		r.sendText(chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
 		return
 	}
-	r.mgr.StopProcessKey(key)
-	if r.mgr.pins != nil {
-		if isResume {
-			if err := r.mgr.pins.Set(key, sessionID); err != nil {
-				log.Warnf("pin resume session failed key=%v session_id=%v error=%v", key, sessionID, err)
-			}
-		} else if err := r.mgr.clearSessionPinForKey(key); err != nil {
-			log.Warnf("clear session pin failed key=%v error=%v", key, err)
-		}
-	}
-	var spawnArgs []string
-	if isResume {
-		spawnArgs = []string{"--resume", sessionID}
-	}
-	proc, err := r.mgr.SpawnWithArgsForKey(key, spawnArgs...)
+	proc, err := r.mgr.replaceOrdinarySession(key, sessionID)
 	if err != nil {
 		if isResume {
 			log.Errorf("failed to spawn process for resume workspace=%v error=%v", ws.ID, err)
@@ -389,12 +379,7 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 	}
 	if isResume {
 		if !r.resumeProcessAvailable(proc, sessionID) {
-			if r.mgr.pins != nil {
-				if err := r.mgr.clearSessionPinForKey(key); err != nil {
-					log.Warnf("clear failed resume session pin failed key=%v session_id=%v error=%v", key, sessionID, err)
-				}
-			}
-			r.mgr.StopProcessKey(key)
+			r.mgr.discardFailedResume(key, proc, sessionID)
 			log.Warnf("resume session failed after spawn key=%v session_id=%v", key, sessionID)
 			r.sendText(chatID, fmt.Sprintf("❌ Failed to resume session %s. It may not exist or may be busy.", sessionID))
 			return
@@ -651,6 +636,16 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
+	if state.BindingInstanceID != "" {
+		p := r.mgr.GetProcessForKey(key)
+		if p == nil || p.State().BindingInstanceID != state.BindingInstanceID {
+			return
+		}
+	}
+	if strings.HasPrefix(eventType, "session_transfer_") {
+		r.stopReminder(key)
+	}
+
 	if eventType == "session_switched" || eventType == "exit" {
 		r.mu.Lock()
 		delete(r.shownQuestions, key)
@@ -736,6 +731,12 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	}
 
 	task := func() {
+		if state.BindingInstanceID != "" {
+			p := r.mgr.GetProcessForKey(key)
+			if p == nil || p.State().BindingInstanceID != state.BindingInstanceID {
+				return
+			}
+		}
 		r.deliverChordEvent(key, imType, chatID, eventType, state, msg)
 	}
 	if r.outbound != nil {

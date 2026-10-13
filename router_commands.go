@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,6 +32,11 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 	if proc == nil {
 		log.Errorf("no process for workspace workspace=%v", ws.ID)
 		r.sendText(chatID, "❌ Workspace not configured.")
+		return
+	}
+
+	if incoming.InternalAction != nil && proc.bindingInstanceID != "" && incoming.InternalAction.BindingInstanceID != proc.bindingInstanceID {
+		r.sendText(chatID, "⚠️ This card belongs to a previous process. Use /status.")
 		return
 	}
 
@@ -280,7 +286,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	}
 	if err := proc.SendUserMessage(cmd.Content); err != nil {
 		log.Errorf("failed to send user message workspace=%v error=%v", ws.ID, err)
-		if r.retrySendInFreshSession(ws, chatID, procKey, cmd.Content) {
+		if !errors.Is(err, ErrSessionTransferred) && r.retrySendInFreshSession(ws, chatID, procKey, cmd.Content) {
 			return
 		}
 		r.sendText(chatID, "❌ Failed to send message to chord.")
@@ -303,16 +309,10 @@ func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatI
 }
 
 func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatID, procKey, content string) bool {
-	if r.mgr == nil {
+	if r.mgr == nil || r.mgr.transferBlocked(procKey) {
 		return false
 	}
-	if r.mgr.pins != nil {
-		if err := r.mgr.clearSessionPinForKey(procKey); err != nil {
-			log.Warnf("clear session pin before retry failed key=%v error=%v", procKey, err)
-		}
-	}
-	r.mgr.StopProcessKey(procKey)
-	proc, err := r.mgr.SpawnWithArgsForKey(procKey)
+	proc, err := r.mgr.replaceOrdinarySession(procKey, "")
 	if err != nil {
 		log.Errorf("failed to start fresh chord session for retry workspace=%v error=%v", ws.ID, err)
 		return false
@@ -394,7 +394,7 @@ func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID stri
 
 	target := strings.TrimSpace(cmd.Content)
 	if target == "" {
-		r.showRoleMenu(chatID, procKey, current, roles, incoming)
+		r.showRoleMenu(chatID, procKey, current, roles, incoming, proc.bindingInstanceID)
 		return
 	}
 
@@ -445,9 +445,9 @@ func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID stri
 // and falling back to a numbered text menu. When a Feishu card send fails the
 // adapter's sendCardOrFallback has already emitted the text fallback, so the
 // handler only falls through to sendText when no Feishu adapter is attached.
-func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles []RoleInfo, incoming IncomingMessage) {
+func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles []RoleInfo, incoming IncomingMessage, instance ...string) {
 	if config.NormalizeIMType(incoming.IMType) == "feishu" {
-		if r.sendFeishuRoleMenu(chatID, procKey, current, roles) {
+		if r.sendFeishuRoleMenu(chatID, procKey, current, roles, instance...) {
 			return
 		}
 		if r.findFeishuAdapter() != nil {

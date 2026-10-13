@@ -28,6 +28,7 @@ var imageSpoolBytes atomic.Int64
 
 // ReceivedImage owns one validated temporary original until Close is called.
 type ReceivedImage struct {
+	BindingInstanceID                                         string
 	Path, Reference, CallID, AgentID, SessionID, MIME, SHA256 string
 	Size                                                      int64
 	Width, Height                                             int
@@ -307,5 +308,6 @@ func (p *ChordProcess) processImageEnvelope(env *HeadlessEnvelope) {
 		image.Close()
 		return
 	}
+	image.BindingInstanceID = p.bindingInstanceID
 	callback(p.key, image)
 }

@@ -19,6 +19,7 @@
 - Multiple IM adapters can run together
 - Per-chat and per-workspace session isolation
 - Session pinning and resume commands (`/new`, `/resume`, `/sessions`)
+- Move a running session between TUI and IM with `/takeover`, preserving queued input and leaving the target paused (macOS/Linux; requires Chord takeover support).
 - Cross-IM login notification (for example, when one channel expires, use another channel to prompt re-login)
 - Local `chord headless` subprocess lifecycle management and cleanup
 - Configurable visibility for optional control-plane events
@@ -96,6 +97,8 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 | `/todos` | Show the current todo list |
 | `/new` | Start a fresh session for the current binding |
 | `/resume <id>` | Resume and pin a session |
+| `/takeover <id> [--timeout <duration>]` | Take over a TUI session into this chat, paused |
+| `/takeover status` | Query the current session transfer |
 | `/sessions` | List recent sessions |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 

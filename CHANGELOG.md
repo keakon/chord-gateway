@@ -10,6 +10,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Session takeover between a local TUI and IM on macOS/Linux: `/takeover <session-id> [--timeout <duration>]` waits for existing work to finish without cancelling it, preserves accepted queued input and TUI attachments, and resumes the target paused. `/takeover status` reports progress with bounded blocker details and recovery guidance; waiting timeouts do not stop the source. `/status` shows the restored queue's total count, owner tasks, bounded previews, and attachment counts before explicit continuation. Transfer guards survive gateway restarts and prevent messages, old cards, and reminders from reclaiming a session transferred out until explicit `/new` or `/resume` succeeds. Incoming target bindings open only after paused readiness, a valid queue summary, and a saved pin. Requires Chord takeover support; `chord_state_dir` can select a shared custom Chord state directory.
+
 - `event_visibility.background_result` can now turn off the chat pushes for finished background job results. They remain enabled by default, and the durable result stays in the Chord session when disabled.
 
 ### Changed

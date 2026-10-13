@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,11 +22,22 @@ import (
 
 // ChordProcess manages a single chord headless child process.
 type ChordProcess struct {
-	images imageReceiver
-	mu     sync.RWMutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	cancel context.CancelFunc
+	bindingInstanceID   string
+	runtimeID           string
+	sessionEpoch        uint64
+	workspacePath       string
+	transfer            *TransferStatus
+	restoringTransferID string
+	bindingGuard        bool
+	expectedSessionID   string
+	readyPaused         bool
+	readySignal         chan struct{}
+	readyOnce           sync.Once
+	images              imageReceiver
+	mu                  sync.RWMutex
+	cmd                 *exec.Cmd
+	stdin               io.WriteCloser
+	cancel              context.CancelFunc
 
 	waitOnce sync.Once
 	exitOnce sync.Once
@@ -122,7 +134,11 @@ type ChordManager struct {
 	procs         map[string]*ChordProcess // processKey.String() → active process
 	onEvent       func(key string, eventType string, state ControlState)
 
-	pins *sessionPinStore
+	pins                *sessionPinStore
+	transfers           *sessionTransferStore
+	takeoverCLI         func(context.Context, string, takeoverRequest) (TransferStatus, error)
+	capabilityMu        sync.Mutex
+	managedCapabilities map[string]bool
 }
 
 type lifecycleKeyLock struct {
@@ -166,11 +182,16 @@ func NewChordManager(cfg *config.Config, paths *config.Paths) *ChordManager {
 	if pinsPath != "" {
 		pins.path = pinsPath
 	}
+	transfers := newSessionTransferStore(paths.StateDir)
+	if err := transfers.Load(); err != nil {
+		log.Errorf("load transfer guards failed: %v", err)
+	}
 	_ = pins.Load()
 
 	m := &ChordManager{
 		procs:      make(map[string]*ChordProcess),
 		pins:       pins,
+		transfers:  transfers,
 		shutdownCh: make(chan struct{}),
 	}
 	m.cfg.Store(cfg)
@@ -216,7 +237,13 @@ func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 	releaseKeyLock := m.acquireKeyLock(key)
 	defer releaseKeyLock()
 
+	if m.transferBlocked(key) {
+		return nil, ErrSessionTransferred
+	}
 	if p := m.GetProcessForKey(key); p != nil {
+		if p.transferActive() {
+			return nil, ErrSessionTransferred
+		}
 		if p.Alive() || p.cmd == nil && p.stdin != nil {
 			return p, nil
 		}
@@ -353,6 +380,9 @@ func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*Ch
 	}
 	releaseKeyLock := m.acquireKeyLock(key)
 	defer releaseKeyLock()
+	if m.transferBlocked(key) {
+		return nil, ErrSessionTransferred
+	}
 	return m.spawnWithArgsForKeyLocked(key, extraArgs...)
 }
 
@@ -396,7 +426,28 @@ func (m *ChordManager) spawnWithArgsForKeyLocked(key string, extraArgs ...string
 
 // spawn starts a new chord headless process for the given workspace.
 func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key string, eventType string, state ControlState), extraArgs ...string) (*ChordProcess, error) {
-	args := []string{"headless", "-d", ws.Path}
+	transferID, instance := transferRestoreArgs(extraArgs)
+	if instance == "" {
+		instance = "binding-" + rand.Text()
+	}
+	workDir, err := resolveTakeoverWorkDir(ws.Path)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"headless", "-d", workDir}
+	managed := m.gatewayManagedSupported()
+	if transferID != "" && !managed {
+		return nil, errors.New("unsupported takeover binary")
+	}
+	if managed {
+		args = append(args, "--gateway-managed")
+	}
+	if _, specified := transferRestoreArgs(extraArgs); managed && specified == "" {
+		args = append(args, "--gateway-instance", instance)
+	}
+	if dir := m.cfg.Load().ChordStateDir; dir != "" {
+		args = append(args, "--state-dir", config.Expand(dir))
+	}
 	args = append(args, extraArgs...)
 
 	cfg := m.cfg.Load()
@@ -436,17 +487,31 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	p := &ChordProcess{
-		cmd:          cmd,
-		stdin:        stdinPipe,
-		cancel:       cancel,
-		key:          key,
-		workspaceID:  ws.ID,
-		lastActivity: time.Now(),
-		autoRestart:  true,
-		mgr:          m,
-		onEvent:      onEvent,
-		stderr:       stderr,
-		pgid:         pgid,
+		bindingInstanceID:   instance,
+		workspacePath:       "",
+		restoringTransferID: transferID,
+		readySignal:         make(chan struct{}),
+		cmd:                 cmd,
+		stdin:               stdinPipe,
+		cancel:              cancel,
+		key:                 key,
+		workspaceID:         ws.ID,
+		lastActivity:        time.Now(),
+		autoRestart:         true,
+		mgr:                 m,
+		onEvent:             onEvent,
+		stderr:              stderr,
+		pgid:                pgid,
+	}
+	p.bindingGuard = m.transferBlocked(key)
+	if p.bindingGuard {
+		p.autoRestart = false
+	}
+	p.state.BindingInstanceID = instance
+	for i := 0; i+1 < len(extraArgs); i++ {
+		if extraArgs[i] == "--resume" {
+			p.expectedSessionID = extraArgs[i+1]
+		}
 	}
 	p.state.UpdatedAt = time.Now().Format(time.RFC3339)
 
@@ -469,9 +534,13 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	// confirmation flows, idle state, and SubAgent completion summaries.
 	// Optional visibility is configured in gateway.
 	// Subscription errors are surfaced through the headless error event.
+	events := configuredHeadlessSubscribeEvents(cfg)
+	if !managed {
+		events = slices.DeleteFunc(events, func(event string) bool { return strings.HasPrefix(event, "session_transfer_") })
+	}
 	if err := p.SendCommand(map[string]any{
 		"type":   "subscribe",
-		"events": configuredHeadlessSubscribeEvents(cfg),
+		"events": events,
 	}); err != nil {
 		log.Warnf("failed to send subscribe command workspace=%v key=%v error=%v", ws.ID, key, err)
 	}
@@ -592,7 +661,7 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// compaction_status, session_switched, background_result, and image_result.
 	// background_result is subscribed by default but can be opted out, because
 	// finished job results are pushed as chat messages.
-	events := []string{"activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}
+	events := []string{"session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}
 	if cfg == nil {
 		return events
 	}
@@ -662,6 +731,9 @@ func (p *ChordProcess) SendCommand(cmd map[string]any) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !p.commandAllowedLocked(cmd) {
+		return ErrSessionTransferred
+	}
 	if err := p.writeCommandLocked(data); err != nil {
 		return err
 	}

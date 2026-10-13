@@ -10,6 +10,8 @@ Treat an allowed IM sender as someone who can interact with Chord in the configu
 
 Workspace files and the Chord process stay on the gateway host, but chat messages and replies still pass through the selected IM platform. Data sent to model providers is governed by the Chord configuration.
 
+Session takeover uses the same accepted IM sender and workspace routing rules. There is no separate takeover permission switch or source-user approval prompt. It is limited to the same OS user and canonical workspace on macOS/Linux, between TUI and gateway-managed headless. Local endpoint identity checks prevent accidental cross-runtime routing; they do not sandbox a malicious process running under the same OS user.
+
 ## Recommended deployment practices
 
 - Use a dedicated machine, user account, container, or VM for gateway deployments when possible.

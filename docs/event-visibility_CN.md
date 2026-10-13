@@ -25,6 +25,10 @@ gateway 默认订阅以下事件：
 - `agent_done`
 - `compaction_status`
 - `session_switched`
+- `session_transfer_preparing`
+- `session_transfer_status`
+- `session_transfer_saved`
+- `session_transfer_released`
 - `background_result`
 - `image_result`
 
@@ -45,10 +49,15 @@ gateway 默认订阅以下事件：
 - SubAgent 完成摘要
 - 供 `/status` 展示最近一次上下文检查点结果
 - 进程内会话切换，使已 pin 的绑定跟随运行时实际使用的会话
+- 会话移交准备、保存与释放，保证重启后已经移交的绑定继续被阻断
 - 后台任务完成结果，没有其它投递通道
 - 通过有界分块转发生成图片
 
 `session_switched` 只更新状态：触发切换的命令本身已经回复了用户，不再额外发消息。它会把绑定的 session pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
+
+`session_transfer_*` 事件属于必需控制面事件，不能通过 `event_visibility` 关闭。准备事件会关闭新输入入口，并在向源端确认之前持久化阻断；状态事件会推送等待收口、阻塞项变化、保存中及保存失败的进度，保留源会话 pin；保存和释放事件更新移交状态，并按源身份条件清除 pin。既有已接纳输入仍属于源会话，新消息与提醒继续被阻断；旧卡回调不能发送到替代绑定实例。用 `/takeover status` 查询进度和阻塞项，绑定被阻断时也可用 `/status`。最终事件丢失不会允许自动重启，详见[运维说明](./operations_CN.md#会话移交恢复)。
+
+暂停就绪回执和状态快照还携带恢复队列摘要。`/status` 展示暂停状态和待处理输入总数，再列出最多八项的所属任务、简短单行预览及附件数，其余条目单独计数。展示摘要不会启动执行，完整正文及附件仍保留在 Chord。缺少队列数据时不会显示为零。接管目标须由 Chord 确认暂停就绪并提供有效摘要，绑定才会开放。headless 契约详见[兼容性说明](./compatibility_CN.md#会话接管能力)。
 
 `background_result` 会作为聊天消息推送到 IM，因为 Chord 侧没有其它通道：后台任务通常在 turn 进入 idle 之后才完成，之后不会有 `assistant_message` 再总结它。觉得刷屏的聊天可设置 `event_visibility.background_result: false` 关闭推送；持久化结果仍保留在 Chord 会话中。
 
@@ -136,6 +145,8 @@ Gateway 解析 JSONL 或读取流失败时，会单独向聊天发送提示。�
 ## 生成图片
 
 Gateway 订阅 `image_result`，接收有界的 `image_artifact` 数据分块，并按顺序向来源会话转发全部图片。微信上传加密媒体；飞书通过 tenant access token 上传消息图片。飞书图片达到或超过 10 MB 时发送保留透明度的缩小 PNG 预览，原图仍保存在 Chord 会话中。
+
+这是出站图片投递。gateway 从 IM 接收文本，不会将收到的图片或文件上传到 Chord。通过 TUI 已接纳的附件仍属于移交会话，由 Chord 恢复。
 
 Chord 结束处理时会清理并提示未完成的传输；切换会话或关闭进程也会清理未完成的传输。损坏或不完整的数据不会上传。同一传输失败只提示一次，后续分块丢弃时不再重复通知。
 

@@ -30,6 +30,10 @@ func reminderDelay(lastPush time.Time, now time.Time) time.Duration {
 }
 
 func (r *NotificationRouter) scheduleReminder(key string, lastPush time.Time) {
+	if r.mgr.transferBlocked(key) {
+		r.stopReminder(key)
+		return
+	}
 	now := time.Now()
 	r.mu.Lock()
 	r.resetReminderTimer(key, reminderDelay(lastPush, now))
@@ -68,6 +72,10 @@ func (r *NotificationRouter) stopReminder(key string) {
 }
 
 func (r *NotificationRouter) fireReminder(key string) {
+	if r.mgr.transferBlocked(key) {
+		r.stopReminder(key)
+		return
+	}
 	proc, ok := r.lookupProcessByKey(key)
 	if !ok || proc == nil || !proc.Alive() {
 		r.stopReminder(key)
@@ -86,6 +94,10 @@ func (r *NotificationRouter) fireReminder(key string) {
 	msg := r.formatLongRunningNotification(state, time.Now())
 	if msg != "" {
 		task := func() {
+			if r.mgr.transferBlocked(key) || r.mgr.GetProcessForKey(key) != proc {
+				r.stopReminder(key)
+				return
+			}
 			r.sendText(chatID, msg)
 			r.markVisibleOutput(key)
 		}

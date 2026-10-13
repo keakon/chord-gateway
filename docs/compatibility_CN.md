@@ -16,6 +16,33 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 
 升级网关后，发送 `/status` 刷新问题集合和答题入口，使用新的入口作答，不再使用旧网关发出的选项按钮。
 
+## 会话接管能力
+
+会话接管还需要 Chord 支持 `chord takeover preflight/start/status/retry-save --json`、`--gateway-managed`、`--gateway-instance`、`--gateway-transfer-id`、移交准备/保存/释放事件，以及带关联身份的 `ready_paused` 回执。managed 会话成功移交时使用退出码 `20`。源端与目标端必须位于同一 macOS 或 Linux 主机、同一 OS 用户及同一规范化工作区，并使用相同的 Chord 状态目录。
+
+`ready_paused`（或 `state: ready_paused` 的 `ready`）及 `status_response` 必须包含 `paused_inputs` 摘要：
+
+```json
+{
+  "paused": true,
+  "pending_input_count": 1,
+  "inputs": [
+    {
+      "input_id": "input-1",
+      "owner_task_id": "task-1",
+      "preview": "Review the draft",
+      "attachment_count": 1
+    }
+  ]
+}
+```
+
+摘要单独报告待处理输入总数，条目数须等于 `min(pending_input_count, 8)`，数量字段不得为负数。input 与 owner ID 须非空、最多 128 字节、不含空白或控制字符，input ID 不得重复。gateway 最多展示八项，每项包含所属任务、最多 160 个 Unicode 字符的单行预览及附件数，展示的 ID 也有长度限制。完整输入正文、附件数据及路径保留在 Chord 会话中，不进入 takeover CLI 状态或 gateway 的移交存储。接管目标须返回有效摘要且 `paused: true`，绑定才会开放。普通状态回执缺少摘要时，gateway 不会将其解释为空队列。
+
+gateway 在接管前检查二进制的 headless 标志。不支持 managed headless 的构建，只要符合上面的普通协议要求，仍可运行普通聊天绑定；`/takeover` 会明确报告缺少能力。没有另一套接管协议，也不会冒险改用其他恢复方式。详见[会话接管](./usage_CN.md#会话接管)。
+
+接管的工作区身份由 Chord 的 `takeover preflight` 回执确认，执行目录通过 `-d` 单独传入；Gateway 不推导 Git 根目录。`ready`、`ready_paused`、`status_response` 与 `session_switched` 提供 `workspace` 字段，用于校验源端和恢复目标的规范化工作区。CLI 的 `preflight` 状态证明接管请求未被接纳；`prepare_failed` 状态证明该移交尚未冻结源端，只有源实例身份仍然一致且进程存活时，Gateway 才解除准备阶段的路由阻断。
+
 ## 当前保留的兼容路径
 
 - 读取已有状态目录时，会话 pin 仍接受早期的 `workspaceID|imType|chatID` 存储键；新键使用编码形式。

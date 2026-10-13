@@ -23,7 +23,7 @@ func newSessionPinStore(storageDir string) *sessionPinStore {
 		path: filepath.Join(storageDir, "session-pins.json"),
 		pins: make(map[string]string),
 		writer: func(path string, data []byte, _ os.FileMode) error {
-			return writePrivateFileAtomically(path, data)
+			return writePrivateFileSynced(path, data)
 		},
 	}
 }
@@ -107,6 +107,27 @@ func (s *sessionPinStore) Set(key, sessionID string) error {
 	}
 	s.mu.Lock()
 	s.pins = updated
+	s.mu.Unlock()
+	return nil
+}
+
+// ClearIf cannot erase a pin published by a newer runtime/session switch.
+func (s *sessionPinStore) ClearIf(key, sessionID string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	s.mu.Lock()
+	if s.pins[key] != sessionID {
+		s.mu.Unlock()
+		return nil
+	}
+	next := maps.Clone(s.pins)
+	s.mu.Unlock()
+	delete(next, key)
+	if err := s.savePins(next); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.pins = next
 	s.mu.Unlock()
 	return nil
 }

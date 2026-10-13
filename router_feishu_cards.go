@@ -19,7 +19,7 @@ func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state Con
 		return false, nil
 	}
 	workspaceID, _, _ := parseProcessKey(key)
-	card := buildFeishuConfirmCard(chatID, state.PendingConfirm, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
+	card := buildFeishuConfirmCard(chatID, state.PendingConfirm, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key, BindingInstanceID: state.BindingInstanceID})
 	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
 	r.recordCardHandle(key, "confirm", state.PendingConfirm.RequestID, handle)
 	return true, err
@@ -34,7 +34,7 @@ func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state Co
 		return false, nil
 	}
 	workspaceID, _, _ := parseProcessKey(key)
-	card := buildFeishuQuestionCard(chatID, state.questionForNotification(), feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key})
+	card := buildFeishuQuestionCard(chatID, state.questionForNotification(), feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key, BindingInstanceID: state.BindingInstanceID})
 	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
 	r.recordCardHandle(key, "question", state.questionForNotification().RequestID, handle)
 	return true, err
@@ -59,13 +59,23 @@ func (r *NotificationRouter) reportFeishuCardFailure(chatID, key string, err err
 // sendFeishuRoleMenu presents the role list as an interactive Feishu card.
 // On card-send failure sendCardOrFallback emits the text menu fallback and
 // reports a nil handle, so the boolean only reports an interactive card.
-func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string, roles []RoleInfo) bool {
+func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string, roles []RoleInfo, instance ...string) bool {
 	feishu := r.findFeishuAdapter()
 	if feishu == nil {
 		return false
 	}
 	reqID := newRoleMenuRequestID()
 	card := buildFeishuRoleCard(chatID, reqID, current, roles)
+	if p := r.mgr.GetProcessForKey(procKey); p != nil {
+		binding := p.State().BindingInstanceID
+		if len(instance) > 0 {
+			if binding != instance[0] {
+				return false
+			}
+			binding = instance[0]
+		}
+		stampCardBinding(card, binding)
+	}
 	handle, err := feishu.sendCardOrFallback(chatID, card, buildRoleMenuText(current, roles))
 	if err != nil {
 		r.reportFeishuCardFailure(chatID, procKey, err)
@@ -122,10 +132,11 @@ func buildFeishuRoleCard(chatID, reqID, current string, roles []RoleInfo) map[st
 }
 
 type feishuCardContext struct {
-	WorkspaceID string
-	SessionID   string
-	RequestedAt string
-	ProcessKey  string
+	WorkspaceID       string
+	SessionID         string
+	RequestedAt       string
+	BindingInstanceID string
+	ProcessKey        string
 }
 
 // maxFeishuQuestionOptions caps how many options a question card carries.
@@ -183,7 +194,7 @@ func buildFeishuConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishuCard
 		}
 	}
 	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click a button, or reply `/allow` / `/deny [reason]`."})
-	baseValue := map[string]any{"request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
+	baseValue := map[string]any{"request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "binding_instance_id": cardCtx.BindingInstanceID, "issued_at": time.Now().Unix()}
 	allowValue := cloneCardValue(baseValue)
 	allowValue["type"] = "confirm"
 	allowValue["action"] = "allow"
@@ -229,7 +240,7 @@ func buildFeishuDoneConfirmCard(chatID string, c *ConfirmPayload, cardCtx feishu
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "**Completion report**\n" + report})
 	}
 	elements = append(elements, map[string]any{"tag": "markdown", "content": "Click Finish to end the loop, or reply `/deny <reason>` to continue. Done rejection requires a reason."})
-	baseValue := map[string]any{"request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
+	baseValue := map[string]any{"request_id": c.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "binding_instance_id": cardCtx.BindingInstanceID, "issued_at": time.Now().Unix()}
 	allowValue := cloneCardValue(baseValue)
 	allowValue["type"] = "confirm"
 	allowValue["action"] = "allow"
@@ -264,7 +275,7 @@ func buildFeishuQuestionCard(chatID string, q *QuestionPayload, cardCtx feishuCa
 	if len(contextLines) > 0 {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": strings.Join(contextLines, "\n")})
 	}
-	baseValue := map[string]any{"type": "question", "action": "answer", "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "issued_at": time.Now().Unix()}
+	baseValue := map[string]any{"type": "question", "action": "answer", "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "binding_instance_id": cardCtx.BindingInstanceID, "issued_at": time.Now().Unix()}
 	if q.Multiple {
 		elements = append(elements, buildFeishuQuestionForm(q, baseValue))
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "Check one or more options, then click Submit. You can also reply /answer @" + q.RequestID + " 1,3."})

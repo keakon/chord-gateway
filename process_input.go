@@ -29,6 +29,9 @@ type InputResultPayload struct {
 func (p *ChordProcess) SendUserMessage(content string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.inputBlockedLocked() {
+		return ErrSessionTransferred
+	}
 	if p.stdin == nil {
 		return io.ErrClosedPipe
 	}

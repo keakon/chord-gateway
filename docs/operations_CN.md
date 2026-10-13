@@ -16,11 +16,38 @@ gateway 会按需为每个活跃绑定启动 `chord headless` 子进程。
 
 如果 gateway 自身被 `SIGKILL`（`kill -9`）杀死，则无法执行清理 handler。此时依赖 Chord 的 parent-death watcher 检测父进程变化并尽快退出。
 
-如果 Chord 进程崩溃（gateway 并未请求其停止却退出），gateway 会在短暂延迟后自动重新拉起；若此时 gateway 正在关闭，则取消这次待执行的重启。
+如果 Chord 进程崩溃（gateway 并未请求其停止却退出），gateway 会在短暂延迟后自动重新拉起；若此时 gateway 正在关闭，则取消这次待执行的重启。会话移交中的进程也不会自动重启；成功移交使用退出码 `20`。即使最终事件丢失或进程异常退出，移交阻断仍然生效。
+
+## 会话移交恢复
+
+在受影响的 IM 聊天中使用 `/takeover status`；绑定被阻断时也可用 `/status`。查询不会新建移交或改用全新会话。对于已有的接管到当前聊天的移交，查询可以在源端释放后完成暂停目标的恢复。在 gateway 所在主机上，以源端相同的工作区和 Chord 状态目录查询：
+
+```sh
+chord takeover status -d /path/to/workspace --session <session-id> --transfer-id <transfer-id> --json
+```
+
+IM 通知只展示简短的阻塞项预览。宿主机命令返回一页有界结果及总数 `blocker_count`；若包含 `next_offset`，可追加 `--blocker-offset <next_offset>` 再次查询下一页。
+
+如果 Chord 使用自定义状态目录，追加 `--state-dir /path/to/chord-state`，并在 gateway 的 `chord_state_dir` 配置相同路径。它与 gateway 自己的状态目录相互独立。
+
+- 等待超时只结束观察，源端继续自然收口并持有会话锁。检查阻塞项，等待既有工作结束。长期任务可能一直阻塞；停止该任务属于用户单独发起的操作。
+- 保存失败时源端继续冻结并持有锁。处理报告的存储问题，再按原移交 ID 重试保存：
+
+  ```sh
+  chord takeover retry-save -d /path/to/workspace --session <session-id> --transfer-id <transfer-id> --json
+  ```
+
+- 源端已经保存、目标恢复失败时，先核对工作区、角色配置与会话锁状态，再显式发送 `/resume <session-id>`。暂停检查点恢复后不会调用模型，直到用户明确继续或发送新输入。继续之前，用 `/status` 核对恢复队列的数量、所属任务、预览及附件数。
+- 观察中断时查询原移交。没有回执不代表源端恢复了执行，也不代表目标已经启动；协调进程不可用时，不保证目标会无人值守地自动启动。
+- 在自然收口期间重启或停止 gateway 属于外部中断，不是成功自然移交；阻断记录会保留供恢复处理。
+
+`<state_dir>/session-transfers.json` 在源端确认准备之前记录绑定阻断，重启后优先于 session pin。普通消息、提醒、旧卡和崩溃恢复不能隐式拉回已经移交的会话。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功；失败时保留阻断。清除阻断时使用私有的 `session-transfers.json.pending` 日志，确保磁盘同步失败后重启不会误开放绑定。若存储故障留下该日志，先处理故障再显式重试；源端所有权不确定时，不要删除任一阻断文件来强行触发自动重启。
+
+会话接管通知通过有序发送队列投递。慢速 IM 发送不会占用进程生命周期锁；队列满时，有界队列的背压仍可能延缓协议读取。
 
 ## 空闲超时
 
-`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。报告有活跃后台任务的进程会继续保留，直到这些任务不再计入运行数量；可通过 `/status` 查看。本地 shell 命令的结果尚未返回时，也会继续保留进程。
+`idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。报告有活跃后台任务的进程会继续保留，直到这些任务不再计入运行数量；可通过 `/status` 查看。本地 shell 命令的结果尚未返回时，也会继续保留进程。移交准备和自然收口期间同样不会执行空闲回收。
 
 清理空闲进程会关闭该 Core 并暂停题目计时，不编造问答终态。重新连接并恢复会话后按原 ID 回答；先检查 `/status`，以 Chord 回执确定结果。权限与 Handoff 请求继续按各自的取消规则处理。
 
@@ -51,8 +78,9 @@ idle_timeout: 30m
 - 微信同步游标（`<state_dir>/wechat/sync-buf.json`）
 - 飞书去重存储
 - session pin 存储
+- 会话移交阻断（`session-transfers.json`）
 
-gateway 会通过原子替换写入 WeChat token / sync 状态、飞书去重状态和 session pin 状态，避免在崩溃或异常重启时留下截断的状态文件。
+gateway 会通过原子替换写入 WeChat token / sync 状态、飞书去重状态、session pin 和移交阻断，避免在崩溃或异常重启时留下截断的状态文件。
 
 ## 配置文件解析
 
@@ -144,6 +172,10 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `agent_done`
 - `compaction_status`
 - `session_switched`
+- `session_transfer_preparing`
+- `session_transfer_status`
+- `session_transfer_saved`
+- `session_transfer_released`
 - `background_result`
 - `image_result`
 

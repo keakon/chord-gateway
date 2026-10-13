@@ -17,6 +17,7 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 		return
 	}
 	p.exitOnce.Do(func() {
+		p.markTransferInterrupted()
 		// Mark as stopped by gateway to avoid crash restarts.
 		p.mu.Lock()
 		p.stoppedByGateway = true
@@ -70,6 +71,9 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 // handleExit cleans up when the chord process exits.
 func (p *ChordProcess) handleExit() {
 	p.mu.Lock()
+	if p.readySignal != nil {
+		p.readyOnce.Do(func() { close(p.readySignal) })
+	}
 	p.state.PendingLocalShells = 0
 	p.state.LocalShellStartedAt = time.Time{}
 	p.state.setAgentBusy(false)
@@ -109,6 +113,10 @@ func (p *ChordProcess) handleExit() {
 	// Serialize Cmd.Wait calls. TerminateGroup may call Wait concurrently.
 	// Waiting here guarantees the process exit is recorded before checking it.
 	exitCode := p.waitAndRecordExit(cmd)
+	if p.recordTransferExit(exitCode) {
+		autoRestart = false
+		crashed = exitCode != sessionTransferExitCode
+	}
 
 	log.Infof("[%v] chord process exited pid=%v exit_code=%v crashed=%v", processLogContext(key, state), pid, exitCode, crashed)
 	if crashed && strings.TrimSpace(stderr) != "" {
@@ -125,6 +133,10 @@ func (p *ChordProcess) handleExit() {
 			log.Infof("[%v] auto-restarting crashed chord process in %v", processLogContext(key, state), defaultAutoRestartDelay)
 			if !p.waitAutoRestart(defaultAutoRestartDelay) {
 				log.Infof("[%v] auto-restart cancelled: gateway is shutting down", processLogContext(key, state))
+				return
+			}
+			// Recheck the exact binding after the delay; a replacement owns its lifecycle.
+			if p.mgr != nil && p.mgr.GetProcessForKey(key) != p {
 				return
 			}
 			// Use the manager to respawn; it handles the procs map.
@@ -227,7 +239,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	candidates := make([]*ChordProcess, 0)
 	for _, p := range procs {
 		p.mu.RLock()
-		if p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
+		if !p.inputBlockedLocked() && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
 			candidates = append(candidates, p)
 		}
 		p.mu.RUnlock()
@@ -238,7 +250,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	for _, p := range candidates {
 		p.mu.Lock()
 		m.mu.Lock()
-		if m.procs[p.key] == p && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
+		if !p.inputBlockedLocked() && m.procs[p.key] == p && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
 			delete(m.procs, p.key)
 			idle = append(idle, p)
 		}
