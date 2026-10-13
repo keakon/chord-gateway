@@ -158,6 +158,12 @@ Use the agent and model pool names exactly as shown in the gateway message. If n
 
 If Chord cancels a pending handoff without a decision (for example because a new request or session switch supersedes it), the gateway sends a cancellation notice and drops the request. A later `/handoff` or `/handoff-deny` then returns the same no-pending warning instead of routing to the cancelled request.
 
+## MCP authentication and availability
+
+`/status` and `/mcp status` show unavailable MCP servers and the host command needed to sign in. Authentication, connection, and tool catalog status are separate: saved credentials alone do not prove the connection works. Visible status changes are pushed once as MCP notifications; inspect intermediate operations with `/status`.
+
+Run `chord mcp login <server>` or `chord mcp logout <server>` in the session's working directory on the Chord host. Add `--agent <definition>` for an agent-private server. Use the local TUI to reconnect. IM commands `/mcp login`, `logout`, `reauth`, `reconnect`, and `cancel` return host instructions and are never sent to the model. Existing `/mcp enable` and `/mcp disable` remain available.
+
 ## Role switching
 
 `/role` switches the main agent role (for example `builder` → `planner`) without starting a new session or discarding the conversation context.

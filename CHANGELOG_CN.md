@@ -10,6 +10,8 @@
 
 ### 新功能
 
+- `/status` 和 `/mcp status` 展示 MCP 可用状态，对可见状态变化去重推送，并提供宿主机登录指引。远程认证命令由 gateway 返回操作说明，不会转发给模型。
+
 - 新增 macOS/Linux 下本机 TUI 与 IM 会话接管：`/takeover <session-id> [--timeout <duration>]` 等待既有工作自然结束，不取消执行，保留已接纳的排队输入和 TUI 附件，新端恢复后保持暂停。`/takeover status` 查询进度，展示有界阻塞项摘要和恢复指引；等待超时不停止源端。明确继续前，可用 `/status` 核对恢复队列的总数、所属任务、有界预览及附件数。移交阻断在 gateway 重启后仍然生效，普通消息、旧卡和提醒不能拉回已经移交出去的会话，只有显式 `/new` 或 `/resume` 成功后才解除原绑定的阻断。接管进来的目标确认暂停就绪、有效队列摘要并保存 pin 后才开放输入。需要 Chord 支持接管；可用 `chord_state_dir` 指定双方共用的自定义 Chord 状态目录。
 
 - 新增 `event_visibility.background_result` 开关，可关闭后台任务完成结果到聊天窗口的推送。该推送默认开启；关闭后持久化结果仍保留在 Chord 会话中。

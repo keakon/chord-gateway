@@ -25,6 +25,7 @@ The gateway subscribes to these events by default:
 - `agent_done`
 - `compaction_status`
 - `session_switched`
+- `mcp_status_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`
 - `session_transfer_saved`
@@ -155,3 +156,9 @@ Image processing is serialized across chats to limit transient memory, and queue
 WeChat CDN uploads retry network errors, 5xx responses and missing upload receipts up to three attempts total, using the same upload URL and ciphertext; 4xx and redirects are not retried. Feishu uploads do not retry transient failures; only an explicit expired-token response (HTTP 200 or an ordinary 4xx, excluding 408/429) triggers one refresh and retry. Feishu image processing, token waits, upload and final sending share a two-minute budget that ends when the adapter disconnects. Preview processing checks cancellation between decoding, resizing and encoding; a codec call already running finishes before cancellation is observed.
 
 An exhausted upload, a platform rejection or an unconfirmed send is reported without replaying the send or regenerating the image. Check the chat first when delivery is unconfirmed, or view the saved original in Chord. A confirmed image or delivery notice resets the long-running reminder window. The gateway does not import local paths from Chord or expose original image bytes in `/status`.
+
+### MCP status
+
+`mcp_status_changed` is subscribed by default. It updates the complete MCP view and notifies changes to the visible status, separate from agent replies. Repeated identical notifications and intermediate operations are suppressed; stable problems on other servers remain visible. `/status` reads the same cached view. Login URLs and credentials are not part of these events; browser authorization happens in the session's working directory on the Chord host. A changed view replaces the previous visibility scope, and delayed snapshots cannot restore older MCP state.
+
+Authentication and connection are reported separately. A connected server can still require sign-in. Automatic credential refresh is shown as an operation; it does not by itself require a host login.

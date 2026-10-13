@@ -385,6 +385,23 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "toast"
 
+	case mcpStatusChangedEvent:
+		if env.Seq < p.state.LastEnvelopeSeq {
+			break
+		}
+		var snapshot MCPStatusSnapshot
+		if json.Unmarshal(env.Payload, &snapshot) == nil && p.state.applyMCPStatus(&snapshot) {
+			text := formatMCPNotification(p.state.MCP)
+			identity := snapshot.BindingID + "\n" + text
+			if text != "" && identity != p.lastMCPNotification {
+				p.lastMCPNotification = identity
+				eventType = mcpStatusChangedEvent
+			}
+			if len(snapshot.Servers) == 0 {
+				p.lastMCPNotification = ""
+			}
+		}
+
 	case "status_response":
 		var resp StatusResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
@@ -429,6 +446,9 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		var resp RoleResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
 			if resp.OK && strings.TrimSpace(resp.Role) != "" {
+				if p.state.CurrentRole != resp.Role {
+					p.state.MCP = nil
+				}
 				p.state.CurrentRole = resp.Role
 			}
 			// Wake any goroutines blocked in WaitRoleList/WaitRoleSwitch.
@@ -441,6 +461,9 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			Role string `json:"role"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil && strings.TrimSpace(payload.Role) != "" {
+			if p.state.CurrentRole != payload.Role {
+				p.state.MCP = nil
+			}
 			p.state.CurrentRole = payload.Role
 		}
 		// No onEvent: a role change is acknowledged synchronously by the
@@ -463,6 +486,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 					p.runtimeID = payload.RuntimeID
 				}
 				p.sessionEpoch = payload.SessionEpoch
+				p.state.MCP = nil
 				if payload.Workspace != "" {
 					p.workspacePath = payload.Workspace
 				}

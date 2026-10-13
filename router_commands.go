@@ -272,6 +272,18 @@ func defaultHandoffAgentName(options []HandoffAgentOption) string {
 }
 
 func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
+	if action, ok := remoteMCPCommand(cmd.Content); ok {
+		if action == "status" {
+			text := formatMCPStatus(proc.State().MCP)
+			if text == "" {
+				text = "No MCP status is available. Use /status to synchronize with the host."
+			}
+			r.sendText(chatID, text)
+		} else {
+			r.sendText(chatID, "Manage MCP authentication in this session's working directory on the host: chord mcp login <server> or chord mcp logout <server>. Reconnect in the local TUI. These commands are not forwarded to the model.")
+		}
+		return
+	}
 	state := proc.State()
 	if state.PendingConfirm != nil && isDoneTool(state.PendingConfirm.ToolName) && !strings.HasPrefix(strings.TrimSpace(cmd.Content), "/") {
 		r.handleConfirmCommand(ws, chatID, IMCommand{Type: "confirm", Action: "deny", Reason: cmd.Content}, msg, procKey, proc)

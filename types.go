@@ -10,15 +10,16 @@ import (
 // ControlState is the aggregated state of a chord headless process,
 // maintained by the gateway from stdout event stream.
 type ControlState struct {
-	BindingInstanceID string          `json:"-"`
-	Transfer          *TransferStatus `json:"-"`
-	SessionID         string          `json:"session_id"`
-	Busy              bool            `json:"busy"`
-	RunningJobs       int             `json:"running_jobs"`
-	Phase             string          `json:"phase"`
-	PhaseDetail       string          `json:"phase_detail"`
-	CurrentRole       string          `json:"current_role,omitempty"`
-	PausedInputs      *PausedInputs   `json:"paused_inputs,omitempty"`
+	MCP               *MCPStatusSnapshot `json:"mcp,omitempty"`
+	BindingInstanceID string             `json:"-"`
+	Transfer          *TransferStatus    `json:"-"`
+	SessionID         string             `json:"session_id"`
+	Busy              bool               `json:"busy"`
+	RunningJobs       int                `json:"running_jobs"`
+	Phase             string             `json:"phase"`
+	PhaseDetail       string             `json:"phase_detail"`
+	CurrentRole       string             `json:"current_role,omitempty"`
+	PausedInputs      *PausedInputs      `json:"paused_inputs,omitempty"`
 	// SuppressUserNotification applies only to the most recent idle event. It
 	// does not change the idle state transition; the router uses it to skip a
 	// user-facing completion reminder for configuration-only quiescence.
@@ -283,6 +284,7 @@ type HeadlessEnvelope struct {
 
 // StatusResponse is the payload for type="status_response".
 type StatusResponse struct {
+	MCP            *MCPStatusSnapshot `json:"mcp,omitempty"`
 	Workspace      string             `json:"workspace"`
 	SessionID      string             `json:"session_id"`
 	PausedInputs   *PausedInputs      `json:"paused_inputs,omitempty"`
@@ -471,10 +473,15 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 		return
 	}
 	if s.SessionID != resp.SessionID {
+		s.MCP = nil
 		s.Questions = nil
 		s.LastQuestion = nil
 		s.LastQuestionResolved = nil
 	}
+	if resp.CurrentRole != "" && resp.CurrentRole != s.CurrentRole {
+		s.MCP = nil
+	}
+	s.applyMCPStatus(resp.MCP)
 	s.SessionID = resp.SessionID
 	s.PausedInputs = resp.PausedInputs
 	s.setAgentBusy(resp.Busy)

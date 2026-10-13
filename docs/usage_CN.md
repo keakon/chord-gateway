@@ -149,6 +149,12 @@ IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题�
 
 如果 Chord 在未做决策的情况下取消了待处理 handoff（例如该请求被新的请求或会话切换取代），gateway 会发送取消通知并丢弃该请求。之后再用 `/handoff` 或 `/handoff-deny` 会返回同样的「没有待处理 handoff」提示，而不会把回复路由到已取消的请求。
 
+## MCP 登录与可用状态
+
+`/status` 和 `/mcp status` 展示不可用的 MCP 服务及宿主机登录命令。认证、连接和工具目录分别显示：凭证已保存不代表连接已成功。可见状态变化会以 MCP 通知推送一次，中间操作进度可通过 `/status` 查看。
+
+在运行 Chord 的宿主机上，先进入该会话的工作目录，再执行 `chord mcp login <server>` 或 `chord mcp logout <server>`；角色私有服务加上 `--agent <definition>`。重连操作在本地 TUI 完成。IM 中的 `/mcp login`、`logout`、`reauth`、`reconnect` 和 `cancel` 只返回宿主机操作指引，不会发送给模型。原有 `/mcp enable` 和 `/mcp disable` 仍可使用。
+
 ## 角色切换
 
 `/role` 切换主 agent 角色（例如从 `builder` 切到 `planner`），不会新建 session，也不会丢弃当前会话上下文。

@@ -59,6 +59,7 @@ type ChordProcess struct {
 	compactionPlanID      string
 	pendingInputs         map[string]struct{}
 	questionEventVersions map[string]uint64
+	lastMCPNotification   string
 
 	// Auto-restart on crash
 	autoRestart      bool
@@ -552,7 +553,9 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 func (p *ChordProcess) State() ControlState {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.state
+	state := p.state
+	state.MCP = p.state.MCP.clone()
+	return state
 }
 
 // envelopeWaiters holds channels waiting for one typed response envelope.
@@ -661,7 +664,7 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// compaction_status, session_switched, background_result, and image_result.
 	// background_result is subscribed by default but can be opted out, because
 	// finished job results are pushed as chat messages.
-	events := []string{"session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent}
+	events := []string{"session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent}
 	if cfg == nil {
 		return events
 	}

@@ -20,6 +20,8 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 			return formatTransferStatus(*state.Transfer)
 		}
 		return ""
+	case mcpStatusChangedEvent:
+		return formatMCPNotification(state.MCP)
 	case "input_result":
 		if result := state.LastInputResult; result != nil && result.Status == inputRejected {
 			return "Input rejected: " + result.Message
@@ -775,6 +777,9 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		sb.WriteString("🔄 Busy")
 	} else {
 		sb.WriteString("⏸️ Idle")
+	}
+	if status := formatMCPStatus(state.MCP); status != "" {
+		sb.WriteString("\n" + status)
 	}
 	if state.RunningJobs > 0 {
 		fmt.Fprintf(&sb, "\n⏳ Background jobs: %d", state.RunningJobs)

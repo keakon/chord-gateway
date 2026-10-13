@@ -172,6 +172,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `agent_done`
 - `compaction_status`
 - `session_switched`
+- `mcp_status_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`
 - `session_transfer_saved`
