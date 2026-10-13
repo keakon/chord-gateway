@@ -23,8 +23,13 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case mcpStatusChangedEvent:
 		return formatMCPNotification(state.MCP)
 	case "input_result":
-		if result := state.LastInputResult; result != nil && result.Status == inputRejected {
-			return "Input rejected: " + result.Message
+		if result := state.LastInputResult; result != nil {
+			switch result.Status {
+			case inputRejected:
+				return "Input rejected: " + result.Message
+			case inputUnknown:
+				return "Input outcome is unconfirmed. Check the original session on the host before resending; the gateway will not retry it automatically."
+			}
 		}
 		return ""
 	case "notification", "done_completion":
@@ -616,7 +621,7 @@ func (r *NotificationRouter) formatTransportErrorNotification(state ControlState
 	}
 	message := "⚠️ Chord connection failed and the process was stopped. " + failure.Message
 	if state.UnconfirmedInputs > 0 {
-		message += fmt.Sprintf("\n%d inputs have no consumption receipt.", state.UnconfirmedInputs)
+		message += fmt.Sprintf("\n%d inputs have unconfirmed outcomes.", state.UnconfirmedInputs)
 	}
 	return message + "\nCheck the session before retrying. Inputs were not replayed."
 }
@@ -780,6 +785,12 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 	}
 	if status := formatMCPStatus(state.MCP); status != "" {
 		sb.WriteString("\n" + status)
+	}
+	if status := formatInputQueueStatus(state.InputQueue); status != "" {
+		sb.WriteString("\n" + status)
+	}
+	if state.UnconfirmedInputs > 0 {
+		fmt.Fprintf(&sb, "\n⚠️ Unconfirmed inputs: %d. Check the original session on the host before resending or changing directories.", state.UnconfirmedInputs)
 	}
 	if state.RunningJobs > 0 {
 		fmt.Fprintf(&sb, "\n⏳ Background jobs: %d", state.RunningJobs)

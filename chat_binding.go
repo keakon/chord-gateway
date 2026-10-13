@@ -16,8 +16,6 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-var errBindStatusUnknown = errors.New("binding status could not be refreshed")
-
 var errBindBusy = errors.New("binding has active work")
 var errBindBlocked = errors.New("binding shutdown could not be confirmed")
 
@@ -192,7 +190,7 @@ func (p *ChordProcess) CanRebind() bool {
 
 func (p *ChordProcess) canRebindLocked() bool {
 	s := p.state
-	return !s.Busy && len(p.pendingInputs) == 0 && s.UnconfirmedInputs == 0 && (s.PausedInputs == nil || s.PausedInputs.PendingInputCount == 0) && s.PendingLocalShells == 0 && s.RunningJobs == 0 && s.PendingConfirm == nil && s.pendingQuestionCount() == 0 && s.PendingHandoff == nil && !p.inputBlockedLocked() && p.readyForBindingLocked()
+	return !s.Busy && !p.hasGuardedInputsLocked() && s.PendingLocalShells == 0 && s.RunningJobs == 0 && s.PendingConfirm == nil && s.pendingQuestionCount() == 0 && s.PendingHandoff == nil && !p.inputBlockedLocked() && p.readyForBindingLocked()
 }
 func (p *ChordProcess) readyForBindingLocked() bool {
 	if p.readySignal == nil {
@@ -230,10 +228,12 @@ func (r *NotificationRouter) dispatchPaired(msg IncomingMessage) {
 				text = fmt.Sprintf("Binding was not changed. Still bound to %s. Send a new task to continue.", displayBindingDirectory(result.PreviousDirectory))
 			}
 			switch {
-			case errors.Is(err, errBindStatusUnknown):
+			case errors.Is(err, errInputStatusUnknown):
 				text = "Could not refresh pending input state. Binding was not changed; check /status and retry."
 			case errors.Is(err, errBindBusy):
 				text = bindBusyMessage
+			case errors.Is(err, errUnresolvedInputs):
+				text = "Binding was not changed. Input state is unresolved. Check /status for queue or storage details, then inspect the original session on the host."
 			case errors.Is(err, errBindBlocked):
 				text = bindBlockedMessage
 			case errors.Is(err, errBindDirectory):

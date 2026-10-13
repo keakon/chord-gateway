@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -244,10 +245,23 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	}
 	m.mu.RUnlock()
 
+	// Bound the entire refresh sweep, including unresponsive children. Status
+	// replies retain the existing idle-clock semantics; confirmed empty sessions
+	// become eligible after that quiet period without manual /status requests.
+	refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	candidates := make([]*ChordProcess, 0)
 	for _, p := range procs {
 		p.mu.RLock()
-		if !p.inputBlockedLocked() && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
+		expired := !p.inputBlockedLocked() && time.Since(p.lastActivity) > timeout
+		p.mu.RUnlock()
+		if expired {
+			if err := p.refreshPendingInputStatus(refreshCtx); err != nil {
+				continue
+			}
+		}
+		p.mu.RLock()
+		if !p.inputBlockedLocked() && !p.hasGuardedInputsLocked() && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
 			candidates = append(candidates, p)
 		}
 		p.mu.RUnlock()
@@ -258,7 +272,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 	for _, p := range candidates {
 		p.mu.Lock()
 		m.mu.Lock()
-		if !p.inputBlockedLocked() && m.procs[p.key] == p && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
+		if !p.inputBlockedLocked() && !p.hasGuardedInputsLocked() && m.procs[p.key] == p && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
 			p.cancelDeliveryLocked()
 			delete(m.procs, p.key)
 			idle = append(idle, p)

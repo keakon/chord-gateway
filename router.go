@@ -343,6 +343,9 @@ func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID, imType stri
 		if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err == nil {
 			r.sendTextForIM(imType, chatID, "🆕 /new sent to chord process.")
 			return
+		} else if errors.Is(err, errInputStatusUnknown) || errors.Is(err, errUnresolvedInputs) {
+			r.sendTextForKey(key, chatID, err.Error())
+			return
 		} else {
 			log.Warnf("failed to send /new to chord process key=%v error=%v", key, err)
 		}
@@ -369,6 +372,10 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 		return
 	}
 	proc, err := r.mgr.replaceOrdinarySession(key, sessionID)
+	if errors.Is(err, errUnresolvedInputs) || errors.Is(err, errInputStatusUnknown) {
+		r.sendTextForKey(key, chatID, err.Error())
+		return
+	}
 	if err != nil {
 		if isResume {
 			log.Errorf("failed to spawn process for resume workspace=%v error=%v", ws.ID, err)
@@ -511,7 +518,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	}
 	if state.BindingInstanceID != "" {
 		p := r.mgr.GetProcessForKey(key)
-		if p == nil || p.State().BindingInstanceID != state.BindingInstanceID {
+		if p == nil || p.BindingInstanceID() != state.BindingInstanceID {
 			return
 		}
 	}
@@ -609,7 +616,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		}
 		if state.BindingInstanceID != "" {
 			p := r.mgr.GetProcessForKey(key)
-			if p == nil || p.State().BindingInstanceID != state.BindingInstanceID {
+			if p == nil || p.BindingInstanceID() != state.BindingInstanceID {
 				return
 			}
 		}

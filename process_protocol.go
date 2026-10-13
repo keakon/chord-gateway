@@ -111,6 +111,11 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	var questionEvents []questionEvent
 
 	switch env.Type {
+	case "input_queue_changed":
+		var queue InputQueue
+		if env.Seq >= p.state.LastEnvelopeSeq && json.Unmarshal(env.Payload, &queue) == nil && p.applyInputQueue(&queue) {
+			eventType = "input_queue_changed"
+		}
 	case "input_result":
 		if p.applyInputResult(env, now) {
 			eventType = "input_result"
@@ -125,6 +130,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			BindingInstanceID string        `json:"binding_instance_id"`
 			State             string        `json:"state"`
 			PausedInputs      *PausedInputs `json:"paused_inputs,omitempty"`
+			InputQueue        *InputQueue   `json:"input_queue,omitempty"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			inputs, err := normalizePausedInputs(payload.PausedInputs)
@@ -160,6 +166,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			}
 			if strings.TrimSpace(payload.SessionID) != "" {
 				p.state.SessionID = payload.SessionID
+				p.state.InputQueue = nil
+				p.applyInputQueue(payload.InputQueue)
 				if p.restoringTransferID == "" && !p.inputBlockedLocked() {
 					sessionPin = payload.SessionID
 				}
@@ -428,7 +436,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 					p.questionEventVersions = nil
 					p.state.resetTurnWindow()
 				}
+				if resp.SessionID != p.state.SessionID {
+					p.state.InputQueue = nil
+				}
 				p.state.applyStatusResponse(&resp)
+				if p.applyInputQueue(resp.InputQueue) {
+					eventType = "input_queue_changed"
+				}
 				if resp.Workspace != "" {
 					p.workspacePath = resp.Workspace
 				}
@@ -471,10 +485,11 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	case "session_switched":
 		var payload struct {
-			SessionID    string `json:"session_id"`
-			RuntimeID    string `json:"runtime_id"`
-			SessionEpoch uint64 `json:"session_epoch"`
-			Workspace    string `json:"workspace"`
+			SessionID    string      `json:"session_id"`
+			RuntimeID    string      `json:"runtime_id"`
+			SessionEpoch uint64      `json:"session_epoch"`
+			InputQueue   *InputQueue `json:"input_queue,omitempty"`
+			Workspace    string      `json:"workspace"`
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
 			if id := strings.TrimSpace(payload.SessionID); id != "" {
@@ -494,6 +509,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.RunningJobs = 0
 				p.state.SessionID = id
 				p.state.PausedInputs = nil
+				p.state.InputQueue = nil
+				p.applyInputQueue(payload.InputQueue)
 				p.state.Questions = nil
 				p.state.LastQuestion = nil
 				p.state.LastQuestionResolved = nil
@@ -620,6 +637,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		key     = p.key
 		state   = p.state // copy
 	)
+	// Queue projections are replaced, never mutated internally. Copy only
+	// when publishing to a caller that may mutate its own snapshot.
 	p.mu.Unlock()
 
 	if deferredLog != nil {
@@ -660,10 +679,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	}
 
 	if eventType != "" && onEvent != nil {
+		state.InputQueue = state.InputQueue.clone()
 		onEvent(key, eventType, state)
 	}
 	if onEvent != nil {
 		for _, event := range questionEvents {
+			event.state.InputQueue = event.state.InputQueue.clone()
 			onEvent(key, event.kind, event.state)
 		}
 	}

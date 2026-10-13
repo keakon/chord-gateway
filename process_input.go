@@ -15,13 +15,18 @@ const (
 	inputQueued   = "queued"
 	inputStarted  = "started"
 	inputRejected = "rejected"
+	inputUnknown  = "unknown"
 )
 
 type InputResultPayload struct {
-	RequestID string `json:"request_id"`
-	Status    string `json:"status"`
-	TurnID    uint64 `json:"turn_id,omitempty"`
-	Message   string `json:"message,omitempty"`
+	Target        *InputQueueTarget `json:"target,omitempty"`
+	InputID       string            `json:"input_id,omitempty"`
+	Revision      uint64            `json:"revision,omitempty"`
+	QueueRevision uint64            `json:"queue_revision,omitempty"`
+	RequestID     string            `json:"request_id"`
+	Status        string            `json:"status"`
+	TurnID        uint64            `json:"turn_id,omitempty"`
+	Message       string            `json:"message,omitempty"`
 }
 
 // SendUserMessage records only correlation IDs. A successful write is not
@@ -63,8 +68,11 @@ func (p *ChordProcess) applyInputResult(env *HeadlessEnvelope, now time.Time) bo
 	if json.Unmarshal(env.Payload, &result) != nil {
 		return false
 	}
+	if target := result.Target; target != nil && (target.RuntimeID != p.runtimeID || target.SessionID != p.state.SessionID || target.SessionEpoch != p.sessionEpoch) {
+		return false
+	}
 	switch result.Status {
-	case inputHandled, inputQueued, inputStarted, inputRejected:
+	case inputHandled, inputQueued, inputStarted, inputRejected, inputUnknown:
 	default:
 		return false
 	}
@@ -72,6 +80,13 @@ func (p *ChordProcess) applyInputResult(env *HeadlessEnvelope, now time.Time) bo
 		return false
 	}
 	delete(p.pendingInputs, result.RequestID)
+	if result.Status == inputUnknown {
+		// This correlated outcome remains uncertain even when a newer state
+		// push overtook the receipt. Do not lose it or infer agent activity.
+		p.state.UnconfirmedInputs++
+		p.state.LastInputResult = &result
+		return true
+	}
 	if env.Seq < p.state.LastEnvelopeSeq {
 		return false
 	}

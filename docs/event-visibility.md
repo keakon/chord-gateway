@@ -28,6 +28,7 @@ The gateway subscribes to these events by default:
 - `compaction_status`
 - `session_switched`
 - `mcp_status_changed`
+- `input_queue_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`
 - `session_transfer_saved`
@@ -164,3 +165,9 @@ An exhausted upload, a platform rejection or an unconfirmed send is reported wit
 `mcp_status_changed` is subscribed by default. It updates the complete MCP view and notifies changes to the visible status, separate from agent replies. Repeated identical notifications and intermediate operations are suppressed; stable problems on other servers remain visible. `/status` reads the same cached view. Login URLs and credentials are not part of these events; browser authorization happens in the session's working directory on the Chord host. A changed view replaces the previous visibility scope, and delayed snapshots cannot restore older MCP state.
 
 Authentication and connection are reported separately. A connected server can still require sign-in. Automatic credential refresh is shown as an operation; it does not by itself require a host login.
+
+## Persistent input queues
+
+Gateway subscribes to `input_queue_changed` and publishes accepted queue changes through its state-event callback. Queue views are bound to runtime/session/epoch and ordered by `view_version`; a storage block can change without a durable revision change. A missing projection is unknown, while an empty input list replaces a previously known queue. `input_result: unknown` ends the send-receipt wait, warns the chat, and remains counted as unconfirmed in `/status` and disconnect notices. It neither marks the agent busy nor retries the input. Pending inputs, a blocked queue, and unconfirmed outcomes prevent directory switching, idle-timeout retirement, and process replacement. `/status` shows the main queue count and gate, storage blocks, and restored-input continuation requirements. A disconnected guarded process is not automatically replaced. Inspect the original session on the host before resending; after resolving an uncertain outcome, restart the gateway to clear its conservative guard. Platform message sends remain ordinary next-request inputs; queue editing and control remain in the local Chord TUI.
+
+Before `/new`, `/resume`, a directory switch or idle retirement, an idle process with a previously nonempty restored input summary is queried again. The all-owner summary must confirm completion; an empty main queue alone is insufficient. A missing, stale or failed status response preserves the guard, as do uncertain receipts. Incoming takeover also checks disconnected target processes and preserves their unresolved input evidence.

@@ -268,6 +268,12 @@ func (m *ChordManager) getOrSpawnForKeyChatLocked(key string) (*ChordProcess, er
 		if p.Alive() || p.cmd == nil && p.stdin != nil {
 			return p, nil
 		}
+		p.mu.RLock()
+		guarded := p.hasGuardedInputsLocked()
+		p.mu.RUnlock()
+		if guarded {
+			return nil, errUnresolvedInputs
+		}
 		m.removeProcessIfCurrent(key, p)
 	}
 	workspaceID, _, _ := parseProcessKey(key)
@@ -611,12 +617,21 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	return p, nil
 }
 
+// BindingInstanceID reads only the identity needed to reject stale output.
+func (p *ChordProcess) BindingInstanceID() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.state.BindingInstanceID
+}
+
 // State returns a copy of the current control state.
 func (p *ChordProcess) State() ControlState {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	state := p.state
 	state.MCP = p.state.MCP.clone()
+
+	state.InputQueue = state.InputQueue.clone()
 	return state
 }
 
@@ -698,7 +713,9 @@ func (p *ChordProcess) WaitStatus(ctx context.Context, questionIDs ...string) (C
 	if len(ids) > 32 {
 		ids = ids[:32]
 	}
-	return waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status", "question_ids": ids})
+	state, err := waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status", "question_ids": ids})
+	state.InputQueue = state.InputQueue.clone()
+	return state, err
 }
 
 // WaitRoleList sends a role list command and waits for the role_response.
@@ -726,7 +743,7 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// compaction_status, session_switched, background_result, and image_result.
 	// background_result is subscribed by default but can be opted out, because
 	// finished job results are pushed as chat messages.
-	events := []string{"session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent}
+	events := []string{"input_queue_changed", "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent}
 	if cfg == nil {
 		return events
 	}
@@ -793,12 +810,21 @@ func (p *ChordProcess) waitAndRecordExit(cmd *exec.Cmd) int {
 // The command format matches chord headless stdin protocol:
 // {"type":"send","content":"..."}, {"type":"confirm","request_id":"...","action":"allow"}, etc.
 func (p *ChordProcess) SendCommand(cmd map[string]any) error {
+	if cmd["type"] == "send" && cmd["content"] == "/new" {
+		if err := p.refreshPendingInputStatus(context.Background()); err != nil {
+			return err
+		}
+	}
 	data, err := json.Marshal(cmd)
 	if err != nil {
 		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if cmd["type"] == "send" && cmd["content"] == "/new" && p.hasGuardedInputsLocked() {
+		return errUnresolvedInputs
+	}
+
 	if !p.commandAllowedLocked(cmd) {
 		return ErrSessionTransferred
 	}

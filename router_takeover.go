@@ -80,6 +80,14 @@ func (r *NotificationRouter) handleTakeover(ws *config.Workspace, chat, key stri
 		r.sendTextForKey(key, chat, "⚠️ transfer_busy. Use /takeover status for the existing transfer.")
 		return
 	}
+	if p := m.GetProcessForKey(key); p != nil {
+		if err := p.guardedInputError(); err != nil {
+			release()
+			m.lifecycleGate.RUnlock()
+			r.sendTextForKey(key, chat, err.Error())
+			return
+		}
+	}
 	if p := m.GetProcessForKey(key); p != nil && (p.Alive() || p.cmd == nil && p.stdin != nil) {
 		release()
 		m.lifecycleGate.RUnlock()
@@ -134,6 +142,13 @@ func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat,
 		releaseBinding()
 		r.sendTextForKey(key, chat, "⚠️ transfer_busy. Use /takeover status for the existing transfer.")
 		return
+	}
+	if p := m.GetProcessForKey(key); p != nil {
+		if err := p.guardedInputError(); err != nil {
+			releaseBinding()
+			r.sendTextForKey(key, chat, err.Error())
+			return
+		}
 	}
 	if p := m.GetProcessForKey(key); p != nil && (p.Alive() || p.cmd == nil && p.stdin != nil) {
 		releaseBinding()
@@ -467,7 +482,7 @@ func (r *NotificationRouter) rejectStaleCard(key string, msg IncomingMessage) bo
 	if p == nil {
 		return true
 	}
-	instance := p.State().BindingInstanceID
+	instance := p.BindingInstanceID()
 	return instance != "" && msg.InternalAction.BindingInstanceID != instance
 }
 func stampCardBinding(value any, instance string) {

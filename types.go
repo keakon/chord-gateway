@@ -10,6 +10,7 @@ import (
 // ControlState is the aggregated state of a chord headless process,
 // maintained by the gateway from stdout event stream.
 type ControlState struct {
+	InputQueue        *InputQueue        `json:"input_queue,omitempty"`
 	MCP               *MCPStatusSnapshot `json:"mcp,omitempty"`
 	BindingInstanceID string             `json:"-"`
 	Transfer          *TransferStatus    `json:"-"`
@@ -284,7 +285,9 @@ type HeadlessEnvelope struct {
 
 // StatusResponse is the payload for type="status_response".
 type StatusResponse struct {
-	MCP            *MCPStatusSnapshot `json:"mcp,omitempty"`
+	MCP *MCPStatusSnapshot `json:"mcp,omitempty"`
+
+	InputQueue     *InputQueue        `json:"input_queue,omitempty"`
 	Workspace      string             `json:"workspace"`
 	SessionID      string             `json:"session_id"`
 	PausedInputs   *PausedInputs      `json:"paused_inputs,omitempty"`

@@ -51,6 +51,8 @@ Session transfer notifications use the ordered outbound queue. Slow IM delivery 
 
 `idle_timeout` controls how long an idle Chord process may remain alive. The default is `30m`. The same timeout applies even if the process is waiting on a pending question, confirmation, or handoff request. Processes reporting active background jobs are retained until those jobs no longer count as running; `/status` shows the count. Processes with pending local shell commands are also retained until their results arrive. Transfer preparation and draining also prevent idle cleanup.
 
+If a restored input summary may be stale, idle cleanup refreshes it before deciding. A successful status refresh restarts the existing idle timer; once the summary confirms no pending input, cleanup no longer needs a manual `/status`. Failed refreshes preserve the process.
+
 Idle cleanup stops Core and suspends question timing without inventing outcomes. Reconnect and restore the session to answer by its original ID; check `/status` and rely on Chord receipts. Confirmation and handoff requests follow their own cancellation rules.
 
 Use Go duration syntax, for example:
@@ -175,6 +177,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `compaction_status`
 - `session_switched`
 - `mcp_status_changed`
+- `input_queue_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`
 - `session_transfer_saved`

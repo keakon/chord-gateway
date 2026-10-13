@@ -32,6 +32,8 @@ Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pi
 
 A pending or completed session transfer takes precedence over a pin. Ordinary messages cannot restart that binding or fall back to a fresh session. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard.
 
+Before `/new` or `/resume` replaces an idle restored session, the gateway refreshes any previously nonempty input summary. Failed refreshes and unresolved input outcomes preserve the original session and pin. `/takeover` cannot bypass this protection when the old process has disconnected.
+
 ## IM commands
 
 | Command | Description |

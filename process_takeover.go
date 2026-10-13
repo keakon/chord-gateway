@@ -253,6 +253,11 @@ func (m *ChordManager) restoreTransferredSession(ctx context.Context, key string
 			return nil, errors.New("target_not_ready: binding already owns another process")
 		}
 	} else {
+		if p != nil && p.restoringTransferID != record.Status.TransferID {
+			if err := p.guardedInputError(); err != nil {
+				return nil, err
+			}
+		}
 		record.Status.State = "restoring"
 		record.BindingInstanceID = record.Status.TargetInstanceID
 		if err = m.transfers.update(key, &record, record.Status.TransferID); err != nil {
@@ -356,8 +361,17 @@ func (m *ChordManager) replaceBlockedBinding(ctx context.Context, key, session s
 	if !ok {
 		return ErrSessionTransferred
 	}
-	if p := m.GetProcessForKey(key); p != nil && p.Alive() {
-		return errors.New("source or target is still active; finish the transfer before changing the session")
+	if p := m.GetProcessForKey(key); p != nil {
+		// A persisted incoming guard cannot authorize discarding an unrelated
+		// disconnected session's unresolved input evidence.
+		if record.Direction == "incoming" && p.restoringTransferID != record.Status.TransferID {
+			if err := p.guardedInputError(); err != nil {
+				return err
+			}
+		}
+		if p.Alive() {
+			return errors.New("source or target is still active; finish the transfer before changing the session")
+		}
 	}
 	args := []string{}
 	if strings.TrimSpace(session) != "" {
@@ -428,6 +442,11 @@ func (p *ChordProcess) markTransferInterrupted() {
 // Replace ordinary sessions under the same lifecycle boundary as preparation.
 // An implicit reconnect cannot stop a source that has begun transferring.
 func (m *ChordManager) replaceOrdinarySession(key, session string) (*ChordProcess, error) {
+	if p := m.GetProcessForKey(key); p != nil {
+		if err := p.refreshPendingInputStatus(context.Background()); err != nil {
+			return nil, err
+		}
+	}
 	m.lifecycleGate.RLock()
 	defer m.lifecycleGate.RUnlock()
 	release := m.acquireKeyLock(key)
@@ -442,9 +461,13 @@ func (m *ChordManager) replaceOrdinarySession(key, session string) (*ChordProces
 		p.mu.RLock()
 		blocked := p.inputBlockedLocked()
 		busy := p.state.Busy
+		guarded := p.hasGuardedInputsLocked()
 		p.mu.RUnlock()
 		if blocked {
 			return nil, ErrSessionTransferred
+		}
+		if guarded {
+			return nil, errUnresolvedInputs
 		}
 		if busy {
 			return nil, errors.New("process is busy")

@@ -26,6 +26,10 @@ func (m *ChordManager) beginBindingSwitch(g *ChatGate, oldKey, newKey string) (*
 	p := m.GetProcessForKey(oldKey)
 	if p != nil {
 		p.mu.Lock()
+		if p.hasGuardedInputsLocked() {
+			p.mu.Unlock()
+			return nil, nil, errUnresolvedInputs
+		}
 		if !p.canRebindLocked() {
 			p.mu.Unlock()
 			return nil, nil, errBindBusy
@@ -42,18 +46,9 @@ func (m *ChordManager) beginBindingSwitch(g *ChatGate, oldKey, newKey string) (*
 // Directory switches drain output and confirm process shutdown before
 // publishing new routing. Failure leaves the gate closed until local recovery.
 func (r *NotificationRouter) prepareBindingSwitch(ctx context.Context, g *ChatGate, oldKey, newKey string) error {
-	// The paused projection covers every owner, while InputQueue covers main
-	// only. Refresh it before retirement rather than inferring completion from
-	// main's empty queue or the aggregate idle event.
 	if p := r.mgr.GetProcessForKey(oldKey); p != nil {
-		state := p.State()
-		if !state.Busy && state.PausedInputs != nil && state.PausedInputs.PendingInputCount > 0 {
-			wait, cancel := context.WithTimeout(ctx, 5*time.Second)
-			_, err := p.WaitStatus(wait)
-			cancel()
-			if err != nil {
-				return errBindStatusUnknown
-			}
+		if err := p.refreshPendingInputStatus(ctx); err != nil {
+			return err
 		}
 	}
 	p, lease, err := r.mgr.beginBindingSwitch(g, oldKey, newKey)

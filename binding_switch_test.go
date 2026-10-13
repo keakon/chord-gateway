@@ -159,7 +159,7 @@ func TestBindingRefreshesRestoredInputsBeforeSwitch(t *testing.T) {
 			if remaining == 0 && err != nil {
 				t.Fatal(err)
 			}
-			if remaining > 0 && !errors.Is(err, errBindBusy) {
+			if remaining > 0 && !errors.Is(err, errUnresolvedInputs) {
 				t.Fatalf("pending worker input allowed switch: %v", err)
 			}
 			if err := <-response; err != nil {
@@ -183,7 +183,7 @@ func TestBindingStatusRefreshFailurePreservesLease(t *testing.T) {
 	r.mgr.procs[key] = p
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := r.prepareBindingSwitch(ctx, ticket.gate, key, "replacement"); !errors.Is(err, errBindStatusUnknown) {
+	if err := r.prepareBindingSwitch(ctx, ticket.gate, key, "replacement"); !errors.Is(err, errInputStatusUnknown) {
 		t.Fatalf("refresh = %v", err)
 	}
 	got, gen, state := ticket.gate.snapshot()

@@ -70,7 +70,7 @@ func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string,
 	reqID := newRoleMenuRequestID()
 	card := buildFeishuRoleCard(chatID, reqID, current, roles)
 	if p := r.mgr.GetProcessForKey(procKey); p != nil {
-		binding := p.State().BindingInstanceID
+		binding := p.BindingInstanceID()
 		if len(instance) > 0 {
 			if binding != instance[0] {
 				return false

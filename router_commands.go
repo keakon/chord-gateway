@@ -24,6 +24,14 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 	}
 	procKey := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	proc, err := r.mgr.getOrSpawnForKeyChatLocked(procKey)
+	if errors.Is(err, errUnresolvedInputs) {
+		if original := r.mgr.GetProcessForKey(procKey); cmd.Type == "status" && original != nil {
+			r.sendTextForKey(procKey, chatID, "⚠️ Chord disconnected. "+formatBindingStatus(ws, imType, chatID, original.State()))
+		} else {
+			r.sendTextForKey(procKey, chatID, errUnresolvedInputs.Error())
+		}
+		return
+	}
 	if err != nil {
 		log.Errorf("failed to get or spawn process workspace=%v error=%v", ws.ID, err)
 		r.sendTextForKey(procKey, chatID, "❌ Failed to connect to chord process.")

@@ -36,6 +36,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Session lists now use Chord’s configured storage and repository scope, including custom state directories and worktrees, instead of scanning a legacy workspace directory. Query failures are reported explicitly; requires `chord sessions list --json`.
 
+- Pending durable inputs, blocked queues and uncertain receipts prevent directory switches, idle retirement and session replacement, including takeover into a disconnected binding. Before `/new`, `/resume`, directory switches and idle retirement, the gateway refreshes previously observed restored input summaries so completed work does not leave stale guards. `/status` explains queue blocks even after disconnection; requests are never automatically replayed.
+
 - Requesting cancellation while idle no longer marks the process busy or starts repeated working reminders. Pending local shell commands remain busy across agent idle events and status snapshots, and are excluded from idle-timeout cleanup.
 
 ## v0.3.3 – 2026-10-12

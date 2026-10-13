@@ -51,6 +51,8 @@ IM 通知只展示简短的阻塞项预览。宿主机命令返回一页有界�
 
 `idle_timeout` 控制空闲 Chord 进程可保留多久。默认值为 `30m`。即使进程正在等待待回答问题、待确认请求或待处理 handoff 请求，也使用同一个 timeout。报告有活跃后台任务的进程会继续保留，直到这些任务不再计入运行数量；可通过 `/status` 查看。本地 shell 命令的结果尚未返回时，也会继续保留进程。移交准备和自然收口期间同样不会执行空闲回收。
 
+恢复输入摘要可能过期时，闲置回收会先刷新再判断。成功的状态刷新仍会重新计算闲置时间；摘要确认没有待处理输入后，无需手动 `/status` 即可恢复正常回收。刷新失败则保留进程。
+
 清理空闲进程会关闭该 Core 并暂停题目计时，不编造问答终态。重新连接并恢复会话后按原 ID 回答；先检查 `/status`，以 Chord 回执确定结果。权限与 Handoff 请求继续按各自的取消规则处理。
 
 使用 Go duration 语法，例如：
@@ -175,6 +177,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `compaction_status`
 - `session_switched`
 - `mcp_status_changed`
+- `input_queue_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`
 - `session_transfer_saved`

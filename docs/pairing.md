@@ -78,3 +78,5 @@ A bot account change does not grant access to the new account. Old paired activi
 Stop the service before editing identity or routing. Runtime transactions reject changed file bytes rather than merging external edits. Resource locks cover configuration, state, pin storage, and custom WeChat token storage. They use the OS user's cache directory and do not depend on `CHORD_GATEWAY_STATE_DIR`. Do not run an older gateway binary concurrently: it does not participate in this lock protocol. Configuration changes require the filesystem's locking and durable replacement support.
 
 Old binding output cannot be newly authorized for a replacement binding. Messages already accepted by an IM platform cannot be withdrawn and may arrive later. Login notices contain connection status only and paired recipients come from explicit current chat bindings.
+
+If a switch is blocked by queued inputs, storage failure or an uncertain result, use `/status` for the reason and inspect the original session on the host. Cancelling active work alone does not resolve these states. Idle cleanup and process replacement preserve the same input guards.
