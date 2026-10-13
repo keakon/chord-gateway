@@ -27,7 +27,7 @@ import (
 
 func testConfig() *config.Config {
 	return &config.Config{
-		IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}},
+		IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"chat-1": "test", "chat": "test"}}}},
 		Workspaces: []config.Workspace{
 			{ID: "test", Path: "/tmp/test"},
 		},
@@ -108,7 +108,7 @@ func TestHandleIncomingMessageNoConfigLoaded(t *testing.T) {
 	sender := &stubIMAdapter{typ: "console"}
 	r := &NotificationRouter{adapter: sender, lastKeyChatID: make(map[string]string)}
 
-	r.HandleIncomingMessage(IncomingMessage{IMType: "console", ChatID: "chat", SenderID: "user", Text: "/status"})
+	r.dispatchMessage(IncomingMessage{IMType: "console", ChatID: "chat", SenderID: "user", Text: "/status"})
 
 	if got := sender.lastMessage().text; !strings.Contains(got, "Configuration not loaded") {
 		t.Fatalf("message = %q", got)
@@ -128,14 +128,14 @@ func TestRespawnSessionWithoutManager(t *testing.T) {
 
 func TestHandleIncomingMessageRoutesMissingWorkspaceError(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
-	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{WorkspaceID: "missing"}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"chat-1": "missing"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
 	r := &NotificationRouter{
 		mgr:           newTestChordManager(cfg),
 		adapter:       sender,
 		lastKeyChatID: make(map[string]string),
 	}
 
-	r.HandleIncomingMessage(IncomingMessage{IMType: "wechat", ChatID: "chat-1", SenderID: "chat-1", Text: "hello"})
+	r.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat-1", SenderID: "chat-1", Text: "hello"})
 	if got := sender.lastMessage().text; !strings.Contains(got, "workspace_id") {
 		t.Fatalf("message = %q", got)
 	}
@@ -150,8 +150,8 @@ func TestHandleIncomingMessageNoWorkspace(t *testing.T) {
 		lastKeyChatID: make(map[string]string),
 	}
 
-	r.HandleIncomingMessage(IncomingMessage{IMType: "console", ChatID: "chat-1", Text: "hello"})
-	if got := sender.lastMessage().text; !strings.Contains(got, "no workspace configured") {
+	r.dispatchMessage(IncomingMessage{IMType: "console", ChatID: "chat-1", Text: "hello"})
+	if got := sender.lastMessage().text; !strings.Contains(got, "console requires exactly one workspace") {
 		t.Fatalf("message = %q", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 	}
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 
-	r.HandleIncomingMessage(IncomingMessage{
+	r.dispatchMessage(IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
 		Text:   "",
@@ -199,7 +199,7 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 	stdin = &captureWriteCloser{}
 	mgr.procs[key].stdin = stdin
 	attachQuestionTestReceipts(mgr.procs[key])
-	r.HandleIncomingMessage(IncomingMessage{
+	r.dispatchMessage(IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
 		Text:   "",
@@ -396,12 +396,8 @@ func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.
 	r := NewNotificationRouter(mgr)
 	r.SetAdapter(sender)
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
-	legacyKey := legacyProcessKeyString("ws1", "wechat", "chat-1")
 	if err := mgr.pins.Set(key, "old-session"); err != nil {
 		t.Fatalf("set old pin: %v", err)
-	}
-	if err := mgr.pins.Set(legacyKey, "legacy-session"); err != nil {
-		t.Fatalf("set legacy pin: %v", err)
 	}
 	oldProc := &ChordProcess{key: key, workspaceID: "ws1", stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
 	mgr.procs[key] = oldProc
@@ -411,9 +407,6 @@ func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.
 
 	if got := mgr.pins.Get(key); got != "" {
 		t.Fatalf("pin = %q, want cleared", got)
-	}
-	if got := mgr.pins.Get(legacyKey); got != "" {
-		t.Fatalf("legacy pin = %q, want cleared", got)
 	}
 	if got := sender.lastMessage().text; !strings.Contains(got, "Previous Chord session was not found or is busy") {
 		t.Fatalf("message = %q", got)
@@ -434,368 +427,6 @@ func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.
 	if !strings.Contains(stdin, "hello after cleanup") {
 		t.Fatalf("fresh session stdin = %q, want original message", stdin)
 	}
-}
-
-func TestHandleBindSelectsExistingWorkspaceAndBinding(t *testing.T) {
-	dir := t.TempDir()
-	defaultDir := filepath.Join(dir, "default")
-	projectDir := filepath.Join(dir, "project-a")
-	for _, p := range []string{defaultDir, projectDir} {
-		if err := os.Mkdir(p, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: " + defaultDir + "\n  project-a:\n    path: " + projectDir + "\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_owner", Text: "/bind project-a \"" + projectDir + "\""})
-
-	msg := sender.lastMessage().text
-	if !strings.Contains(msg, "Bound") || !strings.Contains(msg, "project-a") {
-		t.Fatalf("message = %q", msg)
-	}
-	if got := currentFeishuBinding(r.getConfig(), "oc_new"); got != "project-a" {
-		t.Fatalf("binding = %q, want project-a", got)
-	}
-	ws := r.getConfig().WorkspaceByID("project-a")
-	if ws == nil || ws.Path != projectDir {
-		t.Fatalf("workspace project-a = %#v", ws)
-	}
-	r.mu.Lock()
-	got := r.lastKeyChatID[(processKey{workspaceID: "project-a", imType: "feishu", chatID: "oc_new"}).String()]
-	r.mu.Unlock()
-	if got != "oc_new" {
-		t.Fatalf("lastKeyChatID new binding = %q", got)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "oc_new: project-a") {
-		t.Fatalf("updated config missing chat binding:\n%s", string(data))
-	}
-}
-
-func TestHandleBindRejectsInvalidQuotedPath(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: ~/default\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_new", SenderID: "ou_owner", Text: "/bind project-a \"~/work/project a"})
-
-	if got := sender.lastMessage().text; got != "⚠️ Usage: /bind <workspace_id> <path>" {
-		t.Fatalf("message = %q", got)
-	}
-	if got := currentFeishuBinding(r.getConfig(), "oc_new"); got != "" {
-		t.Fatalf("binding = %q, want empty", got)
-	}
-	if ws := r.getConfig().WorkspaceByID("project-a"); ws != nil {
-		t.Fatalf("workspace should not be created, got %#v", ws)
-	}
-}
-
-func TestHandleBindFromDefaultWorkspaceStopsOldProcess(t *testing.T) {
-	fakeChord := makeFakeChordBinary(t, "")
-	stateDir := t.TempDir()
-	dir := t.TempDir()
-	defaultDir := filepath.Join(dir, "default")
-	projectDir := filepath.Join(dir, "project a")
-	for _, p := range []string{defaultDir, projectDir} {
-		if err := os.Mkdir(p, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: " + defaultDir + "\n  project-a:\n    path: " + projectDir + "\nchord_path: " + fakeChord + "\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-	oldKey := (processKey{workspaceID: "default", imType: "feishu", chatID: "oc_chat"}).String()
-	r.mu.Lock()
-	r.lastKeyChatID[oldKey] = "oc_chat"
-	r.mu.Unlock()
-	r.scheduleReminder(oldKey, time.Now())
-	if err := mgr.pins.Set(oldKey, "session-default"); err != nil {
-		t.Fatalf("set pin: %v", err)
-	}
-	proc, err := mgr.SpawnWithArgsForKey(oldKey)
-	if err != nil {
-		t.Fatalf("SpawnWithArgsForKey() error = %v", err)
-	}
-	if proc == nil || !proc.Alive() {
-		t.Fatalf("expected live old process, got %#v", proc)
-	}
-
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind project-a \"" + projectDir + "\""})
-	defer mgr.StopAll(time.Second)
-
-	if got := currentFeishuBinding(r.getConfig(), "oc_chat"); got != "project-a" {
-		t.Fatalf("binding = %q, want project-a", got)
-	}
-	if got := mgr.pins.Get(oldKey); got != "" {
-		t.Fatalf("old pin = %q, want cleared", got)
-	}
-	if got := mgr.procs[oldKey]; got != nil {
-		t.Fatalf("old process should be removed, got %#v", got)
-	}
-	r.mu.Lock()
-	_, ok := r.lastKeyChatID[oldKey]
-	r.mu.Unlock()
-	if ok {
-		t.Fatalf("old key should be removed from lastKeyChatID")
-	}
-	if _, ok := r.reminders[oldKey]; ok {
-		t.Fatalf("old reminder should be removed")
-	}
-	ws := r.getConfig().WorkspaceByID("project-a")
-	if ws == nil || ws.Path != projectDir {
-		t.Fatalf("workspace project-a = %#v", ws)
-	}
-}
-
-func TestHandleBindUpdatesExistingBindingAndStopsOldProcess(t *testing.T) {
-	fakeChord := makeFakeChordBinary(t, "")
-	stateDir := t.TempDir()
-	dir := t.TempDir()
-	oldDir := filepath.Join(dir, "old")
-	newDir := filepath.Join(dir, "new")
-	for _, p := range []string{oldDir, newDir} {
-		if err := os.Mkdir(p, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\n    chat_bindings:\n      oc_chat: ws-old\nworkspaces:\n  ws-old:\n    path: " + oldDir + "\n  ws-new:\n    path: " + newDir + "\nchord_path: " + fakeChord + "\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-	oldKey := (processKey{workspaceID: "ws-old", imType: "feishu", chatID: "oc_chat"}).String()
-	r.mu.Lock()
-	r.lastKeyChatID[oldKey] = "oc_chat"
-	r.mu.Unlock()
-	if err := mgr.pins.Set(oldKey, "session-old"); err != nil {
-		t.Fatalf("set pin: %v", err)
-	}
-	proc, err := mgr.SpawnWithArgsForKey(oldKey)
-	if err != nil {
-		t.Fatalf("SpawnWithArgsForKey() error = %v", err)
-	}
-	if proc == nil || !proc.Alive() {
-		t.Fatalf("expected live old process, got %#v", proc)
-	}
-
-	// Bind to ws-new with its existing path (path must match).
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws-new \"" + newDir + "\""})
-	defer mgr.StopAll(time.Second)
-
-	msg := sender.lastMessage().text
-	if !strings.Contains(msg, "Binding updated") || !strings.Contains(msg, "ws-new") {
-		t.Fatalf("message = %q", msg)
-	}
-	if got := currentFeishuBinding(r.getConfig(), "oc_chat"); got != "ws-new" {
-		t.Fatalf("binding = %q, want ws-new", got)
-	}
-	if got := mgr.pins.Get(oldKey); got != "" {
-		t.Fatalf("old pin = %q, want cleared", got)
-	}
-	if got := mgr.procs[oldKey]; got != nil {
-		t.Fatalf("old process should be removed, got %#v", got)
-	}
-	r.mu.Lock()
-	_, ok := r.lastKeyChatID[oldKey]
-	r.mu.Unlock()
-	if ok {
-		t.Fatalf("old key should be removed from lastKeyChatID")
-	}
-	newKey := (processKey{workspaceID: "ws-new", imType: "feishu", chatID: "oc_chat"}).String()
-	r.mu.Lock()
-	got := r.lastKeyChatID[newKey]
-	r.mu.Unlock()
-	if got != "oc_chat" {
-		t.Fatalf("new key chat id = %q", got)
-	}
-}
-
-func TestHandleBindDoesNotSpawnProcessForBusyCheck(t *testing.T) {
-	fakeChord := makeFakeChordBinary(t, "")
-	stateDir := t.TempDir()
-	dir := t.TempDir()
-	oldDir := filepath.Join(dir, "old")
-	newDir := filepath.Join(dir, "new")
-	for _, p := range []string{oldDir, newDir} {
-		if err := os.Mkdir(p, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\n    chat_bindings:\n      oc_chat: ws-old\nworkspaces:\n  ws-old:\n    path: " + oldDir + "\n  ws-new:\n    path: " + newDir + "\nchord_path: " + fakeChord + "\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: stateDir})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-	oldKey := (processKey{workspaceID: "ws-old", imType: "feishu", chatID: "oc_chat"}).String()
-	if got := mgr.GetProcessForKey(oldKey); got != nil {
-		t.Fatalf("precondition failed: unexpected process %#v", got)
-	}
-
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws-new \"" + newDir + "\""})
-	defer mgr.StopAll(time.Second)
-
-	if got := sender.lastMessage().text; !strings.Contains(got, "Binding updated") || !strings.Contains(got, "ws-new") {
-		t.Fatalf("message = %q", got)
-	}
-	if got := mgr.GetProcessForKey(oldKey); got != nil {
-		t.Fatalf("busy check should not spawn old process, got %#v", got)
-	}
-	if got := currentFeishuBinding(r.getConfig(), "oc_chat"); got != "ws-new" {
-		t.Fatalf("binding = %q, want ws-new", got)
-	}
-}
-
-func TestHandleBindRejectsPathMismatch(t *testing.T) {
-	dir := t.TempDir()
-	originalDir := filepath.Join(dir, "original")
-	differentDir := filepath.Join(dir, "different")
-	for _, p := range []string{originalDir, differentDir} {
-		if err := os.Mkdir(p, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  ws1:\n    path: " + originalDir + "\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-
-	// Try to bind to ws1 with a different path — should error.
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_owner", Text: "/bind ws1 \"" + differentDir + "\""})
-	msg := sender.lastMessage().text
-	if !strings.Contains(msg, "⛔") || !strings.Contains(msg, "existing workspace") {
-		t.Fatalf("expected path mismatch error, got: %q", msg)
-	}
-}
-
-func TestHandleBindRejectsUnauthorizedSender(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-	content := "ims:\n  feishu:\n    app_id: cli_xxx\n    app_secret: secret\n    owner_open_id: ou_owner\nworkspaces:\n  default:\n    path: ~/default\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	mgr := NewChordManager(cfg, &config.Paths{StateDir: t.TempDir()})
-	sender := &stubIMAdapter{typ: "feishu"}
-	r := NewNotificationRouter(mgr)
-	r.SetConfigFile(configPath)
-	r.SetAdapter(sender)
-
-	// Sender not in allowed list: gateway must not reply.
-	r.HandleIncomingMessage(IncomingMessage{IMType: "feishu", ChatID: "oc_chat", SenderID: "ou_stranger", Text: "/bind project-a ~/work/project-a"})
-	if msg := sender.lastMessage(); msg.text != "" {
-		t.Fatalf("expected no reply for unauthorized sender, got: %q", msg.text)
-	}
-}
-
-func TestHandleSessions(t *testing.T) {
-	sender := &stubIMAdapter{typ: "wechat"}
-	r := &NotificationRouter{adapter: sender}
-
-	t.Run("missing sessions directory", func(t *testing.T) {
-		r.handleSessions(&config.Workspace{ID: "ws", Path: t.TempDir()}, "chat")
-		if got := sender.lastMessage().text; got != "📂 No sessions found." {
-			t.Fatalf("message = %q", got)
-		}
-	})
-
-	t.Run("lists directories newest first and skips files", func(t *testing.T) {
-		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{adapter: sender}
-		root := t.TempDir()
-		sessionsDir := filepath.Join(root, ".chord", "sessions")
-		if err := os.MkdirAll(filepath.Join(sessionsDir, "2026-01-01"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Join(sessionsDir, "2026-01-03"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(sessionsDir, "not-a-session"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		r.handleSessions(&config.Workspace{ID: "ws", Path: root}, "chat")
-		msg := sender.lastMessage().text
-		if !strings.Contains(msg, "📂 Recent sessions:") || !strings.Contains(msg, "2026-01-03") || !strings.Contains(msg, "2026-01-01") {
-			t.Fatalf("message = %q", msg)
-		}
-		if strings.Contains(msg, "not-a-session") {
-			t.Fatalf("file should be skipped: %q", msg)
-		}
-		if strings.Index(msg, "2026-01-03") > strings.Index(msg, "2026-01-01") {
-			t.Fatalf("sessions should be listed newest name first: %q", msg)
-		}
-	})
 }
 
 func TestHandleChordEventRoutesDirectAndLegacy(t *testing.T) {
@@ -864,7 +495,7 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	feishu := &stubIMAdapter{typ: "feishu"}
 	r := &NotificationRouter{
 		adapter: &MultiAdapter{adapters: []IMAdapter{wechat, feishu}},
-		mgr:     newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
+		mgr:     newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"feishu-chat": "ws1"}}}, {Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"wechat-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{
 			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat",
 		},
@@ -923,12 +554,8 @@ func TestHandleNewStartsFreshSessionAndClearsPinWhenUnavailable(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	r := &NotificationRouter{mgr: mgr, adapter: sender}
 	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
-	legacyKey := legacyProcessKeyString("ws1", "wechat", "chat-1")
 	if err := mgr.pins.Set(key, "old-session"); err != nil {
 		t.Fatalf("set old pin: %v", err)
-	}
-	if err := mgr.pins.Set(legacyKey, "legacy-session"); err != nil {
-		t.Fatalf("set legacy pin: %v", err)
 	}
 
 	r.handleNew(ws, "chat-1", "wechat")
@@ -936,9 +563,6 @@ func TestHandleNewStartsFreshSessionAndClearsPinWhenUnavailable(t *testing.T) {
 
 	if got := mgr.pins.Get(key); got != "" {
 		t.Fatalf("pin = %q, want cleared", got)
-	}
-	if got := mgr.pins.Get(legacyKey); got != "" {
-		t.Fatalf("legacy pin = %q, want cleared", got)
 	}
 	if got := sender.lastMessage().text; got != "🆕 New session started." {
 		t.Fatalf("message = %q", got)
@@ -1081,20 +705,18 @@ func TestHandleTodosNoActiveSession(t *testing.T) {
 
 func TestParseIMCommand(t *testing.T) {
 	tests := []struct {
-		name            string
-		input           string
-		wantType        string
-		wantContent     string
-		wantRequestID   string
-		wantAction      string
-		wantAnswers     []string
-		wantSessionID   string
-		wantWorkspaceID string
-		wantPath        string
-		wantReason      string
-		wantAgent       string
-		wantPool        string
-		wantInvalid     bool
+		name          string
+		input         string
+		wantType      string
+		wantContent   string
+		wantRequestID string
+		wantAction    string
+		wantAnswers   []string
+		wantSessionID string
+		wantReason    string
+		wantAgent     string
+		wantPool      string
+		wantInvalid   bool
 	}{
 		{name: "status", input: "/status", wantType: "status"},
 		{name: "summary", input: "/summary", wantType: "send", wantContent: "/summary"},
@@ -1115,10 +737,6 @@ func TestParseIMCommand(t *testing.T) {
 		{name: "resume with session_id", input: "/resume 123", wantType: "resume", wantSessionID: "123"},
 		{name: "sessions", input: "/sessions", wantType: "sessions"},
 		{name: "todos", input: "/todos", wantType: "todos"},
-		{name: "bind with workspace and path", input: "/bind project-a ~/work/project-a", wantType: "bind", wantWorkspaceID: "project-a", wantPath: "~/work/project-a"},
-		{name: "bind with quoted path", input: "/bind project-a \"~/work/project a\"", wantType: "bind", wantWorkspaceID: "project-a", wantPath: "~/work/project a"},
-		{name: "bind with unterminated quoted path", input: "/bind project-a \"~/work/project a", wantType: "bind", wantInvalid: true},
-		{name: "bind with extra argument", input: "/bind project-a ~/work/project-a extra", wantType: "bind", wantInvalid: true},
 		{name: "plain text becomes send", input: "hello world", wantType: "send", wantContent: "hello world"},
 		{name: "bang local shell", input: "!pwd", wantType: "local_shell", wantContent: "pwd"},
 		{name: "fullwidth bang local shell", input: "！go test ./...", wantType: "local_shell", wantContent: "go test ./..."},
@@ -1158,12 +776,6 @@ func TestParseIMCommand(t *testing.T) {
 			}
 			if got.SessionID != tt.wantSessionID {
 				t.Errorf("SessionID = %q, want %q", got.SessionID, tt.wantSessionID)
-			}
-			if got.WorkspaceID != tt.wantWorkspaceID {
-				t.Errorf("WorkspaceID = %q, want %q", got.WorkspaceID, tt.wantWorkspaceID)
-			}
-			if got.Path != tt.wantPath {
-				t.Errorf("Path = %q, want %q", got.Path, tt.wantPath)
 			}
 			if got.Invalid != tt.wantInvalid {
 				t.Errorf("Invalid = %v, want %v", got.Invalid, tt.wantInvalid)
@@ -2025,7 +1637,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{
 		adapter:       multi,
-		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
+		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"feishu-chat": "ws1"}}}, {Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"wechat-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"},
 	}
 
@@ -2053,7 +1665,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	}
 }
 
-func TestSendTextAndBroadcastHelpers(t *testing.T) {
+func TestSendTextHelper(t *testing.T) {
 	r := &NotificationRouter{
 		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-config": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"},
@@ -2068,21 +1680,6 @@ func TestSendTextAndBroadcastHelpers(t *testing.T) {
 		t.Fatalf("sendText got %#v", got)
 	}
 
-	r.sendTextAll("ws1", "workspace-msg")
-	if got := len(single.sentMessages()); got != 2 {
-		t.Fatalf("single sendTextAll count = %d", got)
-	}
-
-	wechat := &stubIMAdapter{typ: "wechat"}
-	feishu := &stubIMAdapter{typ: "feishu"}
-	r.adapter = &MultiAdapter{adapters: []IMAdapter{wechat, feishu}, router: r}
-	r.sendTextAll("ws1", "workspace-msg")
-	if got := wechat.lastMessage().chatID; got != "wechat-chat" {
-		t.Fatalf("wechat broadcast chatID = %q", got)
-	}
-	if got := feishu.lastMessage().chatID; got != "feishu-config" {
-		t.Fatalf("feishu broadcast chatID = %q", got)
-	}
 }
 
 func BenchmarkNotificationRouterSnapshotLastKeyChatIDParallel(b *testing.B) {
@@ -3473,7 +3070,7 @@ func TestHandleIncomingMessageQuestionFormSubmit(t *testing.T) {
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 	defer r.stopReminder(key)
 
-	r.HandleIncomingMessage(IncomingMessage{
+	r.dispatchMessage(IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
 		InternalAction: &InternalAction{
@@ -3513,7 +3110,7 @@ func TestHandleIncomingMessageQuestionNumericLabelButton(t *testing.T) {
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 	defer r.stopReminder(key)
 
-	r.HandleIncomingMessage(IncomingMessage{
+	r.dispatchMessage(IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
 		InternalAction: &InternalAction{

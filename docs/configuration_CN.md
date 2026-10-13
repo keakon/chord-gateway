@@ -1,5 +1,7 @@
 # 配置说明
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档提供 `chord-gateway` 的字段级配置说明。
 
 ## 顶层字段
@@ -7,7 +9,7 @@
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
 | `ims` | object | 是 | - | IM 适配器映射。支持的 key 为 `wechat` 和 `feishu`。 |
-| `workspaces` | object | 是 | - | 以 workspace ID 为 key 的工作区映射。value 只定义工作区路径。 |
+| `workspaces` | object | 否 | - | 以 workspace ID 为 key 的工作区映射。value 只定义工作区路径。 |
 | `chord_path` | string | 否 | `chord` | chord 可执行文件路径，支持 `~` 展开。 |
 | `chord_state_dir` | string | 否 | Chord 默认状态目录 | managed headless 与 takeover CLI 共用的 Chord 状态目录；TUI 使用自定义 `--state-dir` 时设置相同路径。支持 `~` 展开。 |
 | `idle_timeout` | string | 否 | `30m` | 空闲超时（Go duration 格式）。 |
@@ -20,10 +22,13 @@
 ims:
   wechat:
     base_url: https://ilinkai.weixin.qq.com
-    workspace_id: default
+    owner: {account_id: bot_example, user_id: user_example}
+    chat_bindings:
+      user_example: default
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -54,7 +59,8 @@ workspaces:
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
 | `base_url` | string | 否 | `https://ilinkai.weixin.qq.com` | 微信 iLink API 地址 |
-| `workspace_id` | string | 条件必填 | 第一个/唯一 workspace | 微信消息进入的 workspace。存在多个 workspace 时必须设置。 |
+| `owner` | object | 配对后 | - | `account_id`, `user_id` |
+| `chat_bindings` | object | 绑定后 | - | chat ID → workspace ID |
 | `token_path` | string | 否 | `<state_dir>/wechat/token.json` | 自定义微信扫码登录 session token 的持久化路径。支持 `~` 展开。 |
 
 说明：
@@ -72,8 +78,7 @@ workspaces:
 |---|---|---|---|---|
 | `app_id` | string | 是 | - | 飞书应用 ID |
 | `app_secret` | string | 是 | - | 飞书应用密钥 |
-| `owner_open_id` | string | 条件必填 | - | owner open_id；除非 `allowed_open_ids` 非空，否则必须设置 |
-| `allowed_open_ids` | array | 否 | `[]` | 额外允许的 open_id 列表 |
+| `owner` | object | 配对后 | - | `account_id`, `user_id` |
 | `chat_bindings` | object | 条件必填 | - | 从飞书 chat ID 到 workspace ID 的映射。存在多个 workspace 时必须设置。 |
 
 飞书使用长连接模式接收事件：
@@ -84,39 +89,11 @@ workspaces:
 - 在事件订阅中订阅 `im.message.receive_v1`。
 - 如果希望使用飞书交互卡片处理确认/提问流程，还需要在回调配置中添加 `card.action.trigger`。
 
-飞书访问控制行为：
+### 授权与绑定
 
-- 如果 `owner_open_id` 和 `allowed_open_ids` 都未设置，则忽略所有消息和命令。
-- 只处理 allowlist 中用户的消息和命令；其他用户会被忽略，并仅用其 `open_id` 和 `chat_id` 记录审计日志。
-- `owner_open_id` 会自动加入最终 allowlist。
+两个平台都只接受配对 owner 的输入。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；已有 owner 在新聊天中发送 `/bind "~/workspace"`。所有聊天都必须显式绑定，单工作区也不例外。
 
-如何在受控联调中获取 `open_id`：
-
-1. 使用私聊或受控测试群，暂不设置 `owner_open_id` 和 `allowed_open_ids` 启动网关。此状态下不会处理任何消息。
-2. 从飞书聊天中发送一条文本消息（`text` 或 `post`）。
-3. 在 gateway 日志中查找类似下面的记录：
-
-```text
-msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
-```
-
-4. 审计日志会刻意省略不受信任的消息正文。记录其中的 `open_id=ou_xxx`，将其设置为 `owner_open_id` 或添加到 `allowed_open_ids`。
-5. 重启 gateway 使 allowlist 变更生效。（`/bind` 只更新飞书 `chat_bindings` 和 `workspaces`，不会重载 allowlist 字段。）
-
-你也可以通过飞书管理后台或[飞书开放平台 API](https://open.feishu.cn/document/server-docs/authentication/access-token/tenant_access_token) 获取 `open_id`。
-
-飞书路由行为：
-
-- 如果只有一个 workspace，可以省略 `chat_bindings`，所有飞书聊天都进入该 workspace。
-- 如果有多个 workspace，必须配置 `chat_bindings`。
-- `chat_bindings` 的 key 是飞书聊天的真实 `chat_id`（例如群聊 `oc_xxx`），value 是你在 `workspaces` 下定义的 workspace ID。
-- 每个 chat ID 都必须映射到一个有效的 workspace ID。
-- 多个 chat ID 可以映射到同一个 workspace。
-- 推荐先用单 workspace 启动 gateway，不填写 `chat_bindings`，然后直接在目标飞书聊天中执行 `/bind <workspace_id> <path>`。如果路径包含空格，请用英文双引号包裹，例如 `/bind project-a "~/work/project a"`。
-- `/bind` 只接受两个参数。路径必须以 `/`、`~`、Windows 盘符前缀（如 `C:\\` 或 `C:/`）或 UNC 前缀（如 `\\\\server\\share`）开头；展开后必须可访问且必须是目录。否则命令会失败，且不会修改配置文件。
-- `/bind` 只会立即更新运行中 gateway 的飞书 `chat_bindings` 和 `workspaces`，并把这两个部分的相同变更写回 YAML 配置文件；它不是通用配置重载入口。常见 YAML 注释会保留，但文件格式可能被重新编码为规范化格式。
-- 手工修改配置文件仍需要重启 gateway 才会生效。
-- 如果你更喜欢手工编辑 YAML，也可以继续从 gateway 日志中提取真实 `chat_id`，再自己填写 `chat_bindings`。
+命令会注册已存在的目录，并在持久保存 YAML 后启用聊天绑定。目录按真实文件系统身份复用，不会创建或克隆目录；切换目录前必须处理完待执行输入、后台任务和交互。路径和恢复规则见[配对指南](./pairing_CN.md)。手工修改配置需先停服务，再修改并重启。
 
 ## `workspaces`
 
@@ -146,8 +123,7 @@ workspaces:
 
 gateway 使用“IM 自带路由”模型：
 
-- 微信通过 `workspace_id` 指定唯一 workspace。
-- 飞书通过 `chat_bindings` 指定 chat 到 workspace 的映射。
+- 微信和飞书都通过 `chat_bindings` 指定聊天到工作区的映射。
 - workspace 不包含任何 IM 特定路由字段。
 
 这样 workspace 定义保持稳定，而每个 IM 自己声明“收到消息时该进入哪个 workspace”。
@@ -192,7 +168,7 @@ gateway 使用“IM 自带路由”模型：
 - `session_pins_file`、`ims.wechat.token_path`、`chord_path`、`chord_state_dir` 和 `workspaces.<id>.path` 支持 `~` 展开。
 - gateway 不会监听外部配置文件变更；配置只在启动时加载。
 - 配置中不支持或已移除的 YAML 字段（包括通过锚点和合并继承的字段）会带源字段行号记录到 gateway 日志并被忽略；文件其余部分仍会正常加载。
-- `/bind` 是当前内置的唯一会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`、并把这两个部分同步写回 YAML 配置文件的入口；其他配置变更仍需要重启。`/bind` 要求路径是已存在的目录，并可能在保留常见注释的同时规范化 YAML 格式。
+- `/bind` 是当前内置的唯一会立即更新内存中的飞书 `chat_bindings`、并把绑定同步写回 YAML 配置文件的入口；其他配置变更仍需要重启。`/bind` 要求路径是已存在的目录，并可能在保留常见注释的同时规范化 YAML 格式。
 
 状态目录包含：
 
@@ -209,7 +185,7 @@ gateway 使用“IM 自带路由”模型：
 gateway 会按绑定存储一个 pin 的 Chord session ID，绑定键为：
 
 ```text
-workspaceID | imType | chatID
+platform + account + owner + workspace + chat (encoded)
 ```
 
 这意味着即使指向同一个 workspace，不同群聊和不同 IM 也会保留各自独立的 pinned session。
@@ -220,7 +196,7 @@ workspaceID | imType | chatID
 
 ## 飞书绑定流程
 
-`/bind` 的任务型操作步骤和手工获取 `chat_id` 的方法见[飞书指南 — 多工作区路由](./feishu_CN.md#多工作区路由与-bind)。本参考页只说明上文 `chat_bindings` 字段的含义与约束。
+`/bind` 的任务型操作步骤见[飞书指南 — 多工作区路由](./feishu_CN.md#多工作区路由与-bind)。本参考页只说明上文 `chat_bindings` 字段的含义与约束。
 
 ## 示例：飞书多工作区
 
@@ -231,9 +207,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_owner_xxx
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -262,13 +236,13 @@ event_visibility:
 ims:
   wechat:
     base_url: https://ilinkai.weixin.qq.com
-    workspace_id: project-a
+    owner: {account_id: bot_example, user_id: user_example}
+    chat_bindings:
+      user_example: project-a
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_owner_xxx
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -291,6 +265,6 @@ event_visibility:
 
 在这个示例中：
 
-- 所有微信消息都进入 `project-a`
+- 已绑定的微信消息都进入 `project-a`
 - 飞书群 `oc_project_a` 进入 `project-a`
 - 飞书群 `oc_project_b` 进入 `project-b`

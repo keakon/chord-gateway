@@ -1,5 +1,7 @@
 # Operations
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This page describes runtime behavior that matters when operating `chord-gateway`.
 
 ## Process lifecycle
@@ -145,11 +147,11 @@ The current dedupe TTL is 24 hours.
 
 ## Workspace routing
 
-WeChat always routes to one workspace. If multiple workspaces are configured and WeChat is enabled, set `ims.wechat.workspace_id` to choose the workspace used by WeChat.
+Both platforms select workspaces through explicit `chat_bindings`; the paired owner uses `/bind "~/workspace"` in each chat.
 
 Feishu supports multiple workspaces through `ims.feishu.chat_bindings`, which maps Feishu `chat_id` values to workspace IDs.
 
-For a single Feishu workspace, `chat_bindings` may be omitted and all chats use that workspace. For multiple Feishu workspaces, configure `chat_bindings` for the chats you want to route.
+Every Feishu chat requires a `chat_bindings` entry, even with one workspace. An unbound group receives binding guidance; use `/bind` before sending tasks.
 
 ## Event contract
 

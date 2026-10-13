@@ -8,11 +8,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// unsupportedConfigFields reports every YAML key the gateway does not define,
+// UnsupportedConfigFields reports every YAML key the gateway does not define,
 // with its line, so a typo or a removed option (for example the former
 // event_visibility.activity) is visible in the log instead of silently doing
 // nothing. Load shares its parsed document with this check.
-func unsupportedConfigFields(doc *yaml.Node) []string {
+func UnsupportedConfigFields(doc *yaml.Node) []string {
 	if doc == nil || len(doc.Content) == 0 {
 		return nil
 	}
@@ -109,6 +109,9 @@ func yamlConfigFields(typ reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
 		name, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
 		if name == "" {
 			name = strings.ToLower(field.Name)

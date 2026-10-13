@@ -1,5 +1,7 @@
 # WeChat iLink Guide
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This guide walks you through setting up **WeChat iLink** (`ims.wechat`) for `chord-gateway`.
 
 If you want a quick minimal config example, see [Quickstart](../QUICKSTART.md). For field-by-field configuration docs, see [Configuration reference](./configuration.md).
@@ -27,7 +29,7 @@ Recommended first-run strategy for beginners:
 
 ## Minimal configuration
 
-With a single workspace you can omit `workspace_id`:
+Before first pairing, only the WeChat adapter is needed:
 
 ```yaml
 ims:
@@ -51,30 +53,19 @@ chord_path: chord
 idle_timeout: 30m
 ```
 
-If you have multiple workspaces and still enable WeChat, you must choose which one WeChat uses:
-
-```yaml
-ims:
-  wechat:
-    workspace_id: project-a
-workspaces:
-  project-a:
-    path: ~/work/project-a
-  project-b:
-    path: ~/work/project-b
-```
+Each chat requires explicit binding; see [pairing](./pairing.md).
 
 ## First login (QR)
 
 1. Start the gateway:
 
    ```bash
-   chord-gateway -f config.yaml
+   chord-gateway -f config.yaml --pair
    ```
 
 2. On first run (or when token is missing/expired), the gateway prints a **QR-login URL**.
 3. Open that link and scan the QR code with WeChat.
-4. After login, send `/status` from the WeChat chat to confirm the binding.
+4. After login, pair in a private bot chat with `/bind "~/workspace" <pairing_code>`, using the terminal code and an existing directory. Then send `/status`.
 
 Treat `/status` as the first success checkpoint. A good first-run outcome is:
 
@@ -87,6 +78,8 @@ If QR login does not appear, check:
 1. Is `ims.wechat.base_url` reachable from this machine?
 2. Are you reading the correct terminal or `<state_dir>/gateway.log`?
 3. Is an old broken token file present at `<state_dir>/wechat/token.json` or your custom `token_path`?
+
+The gateway deduplicates inbound messages by the server-assigned `message_id` (or an item’s `msg_id` when the top-level ID is absent), scoped to the bot account and sender. Numeric and string-encoded uint64 IDs retain their full precision. An outbound `client_id` is not used as an inbound message ID.
 
 ## Runtime state: token and sync cursor
 
@@ -135,7 +128,7 @@ The gateway returns a QR-login link. Scan it to refresh the token without restar
 
 ## Limitations and risk notes
 
-- WeChat routes to **one workspace only**.
+- Each WeChat chat routes to one workspace at a time. The owner can switch its directory with `/bind`.
 - WeChat iLink integration depends on an external iLink API and may be less stable than pure bot platforms.
   - Avoid using your main WeChat account for testing if stability/risk is a concern.
 

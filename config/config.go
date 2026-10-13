@@ -2,7 +2,6 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,11 +64,11 @@ type IMAdapterConfig struct {
 }
 
 // Type returns the normalized adapter type name for this config entry.
-func (c IMAdapterConfig) Type() string {
+func (im IMAdapterConfig) Type() string {
 	switch {
-	case c.Wechat != nil:
+	case im.Wechat != nil:
 		return "wechat"
-	case c.Feishu != nil:
+	case im.Feishu != nil:
 		return "feishu"
 	default:
 		return ""
@@ -78,40 +77,23 @@ func (c IMAdapterConfig) Type() string {
 
 // WechatConfig holds WeChat iLink Bot configuration.
 type WechatConfig struct {
-	BaseURL     string `yaml:"base_url,omitempty"`
-	WorkspaceID string `yaml:"workspace_id,omitempty"`
-	TokenPath   string `yaml:"token_path,omitempty"`
+	Owner        *OwnerIdentity    `yaml:"owner,omitempty"`
+	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+	fields       accessFields
+
+	BaseURL   string `yaml:"base_url,omitempty"`
+	TokenPath string `yaml:"token_path,omitempty"`
 }
 
 // FeishuConfig holds Feishu application configuration.
 type FeishuConfig struct {
-	AppID          string            `yaml:"app_id"`
-	AppSecret      string            `yaml:"app_secret"`
-	OwnerOpenID    string            `yaml:"owner_open_id,omitempty"`
-	AllowedOpenIDs []string          `yaml:"allowed_open_ids,omitempty"`
-	ChatBindings   map[string]string `yaml:"chat_bindings,omitempty"`
-}
+	Owner  *OwnerIdentity `yaml:"owner,omitempty"`
+	fields accessFields
 
-// IsOpenIDAllowed checks if an open_id is allowed to send messages.
-// An empty allowlist denies access.
-func (fc *FeishuConfig) IsOpenIDAllowed(openID string) bool {
-	if fc == nil || strings.TrimSpace(openID) == "" {
-		return false
-	}
-	if fc.OwnerOpenID == openID {
-		return true
-	}
-	for _, id := range fc.AllowedOpenIDs {
-		if id == openID {
-			return true
-		}
-	}
-	return false
-}
+	AppID     string `yaml:"app_id"`
+	AppSecret string `yaml:"app_secret"`
 
-// IsOwner reports whether openID is the explicitly configured owner.
-func (fc *FeishuConfig) IsOwner(openID string) bool {
-	return fc != nil && strings.TrimSpace(openID) != "" && fc.OwnerOpenID == openID
+	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
 }
 
 // Workspace defines a project directory.
@@ -187,14 +169,24 @@ func parseIMsNode(node *yaml.Node) ([]IMAdapterConfig, error) {
 		switch typ {
 		case "wechat":
 			var wc WechatConfig
+			var err error
 			if err := valueNode.Decode(&wc); err != nil {
 				return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
+			}
+			wc.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
 			}
 			configs = append(configs, IMAdapterConfig{Wechat: &wc})
 		case "feishu":
 			var fc FeishuConfig
+			var err error
 			if err := valueNode.Decode(&fc); err != nil {
 				return nil, fmt.Errorf("parse ims.%s: %w", typ, err)
+			}
+			fc.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
 			}
 			configs = append(configs, IMAdapterConfig{Feishu: &fc})
 		default:
@@ -274,56 +266,22 @@ func (c *Config) IsMultiIM() bool {
 // ResolveWorkspace resolves a workspace by IM type and chat ID using routing
 // declared under each IM adapter config.
 func (c *Config) ResolveWorkspace(imType, chatID string) (*Workspace, error) {
-	if len(c.Workspaces) == 0 {
-		return nil, fmt.Errorf("no workspace configured")
-	}
 	imType = NormalizeIMType(imType)
-
 	if imType == "console" {
 		if len(c.Workspaces) == 1 {
 			return &c.Workspaces[0], nil
 		}
-		return nil, fmt.Errorf("console chat_id %q is not bound to any workspace; console mode requires exactly one workspace", chatID)
+		return nil, fmt.Errorf("console requires exactly one workspace")
 	}
-
-	imCfg := c.IMConfigByType(imType)
-	if imCfg == nil {
-		if len(c.Workspaces) == 1 {
-			return &c.Workspaces[0], nil
-		}
-		return nil, fmt.Errorf("no %s adapter configured for workspace routing", imType)
+	im := c.IMConfigByType(imType)
+	if im == nil {
+		return nil, fmt.Errorf("no %s adapter configured", imType)
 	}
-
-	switch imType {
-	case "wechat":
-		workspaceID := ""
-		if imCfg.Wechat != nil {
-			workspaceID = imCfg.Wechat.WorkspaceID
-		}
-		if workspaceID == "" {
-			if len(c.Workspaces) == 1 {
-				return &c.Workspaces[0], nil
-			}
-			return nil, fmt.Errorf("wechat with multiple workspaces requires ims.wechat.workspace_id to select a single workspace")
-		}
-		return c.workspaceByID(workspaceID)
-
-	case "feishu":
-		if len(c.Workspaces) == 1 && len(imCfg.Feishu.ChatBindings) == 0 {
-			return &c.Workspaces[0], nil
-		}
-		workspaceID := imCfg.Feishu.ChatBindings[chatID]
-		if workspaceID == "" {
-			return nil, fmt.Errorf("feishu chat_id %q is not bound to any workspace; please configure ims.feishu.chat_bindings in config", chatID)
-		}
-		return c.workspaceByID(workspaceID)
-
-	default:
-		if len(c.Workspaces) == 1 {
-			return &c.Workspaces[0], nil
-		}
-		return nil, fmt.Errorf("no workspace routing configured for IM type %q and chat_id %q", imType, chatID)
+	id := im.Bindings()[chatID]
+	if id == "" {
+		return nil, ErrChatUnbound
 	}
+	return c.workspaceByID(id)
 }
 
 // IMConfigByType returns the first configured adapter matching imType.
@@ -384,10 +342,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one IM adapter must be configured in ims")
 	}
 
-	if len(c.Workspaces) == 0 {
-		return fmt.Errorf("at least one workspace must be configured")
-	}
-
 	workspaceByID := make(map[string]int)
 	for i, ws := range c.Workspaces {
 		if ws.ID == "" {
@@ -420,60 +374,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("ims supports at most one %s adapter", typ)
 		}
 
-		switch typ {
-		case "wechat":
-			if im.Wechat.WorkspaceID == "" {
-				if len(c.Workspaces) > 1 {
-					return fmt.Errorf("wechat with multiple workspaces requires ims.wechat.workspace_id to select a single workspace")
-				}
-			} else if _, ok := workspaceByID[im.Wechat.WorkspaceID]; !ok {
-				return fmt.Errorf("ims.wechat.workspace_id %q does not match any configured workspace", im.Wechat.WorkspaceID)
-			}
-
-		case "feishu":
-			if im.Feishu.AppID == "" {
-				return fmt.Errorf("ims.feishu.app_id is required")
-			}
-			if im.Feishu.AppSecret == "" {
-				return fmt.Errorf("ims.feishu.app_secret is required")
-			}
-			if len(c.Workspaces) > 1 && len(im.Feishu.ChatBindings) == 0 {
-				return fmt.Errorf("feishu with multiple workspaces requires ims.feishu.chat_bindings")
-			}
-			for chatID, workspaceID := range im.Feishu.ChatBindings {
-				if strings.TrimSpace(chatID) == "" {
-					return fmt.Errorf("ims.feishu.chat_bindings contains an empty chat_id")
-				}
-				if _, ok := workspaceByID[workspaceID]; !ok {
-					return fmt.Errorf("ims.feishu.chat_bindings[%q] references unknown workspace %q", chatID, workspaceID)
-				}
-			}
-
-			// Deduplicate allowed_open_ids.
-			if len(im.Feishu.AllowedOpenIDs) > 0 {
-				seen := make(map[string]bool)
-				deduped := make([]string, 0, len(im.Feishu.AllowedOpenIDs))
-				for _, id := range im.Feishu.AllowedOpenIDs {
-					if !seen[id] {
-						seen[id] = true
-						deduped = append(deduped, id)
-					}
-				}
-				im.Feishu.AllowedOpenIDs = deduped
-			}
-			// If owner_open_id is set, ensure it's also in allowed_open_ids.
-			if im.Feishu.OwnerOpenID != "" && len(im.Feishu.AllowedOpenIDs) > 0 {
-				found := false
-				for _, id := range im.Feishu.AllowedOpenIDs {
-					if id == im.Feishu.OwnerOpenID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					im.Feishu.AllowedOpenIDs = append(im.Feishu.AllowedOpenIDs, im.Feishu.OwnerOpenID)
-				}
-			}
+		if err := c.validateAccess(im); err != nil {
+			return err
 		}
 	}
 
@@ -507,21 +409,12 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	var cfg Config
-	var doc yaml.Node
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	// Unknown fields are intentionally tolerated for compatibility with older
-	// configs, but each one is reported so a typo or a removed option does not
-	// silently do nothing. Validation still rejects unsupported structural forms.
-	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+	cfg, doc, err := ParseDocument(data)
+	if err != nil {
+		return nil, err
 	}
-	if err := doc.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-	for _, issue := range unsupportedConfigFields(&doc) {
+	for _, issue := range UnsupportedConfigFields(doc) {
 		log.Warnf("config %s: unsupported field ignored: %s", path, issue)
 	}
-	cfg.ExpandPath(Expand)
-	return &cfg, nil
+	return cfg, nil
 }

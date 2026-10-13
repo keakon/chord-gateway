@@ -1,5 +1,5 @@
 # Example gateway configuration.
-# Unsupported keys anywhere in this file are reported in the gateway log and ignored.
+# Unsupported general keys are reported and ignored; malformed authorization fields are rejected.
 #
 # The gateway looks for config in this order:
 #   1. --config flag
@@ -12,14 +12,15 @@
 #   2. $XDG_STATE_HOME/chord-gateway
 #   3. ~/.local/state/chord-gateway
 #
-# The following are the required sections.
+# New installations: pairing needs no owner IDs or workspace routes.
+# Run chord-gateway --pair in a foreground terminal; see docs/pairing.md.
+# Feishu chats require chat_bindings or a successful /bind before use, even with one workspace.
 
 # --- IM Platform Configuration ---
 # Configure adapters explicitly under `ims`.
 ims:
   wechat:
     base_url: https://ilinkai.weixin.qq.com  # optional, defaults to this
-    workspace_id: project-a                  # required when more than one workspace exists
     # Optional. Defaults to <state_dir>/wechat/token.json.
     # Use this only when you want to store the WeChat QR-login session token elsewhere.
     # token_path: ~/.local/state/chord-gateway/wechat/token.json
@@ -27,23 +28,9 @@ ims:
   # feishu:
   #   app_id: cli_xxx
   #   app_secret: xxx
-  #   owner_open_id: ou_owner_xxx       # Required unless allowed_open_ids is non-empty.
-  #   # allowed_open_ids:               # Additional allowed users (owner is auto-included).
-  #   #   - ou_user2
-  #   # To discover your open_id safely, start once without an allowlist, send a
-  #   # message, and copy open_id=ou_xxx from the "non-allowed open_id" log line.
-  #   chat_bindings:
-  #     oc_chat_project_a: project-a
-  #     oc_chat_project_b: project-b
 
-# --- Workspace Definitions ---
-# Workspaces only define project directories.
-workspaces:
-  project-a:
-    path: ~/work/project-a
-
-  # project-b:
-  #   path: ~/work/project-b
+# Paired /bind registers existing directories and chat bindings here.
+workspaces: {}
 
 # --- Chord Binary ---
 # Path to the chord binary. Supports ~ expansion.
@@ -76,6 +63,6 @@ event_visibility:
   todos: false
 
 # --- Optional: Session Pins Store ---
-# Path to the session pin store (one pin per binding: workspaceID|imType|chatID).
+# Path to the session pin store (one pin per owner and explicit chat binding).
 # If omitted, defaults to <state_dir>/session-pins.json.
 # session_pins_file: ~/.local/state/chord-gateway/session-pins.json

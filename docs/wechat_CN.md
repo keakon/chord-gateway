@@ -1,5 +1,7 @@
 # 微信 iLink 接入指南
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档用于指导你在 `chord-gateway` 中配置并跑通 **微信 iLink**（`ims.wechat`）。
 
 如果你只想快速跑通最小配置，可先看：[快速开始](../QUICKSTART_CN.md)。字段级配置说明见：[配置参考](./configuration_CN.md)。
@@ -27,7 +29,7 @@
 
 ## 最小配置
 
-只有一个 workspace 时，可以省略 `workspace_id`：
+首次配对前可只配置微信平台：
 
 ```yaml
 ims:
@@ -51,30 +53,19 @@ chord_path: chord
 idle_timeout: 30m
 ```
 
-如果你配置了多个 workspace 且启用了微信，必须明确微信使用哪个 workspace：
-
-```yaml
-ims:
-  wechat:
-    workspace_id: project-a
-workspaces:
-  project-a:
-    path: ~/work/project-a
-  project-b:
-    path: ~/work/project-b
-```
+每个聊天都需显式绑定，详见[配对指南](./pairing_CN.md)。
 
 ## 首次登录（扫码）
 
 1. 启动 gateway：
 
    ```bash
-   chord-gateway -f config.yaml
+   chord-gateway -f config.yaml --pair
    ```
 
 2. 首次运行（或 token 缺失/过期）时，gateway 会打印 **二维码登录 URL**。
 3. 打开该链接并用微信扫码。
-4. 登录完成后，在微信聊天中发送 `/status` 验证绑定与路由是否正确。
+4. 登录后，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`，使用终端显示的配对码和已存在的目录；再发送 `/status` 验证。
 
 可以把 `/status` 视为第一阶段成功标志。理想的首轮结果是：
 
@@ -87,6 +78,8 @@ workspaces:
 1. 当前机器是否能访问 `ims.wechat.base_url`？
 2. 你查看的是不是正确的终端窗口或 `<state_dir>/gateway.log`？
 3. `<state_dir>/wechat/token.json`（或自定义 `token_path`）里是否残留了已损坏的旧 token？
+
+gateway 按服务端 `message_id` 去重；顶层 ID 缺失时使用消息项的 `msg_id`，并按机器人账号和发送者隔离。数字或字符串形式的 uint64 ID 均保留完整精度，外发使用的 `client_id` 不作为入站消息 ID。
 
 ## 运行时状态：token 与同步游标
 
@@ -135,7 +128,7 @@ gateway 会返回微信二维码登录链接。扫码后会更新 token，通常
 
 ## 限制与风险提示
 
-- 微信始终只路由到 **一个 workspace**。
+- 每个微信聊天同一时刻只路由到一个 workspace。owner 可用 `/bind` 切换目录。
 - 微信 iLink 依赖外部 iLink API，稳定性与可用性可能不如纯 Bot 平台。
   - 如果你对稳定性/风控风险敏感，不建议用主号测试。
 

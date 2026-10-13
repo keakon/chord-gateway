@@ -1,10 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,11 +24,11 @@ const (
 // It parses incoming IM messages as commands, dispatches them to chord processes,
 // and routes chord events back to IM users as notifications.
 type NotificationRouter struct {
-	mgr        *ChordManager
-	adapter    IMAdapter // protected by adapterMu
-	adapterMu  sync.RWMutex
-	configFile string
-	bindMu     sync.Mutex
+	admission *Admission
+
+	mgr       *ChordManager
+	adapter   IMAdapter // protected by adapterMu
+	adapterMu sync.RWMutex
 
 	mu sync.RWMutex
 
@@ -78,11 +78,6 @@ func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 		mgr.SetOnImage(r.HandleChordImage)
 	}
 	return r
-}
-
-// SetConfigFile sets the config path used by chat-binding commands.
-func (r *NotificationRouter) SetConfigFile(path string) {
-	r.configFile = strings.TrimSpace(path)
 }
 
 // SetAdapter sets the IM adapter used for sending notifications.
@@ -258,6 +253,17 @@ func (r *NotificationRouter) findFeishuAdapter() *FeishuAdapter {
 // HandleIncomingMessage is the primary entry point for IM messages.
 // It parses the message into a command and dispatches it.
 func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
+	if msg.IMType != "console" {
+		if r.admission == nil {
+			return
+		}
+		r.dispatchPaired(msg)
+		return
+	}
+	r.dispatchMessage(msg)
+}
+
+func (r *NotificationRouter) dispatchMessage(msg IncomingMessage) {
 	imType := msg.IMType
 	chatID := msg.ChatID
 	text := msg.Text
@@ -274,24 +280,24 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	)
 
 	if cmd.Type == "bind" {
-		r.handleBind(chatID, msg, cmd)
+		r.sendTextForIM(msg.IMType, chatID, bindUsageMessage)
 		return
 	}
 
 	cfg := r.getConfig()
 	if cfg == nil {
-		r.sendText(chatID, "❌ Configuration not loaded.")
+		r.sendTextForIM(msg.IMType, chatID, "❌ Configuration not loaded.")
 		return
 	}
 	ws, err := cfg.ResolveWorkspace(imType, chatID)
 	if err != nil {
 		log.Warnf("resolve workspace failed imType=%v chatID=%v error=%v", imType, chatID, err)
-		r.sendText(chatID, fmt.Sprintf("⚠️ %v", err))
+		r.sendTextForIM(msg.IMType, chatID, fmt.Sprintf("⚠️ %v", err))
 		return
 	}
 	if ws == nil {
 		log.Warnf("no workspace for chatID chatID=%v", chatID)
-		r.sendText(chatID, "⚠️ No workspace configured for this chat.")
+		r.sendTextForIM(msg.IMType, chatID, "⚠️ No workspace configured for this chat.")
 		return
 	}
 
@@ -299,7 +305,7 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	r.recordChatID(key, chatID)
 
 	if r.rejectStaleCard(key, msg) {
-		r.sendText(chatID, "⚠️ This card belongs to a previous process. Use /status to get current entries.")
+		r.sendTextForIM(msg.IMType, chatID, "⚠️ This card belongs to a previous process. Use /status to get current entries.")
 		return
 	}
 	if r.routeTransferGuard(ws, chatID, key, cmd, msg) {
@@ -313,11 +319,11 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	case "resume":
 		r.handleResume(ws, chatID, cmd.SessionID, imType)
 	case "sessions":
-		r.handleSessions(ws, chatID)
+		r.handleSessions(ws, chatID, imType)
 	case "todos":
 		r.handleTodos(ws, chatID, imType)
 	case "login":
-		r.handleLogin(chatID, cmd.Content)
+		r.handleLogin(chatID, cmd.Content, imType)
 	default:
 		r.handleChordCommand(ws, chatID, cmd, imType, &msg)
 	}
@@ -328,14 +334,14 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 // starting a fresh headless process without trying to resume a pinned session first.
 func (r *NotificationRouter) handleNew(ws *config.Workspace, chatID, imType string) {
 	if r.mgr == nil {
-		r.sendText(chatID, "❌ Process manager not available.")
+		r.sendTextForIM(imType, chatID, "❌ Process manager not available.")
 		return
 	}
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	proc := r.mgr.GetProcessForKey(key)
 	if proc != nil && (proc.Alive() || proc.cmd == nil && proc.stdin != nil) {
 		if err := proc.SendCommand(map[string]any{"type": "send", "content": "/new"}); err == nil {
-			r.sendText(chatID, "🆕 /new sent to chord process.")
+			r.sendTextForIM(imType, chatID, "🆕 /new sent to chord process.")
 			return
 		} else {
 			log.Warnf("failed to send /new to chord process key=%v error=%v", key, err)
@@ -351,7 +357,7 @@ func (r *NotificationRouter) handleResume(ws *config.Workspace, chatID, sessionI
 
 func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType, sessionID string) {
 	if r.mgr == nil {
-		r.sendText(chatID, "❌ Process manager not available.")
+		r.sendTextForIM(imType, chatID, "❌ Process manager not available.")
 		return
 	}
 	sessionID = strings.TrimSpace(sessionID)
@@ -359,34 +365,34 @@ func (r *NotificationRouter) respawnSession(ws *config.Workspace, chatID, imType
 
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
 	if proc := r.mgr.GetProcessForKey(key); proc != nil && proc.Alive() && proc.State().Busy {
-		r.sendText(chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
+		r.sendTextForIM(imType, chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
 		return
 	}
 	proc, err := r.mgr.replaceOrdinarySession(key, sessionID)
 	if err != nil {
 		if isResume {
 			log.Errorf("failed to spawn process for resume workspace=%v error=%v", ws.ID, err)
-			r.sendText(chatID, "❌ Failed to resume session.")
+			r.sendTextForIM(imType, chatID, "❌ Failed to resume session.")
 		} else {
 			log.Errorf("failed to spawn new process workspace=%v error=%v", ws.ID, err)
-			r.sendText(chatID, "❌ Failed to start new session.")
+			r.sendTextForIM(imType, chatID, "❌ Failed to start new session.")
 		}
 		return
 	}
 	if proc == nil {
-		r.sendText(chatID, "❌ Workspace not configured.")
+		r.sendTextForIM(imType, chatID, "❌ Workspace not configured.")
 		return
 	}
 	if isResume {
 		if !r.resumeProcessAvailable(proc, sessionID) {
 			r.mgr.discardFailedResume(key, proc, sessionID)
 			log.Warnf("resume session failed after spawn key=%v session_id=%v", key, sessionID)
-			r.sendText(chatID, fmt.Sprintf("❌ Failed to resume session %s. It may not exist or may be busy.", sessionID))
+			r.sendTextForIM(imType, chatID, fmt.Sprintf("❌ Failed to resume session %s. It may not exist or may be busy.", sessionID))
 			return
 		}
-		r.sendText(chatID, fmt.Sprintf("🔄 Resuming session %s", sessionID))
+		r.sendTextForIM(imType, chatID, fmt.Sprintf("🔄 Resuming session %s", sessionID))
 	} else {
-		r.sendText(chatID, "🆕 New session started.")
+		r.sendTextForIM(imType, chatID, "🆕 New session started.")
 	}
 }
 
@@ -407,194 +413,53 @@ func (r *NotificationRouter) resumeProcessAvailable(proc *ChordProcess, sessionI
 	}
 }
 
-// handleSessions lists recent sessions by reading the .chord/sessions directory.
-func (r *NotificationRouter) handleSessions(ws *config.Workspace, chatID string) {
-	sessionsDir := ws.Path + "/.chord/sessions"
-	entries, err := os.ReadDir(sessionsDir)
-	if err != nil {
-		r.sendText(chatID, "📂 No sessions found.")
-		return
-	}
-
-	// Show up to 10 most recent session directories (sorted by name = timestamp-based).
-	var lines []string
-	count := 0
-	for i := len(entries) - 1; i >= 0 && count < 10; i-- {
-		if !entries[i].IsDir() {
-			continue
-		}
-		info, err := entries[i].Info()
-		if err != nil {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("• %s (%s)", entries[i].Name(), info.ModTime().Format("2006-01-02 15:04")))
-		count++
-	}
-
-	if len(lines) == 0 {
-		r.sendText(chatID, "📂 No sessions found.")
-		return
-	}
-	r.sendText(chatID, "📂 Recent sessions:\n"+strings.Join(lines, "\n"))
-}
-
 // handleTodos shows the current todo list.
 func (r *NotificationRouter) handleTodos(ws *config.Workspace, chatID string, imType string) {
 	key := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	proc, err := r.mgr.GetOrSpawnForKey(key)
+	proc, err := r.mgr.getOrSpawnForKeyChatLocked(key)
 	if err != nil {
-		r.sendText(chatID, "❌ Failed to connect to chord process.")
+		r.sendTextForIM(imType, chatID, "❌ Failed to connect to chord process.")
 		return
 	}
 	if proc == nil || !proc.Alive() {
-		r.sendText(chatID, "⏸️ No active session.")
+		r.sendTextForIM(imType, chatID, "⏸️ No active session.")
 		return
 	}
 	state := proc.State()
-	r.sendText(chatID, formatTodoList(state.Todos))
+	r.sendTextForIM(imType, chatID, formatTodoList(state.Todos))
 }
 
 // handleLogin initiates a login flow for the specified IM adapter.
 // If no target is specified, lists the adapters that support login.
-func (r *NotificationRouter) handleLogin(chatID, target string) {
+func (r *NotificationRouter) handleLogin(chatID, target string, platform ...string) {
 	target = config.NormalizeIMType(target)
 	if target == "" {
 		options := r.availableLoginTargets()
 		if len(options) == 0 {
-			r.sendText(chatID, "⚠️ No IM adapter supports login renewal.")
+			r.sendTextForIM(r.replyPlatform(platform), chatID, "⚠️ No IM adapter supports login renewal.")
 			return
 		}
-		r.sendText(chatID, "Usage: /login <platform>\nSupported platforms: "+strings.Join(options, ", "))
+		r.sendTextForIM(r.replyPlatform(platform), chatID, "Usage: /login <platform>\nSupported platforms: "+strings.Join(options, ", "))
 		return
 	}
 
 	adapter := r.findAdapterByType(target)
 	if adapter == nil {
-		r.sendText(chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", config.NormalizeIMType(target)))
+		r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", config.NormalizeIMType(target)))
 		return
 	}
 
 	qrURL, err := adapter.StartLogin()
 	if err != nil {
 		if errors.Is(err, ErrLoginNotSupported) {
-			r.sendText(chatID, fmt.Sprintf("⚠️ %s does not support login renewal via /login.", imDisplayName(target)))
+			r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("⚠️ %s does not support login renewal via /login.", imDisplayName(target)))
 			return
 		}
-		r.sendText(chatID, fmt.Sprintf("❌ Failed to get %s login link: %v", imDisplayName(target), err))
+		r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("❌ Failed to get %s login link: %v", imDisplayName(target), err))
 		return
 	}
 
-	r.sendText(chatID, fmt.Sprintf("⚠️ Click the link to scan and renew %s login:\n%s", imDisplayName(target), qrURL))
-}
-
-func (r *NotificationRouter) handleBind(chatID string, msg IncomingMessage, cmd IMCommand) {
-	if config.NormalizeIMType(msg.IMType) != "feishu" {
-		r.sendText(chatID, "⚠️ /bind is only supported in Feishu chats.")
-		return
-	}
-	cfg := r.getConfig()
-	if cfg == nil {
-		r.sendText(chatID, "❌ Configuration not loaded.")
-		return
-	}
-	imCfg := cfg.IMConfigByType("feishu")
-	if imCfg == nil || imCfg.Feishu == nil {
-		r.sendText(chatID, "❌ Feishu configuration not loaded.")
-		return
-	}
-	// Binding changes workspace routing and is owner-only.
-	feishuCfg := imCfg.Feishu
-	if !feishuCfg.IsOwner(msg.SenderID) {
-		log.Warnf("bind: sender is not owner, ignoring sender_id=%v chat_id=%v", msg.SenderID, chatID)
-		return
-	}
-	if cmd.Invalid || strings.TrimSpace(cmd.WorkspaceID) == "" || strings.TrimSpace(cmd.Path) == "" {
-		r.sendText(chatID, "⚠️ Usage: /bind <workspace_id> <path>")
-		return
-	}
-	if strings.TrimSpace(r.configFile) == "" {
-		r.sendText(chatID, "❌ Cannot update config: config file path not set.")
-		return
-	}
-	configuredWorkspace := cfg.WorkspaceByID(cmd.WorkspaceID)
-	if configuredWorkspace == nil || configuredWorkspace.Path != config.Expand(cmd.Path) {
-		r.sendText(chatID, "⛔ /bind can only select an existing workspace with its configured path.")
-		return
-	}
-
-	oldWorkspaceID := currentFeishuBinding(cfg, chatID)
-	hadOldBinding := oldWorkspaceID != ""
-	if oldWorkspaceID == "" {
-		if oldWS, err := cfg.ResolveWorkspace(msg.IMType, chatID); err == nil && oldWS != nil {
-			oldWorkspaceID = oldWS.ID
-		}
-	}
-	if oldWorkspaceID == "" {
-		for key, knownChatID := range r.snapshotLastKeyChatID() {
-			workspaceID, imType, _ := parseProcessKey(key)
-			if knownChatID == chatID && config.NormalizeIMType(imType) == "feishu" {
-				oldWorkspaceID = workspaceID
-				break
-			}
-		}
-	}
-
-	// Busy check: cannot rebind while a session is actively running.
-	if r.mgr != nil && oldWorkspaceID != "" {
-		oldKey := (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
-		if proc := r.mgr.GetProcessForKey(oldKey); proc != nil && proc.Alive() && proc.State().Busy {
-			r.sendText(chatID, "⚠️ The process is busy. Send /cancel before changing the session.")
-			return
-		}
-	}
-
-	r.bindMu.Lock()
-	updatedCfg, err := upsertFeishuBindingConfigFile(r.configFile, chatID, cmd.WorkspaceID, cmd.Path)
-	if err == nil {
-		if r.mgr != nil {
-			r.mgr.setConfig(updatedCfg)
-		}
-		if feishu := r.findFeishuAdapter(); feishu != nil {
-			if updatedIMCfg := updatedCfg.IMConfigByType("feishu"); updatedIMCfg != nil {
-				feishu.updateIMConfig(*updatedIMCfg)
-			}
-		}
-	}
-	r.bindMu.Unlock()
-	if err != nil {
-		r.sendText(chatID, fmt.Sprintf("❌ Failed to update config: %v", err))
-		return
-	}
-
-	oldKey := ""
-	if oldWorkspaceID != "" {
-		oldKey = (processKey{workspaceID: oldWorkspaceID, imType: msg.IMType, chatID: chatID}).String()
-	}
-	newKey := (processKey{workspaceID: cmd.WorkspaceID, imType: msg.IMType, chatID: chatID}).String()
-
-	r.mu.Lock()
-	if oldKey != "" {
-		delete(r.lastKeyChatID, oldKey)
-	}
-	r.lastKeyChatID[newKey] = chatID
-	r.publishLastKeyChatIDLocked()
-	r.mu.Unlock()
-
-	if r.mgr != nil && oldKey != "" {
-		r.stopReminder(oldKey)
-		r.mgr.StopProcessKey(oldKey)
-		if r.mgr.pins != nil {
-			if err := r.mgr.pins.Set(oldKey, ""); err != nil {
-				log.Warnf("clear old session pin failed key=%v error=%v", oldKey, err)
-			}
-		}
-	}
-
-	action := "Bound"
-	if hadOldBinding {
-		action = "Binding updated"
-	}
-	r.sendText(chatID, fmt.Sprintf("✅ %s: feishu/%s → workspace %s (%s)", action, chatID, cmd.WorkspaceID, cmd.Path))
+	r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("⚠️ Click the link to scan and renew %s login:\n%s", imDisplayName(target), qrURL))
 }
 
 func (r *NotificationRouter) availableLoginTargets() []string {
@@ -636,6 +501,14 @@ func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
+	target, targetOK := r.targetForKey(key)
+	if !targetOK {
+		return
+	}
+	sendCtx := context.Background()
+	if target.lease != nil {
+		sendCtx = target.lease.ctx
+	}
 	if state.BindingInstanceID != "" {
 		p := r.mgr.GetProcessForKey(key)
 		if p == nil || p.State().BindingInstanceID != state.BindingInstanceID {
@@ -731,16 +604,19 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	}
 
 	task := func() {
+		if !r.validTarget(target) {
+			return
+		}
 		if state.BindingInstanceID != "" {
 			p := r.mgr.GetProcessForKey(key)
 			if p == nil || p.State().BindingInstanceID != state.BindingInstanceID {
 				return
 			}
 		}
-		r.deliverChordEvent(key, imType, chatID, eventType, state, msg)
+		r.deliverChordEvent(target, eventType, state, msg)
 	}
 	if r.outbound != nil {
-		result := r.outbound.enqueueOrWait(key, task)
+		result := r.outbound.enqueueOrWaitContext(sendCtx, key, task)
 		switch result {
 		case outboundQueued:
 			return
@@ -752,7 +628,8 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	task()
 }
 
-func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType string, state ControlState, msg string) {
+func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType string, state ControlState, msg string) {
+	key, imType := target.ProcessKey, target.Identity.Platform
 	if eventType == "notification" && r.duplicatePromptNotification(key, state) {
 		return
 	}
@@ -793,36 +670,36 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 
 	if imType == "feishu" {
 		if eventType == "confirm_request" {
-			if handled, err := r.sendFeishuConfirmCard(chatID, key, state); handled {
+			if handled, err := r.sendFeishuConfirmCard(target, state); handled {
 				delivered = err == nil
 				if delivered {
 					r.markVisibleOutput(key)
 				} else {
-					r.reportFeishuCardFailure(chatID, key, err)
+					r.reportFeishuCardFailure(target, err)
 				}
 				return
 			}
 		}
 		if eventType == "question_request" {
-			if handled, err := r.sendFeishuQuestionCard(chatID, key, state); handled {
+			if handled, err := r.sendFeishuQuestionCard(target, state); handled {
 				delivered = err == nil
 				if delivered {
 					r.markVisibleOutput(key)
 				} else {
-					r.reportFeishuCardFailure(chatID, key, err)
+					r.reportFeishuCardFailure(target, err)
 				}
 				return
 			}
 		}
 		if eventType == "question_resolved" {
-			if r.resolveQuestionCard(key, state) {
+			if r.resolveQuestionCard(target, state) {
 				r.markVisibleOutput(key)
 				return
 			}
 		}
 	}
 
-	delivered = r.sendText(chatID, msg)
+	delivered = r.SendBound(context.Background(), target, msg) == nil
 	if delivered {
 		r.markVisibleOutput(key)
 	}
@@ -832,7 +709,7 @@ func (r *NotificationRouter) deliverChordEvent(key, imType, chatID, eventType st
 // chord just closed. It reports whether a card was actually updated; when the
 // question was delivered as text (no stored handle) the caller falls back to
 // sending the close notification as text.
-func (r *NotificationRouter) resolveQuestionCard(key string, state ControlState) bool {
+func (r *NotificationRouter) resolveQuestionCard(target DeliveryTarget, state ControlState) bool {
 	p := state.LastQuestionResolved
 	if p == nil {
 		return false
@@ -842,7 +719,7 @@ func (r *NotificationRouter) resolveQuestionCard(key string, state ControlState)
 		message += "\n" + strings.Join(p.Selected, ", ")
 	}
 	message += "\nQuestion: " + p.RequestID
-	return r.resolveFeishuCard(IncomingMessage{IMType: "feishu"}, key, "question", p.RequestID, title, message, template)
+	return r.updateFeishuCardForTarget(IncomingMessage{IMType: "feishu"}, target, "question", p.RequestID, buildFeishuResolvedCard(title, message, template))
 }
 
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a
@@ -935,34 +812,6 @@ func (r *NotificationRouter) sendText(chatID, text string) bool {
 	return true
 }
 
-// sendTextAll sends a notification to all active channels for a workspace.
-// In multi-IM mode, each adapter receives the message at its tracked chatID.
-// In single-IM mode, falls back to sendText with the first available chatID.
-func (r *NotificationRouter) sendTextAll(workspaceID, text string) {
-	a := r.currentAdapter()
-	if a == nil {
-		return
-	}
-	chatIDs := r.chatIDsForWorkspace(workspaceID)
-	if multi, ok := a.(*MultiAdapter); ok && len(chatIDs) > 0 {
-		for imType, chatID := range chatIDs {
-			adapter := multi.FindAdapterByType(imType)
-			if adapter == nil {
-				continue
-			}
-			if err := adapter.SendText(chatID, text); err != nil {
-				log.Errorf("failed to send notification type=%v chatID=%v error=%v", imType, chatID, err)
-			}
-		}
-		return
-	}
-	// Single-IM mode: use the first chatID.
-	for _, chatID := range chatIDs {
-		r.sendText(chatID, text)
-		return
-	}
-}
-
 // HandleSessionExpired is called when an IM adapter detects its session has
 // expired (e.g. WeChat iLink errcode=-14). It broadcasts a notification to
 // all OTHER adapters so the user can take action.
@@ -981,35 +830,26 @@ func (r *NotificationRouter) HandleLoginResult(imType string, success bool, errM
 	if success {
 		r.broadcastExcept(imType, fmt.Sprintf("✅ %s login renewed", imDisplayName(imType)))
 	} else {
-		r.broadcastExcept(imType, fmt.Sprintf("❌ %s login renewal failed: %s", imDisplayName(imType), errMsg))
+		r.broadcastExcept(imType, fmt.Sprintf("❌ %s login renewal failed. Check the local gateway.", imDisplayName(imType)))
 	}
 }
 
 // broadcastExcept sends a message through all adapters EXCEPT the one of the
 // given type. Used for cross-IM notifications.
 func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
-	a := r.currentAdapter()
-	if a == nil {
-		log.Warnf("no adapter set, cannot broadcast notification")
-		return
-	}
-	if multi, ok := a.(*MultiAdapter); ok {
-		cfg := r.getConfig()
-		if cfg == nil {
-			log.Warnf("no config set, cannot broadcast notification")
-			return
-		}
-		for i := range cfg.Workspaces {
-			chatIDs := r.chatIDsForWorkspace(cfg.Workspaces[i].ID)
-			if len(chatIDs) == 0 {
+	if cfg := r.getConfig(); cfg != nil {
+		for _, im := range cfg.IMs {
+			if im.Type() == excludeType {
 				continue
 			}
-			multi.BroadcastTextExcept(excludeType, chatIDs, text)
+			for chat, ws := range im.Bindings() {
+				if r.admission != nil {
+					r.ensureOwnedGate(im.Type(), chat, ws)
+				}
+				r.sendTextForIM(im.Type(), chat, text)
+			}
 		}
-		return
 	}
-	// Single adapter mode — can't cross-notify.
-	log.Warnf("session issue but no multi-IM for cross-notification exclude=%v", excludeType)
 }
 
 // imDisplayName returns a human-friendly name for an IM type.
@@ -1025,3 +865,13 @@ func imDisplayName(imType string) string {
 }
 
 // parseIMCommand parses a user's text message into an IMCommand.
+
+func (r *NotificationRouter) replyPlatform(platform []string) string {
+	if len(platform) > 0 {
+		return platform[0]
+	}
+	if a := r.currentAdapter(); a != nil {
+		return a.Type()
+	}
+	return ""
+}

@@ -23,20 +23,20 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		incoming = *msg
 	}
 	procKey := (processKey{workspaceID: ws.ID, imType: imType, chatID: chatID}).String()
-	proc, err := r.mgr.GetOrSpawnForKey(procKey)
+	proc, err := r.mgr.getOrSpawnForKeyChatLocked(procKey)
 	if err != nil {
 		log.Errorf("failed to get or spawn process workspace=%v error=%v", ws.ID, err)
-		r.sendText(chatID, "❌ Failed to connect to chord process.")
+		r.sendTextForKey(procKey, chatID, "❌ Failed to connect to chord process.")
 		return
 	}
 	if proc == nil {
 		log.Errorf("no process for workspace workspace=%v", ws.ID)
-		r.sendText(chatID, "❌ Workspace not configured.")
+		r.sendTextForKey(procKey, chatID, "❌ Workspace not configured.")
 		return
 	}
 
 	if incoming.InternalAction != nil && proc.bindingInstanceID != "" && incoming.InternalAction.BindingInstanceID != proc.bindingInstanceID {
-		r.sendText(chatID, "⚠️ This card belongs to a previous process. Use /status.")
+		r.sendTextForKey(procKey, chatID, "⚠️ This card belongs to a previous process. Use /status.")
 		return
 	}
 
@@ -59,7 +59,7 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleLocalShellCommand(ws, chatID, cmd, procKey, proc)
 	default:
 		log.Warnf("unknown command type type=%v", cmd.Type)
-		r.sendText(chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
+		r.sendTextForKey(procKey, chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
 	}
 }
 
@@ -73,17 +73,17 @@ func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, i
 		log.Warnf("status command did not receive a response in time workspace=%v error=%v", ws.ID, err)
 		state = proc.State()
 	}
-	r.sendText(chatID, formatBindingStatus(ws, imType, chatID, state))
+	r.sendTextForIM(imType, chatID, formatBindingStatus(ws, imType, chatID, state))
 }
 
 func (r *NotificationRouter) handleCancelCommand(ws *config.Workspace, chatID, procKey string, proc *ChordProcess) {
 	if err := proc.SendCommand(map[string]any{"type": "cancel"}); err != nil {
 		log.Errorf("failed to send cancel command workspace=%v error=%v", ws.ID, err)
-		r.sendText(chatID, "❌ Failed to cancel.")
+		r.sendTextForKey(procKey, chatID, "❌ Failed to cancel.")
 		return
 	}
 	r.scheduleCommandReminder(procKey)
-	r.sendText(chatID, "🛑 Cancel requested.")
+	r.sendTextForKey(procKey, chatID, "🛑 Cancel requested.")
 }
 
 func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
@@ -94,25 +94,25 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		content := buildExpiredConfirmFollowup(cmd, expired.Confirm)
 		if err := proc.SendUserMessage(content); err != nil {
 			log.Errorf("failed to send expired confirmation follow-up workspace=%v error=%v", ws.ID, err)
-			r.sendText(chatID, "❌ Failed to send follow-up message to chord.")
+			r.sendTextForKey(procKey, chatID, "❌ Failed to send follow-up message to chord.")
 			return
 		}
 		r.resolveFeishuCard(msg, procKey, "confirm", cmd.RequestID, "Confirmation expired", "⌛ The pending confirmation has expired.", "grey")
-		r.sendText(chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
+		r.sendTextForKey(procKey, chatID, "⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.")
 		return
 	}
 	requestID := pc.RequestID
 	if cmd.RequestID != "" {
 		if cmd.RequestID != pc.RequestID {
 			r.resolveFeishuCard(msg, procKey, "confirm", cmd.RequestID, "No matching confirmation", "⚠️ This confirmation has already been handled or no longer matches the current request.", "grey")
-			r.sendText(chatID, "⚠️ No matching pending confirmation to respond to.")
+			r.sendTextForKey(procKey, chatID, "⚠️ No matching pending confirmation to respond to.")
 			return
 		}
 		requestID = cmd.RequestID
 	}
 	reason := strings.TrimSpace(cmd.Reason)
 	if cmd.Action == "deny" && isDoneTool(pc.ToolName) && reason == "" {
-		r.sendText(chatID, "⚠️ Rejecting Done requires a reason. Reply /deny <what remains to do>.")
+		r.sendTextForKey(procKey, chatID, "⚠️ Rejecting Done requires a reason. Reply /deny <what remains to do>.")
 		return
 	}
 	confirmCmd := map[string]any{
@@ -125,7 +125,7 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 	}
 	if err := proc.SendCommand(confirmCmd); err != nil {
 		log.Errorf("failed to send confirm response workspace=%v error=%v", ws.ID, err)
-		r.sendText(chatID, "❌ Failed to send confirmation.")
+		r.sendTextForKey(procKey, chatID, "❌ Failed to send confirmation.")
 		return
 	}
 	r.scheduleCommandReminder(procKey)
@@ -139,17 +139,17 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		}
 		r.resolveFeishuCard(msg, procKey, "confirm", requestID, "Confirmation denied", status, "red")
 		log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
-		r.sendText(chatID, text)
+		r.sendTextForKey(procKey, chatID, text)
 		return
 	}
 	r.resolveFeishuCard(msg, procKey, "confirm", requestID, "Confirmation approved", "✅ Approved by "+sender, "green")
 	log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
-	r.sendText(chatID, "✅ allowed")
+	r.sendTextForKey(procKey, chatID, "✅ allowed")
 }
 
 func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
 	if cmd.Invalid {
-		r.sendText(chatID, "⚠️ Use /question-replace <old-id> <new-id>.")
+		r.sendTextForKey(procKey, chatID, "⚠️ Use /question-replace <old-id> <new-id>.")
 		return
 	}
 	state := proc.State()
@@ -161,7 +161,7 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		state, err = proc.WaitStatus(ctx, cmd.RequestID)
 		cancel()
 		if err != nil {
-			r.sendText(chatID, "⚠️ Could not synchronize questions. Check /status before retrying.")
+			r.sendTextForKey(procKey, chatID, "⚠️ Could not synchronize questions. Check /status before retrying.")
 			return
 		}
 	}
@@ -172,11 +172,11 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 	if q == nil {
 		switch {
 		case cmd.RequestID != "":
-			r.sendText(chatID, "⚠️ Question "+cmd.RequestID+" was not found in the current session. Check /status and the session ID.")
+			r.sendTextForKey(procKey, chatID, "⚠️ Question "+cmd.RequestID+" was not found in the current session. Check /status and the session ID.")
 		case state.pendingQuestionCount() == 0:
-			r.sendText(chatID, "⚠️ No pending question. Use /answer @<id> <answer> to revise a historical answer.")
+			r.sendTextForKey(procKey, chatID, "⚠️ No pending question. Use /answer @<id> <answer> to revise a historical answer.")
 		default:
-			r.sendText(chatID, "⚠️ Specify a question ID when several questions are available: /answer @<id> <answer>.")
+			r.sendTextForKey(procKey, chatID, "⚠️ Specify a question ID when several questions are available: /answer @<id> <answer>.")
 		}
 		return
 	}
@@ -186,14 +186,14 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		defer cancel()
 		receipt, err := r.waitQuestionOperation(ctx, procKey, msg.SenderID, proc, action)
 		if err != nil {
-			r.sendText(chatID, "⚠️ Question outcome unknown; check /status before retrying.")
+			r.sendTextForKey(procKey, chatID, "⚠️ Question outcome unknown; check /status before retrying.")
 			return
 		}
 		if !receipt.Accepted {
-			r.sendText(chatID, "⚠️ "+receipt.Error)
+			r.sendTextForKey(procKey, chatID, "⚠️ "+receipt.Error)
 			return
 		}
-		r.sendText(chatID, "✅ Question updated.")
+		r.sendTextForKey(procKey, chatID, "✅ Question updated.")
 		return
 	}
 	r.submitQuestionAnswer(chatID, msg, procKey, proc, q, cmd.Answers)
@@ -209,13 +209,13 @@ func questionUserOperationID(msg IncomingMessage, id, action string) string {
 
 func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
 	if cmd.Invalid {
-		r.sendText(chatID, "⚠️ Usage: /handoff <agent> [model_pool] or /handoff-deny <reason>.")
+		r.sendTextForKey(procKey, chatID, "⚠️ Usage: /handoff <agent> [model_pool] or /handoff-deny <reason>.")
 		return
 	}
 	state := proc.State()
 	h := state.PendingHandoff
 	if h == nil || strings.TrimSpace(h.RequestID) == "" {
-		r.sendText(chatID, "⚠️ No pending handoff to respond to.")
+		r.sendTextForKey(procKey, chatID, "⚠️ No pending handoff to respond to.")
 		return
 	}
 	handoffCmd := map[string]any{
@@ -234,16 +234,16 @@ func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID s
 	}
 	if err := proc.SendCommand(handoffCmd); err != nil {
 		log.Errorf("failed to send handoff response workspace=%v error=%v", ws.ID, err)
-		r.sendText(chatID, "❌ Failed to send handoff response.")
+		r.sendTextForKey(procKey, chatID, "❌ Failed to send handoff response.")
 		return
 	}
 	r.scheduleCommandReminder(procKey)
 	if cmd.Action == "deny" {
 		if strings.TrimSpace(cmd.Reason) != "" {
-			r.sendText(chatID, "✅ handoff denied: "+strings.TrimSpace(cmd.Reason))
+			r.sendTextForKey(procKey, chatID, "✅ handoff denied: "+strings.TrimSpace(cmd.Reason))
 			return
 		}
-		r.sendText(chatID, "✅ handoff denied")
+		r.sendTextForKey(procKey, chatID, "✅ handoff denied")
 		return
 	}
 	agentName := strings.TrimSpace(cmd.Agent)
@@ -251,10 +251,10 @@ func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID s
 		agentName = defaultHandoffAgentName(h.Agents)
 	}
 	if strings.TrimSpace(cmd.Pool) != "" {
-		r.sendText(chatID, fmt.Sprintf("✅ handoff accepted: %s (%s)", agentName, strings.TrimSpace(cmd.Pool)))
+		r.sendTextForKey(procKey, chatID, fmt.Sprintf("✅ handoff accepted: %s (%s)", agentName, strings.TrimSpace(cmd.Pool)))
 		return
 	}
-	r.sendText(chatID, "✅ handoff accepted: "+agentName)
+	r.sendTextForKey(procKey, chatID, "✅ handoff accepted: "+agentName)
 }
 
 func defaultHandoffAgentName(options []HandoffAgentOption) string {
@@ -278,9 +278,9 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 			if text == "" {
 				text = "No MCP status is available. Use /status to synchronize with the host."
 			}
-			r.sendText(chatID, text)
+			r.sendTextForKey(procKey, chatID, text)
 		} else {
-			r.sendText(chatID, "Manage MCP authentication in this session's working directory on the host: chord mcp login <server> or chord mcp logout <server>. Reconnect in the local TUI. These commands are not forwarded to the model.")
+			r.sendTextForKey(procKey, chatID, "Manage MCP authentication in this session's working directory on the host: chord mcp login <server> or chord mcp logout <server>. Reconnect in the local TUI. These commands are not forwarded to the model.")
 		}
 		return
 	}
@@ -293,7 +293,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	// Remote control plane must not forward them.
 	switch strings.ToLower(strings.TrimSpace(cmd.Content)) {
 	case "/model", "/new", "/resume", "/export":
-		r.sendText(chatID, "⚠️ This command is only available in local TUI.")
+		r.sendTextForKey(procKey, chatID, "⚠️ This command is only available in local TUI.")
 		return
 	}
 	if err := proc.SendUserMessage(cmd.Content); err != nil {
@@ -301,7 +301,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 		if !errors.Is(err, ErrSessionTransferred) && r.retrySendInFreshSession(ws, chatID, procKey, cmd.Content) {
 			return
 		}
-		r.sendText(chatID, "❌ Failed to send message to chord.")
+		r.sendTextForKey(procKey, chatID, "❌ Failed to send message to chord.")
 		return
 	}
 }
@@ -309,12 +309,12 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
 	command := strings.TrimSpace(cmd.Content)
 	if command == "" {
-		r.sendText(chatID, "⚠️ Empty command after !")
+		r.sendTextForKey(procKey, chatID, "⚠️ Empty command after !")
 		return
 	}
 	if err := proc.SendCommand(map[string]any{"type": "local_shell", "command": command}); err != nil {
 		log.Errorf("failed to send local shell command workspace=%v error=%v", ws.ID, err)
-		r.sendText(chatID, "❌ Failed to run local shell command.")
+		r.sendTextForKey(procKey, chatID, "❌ Failed to run local shell command.")
 		return
 	}
 	r.scheduleCommandReminder(procKey)
@@ -337,7 +337,7 @@ func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatI
 		log.Errorf("failed to send user message to fresh session workspace=%v error=%v", ws.ID, err)
 		return false
 	}
-	r.sendText(chatID, "⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.")
+	r.sendTextForKey(procKey, chatID, "⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.")
 	return true
 }
 
@@ -347,7 +347,7 @@ func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg IncomingMes
 	// Only numeric selections or trusted option/form callbacks select IDs.
 	answer := parseQuestionAnswer(answers, q, msg.InternalAction)
 	if len(answer.values) == 0 {
-		r.sendText(chatID, "⚠️ This selection no longer matches the question. Check /status and try again.")
+		r.sendTextForKey(procKey, chatID, "⚠️ This selection no longer matches the question. Check /status and try again.")
 		return false
 	}
 	action := "answer"
@@ -359,14 +359,14 @@ func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg IncomingMes
 	defer cancel()
 	receipt, err := r.waitQuestionOperation(ctx, procKey, msg.SenderID, proc, cmd)
 	if err != nil {
-		r.sendText(chatID, "⚠️ Answer outcome unknown; check /status before retrying.")
+		r.sendTextForKey(procKey, chatID, "⚠️ Answer outcome unknown; check /status before retrying.")
 		return false
 	}
 	if !receipt.Accepted {
-		r.sendText(chatID, "⚠️ Answer not accepted: "+receipt.Error)
+		r.sendTextForKey(procKey, chatID, "⚠️ Answer not accepted: "+receipt.Error)
 		return false
 	}
-	r.sendText(chatID, truncate("✅ Answer accepted ("+q.RequestID+"): "+strings.Join(answer.labels, ", ")))
+	r.sendTextForKey(procKey, chatID, truncate("✅ Answer accepted ("+q.RequestID+"): "+strings.Join(answer.labels, ", ")))
 	return true
 }
 
@@ -419,7 +419,7 @@ func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID stri
 	if n, atoiErr := strconv.Atoi(target); atoiErr == nil && !fromCard {
 		// Numeric menu choice: map against the freshly fetched list.
 		if n < 1 || n > len(roles) {
-			r.sendText(chatID, "⚠️ Invalid role selection. Send /role to see the current roles.")
+			r.sendTextForKey(procKey, chatID, "⚠️ Invalid role selection. Send /role to see the current roles.")
 			return
 		}
 		name = strings.TrimSpace(roles[n-1].Name)
@@ -455,7 +455,7 @@ func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID stri
 
 // showRoleMenu presents the role list, preferring a Feishu interactive card
 // and falling back to a numbered text menu. When a Feishu card send fails the
-// adapter's sendCardOrFallback has already emitted the text fallback, so the
+// router's sendCardToTarget has already emitted the text fallback, so the
 // handler only falls through to sendText when no Feishu adapter is attached.
 func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles []RoleInfo, incoming IncomingMessage, instance ...string) {
 	if config.NormalizeIMType(incoming.IMType) == "feishu" {
@@ -466,7 +466,7 @@ func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles
 			return
 		}
 	}
-	r.sendText(chatID, buildRoleMenuText(current, roles))
+	r.sendTextForKey(procKey, chatID, buildRoleMenuText(current, roles))
 }
 
 // replyRoleResult reports a /role outcome. A Feishu card click is patched in
@@ -476,7 +476,7 @@ func (r *NotificationRouter) replyRoleResult(chatID string, incoming IncomingMes
 	if r.resolveRoleCard(incoming, procKey, title, message, template) {
 		return
 	}
-	r.sendText(chatID, message)
+	r.sendTextForKey(procKey, chatID, message)
 }
 
 // resolveRoleCard patches the Feishu role menu card when the switch was

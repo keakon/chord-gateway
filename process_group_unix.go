@@ -34,3 +34,5 @@ func terminateProcessGroup(pgid int) error {
 func killProcessGroup(pgid int) error {
 	return syscall.Kill(-pgid, syscall.SIGKILL)
 }
+
+func bindingGroupAlive(pgid int) bool { return pgid > 0 && syscall.Kill(-pgid, 0) != syscall.ESRCH }

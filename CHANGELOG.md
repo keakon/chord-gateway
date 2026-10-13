@@ -8,9 +8,17 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ## Unreleased
 
+### Breaking changes
+
+- Feishu and WeChat now use one paired owner and explicit chat bindings, including single-workspace deployments. Removed legacy mode and `access_mode`, `owner_open_id`, `allowed_open_ids`, and WeChat `workspace_id`; configurations containing them fail with an explicit error. Replaced `/bind <workspace_id> <path>` with `/bind "<existing-directory>"`; first private-chat pairing also requires the terminal code. Old authorization is not migrated automatically.
+- Upgrading an existing deployment: stop the gateway, finish or resolve outstanding session transfers, and back up YAML and runtime state. Remove the fields above and clear `chat_bindings` on unpaired platforms; keep workspaces and Chord sessions. Move old unscoped `session-pins.json` (or custom `session_pins_file`) to a backup location to avoid restoring under an old identity. Start with `--pair`, pair privately, then rebind each chat. Old `workspaceID|imType|chatID` pins are no longer read; verify `/sessions` before explicitly using `/resume` for historical sessions. Do not delete unresolved transfer state.
+- Local stdin/stdout now requires explicit `--console`, exactly one configured workspace, and no `--pair`. Missing WeChat tokens trigger QR login instead of implicitly selecting console mode.
+
 ### Added
 
-- MCP availability in `/status` and `/mcp status`, with notifications for visible status changes and host-side login instructions. Remote authentication commands are handled locally by the gateway and never forwarded to the model.
+- Added owner pairing (`--pair`), directory-based `/bind`, and local `pairing reset`. Directory switches preserve existing configuration and wait for outstanding work and session transfers to be resolved. Temporary connection loss preserves accepted owner inputs and replies; account, directory, and process changes prevent stale output from being sent under a new identity. Text and image delivery distinguish explicit rejection from unknown outcomes without automatically resending uncertain messages.
+
+- MCP availability in `/status` and `/mcp status`, with notifications for visible status changes and login instructions for the session working directory on the host. Remote authentication commands are handled locally by the gateway and never forwarded to the model.
 
 - Session takeover between a local TUI and IM on macOS/Linux: `/takeover <session-id> [--timeout <duration>]` waits for existing work to finish without cancelling it, preserves accepted queued input and TUI attachments, and resumes the target paused. `/takeover status` reports progress with bounded blocker details and recovery guidance; waiting timeouts do not stop the source. `/status` shows the restored queue's total count, owner tasks, bounded previews, and attachment counts before explicit continuation. Transfer guards survive gateway restarts and prevent messages, old cards, and reminders from reclaiming a session transferred out until explicit `/new` or `/resume` succeeds. Incoming target bindings open only after paused readiness, a valid queue summary, and a saved pin. Requires Chord takeover support; `chord_state_dir` can select a shared custom Chord state directory.
 
@@ -23,6 +31,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Unsupported YAML config keys are now reported in the gateway log with their line and ignored instead of doing nothing silently: typos and removed options such as `event_visibility.activity` are visible at startup while the rest of the file still loads.
 
 ### Fixed
+
+- Startup configuration warnings reach both stderr and the configured gateway log after resource locks are acquired.
+
+- Session lists now use Chord’s configured storage and repository scope, including custom state directories and worktrees, instead of scanning a legacy workspace directory. Query failures are reported explicitly; requires `chord sessions list --json`.
 
 - Requesting cancellation while idle no longer marks the process busy or starts repeated working reminders. Pending local shell commands remain busy across agent idle events and status snapshots, and are excluded from idle-timeout cleanup.
 

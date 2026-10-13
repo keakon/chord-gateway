@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // resetReminderTimer arms or resets the reminder timer for the given key.
 // Must be called with r.mu held.
@@ -93,16 +96,24 @@ func (r *NotificationRouter) fireReminder(key string) {
 	}
 	msg := r.formatLongRunningNotification(state, time.Now())
 	if msg != "" {
+		target, allowed := r.targetForKey(key)
+		if !allowed {
+			return
+		}
+		ctx := context.Background()
+		if target.lease != nil {
+			ctx = target.lease.ctx
+		}
 		task := func() {
 			if r.mgr.transferBlocked(key) || r.mgr.GetProcessForKey(key) != proc {
 				r.stopReminder(key)
 				return
 			}
-			r.sendText(chatID, msg)
+			_ = r.SendBound(ctx, target, msg)
 			r.markVisibleOutput(key)
 		}
 		if r.outbound != nil {
-			result := r.outbound.enqueueOrWait(key, task)
+			result := r.outbound.enqueueOrWaitContext(ctx, key, task)
 			switch result {
 			case outboundQueued, outboundClosed:
 				return

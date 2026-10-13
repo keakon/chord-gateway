@@ -82,7 +82,14 @@ func encryptILinkImage(data, key []byte) ([]byte, error) {
 }
 
 func (a *WechatAdapter) SendImage(chatID string, image *ReceivedImage) error {
-	release, err := acquireImageUpload(a.ctx)
+	return a.SendImageContext(a.ctx, chatID, image)
+}
+func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, image *ReceivedImage) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	account := a.token.Load()
+	release, err := acquireImageUpload(ctx)
 	if err != nil {
 		return err
 	}
@@ -103,7 +110,10 @@ func (a *WechatAdapter) SendImage(chatID string, image *ReceivedImage) error {
 	if err != nil {
 		return err
 	}
-	resp, err := a.apiPost("ilink/bot/getuploadurl", map[string]any{"filekey": hex.EncodeToString(fileKey), "media_type": 1, "to_user_id": chatID, "rawsize": len(data), "rawfilemd5": hex.EncodeToString(digest[:]), "filesize": len(ciphertext), "no_need_thumb": true, "aeskey": keyHex, "base_info": ilinkBaseInfo{ChannelVersion: ilinkChannelVersion}})
+	post := func(path string, body any) (*http.Response, error) {
+		return a.apiPostSnapshot(ctx, account, path, body)
+	}
+	resp, err := post("ilink/bot/getuploadurl", map[string]any{"filekey": hex.EncodeToString(fileKey), "media_type": 1, "to_user_id": chatID, "rawsize": len(data), "rawfilemd5": hex.EncodeToString(digest[:]), "filesize": len(ciphertext), "no_need_thumb": true, "aeskey": keyHex, "base_info": ilinkBaseInfo{ChannelVersion: ilinkChannelVersion}})
 	if err != nil {
 		return fmt.Errorf("get image upload URL: %w", err)
 	}
@@ -129,10 +139,6 @@ func (a *WechatAdapter) SendImage(chatID string, image *ReceivedImage) error {
 	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 		return fmt.Errorf("invalid WeChat media upload URL")
 	}
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(ctx, ilinkMediaUploadTimeout)
 	defer cancel()
 	downloadParam, err := a.uploadILinkMedia(ctx, uploadURL, ciphertext)
@@ -141,14 +147,24 @@ func (a *WechatAdapter) SendImage(chatID string, image *ReceivedImage) error {
 	}
 	item := ilinkItem{Type: ilinkItemTypeImage, ImageItem: &ilinkImageItem{Media: ilinkCDNMedia{EncryptQueryParam: downloadParam, AESKey: base64.StdEncoding.EncodeToString(key), EncryptType: 1}, AESKey: keyHex, MidSize: len(ciphertext)}}
 	a.mu.Lock()
-	token := a.contextTokens[chatID]
-	a.mu.Unlock()
-	if token == "" {
-		// Some message types/clients omit context_token; mirror the text path and
-		// try sending without threading a reply instead of dropping the image.
-		log.Warnf("wechat ilink: missing context_token, attempting image send without it chatID=%v", chatID)
+	token := ""
+
+	if account == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("account unavailable")
 	}
-	return a.sendMessage(ilinkSendMessageRequest{Msg: ilinkMessage{ToUserID: chatID, ClientID: "chord-gateway-image-" + hex.EncodeToString(fileKey), MessageType: ilinkMessageTypeBot, MessageState: ilinkMessageStateFinish, ContextToken: token, ItemList: []ilinkItem{item}}})
+	reply := a.replyContexts[compositeKey(account.AccountID, chatID)]
+	if reply.bound || time.Now().Before(reply.expires) {
+		token = reply.token
+	}
+
+	a.mu.Unlock()
+	body := ilinkSendMessageRequest{Msg: ilinkMessage{ToUserID: chatID, ClientID: "chord-gateway-image-" + hex.EncodeToString(fileKey), MessageType: ilinkMessageTypeBot, MessageState: ilinkMessageStateFinish, ContextToken: token, ItemList: []ilinkItem{item}}}
+
+	if token == "" || a.token.Load() != account {
+		return fmt.Errorf("reply context unavailable")
+	}
+	return a.sendMessage(ctx, account, body)
 }
 
 func (a *WechatAdapter) uploadILinkMedia(ctx context.Context, uploadURL string, ciphertext []byte) (string, error) {

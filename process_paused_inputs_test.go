@@ -136,7 +136,7 @@ func TestPausedInputsVisibleThroughTargetRestoreAndStatusCommand(t *testing.T) {
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{ChordPath: binary, Workspaces: []config.Workspace{{ID: "test", Path: workspace}}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{ChatBindings: map[string]string{"chat": "test"}}}}, ChordPath: binary, Workspaces: []config.Workspace{{ID: "test", Path: workspace}}}
 	m := newTestChordManager(cfg)
 	m.transfers = newSessionTransferStore(t.TempDir())
 	m.pins = newSessionPinStore(t.TempDir())
@@ -168,15 +168,15 @@ func TestPausedInputsVisibleThroughTargetRestoreAndStatusCommand(t *testing.T) {
 			t.Error("target read loop did not exit")
 		}
 	})
-	router.observeTakeover(&cfg.Workspaces[0], "chat", key, false, nil)
+	router.observeTakeover(&cfg.Workspaces[0], "chat", key, false, nil, testChatOperation(t, router.mgr, key))
 	text := adapter.lastMessage().text
 	for _, want := range []string{"ready_paused", "Pending inputs: 2", "main · input-1", "Review the document", "task-2 · input-2"} {
 		requireContains(t, text, want)
 	}
-	if m.transferBlocked(key) || m.pins.Get(key) != "session-1" || strings.Contains(text, "Pending inputs: 99") {
+	if m.transferBlocked(key) || m.pins.Get(pinKeyForBinding(cfg, key)) != "session-1" || strings.Contains(text, "Pending inputs: 99") {
 		t.Fatal("target was not published from its own paused input snapshot")
 	}
-	router.HandleIncomingMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: "/status"})
+	router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: "/status"})
 	text = adapter.lastMessage().text
 	for _, want := range []string{"Paused", "Pending inputs: 2", "Review the document", "task-2 · input-2"} {
 		requireContains(t, text, want)

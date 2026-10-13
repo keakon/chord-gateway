@@ -1,5 +1,7 @@
 # chord-gateway Docs
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This documentation is for users who want to run `chord-gateway`, connect IM platforms to `chord headless`, and operate it safely.
 
 - Chinese version: [index_CN.md](./index_CN.md)

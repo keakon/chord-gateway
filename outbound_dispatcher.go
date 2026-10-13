@@ -27,7 +27,7 @@ type outboundDispatcher struct {
 	done      chan struct{}
 	cancel    context.CancelFunc
 	queues    [outboundDispatchShards]chan outboundTask
-	sendMu    [outboundDispatchShards]sync.Mutex
+	sendMu    [outboundDispatchShards]chan struct{}
 	metrics   queueMetrics
 	producers sync.WaitGroup
 	wg        sync.WaitGroup
@@ -39,13 +39,15 @@ func newOutboundDispatcher() *outboundDispatcher {
 	d.wg.Add(len(d.queues))
 	for i := range d.queues {
 		d.queues[i] = make(chan outboundTask, outboundQueueSize)
+		d.sendMu[i] = make(chan struct{}, 1)
+		d.sendMu[i] <- struct{}{}
 		go d.consume(ctx, d.queues[i])
 	}
 	return d
 }
 
 func (d *outboundDispatcher) enqueue(key string, task outboundTask) outboundEnqueueResult {
-	return d.enqueueTask(key, task, false)
+	return d.enqueueTaskContext(context.Background(), key, task, false)
 }
 
 // enqueueOrWait enqueues immediately when capacity is available. If the shard
@@ -53,10 +55,13 @@ func (d *outboundDispatcher) enqueue(key string, task outboundTask) outboundEnqu
 // for the same key cannot overtake it. Closing wakes the producer and rejects
 // the task.
 func (d *outboundDispatcher) enqueueOrWait(key string, task outboundTask) outboundEnqueueResult {
-	return d.enqueueTask(key, task, true)
+	return d.enqueueOrWaitContext(context.Background(), key, task)
 }
 
-func (d *outboundDispatcher) enqueueTask(key string, task outboundTask, block bool) outboundEnqueueResult {
+func (d *outboundDispatcher) enqueueOrWaitContext(ctx context.Context, key string, task outboundTask) outboundEnqueueResult {
+	return d.enqueueTaskContext(ctx, key, task, true)
+}
+func (d *outboundDispatcher) enqueueTaskContext(ctx context.Context, key string, task outboundTask, block bool) outboundEnqueueResult {
 	if d == nil || task == nil {
 		return outboundClosed
 	}
@@ -71,14 +76,22 @@ func (d *outboundDispatcher) enqueueTask(key string, task outboundTask, block bo
 	defer d.producers.Done()
 
 	shard := stableShard(key, len(d.queues))
-	d.sendMu[shard].Lock()
-	defer d.sendMu[shard].Unlock()
+	select {
+	case <-ctx.Done():
+		return outboundClosed
+	case <-d.done:
+		return outboundClosed
+	case <-d.sendMu[shard]:
+	}
+	defer func() { d.sendMu[shard] <- struct{}{} }()
 	queue := d.queues[shard]
 	if block {
 		select {
 		case queue <- task:
 			d.metrics.enqueued.Add(1)
 			return outboundQueued
+		case <-ctx.Done():
+			return outboundClosed
 		case <-d.done:
 			d.metrics.closed.Add(1)
 			return outboundClosed
@@ -92,6 +105,8 @@ func (d *outboundDispatcher) enqueueTask(key string, task outboundTask, block bo
 			d.metrics.recordBlockedWait(time.Since(waitStart))
 			d.metrics.enqueued.Add(1)
 			return outboundQueued
+		case <-ctx.Done():
+			return outboundClosed
 		case <-d.done:
 			d.metrics.recordBlockedWait(time.Since(waitStart))
 			d.metrics.closed.Add(1)
@@ -102,6 +117,8 @@ func (d *outboundDispatcher) enqueueTask(key string, task outboundTask, block bo
 	case queue <- task:
 		d.metrics.enqueued.Add(1)
 		return outboundQueued
+	case <-ctx.Done():
+		return outboundClosed
 	case <-d.done:
 		d.metrics.closed.Add(1)
 		return outboundClosed

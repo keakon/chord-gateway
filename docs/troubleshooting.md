@@ -1,5 +1,7 @@
 # Troubleshooting
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This page covers common `chord-gateway` startup, IM integration, routing, and runtime issues.
 
 ## Startup failures
@@ -40,8 +42,8 @@ chord_path: ~/go/bin/chord
 Common causes:
 
 - `workspaces.<id>.path` does not exist.
-- WeChat is enabled with multiple workspaces but `ims.wechat.workspace_id` is not set.
-- Feishu has multiple workspaces but `ims.feishu.chat_bindings` is missing or incomplete.
+- Both platforms select workspaces through explicit `chat_bindings`; the paired owner uses `/bind "~/workspace"` in each chat.
+- The Feishu chat is not listed in `ims.feishu.chat_bindings`; this also applies with one workspace.
 - A Feishu `chat_bindings` entry points to the wrong workspace ID.
 
 ## WeChat issues
@@ -90,62 +92,13 @@ Check:
 
 Check that the Feishu app is configured to use “Receive events via long connection”, the gateway is already running, and `app_id` / `app_secret` are correct.
 
-### Messages are ignored
+### Messages are ignored or the chat is unbound
 
-Check:
+Check that the sender is the paired owner for the current bot account, the chat is explicitly bound, and the message is text (`text` or `post`). First pairing requires foreground `--pair` and the terminal code in a private bot chat. Ordinary startup never opens pairing.
 
-- the sender is allowed by `owner_open_id` / `allowed_open_ids` when an allowlist is configured
-- the inbound Feishu message is a text message (`text` or `post`); non-text messages are ignored
-- the target chat is routed to the expected workspace
+To bind a group, complete private pairing, add the bot to a trusted group, and have the owner send `/bind "~/work/project-a"` there. The directory must exist. After success, inspect YAML `chat_bindings` for the chat ID and workspace mapping. Earlier unbound messages are not replayed. If switching is blocked, inspect `/status` for pending inputs, background work, interactions, and transfers. A failed status refresh preserves the old binding; retry after restoring connectivity.
 
-You can obtain the sender `open_id` from the Feishu developer console or event payload and add it to the allowlist.
-
-### How to bind a Feishu group to a workspace
-
-Recommended steps:
-
-1. Start the gateway with a single workspace and no `chat_bindings`
-2. Create the target Feishu group and add the bot to that group
-3. Send a text message in the group
-4. In that same chat, run:
-
-```text
-/bind <workspace_id> <path>
-```
-
-5. The gateway updates only Feishu `chat_bindings` and `workspaces` in memory, then writes the same binding/workspace change back to the YAML config file.
-
-`/bind` accepts exactly two arguments. The path must start with `/`, `~`, a Windows drive prefix such as `C:\\` or `C:/`, or a UNC prefix such as `\\\\server\\share`; after expansion it must be accessible and must be a directory. Extra arguments or an inaccessible path return an error and leave the config unchanged.
-
-Example:
-
-```text
-/bind project-a ~/work/project-a
-```
-
-Manual YAML edits still work, but they require a gateway restart to take effect.
-
-### How to find a Feishu group `chat_id`
-
-Recommended steps:
-
-1. Start the gateway with a single workspace and no `chat_bindings`
-2. Create the target Feishu group and add the bot to that group
-3. Send a text message in the group
-4. Look for a log line like:
-
-```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
-```
-
-Here, `chat_id=oc_xxx` is the real `chat_id` for that group.
-
-If you have multiple workspaces and prefer to edit YAML manually, copy it back into:
-
-```yaml
-chat_bindings:
-  oc_xxx: your-workspace-id
-```
+See [pairing and local reset](./pairing.md) for account changes or authorization recovery. Do not copy identity from untrusted message logs to bypass pairing.
 
 ### Duplicate messages
 
@@ -157,7 +110,7 @@ Feishu may retry event deliveries. The gateway deduplicates by `app_id + chat_id
 
 For Feishu multi-workspace mode, confirm `ims.feishu.chat_bindings` maps each Feishu chat ID to the intended workspace ID.
 
-For a single Feishu workspace without `chat_bindings`, all chats use that workspace.
+Feishu never chooses a default workspace for an unbound chat. Ask the owner to bind the chat, even with one workspace.
 
 ### Session context is not what you expected
 

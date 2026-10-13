@@ -1,6 +1,8 @@
 # 快速开始
 
-本指南帮助你把一个项目连接到微信或飞书。首次接入只配置一个工作区；确认聊天可用后，再增加其他工作区。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。
+
+本指南帮助你把一个项目连接到微信或飞书。配对后即可在聊天中登记目录。
 
 ## 1. 安装 Chord 和网关
 
@@ -19,61 +21,49 @@ chord-gateway --version
 
 预编译版本、源码构建和后台服务配置见 [Cookbook](./docs/cookbook_CN.md)。
 
-## 2. 创建一个最小配置
+## 2. 选择平台
 
-从下面选择一个平台，把示例保存为 `config.yaml`。将 `/path/to/project` 替换为允许 Chord 操作的项目目录。路径可以是绝对路径、以 `~` 开头，也可以使用 Windows 盘符或 UNC 前缀。
+将下面一个最小配置保存为 `config.yaml`。
 
-### 方案 A：微信
+微信：
 
 ```yaml
 ims:
-  wechat:
-    base_url: https://ilinkai.weixin.qq.com
-workspaces:
-  default:
-    path: /path/to/project
-chord_path: chord
-idle_timeout: 30m
+  wechat: {}
 ```
 
-首次启动时，用微信扫描终端中显示的二维码链接。登录凭据默认保存在 `<state_dir>/wechat/token.json`。
-
-### 方案 B：飞书
+飞书：
 
 ```yaml
 ims:
   feishu:
-    app_id: cli_xxx
+    app_id: cli_example
     app_secret: your-app-secret
-    owner_open_id: ou_xxx
-workspaces:
-  default:
-    path: /path/to/project
-chord_path: chord
-idle_timeout: 30m
 ```
 
-启动网关前，请在飞书后台选择长连接接收事件、订阅 `im.message.receive_v1`、把机器人加入私聊或受控测试群，并发布应用版本。需要交互式确认和提问卡片时，再添加 `card.action.trigger`。具体权限与后台操作见 [飞书接入指南](./docs/feishu_CN.md)。
+飞书应用需要启用长连接、订阅 `im.message.receive_v1` 并发布版本；使用交互卡片时添加 `card.action.trigger`。权限和控制台步骤见[飞书指南](./docs/feishu_CN.md)。
 
-生成最终配置前，可以安全获取自己的 ID：先不配置 `owner_open_id` 和 `allowed_open_ids` 启动一次，发送一条文本消息，然后从 `message from non-allowed open_id` 日志中复制 `open_id=ou_xxx`。该日志不包含消息正文，消息也不会被处理。停止网关，把该值配置为 `owner_open_id` 后再启动。即使网关运行在本机，也不代表只有本机用户能通过飞书访问机器人。
+## 3. 在私聊中配对
 
-## 3. 启动并验证
+在前台终端运行：
 
 ```bash
-chord-gateway -f config.yaml
+chord-gateway -f config.yaml --pair
 ```
 
-启动后：
+微信按提示扫码登录。平台连接成功后，终端会显示配对码。在与机器人的私聊中发送：
 
-1. 完成微信扫码登录，或从飞书 owner 账号发送一条文本消息。
-2. 发送 `/status`，确认显示的是预期工作区。
-3. 发送普通文本请求，开始使用 Chord。
+```text
+/bind "~/workspace" <pairing_code>
+```
 
-使用飞书时，还应确认 allowlist 之外账号发送的消息会被忽略。
+使用 gateway 主机上已有的目录，配对码有效期为 10 分钟。Gateway 保存 owner 和聊天绑定，下一条任务才启动 Chord；其他发送者的消息会被忽略。配对后可使用 `chord-gateway -f config.yaml` 普通启动，也可作为后台服务运行。
 
-## 4. 稳定运行后再增加高级路由
+## 4. 绑定新聊天或切换目录
 
-微信始终路由到一个工作区。飞书可通过 `/bind` 和 `chat_bindings` 将不同聊天映射到不同工作区。请先完成单工作区接入，再按[飞书多工作区指南](./docs/feishu_CN.md#多工作区路由与-bind)操作。
+Owner 可在新聊天或空闲的已有聊天中发送 `/bind "/path/to/project"`，无需配对码。Paired 模式下两个平台均使用显式聊天路由。Owner 可以绑定飞书群，但群成员可以看到回复。切换目录前应完成任务和待处理交互。
+
+保存失败恢复、账号变化和本机重置见[配对指南](./docs/pairing_CN.md)。
 
 ## 5. 状态位置与后续文档
 

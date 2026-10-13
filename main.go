@@ -48,12 +48,45 @@ func newRootCmd(paths *config.Paths, flagConfig *string) *cobra.Command {
 		RunE:          runGateway(paths, flagConfig),
 	}
 
-	rootCmd.Flags().StringVarP(flagConfig, "config", "f", paths.ConfigFile, "Gateway config file path")
+	rootCmd.PersistentFlags().StringVarP(flagConfig, "config", "f", paths.ConfigFile, "Gateway config file path")
+	rootCmd.Flags().Bool("pair", false, "Open a 10-minute private-chat pairing window for unregistered platforms")
+	rootCmd.Flags().Bool("console", false, "Use local stdin/stdout without connecting IM platforms (requires one workspace)")
+	rootCmd.MarkFlagsMutuallyExclusive("pair", "console")
+	rootCmd.AddCommand(newPairingCommand(paths, flagConfig))
 	return rootCmd
 }
 
 func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error {
+
+		store, locks, err := loadLockedConfiguration(*flagConfig, paths)
+		if err != nil {
+			return err
+		}
+		if locks != nil {
+			defer locks.Close()
+		}
+		cfg := store.Snapshot()
+		console, _ := cmd.Flags().GetBool("console")
+		if console && len(cfg.Workspaces) != 1 {
+			return fmt.Errorf("console requires exactly one workspace")
+		}
+		pair, _ := cmd.Flags().GetBool("pair")
+		var terminal *os.File
+		needsTerminal := false
+		for _, im := range cfg.ActiveIMs() {
+			if im.OwnerIdentity() == nil {
+				needsTerminal = true
+			}
+		}
+		if pair && needsTerminal {
+			terminal, err = openPairingTerminal()
+			if err != nil {
+				return fmt.Errorf("pairing requires a controlling terminal")
+			}
+			defer terminal.Close()
+		}
+
 		if err := os.MkdirAll(paths.StateDir, privateDirMode); err != nil {
 			return fmt.Errorf("create state dir: %w", err)
 		}
@@ -61,8 +94,8 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			return fmt.Errorf("restrict state dir permissions: %w", err)
 		}
 
-		// Set up golog before loading the config so config warnings (for
-		// example unsupported keys) reach both stderr and the rotating log.
+		// Resource locks are held before opening the log. Replay diagnostics
+		// from the locked configuration after both log outputs are installed.
 		logFile, err := newPrivateRotatingLogWriter(paths.LogFile, 10*1024*1024, 3)
 		if err != nil {
 			return fmt.Errorf("create rotating log writer: %w", err)
@@ -75,15 +108,12 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		logger.AddHandler(handler)
 		defer logger.Close()
 		log.SetDefaultLogger(logger)
-
-		cfg, err := config.Load(*flagConfig)
-		if err != nil {
-			return fmt.Errorf("load config: %w", err)
+		for _, warning := range store.warnings {
+			log.Warnf("config %s: unsupported field ignored: %s", store.path, warning)
 		}
 
-		// Validate configuration before starting any adapters/processes.
-		if err := cfg.Validate(); err != nil {
-			return fmt.Errorf("config validation: %w", err)
+		if pair && !needsTerminal {
+			log.Infof("no platform requires pairing; existing owners are unchanged")
 		}
 
 		activeIMs := cfg.ActiveIMs()
@@ -96,14 +126,18 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 
 		// Create the chord process manager
 		mgr := NewChordManager(cfg, paths)
+		mgr.store = store
 
 		// Create the notification router
 		router := NewNotificationRouter(mgr)
-		router.SetConfigFile(*flagConfig)
+		router.admission = NewAdmission(NewPairingService(store, pair, terminal))
+		mgr.admission = router.admission
 
 		// Create and start the IM adapter(s)
 		var adapter IMAdapter
-		if len(activeIMs) > 1 {
+		if console {
+			adapter = newConsoleAdapter(router)
+		} else if len(activeIMs) > 1 {
 			adapter, err = NewMultiAdapter(cfg, paths, router)
 			if err != nil {
 				return fmt.Errorf("create multi-adapter: %w", err)
@@ -143,7 +177,11 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		}
 		defer shutdown()
 		go func() {
-			<-ctx.Done()
+			select {
+			case <-ctx.Done():
+			case <-store.Fatal():
+				stop()
+			}
 			log.Infof("gateway shutting down, terminating chord processes")
 			shutdown()
 		}()
@@ -158,6 +196,12 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 }
 
 func shutdownGateway(adapter IMAdapter, mgr *ChordManager, router *NotificationRouter, grace time.Duration) {
+	if mgr != nil && mgr.store != nil {
+		mgr.store.closing.Store(true)
+	}
+	if router != nil && router.admission != nil {
+		router.admission.Close()
+	}
 	if mgr != nil {
 		mgr.StopAll(grace)
 	}

@@ -1,5 +1,7 @@
 # 飞书接入指南
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档用于指导你在 `chord-gateway` 中配置并跑通 **飞书**（`ims.feishu`）。
 
 - 如果你只想快速跑通最小配置，先看：[快速开始](../QUICKSTART_CN.md)
@@ -18,7 +20,7 @@
 
 1. 先只配置 **一个工作区**。
 2. 只使用私聊或受控测试群进行联调。
-3. 先不配置 allowlist 启动一次，从被拒绝消息的审计日志获取自己的 ID；配置 allowlist 并重启前，消息不会被处理。
+3. 前台运行 `--pair`，在机器人私聊使用终端显示的配对码绑定目录，再发送 `/status`。
 
 ## 这条接入是什么
 
@@ -136,106 +138,30 @@
 3. 重启 gateway。
 
 
-## 第 4 步：配置 `chord-gateway`
+## 第 4 步：配置并配对
 
-最小配置示例：
-
-```yaml
-ims:
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    owner_open_id: ou_xxx
-workspaces:
-  default:
-    path: /path/to/project
-```
-
-更接近日常使用的 starter 配置示例：
+保存最小配置：
 
 ```yaml
 ims:
   feishu:
-    app_id: cli_xxx
+    app_id: cli_example
     app_secret: your-app-secret
-    owner_open_id: ou_xxx
-workspaces:
-  default:
-    path: /path/to/project
-chord_path: chord
-idle_timeout: 30m
 ```
 
-启动 gateway：
-
-```bash
-chord-gateway -f config.yaml
-```
-
-启动后你应该重点观察：
-
-- gateway 能正常启动，没有 `load config` 错误
-- 飞书长连接建立成功
-- 日志同时写到 stderr 和 `<state_dir>/gateway.log`
-
-## 第 5 步：验证入站事件并获取 `open_id`
-
-如果还不知道自己的 `open_id`，请先省略 `owner_open_id`，启动 gateway，再给机器人发送一条 **文本消息**（`text` 或 `post`）。该消息不会被处理。
-
-1. 在 gateway 日志中查找类似记录：
+在前台终端运行 `chord-gateway --config config.yaml --pair`。连接成功后，终端显示 10 分钟有效的配对码。在机器人**私聊**中发送：
 
 ```text
-msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
+/bind "~/work/project-a" <pairing_code>
 ```
 
-2. 把这条不含消息正文的审计日志视为第一阶段成功标志：
-   - `chat_id=oc_xxx` 表示 gateway 识别到了哪个飞书聊天
-   - `open_id=ou_xxx` 表示是谁发来的消息
-3. 停止 gateway 并配置 owner；网关在本机运行并不能限制谁可向机器人发消息：
-
-```yaml
-ims:
-  feishu:
-    owner_open_id: ou_xxx
-```
-
-然后重启 gateway。
-
-如果你 **没有** 看到这条日志，按下面顺序检查：
-
-1. 应用是否配置成 **长连接**，而不是 webhook？
-2. 是否订阅了 `im.message.receive_v1`？
-3. 最近一次控制台改动后是否已经 **发布版本**？
-4. 机器人是否真的在你发消息的私聊/群聊里？
-5. 你发的是不是 **文本消息**（`text` 或 `post`），而不是图片/文件/表情？
+目录必须已存在。成功后 gateway 保存 owner、工作区和聊天绑定；发送 `/status` 验证。之后普通启动即可，不需再加 `--pair`。若收不到事件，检查长连接、订阅、scope 和应用发布状态。
 
 ## 多工作区路由与 `/bind`
 
-当存在多个 workspace 时，飞书通过 `chat_bindings` 做“群聊 → 工作区”映射。
+配对后的 owner 可把机器人加入群聊，并在目标聊天发送 `/bind "~/work/project-b"`。不同聊天可绑定不同目录或共享同一目录；只有 owner 的输入会执行，群成员可以看到回复。单工作区也必须显式绑定。新绑定不会重放先前未绑定的消息。
 
-推荐流程：
-
-1. 先用单 workspace 配置启动 gateway，不填写 `chat_bindings`。
-2. 在飞书中创建目标群聊，把机器人加入该群，并发送一条文本消息。
-3. 在该聊天中执行：
-
-```text
-/bind <workspace_id> <path>
-```
-
-示例：
-
-```text
-/bind project-a ~/work/project-a
-```
-
-4. gateway 只会更新 `ims.feishu.chat_bindings` 和 `workspaces`，并把这两段写回 YAML。
-5. 重新打开 `config.yaml`，确认映射已经按预期写入。
-
-边界说明：
-
-- `/bind` 不会更新 allowlist 等其他适配器设置。
-- `/bind` 之外的手工配置修改仍需要重启 gateway。
+目录切换需等待工作、输入和交互完成。账号变化、配对重置与保存失败恢复见[配对指南](./pairing_CN.md)。
 
 ## 已知限制
 

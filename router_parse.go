@@ -94,8 +94,7 @@ func parseIMCommand(text string) IMCommand {
 		}
 		return IMCommand{Type: "login", Content: target}
 	case "/bind":
-		workspaceID, path, ok := parseBindArgs(strings.TrimSpace(strings.TrimPrefix(text, parts[0])))
-		return IMCommand{Type: "bind", WorkspaceID: workspaceID, Path: path, Invalid: !ok}
+		return IMCommand{Type: "bind"}
 	default:
 		return IMCommand{Type: "send", Content: text}
 	}
@@ -125,28 +124,6 @@ func commandFromInternalAction(action *InternalAction) IMCommand {
 // stable option ID.
 func (a *InternalAction) questionFormSubmit() bool {
 	return a != nil && a.Type == "question" && len(a.Values) > 0
-}
-
-func parseBindArgs(rest string) (workspaceID, path string, ok bool) {
-	rest = strings.TrimSpace(rest)
-	if rest == "" {
-		return "", "", true
-	}
-	workspaceID, remaining, ok := nextCommandArg(rest)
-	if !ok {
-		return "", "", false
-	}
-	if strings.TrimSpace(remaining) == "" {
-		return workspaceID, "", true
-	}
-	path, remaining, ok = nextCommandArg(remaining)
-	if !ok {
-		return "", "", false
-	}
-	if strings.TrimSpace(remaining) != "" {
-		return "", "", false
-	}
-	return workspaceID, path, true
 }
 
 func parseHandoffArgs(rest string) (agentName, pool string, ok bool) {

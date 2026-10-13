@@ -14,7 +14,6 @@ const encodedProcessKeyPrefix = "v2:"
 // binding gets its own chord headless process and its own pinned session ID.
 //
 // Encoded format: v2:<base64url(JSON [workspaceID, imType, chatID])>.
-// Legacy workspaceID|imType|chatID keys are still accepted when parsing.
 //
 // Note: chatID is treated as an opaque identifier from the IM adapter.
 type processKey struct {
@@ -31,10 +30,6 @@ func (k processKey) String() string {
 	return encodedProcessKeyPrefix + base64.RawURLEncoding.EncodeToString(payload)
 }
 
-func legacyProcessKeyString(workspaceID, imType, chatID string) string {
-	return strings.Join([]string{workspaceID, imType, chatID}, "|")
-}
-
 func parseProcessKey(s string) (workspaceID, imType, chatID string) {
 	if strings.HasPrefix(s, encodedProcessKeyPrefix) {
 		payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(s, encodedProcessKeyPrefix))
@@ -47,11 +42,7 @@ func parseProcessKey(s string) (workspaceID, imType, chatID string) {
 		}
 		return parts[0], parts[1], parts[2]
 	}
-	parts := strings.SplitN(s, "|", 3)
-	if len(parts) != 3 {
-		return "", "", ""
-	}
-	return parts[0], parts[1], parts[2]
+	return "", "", ""
 }
 
 func processLogContext(key string, state ControlState) string {

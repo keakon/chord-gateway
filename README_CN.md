@@ -1,5 +1,7 @@
 # chord-gateway
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。
+
 [![CI](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/keakon/chord-gateway?display_name=release)](https://github.com/keakon/chord-gateway/releases)
 [![Go](https://img.shields.io/github/go-mod/go-version/keakon/chord-gateway)](https://go.dev/)
@@ -15,7 +17,7 @@
 ## 功能特性
 
 - 微信 iLink：扫码登录与 token 持久化（默认 `<state_dir>/wechat/token.json`）
-- 飞书机器人：长连接模式、owner allowlist、事件去重
+- 飞书机器人：长连接模式、owner pairing、事件去重
 - 支持同时运行多个 IM adapter
 - 按聊天会话和工作区隔离 Chord session
 - 会话 pin 与恢复命令（`/new`、`/resume`、`/sessions`）
@@ -66,14 +68,14 @@ idle_timeout: 30m
 启动 gateway：
 
 ```bash
-chord-gateway -f config.yaml
+chord-gateway -f config.yaml --pair
 ```
 
 仅支持 YAML 配置文件（`.yaml` 或 `.yml`）。
 
-启动后，在已连接的 IM 聊天中发送 `/status` 确认路由正常，再发送普通文本开始与 Chord 交互。
+扫码登录后，在机器人私聊发送 `/bind "/path/to/project" <pairing_code>`，使用终端显示的配对码。成功后发送 `/status` 验证，再发送普通文本任务。之后普通启动无需 `--pair`。
 
-提示：微信始终路由到单个 workspace；当前飞书入站处理只接受文本消息。详见“支持范围 / 已知限制”。
+提示：每个聊天需显式绑定；飞书入站当前只接受文本消息。
 
 飞书配置和多工作区路由请参见 [QUICKSTART_CN.md](./QUICKSTART_CN.md)。
 
@@ -81,7 +83,7 @@ chord-gateway -f config.yaml
 
 - 源码构建需要 Go 1.27.0+，并且需要单独安装 `chord` 二进制；`chord-gateway` 不会内置 Chord。
 - 当前 CI 会构建这些目标：`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`、`windows/amd64`。
-- 微信始终路由到一个 workspace。存在多个 workspace 时，必须通过 `ims.wechat.workspace_id` 指定微信使用哪个 workspace。
+- 微信和飞书都通过显式 `chat_bindings` 选择工作区；配对后的 owner 在每个聊天使用 `/bind "~/workspace"`。
 - 飞书多 workspace 路由通过 `ims.feishu.chat_bindings` 把 chat ID 映射到 workspace ID。当前飞书入站处理只接受文本消息，非文本消息会被忽略。
 - `/login [platform]` 仅适用于支持交互式登录续期的适配器；目前该流程适用于微信，不适用于飞书。
 
@@ -89,6 +91,7 @@ chord-gateway -f config.yaml
 
 | 命令 | 说明 |
 |---|---|
+| `/bind "<directory>" [pairing_code]` | 绑定已有目录；首次私聊配对需提供终端配对码 |
 | `/status` | 查看当前 Chord 状态 |
 | `/cancel` | 取消当前 turn |
 | `/allow` / `/deny [reason]` | 批准或拒绝待确认请求 |
@@ -122,7 +125,7 @@ chord-gateway -f config.yaml
 
 `chord-gateway` 会把 IM 消息路由到本地 `chord headless` 进程，而该进程可以与配置的工作区交互。请把 IM 访问视为对该工作区的控制面访问。
 
-除在受控聊天中进行短时联调外，请为飞书配置允许名单（`owner_open_id` 和/或 `allowed_open_ids`）。即使网关运行在本机，也不代表只有本机用户能通过飞书向机器人发消息。请不要把飞书密钥、微信 token 文件（默认 `<state_dir>/wechat/token.json`，除非设置了 `ims.wechat.token_path`）或网关状态目录提交到版本控制。详见 [docs/permissions-and-safety_CN.md](./docs/permissions-and-safety_CN.md) 和 [SECURITY_CN.md](./SECURITY_CN.md)。
+通过配对登记的 owner 是受信任的本机控制面用户。请勿把飞书密钥、微信 token 或网关状态目录提交到版本控制。详见[权限与安全](./docs/permissions-and-safety_CN.md)。
 
 ## License
 

@@ -51,7 +51,7 @@ func TestParseTakeoverCommand(t *testing.T) {
 }
 
 func TestTransferGuardsRouterMessagesRemindersAndOldCardsAfterRestart(t *testing.T) {
-	cfg := &config.Config{ChordPath: "/missing-test-binary", Workspaces: []config.Workspace{{ID: "test", Path: t.TempDir()}}}
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{ChatBindings: map[string]string{"chat": "test"}}}}, ChordPath: "/missing-test-binary", Workspaces: []config.Workspace{{ID: "test", Path: t.TempDir()}}}
 	m := newTestChordManager(cfg)
 	dir := t.TempDir()
 	m.transfers = newSessionTransferStore(dir)
@@ -73,7 +73,7 @@ func TestTransferGuardsRouterMessagesRemindersAndOldCardsAfterRestart(t *testing
 		{IMType: "wechat", ChatID: "chat", Text: "/answer @old-question late answer"},
 		{IMType: "wechat", ChatID: "chat", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "old-confirm", BindingInstanceID: "binding-old"}},
 	} {
-		router.HandleIncomingMessage(message)
+		router.dispatchMessage(message)
 		if m.GetProcessForKey(key) != nil {
 			t.Fatal("blocked input or stale callback spawned replacement")
 		}
@@ -120,7 +120,7 @@ func TestTakeoverObserverUnknownOutcomeRetainsOriginalTransfer(t *testing.T) {
 	router := NewNotificationRouter(m)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	router.observeTakeover(&m.Config().Workspaces[0], "chat", key, true, nil)
+	router.observeTakeover(&m.Config().Workspaces[0], "chat", key, true, nil, testChatOperation(t, router.mgr, key))
 	got, ok, err := m.transfers.Get(key)
 	if err != nil || !ok || calls != 1 || got.Status.TransferID != record.Status.TransferID || !m.transferBlocked(key) {
 		t.Fatalf("unknown start lost original guard %#v, %v", got, err)
@@ -130,37 +130,41 @@ func TestTakeoverObserverUnknownOutcomeRetainsOriginalTransfer(t *testing.T) {
 	}
 }
 
-func TestTakeoverZeroBudgetDoesNotCancelOrClearSource(t *testing.T) {
-	m := newTestChordManager(testConfig())
-	m.transfers = newSessionTransferStore(t.TempDir())
-	key := (processKey{workspaceID: "test", imType: "wechat", chatID: "chat"}).String()
-	record := takeoverTestRecord("waiting_source")
-	record.Direction = "incoming"
-	record.Status.TargetKind = "gateway"
-	if err := m.transfers.update(key, &record, ""); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	m.takeoverCLI = func(_ context.Context, _ string, req takeoverRequest) (TransferStatus, error) {
-		calls++
-		if req.Action != "start" {
-			t.Fatalf("zero wait executed %q", req.Action)
-		}
-		status := record.Status
-		status.State = "draining"
-		status.StartedAt = "2026-01-01T00:00:00Z"
-		return status, nil
-	}
-	router := NewNotificationRouter(m)
-	adapter := &stubIMAdapter{typ: "wechat"}
-	router.SetAdapter(adapter)
-	router.observeTakeover(&m.Config().Workspaces[0], "chat", key, true, new(time.Duration(0)))
-	got, ok, err := m.transfers.Get(key)
-	if err != nil || !ok || calls != 1 || got.Status.State != "draining" || got.Status.StartedAt == "" || got.Status.WaitExpired {
-		t.Fatalf("wait budget changed source %#v %v", got, err)
-	}
-	if !strings.Contains(adapter.lastMessage().text, "Source work is not cancelled") {
-		t.Fatal("zero budget lacked independent-observation guidance")
+func TestTakeoverObservationBudgetDoesNotPreventStart(t *testing.T) {
+	for _, budget := range []time.Duration{0, time.Nanosecond} {
+		t.Run(budget.String(), func(t *testing.T) {
+			m := newTestChordManager(testConfig())
+			m.transfers = newSessionTransferStore(t.TempDir())
+			key := (processKey{workspaceID: "test", imType: "wechat", chatID: "chat"}).String()
+			record := takeoverTestRecord("waiting_source")
+			record.Direction = "incoming"
+			record.Status.TargetKind = "gateway"
+			if err := m.transfers.update(key, &record, ""); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			m.takeoverCLI = func(_ context.Context, _ string, req takeoverRequest) (TransferStatus, error) {
+				calls++
+				if req.Action != "start" {
+					t.Fatalf("zero wait executed %q", req.Action)
+				}
+				status := record.Status
+				status.State = "draining"
+				status.StartedAt = "2026-01-01T00:00:00Z"
+				return status, nil
+			}
+			router := NewNotificationRouter(m)
+			adapter := &stubIMAdapter{typ: "wechat"}
+			router.SetAdapter(adapter)
+			router.observeTakeover(&m.Config().Workspaces[0], "chat", key, true, new(budget), testChatOperation(t, router.mgr, key))
+			got, ok, err := m.transfers.Get(key)
+			if err != nil || !ok || calls != 1 || got.Status.State != "draining" || got.Status.StartedAt == "" || got.Status.WaitExpired {
+				t.Fatalf("wait budget changed source %#v %v", got, err)
+			}
+			if !strings.Contains(adapter.lastMessage().text, "Source work is not cancelled") {
+				t.Fatal("zero budget lacked independent-observation guidance")
+			}
+		})
 	}
 }
 
@@ -169,7 +173,7 @@ func TestStaleCardCannotReachReplacementBinding(t *testing.T) {
 	router := NewNotificationRouter(m)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	router.HandleIncomingMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm-1", BindingInstanceID: "binding-old"}})
+	router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm-1", BindingInstanceID: "binding-old"}})
 	if w.String() != "" || m.GetProcessForKey(p.key) != p || !strings.Contains(adapter.lastMessage().text, "previous process") {
 		t.Fatal("stale approval reached replacement runtime")
 	}
@@ -209,7 +213,7 @@ func TestTakeoverTargetPreflightRejectsActiveOwnedOrFailedGuardWriter(t *testing
 				}
 				requireContains(t, adapter.lastMessage().text, "target_not_ready")
 			} else {
-				router.prepareIncomingTakeover(&cfg.Workspaces[0], "chat", key, cmd)
+				router.prepareIncomingTakeover(&cfg.Workspaces[0], "chat", key, cmd, testChatOperation(t, router.mgr, key))
 				if calls != 1 || m.transferBlocked(key) {
 					t.Fatalf("preflight calls=%d blocked=%v", calls, m.transferBlocked(key))
 				}
@@ -222,7 +226,7 @@ func TestTakeoverTargetPreflightRejectsActiveOwnedOrFailedGuardWriter(t *testing
 func TestFailedExplicitSessionChangeKeepsTransferGuard(t *testing.T) {
 	for _, command := range []string{"/new", "/resume session-2"} {
 		t.Run(command, func(t *testing.T) {
-			cfg := &config.Config{ChordPath: "/missing-test-binary", Workspaces: []config.Workspace{{ID: "test", Path: t.TempDir()}}}
+			cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{ChatBindings: map[string]string{"chat": "test"}}}}, ChordPath: "/missing-test-binary", Workspaces: []config.Workspace{{ID: "test", Path: t.TempDir()}}}
 			m := newTestChordManager(cfg)
 			m.transfers = newSessionTransferStore(t.TempDir())
 			m.pins = newSessionPinStore(t.TempDir())
@@ -240,7 +244,7 @@ func TestFailedExplicitSessionChangeKeepsTransferGuard(t *testing.T) {
 			router := NewNotificationRouter(m)
 			adapter := &stubIMAdapter{typ: "wechat"}
 			router.SetAdapter(adapter)
-			router.HandleIncomingMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: command})
+			router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: command})
 			if !m.transferBlocked(key) || m.pins.Get(key) != "session-1" || m.GetProcessForKey(key) != nil {
 				t.Fatal("failed explicit change cleared guard or published target pin")
 			}
@@ -271,7 +275,7 @@ func TestIncomingRejectedTransferClearsOnlyConfirmedIdentity(t *testing.T) {
 				router := NewNotificationRouter(m)
 				adapter := &stubIMAdapter{typ: "wechat"}
 				router.SetAdapter(adapter)
-				router.observeTakeover(&m.Config().Workspaces[0], "chat", p.key, true, nil)
+				router.observeTakeover(&m.Config().Workspaces[0], "chat", p.key, true, nil, testChatOperation(t, router.mgr, p.key))
 				wantBlocked := changed || state == "status_unknown"
 				if got := m.transferBlocked(p.key); got != wantBlocked {
 					t.Fatalf("blocked=%v want %v", got, wantBlocked)
@@ -300,7 +304,7 @@ func TestIncomingPreflightRechecksBindingBeforeStartingSource(t *testing.T) {
 	router := NewNotificationRouter(m)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat", key, parseTakeoverCommand("session-1 --timeout 0"))
+	router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat", key, parseTakeoverCommand("session-1 --timeout 0"), testChatOperation(t, router.mgr, key))
 	if calls != 1 || m.transferBlocked(key) {
 		t.Fatalf("calls=%d blocked=%v", calls, m.transferBlocked(key))
 	}
@@ -340,7 +344,7 @@ func TestIncomingTakeoverDoesNotHoldLifecycleLocksDuringIMSend(t *testing.T) {
 	router.SetAdapter(adapter)
 	finished := make(chan struct{})
 	go func() {
-		router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat", key, parseTakeoverCommand("session-1 --timeout 0"))
+		router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat", key, parseTakeoverCommand("session-1 --timeout 0"), testChatOperation(t, router.mgr, key))
 		close(finished)
 	}()
 	defer func() {

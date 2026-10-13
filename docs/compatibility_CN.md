@@ -37,7 +37,7 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 }
 ```
 
-摘要单独报告待处理输入总数，条目数须等于 `min(pending_input_count, 8)`，数量字段不得为负数。input 与 owner ID 须非空、最多 128 字节、不含空白或控制字符，input ID 不得重复。gateway 最多展示八项，每项包含所属任务、最多 160 个 Unicode 字符的单行预览及附件数，展示的 ID 也有长度限制。完整输入正文、附件数据及路径保留在 Chord 会话中，不进入 takeover CLI 状态或 gateway 的移交存储。接管目标须返回有效摘要且 `paused: true`，绑定才会开放。普通状态回执缺少摘要时，gateway 不会将其解释为空队列。
+摘要单独报告待处理输入总数，条目数须等于 `min(pending_input_count, 8)`，数量字段不得为负数。input 与 owner ID 须非空、最多 128 字节、不含空白或控制字符，input ID 不得重复。gateway 最多展示八项，每项包含所属任务、最多 160 个 Unicode 字符的单行预览及附件数，展示的 ID 也有长度限制。完整输入正文、附件数据及路径保留在 Chord 会话中，不进入 takeover CLI 状态或 gateway 的移交存储。接管目标须返回有效摘要且 `paused: true`，绑定才会开放。普通状态回执缺少摘要时，gateway 保留同一会话最后确认的摘要及其目录切换保护。只有明确的空摘要或会话切换才能清除此前已知的待处理输入。
 
 gateway 在接管前检查二进制的 headless 标志。不支持 managed headless 的构建，只要符合上面的普通协议要求，仍可运行普通聊天绑定；`/takeover` 会明确报告缺少能力。没有另一套接管协议，也不会冒险改用其他恢复方式。详见[会话接管](./usage_CN.md#会话接管)。
 
@@ -45,7 +45,7 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 
 ## 当前保留的兼容路径
 
-- 读取已有状态目录时，会话 pin 仍接受早期的 `workspaceID|imType|chatID` 存储键；新键使用编码形式。
+- 自动恢复 pin 按机器人账号和 owner 隔离。旧无作用域键不再恢复，详见[升级说明](../CHANGELOG_CN.md)。
 - YAML 中未知字段会被忽略，但会在 gateway 日志中带行号报告，便于发现拼写错误或已移除的字段。已移除的 `event_visibility.activity` 字段不再生效，活动状态跟踪始终启用。
 - 仍接受 Chord headless 对外发出的 `todos` 事件。虽然 Chord 内部也存在名为 `todos_updated` 的协议事件，但当前 headless 对外协议仍暴露 `todos`，gateway 会继续按该外部事件名处理。
 
@@ -60,3 +60,11 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 ## 清理规则
 
 只有在受支持的外部配置 / 协议版本发生变更，并且在同一改动中同步更新测试与文档时，才应移除仍保留的兼容路径。
+
+## 会话列表
+
+会话列表需要 `chord sessions list --json --limit 10`，返回版本为 1 的结构、规范化 workspace 和包含 ID、RFC 3339 最近活动时间及锁定状态的 sessions 数组。不支持此命令时会明确提示查询失败，不会改为扫描旧目录。
+
+## 聊天绑定
+
+飞书和微信统一要求 owner 配对与显式聊天绑定，单工作区也不例外。旧授权字段和旧 `/bind` 已移除，不自动迁移；详见[升级说明](../CHANGELOG_CN.md)。

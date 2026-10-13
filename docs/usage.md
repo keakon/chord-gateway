@@ -1,10 +1,12 @@
 # Usage
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This page covers day-to-day interaction with `chord-gateway` from IM chats.
 
 ## First message checklist
 
-After the gateway starts:
+After completing [pairing and binding](./pairing.md):
 
 1. Send `/status` from the connected IM chat.
 2. Confirm the reported workspace and IM binding are the ones you expect.
@@ -13,20 +15,7 @@ After the gateway starts:
 
 ## Routing model
 
-The gateway isolates Chord sessions by IM channel and workspace.
-
-A session binding is keyed by:
-
-```text
-workspaceID | imType | chatID
-```
-
-Examples:
-
-- `default|wechat|user123`
-- `backend|feishu|oc_xxx`
-
-Different chats keep different session context. Different workspaces also keep different session context.
+Each chat selects a workspace through `chat_bindings`. Gateway isolates running sessions by workspace, IM platform, and chat; automatic resume pins also include the bot account and owner identity. Storage keys are encoded and should not be assembled manually. Different chats retain separate session context even when sharing a workspace.
 
 ## Session pinning
 
@@ -47,6 +36,7 @@ A pending or completed session transfer takes precedence over a pin. Ordinary me
 
 | Command | Description |
 |---|---|
+| `/bind "<directory>" [pairing_code]` | Bind an existing directory; first private pairing requires the terminal code |
 | `/status` | Show current Chord state: busy/idle, session, current role, phase, last context checkpoint, pending interaction, and restored queued input |
 | `/cancel` | Cancel the current turn |
 | `/allow` | Approve the pending confirmation |
@@ -71,6 +61,8 @@ Notes:
 - `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
 - Unrecognized slash commands are forwarded to Chord as normal text.
 - `/summary` is not part of the documented gateway command set.
+
+`/sessions` queries `chord sessions list --json --limit 10` in the bound directory and forwards `chord_state_dir`. Chord resolves custom session roots and sessions shared by repository worktrees. Results are ordered by recent activity and mark sessions in use. Query failures are reported separately from an empty list. Use a Chord build providing this command; the gateway does not scan legacy directories.
 
 ## Session takeover
 

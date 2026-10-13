@@ -1,5 +1,7 @@
 # Cookbook
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档收集常见真实部署场景下可直接复制的安装、配置和运行示例。
 
 - English version: [cookbook.md](./cookbook.md)
@@ -101,21 +103,22 @@ idle_timeout: 30m
 启动：
 
 ```bash
-chord-gateway -f ~/.config/chord-gateway/config.yaml
+chord-gateway -f ~/.config/chord-gateway/config.yaml --pair
 ```
 
 首次运行时，gateway 会打印二维码 URL。扫码登录后，默认会把可复用的微信 token 保存到 `<state_dir>/wechat/token.json`；如需单独管理该密钥，可设置 `ims.wechat.token_path`。
 
+先在机器人私聊发送 `/bind "~/work/project-a" <pairing_code>` 完成配对，再发送任务。
+
 ## 场景：只用飞书，一个 workspace
 
-适用于允许的飞书聊天都进入同一个 workspace 的场景。
+适用于已显式绑定的飞书聊天进入同一个 workspace 的场景。授权用户仍须先绑定聊天。
 
 ```yaml
 ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
 workspaces:
   default:
     path: ~/work/project-a
@@ -130,9 +133,9 @@ idle_timeout: 30m
 3. 在回调配置中添加 `card.action.trigger`，用于交互卡片。
 4. 修改能力、权限或事件订阅后，发布新的应用版本。
 5. 把机器人加入目标聊天。
-6. 发送一条文本消息（`text` 或 `post`），再发送 `/status`。
+6. 前台运行 `--pair`，在机器人私聊发送 `/bind "~/work/project-a" <pairing_code>`，成功后再发送 `/status`。
 
-如果还不知道 `owner_open_id`，可先临时省略它，发送一条消息，然后从 `feishu: received message` 日志行中读取 `open_id=ou_xxx`。把该值写回配置后重启 gateway。
+首次接入时省略 `owner` 和绑定，运行 `chord-gateway --pair`，按[配对指南](./pairing_CN.md)完成私聊配对。下方身份配置代表成功保存后的结果。
 
 ## 场景：飞书多个群，对应多个 workspace
 
@@ -140,11 +143,11 @@ idle_timeout: 30m
 
 推荐上线流程：
 
-1. 先用上面的单 workspace 飞书配置启动 gateway。
+1. 先按上面的单工作区流程完成飞书私聊配对。
 2. 创建每个目标飞书群，并把机器人加入群里。
 3. 在群里发送一条文本消息（`text` 或 `post`）。
-4. 在同一个聊天里执行 `/bind <workspace_id> <path>`。
-5. 重新打开 `config.yaml`，确认 `ims.feishu.chat_bindings` 和 `workspaces` 已按预期写入。
+4. 在同一个聊天里执行 `/bind "<path>"`。
+5. 重新打开 `config.yaml`，确认 `ims.feishu.chat_bindings` 已按预期写入。
 
 示例最终配置：
 
@@ -153,7 +156,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -176,11 +179,13 @@ idle_timeout: 30m
 ims:
   wechat:
     base_url: https://ilinkai.weixin.qq.com
-    workspace_id: project-a
+    owner: {account_id: bot_example, user_id: user_example}
+    chat_bindings:
+      user_example: project-a
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -195,7 +200,7 @@ idle_timeout: 30m
 
 路由行为：
 
-- 所有微信消息进入 `project-a`。
+- 已绑定微信聊天的消息进入 `project-a`。
 - 飞书群 `oc_project_a` 进入 `project-a`。
 - 飞书群 `oc_project_b` 进入 `project-b`。
 
@@ -315,7 +320,7 @@ Gateway 自身日志仍会写入 `<state_dir>/gateway.log`；`journalctl` 主要
 - 从每个预期使用的 IM 聊天里执行 `/status`。
 - `chord_path` 在 service 环境下指向预期 Chord 二进制。
 - gateway 日志路径和状态目录对 service 用户可写。
-- 飞书已配置 `owner_open_id` 和/或 `allowed_open_ids`；网关在本机运行并不能限制谁可向机器人发消息。
+- 两个平台都需完成 owner 配对，聊天必须显式绑定；本机运行并不限制外部用户向机器人发消息。
 - 如果希望迁移机器后保留登录状态，请备份 `config.yaml`，以及包含微信 token 的状态目录。
 - 知道如何停止服务：
   - systemd user service：`systemctl --user stop chord-gateway`

@@ -25,3 +25,5 @@ func terminateProcessGroup(pgid int) error {
 func killProcessGroup(pgid int) error {
 	return nil
 }
+
+func bindingGroupAlive(_ int) bool { return false }

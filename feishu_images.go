@@ -45,10 +45,13 @@ func imageExtension(mimeType string) string {
 }
 
 func (a *FeishuAdapter) SendImage(chatID string, image *ReceivedImage) error {
+	return a.SendImageContext(a.connectionContext(), chatID, image)
+}
+func (a *FeishuAdapter) SendImageContext(parent context.Context, chatID string, image *ReceivedImage) error {
 	// Root the deadline at the adapter's connection context so a shutdown
 	// cancels an upload already in flight; fall back to Background when the
 	// adapter is used before Connect has run.
-	ctx, cancel := context.WithTimeout(a.connectionContext(), feishuMediaUploadTimeout)
+	ctx, cancel := context.WithTimeout(parent, feishuMediaUploadTimeout)
 	defer cancel()
 	release, err := acquireImageUpload(ctx)
 	if err != nil {

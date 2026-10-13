@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,7 +11,8 @@ import (
 	"github.com/keakon/golog/log"
 )
 
-func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state ControlState) (bool, error) {
+func (r *NotificationRouter) sendFeishuConfirmCard(target DeliveryTarget, state ControlState) (bool, error) {
+	key, chatID := target.ProcessKey, target.Identity.ChatID
 	if state.PendingConfirm == nil {
 		return false, nil
 	}
@@ -20,12 +22,13 @@ func (r *NotificationRouter) sendFeishuConfirmCard(chatID, key string, state Con
 	}
 	workspaceID, _, _ := parseProcessKey(key)
 	card := buildFeishuConfirmCard(chatID, state.PendingConfirm, feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key, BindingInstanceID: state.BindingInstanceID})
-	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatConfirmNotification(state))
+	handle, err := r.sendCardToTarget(target, card, r.formatConfirmNotification(state))
 	r.recordCardHandle(key, "confirm", state.PendingConfirm.RequestID, handle)
 	return true, err
 }
 
-func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state ControlState) (bool, error) {
+func (r *NotificationRouter) sendFeishuQuestionCard(target DeliveryTarget, state ControlState) (bool, error) {
+	key, chatID := target.ProcessKey, target.Identity.ChatID
 	if state.questionForNotification() == nil || !shouldSendFeishuQuestionCard(state.questionForNotification()) {
 		return false, nil
 	}
@@ -35,29 +38,29 @@ func (r *NotificationRouter) sendFeishuQuestionCard(chatID, key string, state Co
 	}
 	workspaceID, _, _ := parseProcessKey(key)
 	card := buildFeishuQuestionCard(chatID, state.questionForNotification(), feishuCardContext{WorkspaceID: workspaceID, SessionID: state.SessionID, RequestedAt: state.UpdatedAt, ProcessKey: key, BindingInstanceID: state.BindingInstanceID})
-	handle, err := feishu.sendCardOrFallback(chatID, card, r.formatQuestionNotification(state))
+	handle, err := r.sendCardToTarget(target, card, r.formatQuestionNotification(state))
 	r.recordCardHandle(key, "question", state.questionForNotification().RequestID, handle)
 	return true, err
 }
 
 // Only a diagnostic may follow an uncertain card send. The original prompt
 // must not be repeated as text by this helper or its caller.
-func (r *NotificationRouter) reportFeishuCardFailure(chatID, key string, err error) {
+func (r *NotificationRouter) reportFeishuCardFailure(target DeliveryTarget, err error) {
 	log.Warnf("feishu card delivery failed error=%v", err)
 	if errors.Is(err, errDeliveryOutcomeUnknown) {
 		feishu := r.findFeishuAdapter()
 		if feishu != nil {
-			if err := feishu.SendText(chatID, "Message delivery is unconfirmed; check the chat first. If the question entry is missing, send /status to view it; send /role to view the role menu. The prompt is not resent as text automatically."); err != nil {
+			if err := r.SendBound(context.Background(), target, "Message delivery is unconfirmed; check the chat first. If the question entry is missing, send /status to view it; send /role to view the role menu. The prompt is not resent as text automatically."); err != nil {
 				log.Warnf("feishu card delivery notice failed error=%v", err)
 			} else {
-				r.markVisibleOutput(key)
+				r.markVisibleOutput(target.ProcessKey)
 			}
 		}
 	}
 }
 
 // sendFeishuRoleMenu presents the role list as an interactive Feishu card.
-// On card-send failure sendCardOrFallback emits the text menu fallback and
+// On card-send failure sendCardToTarget emits the text menu fallback and
 // reports a nil handle, so the boolean only reports an interactive card.
 func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string, roles []RoleInfo, instance ...string) bool {
 	feishu := r.findFeishuAdapter()
@@ -76,9 +79,13 @@ func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string,
 		}
 		stampCardBinding(card, binding)
 	}
-	handle, err := feishu.sendCardOrFallback(chatID, card, buildRoleMenuText(current, roles))
+	target, ok := r.targetForKey(procKey)
+	if !ok || len(instance) > 0 && target.RuntimeInstanceID != instance[0] {
+		return false
+	}
+	handle, err := r.sendCardToTarget(target, card, buildRoleMenuText(current, roles))
 	if err != nil {
-		r.reportFeishuCardFailure(chatID, procKey, err)
+		r.reportFeishuCardFailure(target, err)
 	}
 	if err == nil && handle != nil {
 		r.recordCardHandle(procKey, "role", reqID, handle)

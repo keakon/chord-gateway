@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"github.com/keakon/golog/log"
@@ -62,6 +63,20 @@ func displaySender(msg IncomingMessage) string {
 // (referenced by processKey/requestType/requestID) by patching it with the
 // supplied card body. No-op for non-Feishu IMs or when no handle is available.
 func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, processKey, requestType, requestID string, card map[string]any) bool {
+	target, ok := r.targetForKey(processKey)
+	if !ok {
+		return false
+	}
+	return r.updateFeishuCardForTarget(msg, target, requestType, requestID, card)
+}
+
+func (r *NotificationRouter) updateFeishuCardForTarget(msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
+	processKey := target.ProcessKey
+	ctx, done, err := r.deliveryContext(context.Background(), target)
+	if err != nil {
+		return false
+	}
+	defer done()
 	if msg.IMType != "feishu" {
 		return false
 	}
@@ -77,7 +92,7 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, process
 	if !ok && (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
 		return false
 	}
-	if err := feishu.UpdateInteractiveCard(handle, card); err != nil {
+	if err := feishu.updateInteractiveMessageContext(ctx, handle.MessageID, card, false); err != nil {
 		log.Warnf("feishu: failed to update interactive card request_id=%v request_type=%v message_id=%v error=%v", requestID, requestType, handle.MessageID, err)
 		return false
 	}

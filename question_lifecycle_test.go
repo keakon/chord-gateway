@@ -49,7 +49,7 @@ func TestQuestionStateRejectsStaleUpdates(t *testing.T) {
 }
 
 func TestFeishuQuestionCallbackKeepsCardUntilResolved(t *testing.T) {
-	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", OwnerOpenID: "ou_owner"}
+	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
 	a := testFeishuAdapter(t, fc)
 	defer a.dedupe.Close()
 	msg := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}

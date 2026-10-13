@@ -22,6 +22,16 @@ import (
 
 // ChordProcess manages a single chord headless child process.
 type ChordProcess struct {
+	// Protected by mgr.mu; independent of process exit so final output can drain.
+	deliveryCtx    context.Context
+	deliveryCancel context.CancelFunc
+
+	lease *BindingLease
+	gate  *ChatGate
+
+	waitDone chan struct{}
+	pinKey   string
+
 	bindingInstanceID   string
 	runtimeID           string
 	sessionEpoch        uint64
@@ -123,6 +133,10 @@ func (t *tailBuffer) String() string {
 
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
+	admission *Admission
+
+	store *ConfigStore
+
 	onImage       func(string, *ReceivedImage)
 	mu            sync.RWMutex
 	lifecycleGate sync.RWMutex
@@ -201,12 +215,10 @@ func NewChordManager(cfg *config.Config, paths *config.Paths) *ChordManager {
 
 // Config returns the current config snapshot.
 func (m *ChordManager) Config() *config.Config {
+	if m.store != nil {
+		return m.store.Snapshot()
+	}
 	return m.cfg.Load()
-}
-
-// setConfig replaces the active config atomically.
-func (m *ChordManager) setConfig(cfg *config.Config) {
-	m.cfg.Store(cfg)
 }
 
 // SetOnEvent registers a callback invoked when a chord process emits a notable event.
@@ -230,6 +242,14 @@ func (m *ChordManager) GetProcessForKey(key string) *ChordProcess {
 }
 
 func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
+	release, err := m.acquireChatOperation(key)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return m.getOrSpawnForKeyChatLocked(key)
+}
+func (m *ChordManager) getOrSpawnForKeyChatLocked(key string) (*ChordProcess, error) {
 	m.lifecycleGate.RLock()
 	defer m.lifecycleGate.RUnlock()
 	if m.shuttingDown.Load() {
@@ -254,7 +274,7 @@ func (m *ChordManager) GetOrSpawnForKey(key string) (*ChordProcess, error) {
 	if workspaceID == "" {
 		return nil, fmt.Errorf("invalid process key %q", key)
 	}
-	cfg := m.cfg.Load()
+	cfg := m.Config()
 	if cfg == nil || cfg.WorkspaceByID(workspaceID) == nil {
 		return nil, nil
 	}
@@ -265,13 +285,7 @@ func (m *ChordManager) spawnArgsForKey(key string) []string {
 	if m == nil || m.pins == nil {
 		return nil
 	}
-	sid := strings.TrimSpace(m.pins.Get(key))
-	if sid == "" {
-		workspaceID, imType, chatID := parseProcessKey(key)
-		if workspaceID != "" || imType != "" || chatID != "" {
-			sid = strings.TrimSpace(m.pins.Get(legacyProcessKeyString(workspaceID, imType, chatID)))
-		}
-	}
+	sid := strings.TrimSpace(m.pins.Get(pinKeyForBinding(m.Config(), key)))
 	if sid == "" {
 		return nil
 	}
@@ -282,22 +296,15 @@ func (m *ChordManager) clearSessionPinForKey(key string) error {
 	if m == nil || m.pins == nil {
 		return nil
 	}
-	var firstErr error
-	if err := m.pins.Set(key, ""); err != nil {
-		firstErr = err
+	return m.pins.Set(pinKeyForBinding(m.Config(), key), "")
+}
+
+// cancelDeliveryLocked retires output when the manager removes this runtime.
+// The delivery fields are guarded by mgr.mu, which the caller must hold.
+func (p *ChordProcess) cancelDeliveryLocked() {
+	if p.deliveryCancel != nil {
+		p.deliveryCancel()
 	}
-	workspaceID, imType, chatID := parseProcessKey(key)
-	if workspaceID == "" && imType == "" && chatID == "" {
-		return firstErr
-	}
-	legacyKey := legacyProcessKeyString(workspaceID, imType, chatID)
-	if legacyKey == key {
-		return firstErr
-	}
-	if err := m.pins.Set(legacyKey, ""); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	return firstErr
 }
 
 func (m *ChordManager) removeProcessIfCurrent(key string, p *ChordProcess) {
@@ -306,6 +313,7 @@ func (m *ChordManager) removeProcessIfCurrent(key string, p *ChordProcess) {
 	}
 	m.mu.Lock()
 	if m.procs[key] == p {
+		p.cancelDeliveryLocked()
 		delete(m.procs, key)
 	}
 	m.mu.Unlock()
@@ -346,6 +354,7 @@ func (m *ChordManager) StopAll(grace time.Duration) {
 	m.mu.Lock()
 	procs := make([]*ChordProcess, 0, len(m.procs))
 	for _, p := range m.procs {
+		p.cancelDeliveryLocked()
 		procs = append(procs, p)
 	}
 	m.procs = make(map[string]*ChordProcess)
@@ -357,6 +366,14 @@ func (m *ChordManager) StopAll(grace time.Duration) {
 }
 
 func (m *ChordManager) StopProcessKey(key string) {
+	release, err := m.acquireChatOperation(key)
+	if err != nil {
+		return
+	}
+	defer release()
+	m.stopProcessKeyChatLocked(key)
+}
+func (m *ChordManager) stopProcessKeyChatLocked(key string) {
 	m.lifecycleGate.RLock()
 	defer m.lifecycleGate.RUnlock()
 	releaseKeyLock := m.acquireKeyLock(key)
@@ -368,12 +385,21 @@ func (m *ChordManager) StopProcessKey(key string) {
 		m.mu.Unlock()
 		return
 	}
+	p.cancelDeliveryLocked()
 	delete(m.procs, key)
 	m.mu.Unlock()
 	p.TerminateGroup(2 * time.Second)
 }
 
 func (m *ChordManager) SpawnWithArgsForKey(key string, extraArgs ...string) (*ChordProcess, error) {
+	release, err := m.acquireChatOperation(key)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return m.spawnWithArgsForKeyChatLocked(key, extraArgs...)
+}
+func (m *ChordManager) spawnWithArgsForKeyChatLocked(key string, extraArgs ...string) (*ChordProcess, error) {
 	m.lifecycleGate.RLock()
 	defer m.lifecycleGate.RUnlock()
 	if m.shuttingDown.Load() {
@@ -393,6 +419,7 @@ func (m *ChordManager) spawnWithArgsForKeyLocked(key string, extraArgs ...string
 	m.mu.Lock()
 	// Stop existing process for this key.
 	if p, ok := m.procs[key]; ok {
+		p.cancelDeliveryLocked()
 		delete(m.procs, key)
 		m.mu.Unlock()
 		p.TerminateGroup(2 * time.Second)
@@ -405,7 +432,7 @@ func (m *ChordManager) spawnWithArgsForKeyLocked(key string, extraArgs ...string
 		return nil, fmt.Errorf("invalid process key %q", key)
 	}
 
-	cfg := m.cfg.Load()
+	cfg := m.Config()
 	if cfg == nil {
 		return nil, fmt.Errorf("workspace %s not found", workspaceID)
 	}
@@ -446,12 +473,12 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	if _, specified := transferRestoreArgs(extraArgs); managed && specified == "" {
 		args = append(args, "--gateway-instance", instance)
 	}
-	if dir := m.cfg.Load().ChordStateDir; dir != "" {
+	if dir := m.Config().ChordStateDir; dir != "" {
 		args = append(args, "--state-dir", config.Expand(dir))
 	}
 	args = append(args, extraArgs...)
 
-	cfg := m.cfg.Load()
+	cfg := m.Config()
 	chordBinary := cfg.ChordBinary()
 	chordBinaryMeta := buildinfo.MetadataForPath(chordBinary)
 	cmd := exec.Command(chordBinary, args...)
@@ -488,6 +515,8 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	p := &ChordProcess{
+		waitDone:            make(chan struct{}),
+		pinKey:              pinKeyForBinding(m.Config(), key),
 		bindingInstanceID:   instance,
 		workspacePath:       "",
 		restoringTransferID: transferID,
@@ -503,6 +532,39 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 		onEvent:             onEvent,
 		stderr:              stderr,
 		pgid:                pgid,
+	}
+	if m.admission != nil && imTypeForKey(key) != "console" {
+		im := m.Config().IMConfigByType(imTypeForKey(key))
+		owner := im.OwnerIdentity()
+		_, _, chat := parseProcessKey(key)
+		if owner != nil {
+			id := ChatIdentity{imTypeForKey(key), owner.AccountID, chat}
+			m.admission.mu.Lock()
+			p.gate = m.admission.gates[id]
+			m.admission.mu.Unlock()
+			if p.gate != nil {
+				p.lease, _, _ = p.gate.snapshot()
+			}
+		}
+		original := p.onEvent
+		p.onEvent = func(k, e string, state ControlState) {
+			if p.lease == nil || p.lease.ctx.Err() != nil {
+				return
+			}
+			if original != nil {
+				state.BindingInstanceID = p.bindingInstanceID
+				original(k, e, state)
+			}
+		}
+	}
+	if m.admission != nil && imTypeForKey(key) == "console" {
+		_, platform, chat := parseProcessKey(key)
+		m.admission.mu.Lock()
+		p.gate = m.admission.gates[ChatIdentity{Platform: platform, ChatID: chat}]
+		m.admission.mu.Unlock()
+		if p.gate != nil {
+			p.lease, _, _ = p.gate.snapshot()
+		}
 	}
 	p.bindingGuard = m.transferBlocked(key)
 	if p.bindingGuard {
@@ -708,6 +770,9 @@ func (p *ChordProcess) waitAndRecordExit(cmd *exec.Cmd) int {
 		return exitCode
 	}
 	p.waitOnce.Do(func() {
+		if p.waitDone != nil {
+			defer close(p.waitDone)
+		}
 		_ = cmd.Wait()
 		exitCode := 0
 		if cmd.ProcessState != nil {
@@ -762,6 +827,9 @@ func (p *ChordProcess) SendCommand(cmd map[string]any) error {
 // writeCommandLocked writes one complete JSONL command under p.mu, shared by
 // control commands and inputs that also register a consumption receipt.
 func (p *ChordProcess) writeCommandLocked(data []byte) error {
+	if p.lease != nil && p.lease.ctx.Err() != nil {
+		return context.Canceled
+	}
 	if p.stdin == nil {
 		return io.ErrClosedPipe
 	}
@@ -785,3 +853,5 @@ func (p *ChordProcess) MarkVisibleOutput(now time.Time) {
 	p.state.InternalEventsSinceLastPush = 0
 	p.mu.Unlock()
 }
+
+func imTypeForKey(key string) string { _, platform, _ := parseProcessKey(key); return platform }

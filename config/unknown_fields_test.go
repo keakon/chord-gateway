@@ -62,8 +62,7 @@ ims:
   feishu:
     app_id: cli_x
     app_secret: secret
-    allowed_open_ids:
-      - ou_owner
+    owner: {account_id: cli_x, user_id: ou_owner}
     chat_bindings:
       oc_chat: ws1
     approv: false
@@ -85,7 +84,7 @@ event_visibility:
 			t.Errorf("issues = %q, want a warning naming %q", joined, want)
 		}
 	}
-	for _, supported := range []string{"app_secret", "allowed_open_ids", "oc_chat", "path", "chord_path", "background_result", "todos"} {
+	for _, supported := range []string{"app_secret", "owner", "oc_chat", "path", "chord_path", "background_result", "todos"} {
 		if strings.Contains(joined, supported) {
 			t.Errorf("issues = %q, must not flag supported key %q", joined, supported)
 		}
@@ -102,7 +101,7 @@ event_visibility:
 
 func TestUnsupportedConfigFieldsEmptyDocument(t *testing.T) {
 	for _, doc := range []*yaml.Node{nil, {}} {
-		if issues := unsupportedConfigFields(doc); issues != nil {
+		if issues := UnsupportedConfigFields(doc); issues != nil {
 			t.Fatalf("issues = %v, want none", issues)
 		}
 	}
@@ -114,7 +113,7 @@ func unsupportedFieldsFromYAML(t *testing.T, data []byte) []string {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	return unsupportedConfigFields(&doc)
+	return UnsupportedConfigFields(&doc)
 }
 
 func TestUnsupportedConfigFieldsAcceptsNormalizedAdapterKeys(t *testing.T) {

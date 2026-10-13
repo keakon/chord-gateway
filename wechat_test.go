@@ -22,15 +22,23 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	storageDir := filepath.Join(dir, "wechat")
-	return &WechatAdapter{
+	dedupe, err := NewDedupeStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dedupe.Close() })
+	a := &WechatAdapter{
+		dedupe:        dedupe,
 		imCfg:         config.IMAdapterConfig{Wechat: &config.WechatConfig{}},
 		storageDir:    storageDir,
 		tokenFile:     filepath.Join(storageDir, "token.json"),
 		httpClient:    &http.Client{Timeout: 5 * time.Second},
-		contextTokens: make(map[string]string),
+		replyContexts: make(map[string]wechatReplyContext),
 		ctx:           ctx,
 		cancel:        cancel,
 	}
+	a.token.Store(&TokenData{Token: "sample-token", AccountID: "bot"})
+	return a
 }
 
 func TestIlinkGetUpdatesResponseStatusKind(t *testing.T) {
@@ -67,13 +75,14 @@ func TestWechatAdapter_HelperMethods(t *testing.T) {
 			t.Fatalf("baseURL from token = %q", got)
 		}
 		a.token.Store(nil)
-		if got := a.baseURL(); got != "" {
+		if got := a.baseURL(); got != ilinkDefaultBaseURL {
 			t.Fatalf("baseURL empty = %q", got)
 		}
 	})
 
 	t.Run("botType defaults and tokenString", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
+		a.token.Store(nil)
 		if got := a.botType(); got != ilinkDefaultBotType {
 			t.Fatalf("botType = %q", got)
 		}
@@ -205,13 +214,11 @@ func TestWechatAdapter_APIHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("apiGet and apiPost require base URL", func(t *testing.T) {
+	t.Run("apiPost requires account", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
-		if _, err := a.apiGet("foo"); err == nil || err.Error() != "no base URL configured" {
-			t.Fatalf("apiGet error = %v", err)
-		}
-		if _, err := a.apiPost("foo", map[string]string{"x": "y"}); err == nil || err.Error() != "no base URL configured" {
-			t.Fatalf("apiPost error = %v", err)
+		a.token.Store(nil)
+		if _, err := a.apiPost("foo", nil); err == nil {
+			t.Fatal("missing account accepted")
 		}
 	})
 }
@@ -278,18 +285,29 @@ func TestWechatAdapter_MessageHandling(t *testing.T) {
 		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "user-1"}).String()
 		mgr.procs[key] = &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, cmd: &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}}
 		router := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string)}
+		cfg.IMs[0].Wechat.Owner = &config.OwnerIdentity{AccountID: "bot", UserID: "user-1"}
+		cfg.IMs[0].Wechat.ChatBindings = map[string]string{"user-1": "ws1"}
+		store := &ConfigStore{}
+		store.snapshot.Store(cfg)
+		router.admission = NewAdmission(NewPairingService(store, false, nil))
+		mgr.admission = router.admission
+		if err := router.admission.pairing.PlatformReady("wechat", "bot"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(router.admission.Close)
+
 		a := newTestWechatAdapter(t)
 		a.msgRouter = router
 		a.notifier = router
 
 		a.handleIncomingMessage(ilinkMessage{
 			FromUserID:   "user-1",
-			ClientID:     "msg-1",
+			MessageID:    "103",
 			MessageType:  ilinkMessageTypeUser,
 			ContextToken: "ctx-1",
 			ItemList:     []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "hello"}}, {Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "world"}}},
 		})
-		if token := a.contextTokens["user-1"]; token != "ctx-1" {
+		if token := a.replyContexts[compositeKey("bot", "user-1")].token; token != "ctx-1" {
 			t.Fatalf("context token = %q", token)
 		}
 		out := stdin.String()
@@ -302,8 +320,8 @@ func TestWechatAdapter_MessageHandling(t *testing.T) {
 		a := newTestWechatAdapter(t)
 		a.handleIncomingMessage(ilinkMessage{MessageType: ilinkMessageTypeBot, FromUserID: "u1"})
 		a.handleIncomingMessage(ilinkMessage{MessageType: ilinkMessageTypeUser, FromUserID: "u1", ItemList: []ilinkItem{{Type: 99}}})
-		if len(a.contextTokens) != 0 {
-			t.Fatalf("context tokens = %#v", a.contextTokens)
+		if len(a.replyContexts) != 0 {
+			t.Fatalf("context tokens = %#v", a.replyContexts)
 		}
 	})
 }
@@ -323,16 +341,16 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 
 		a := newTestWechatAdapter(t)
 		a.imCfg.Wechat.BaseURL = ts.URL
-		if err := a.sendMessage(ilinkSendMessageRequest{}); err == nil {
+		if err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{}); err == nil {
 			t.Fatal("sendMessage accepted an unknown non-JSON outcome")
 		}
-		err := a.sendMessage(ilinkSendMessageRequest{})
+		err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{})
 		if err == nil || !strings.Contains(err.Error(), "errcode=-14") {
 			t.Fatalf("sendMessage session error = %v", err)
 		}
 	})
 
-	t.Run("sendILinkText sends split segments with context token", func(t *testing.T) {
+	t.Run("SendText sends split segments with context token", func(t *testing.T) {
 		var bodies []ilinkSendMessageRequest
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer r.Body.Close()
@@ -347,10 +365,11 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 
 		a := newTestWechatAdapter(t)
 		a.imCfg.Wechat.BaseURL = ts.URL
-		a.contextTokens["chat-1"] = "ctx-1"
+		a.token.Store(&TokenData{AccountID: "bot"})
+		a.cachePairedContext("bot", "chat-1", "ctx-1", true)
 		longText := strings.Repeat("a", ilinkMaxMessageLen+10)
-		if err := a.sendILinkText("chat-1", longText); err != nil {
-			t.Fatalf("sendILinkText error = %v", err)
+		if err := a.SendText("chat-1", longText); err != nil {
+			t.Fatalf("SendText error = %v", err)
 		}
 		if len(bodies) < 2 {
 			t.Fatalf("expected split segments, got %d", len(bodies))
@@ -360,8 +379,9 @@ func TestWechatAdapter_SendMessageAndSendILinkText(t *testing.T) {
 		}
 	})
 
-	t.Run("SendText prints in console mode", func(t *testing.T) {
-		a := newTestWechatAdapter(t)
+	t.Run("ConsoleAdapter prints locally", func(t *testing.T) {
+		a := newConsoleAdapter(nil)
+		defer a.cancel()
 		origStdout := os.Stdout
 		r, w, err := os.Pipe()
 		if err != nil {
@@ -509,7 +529,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(wechatDir, "token.json"), []byte(`{"token":"tok","baseUrl":"https://api","accountId":"acc","userId":"u1","savedAt":"now"}`), 0o600); err != nil {
 			t.Fatalf("write token.json: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(wechatDir, "sync-buf.json"), []byte(`{"get_updates_buf":"sync-1"}`), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(wechatDir, "sync-buf.json"), []byte(`{"version":1,"account_id":"acc","get_updates_buf":"sync-1"}`), 0o600); err != nil {
 			t.Fatalf("write sync-buf.json: %v", err)
 		}
 		paths := testPaths(t)

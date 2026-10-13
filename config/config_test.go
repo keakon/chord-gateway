@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestValidate_WechatMultiWorkspace_RequiresWorkspaceID(t *testing.T) {
+func TestValidate_WechatMultiWorkspace_AllowsUnboundChats(t *testing.T) {
 	cfg := &Config{
 		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{}}},
 		Workspaces: []Workspace{
@@ -16,14 +16,14 @@ func TestValidate_WechatMultiWorkspace_RequiresWorkspaceID(t *testing.T) {
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "wechat.workspace_id") {
-		t.Fatalf("expected wechat workspace_id validation error, got: %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error, got: %v", err)
 	}
 }
 
 func TestValidate_WechatWorkspaceID_OK(t *testing.T) {
 	cfg := &Config{
-		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "ws1"}}},
+		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{Owner: &OwnerIdentity{AccountID: "bot", UserID: "user"}, ChatBindings: map[string]string{"chat": "ws1"}}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
@@ -36,10 +36,10 @@ func TestValidate_WechatWorkspaceID_OK(t *testing.T) {
 
 func TestValidate_WechatWorkspaceID_NotFound(t *testing.T) {
 	cfg := &Config{
-		IMs:        []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "missing"}}},
+		IMs:        []IMAdapterConfig{{Wechat: &WechatConfig{Owner: &OwnerIdentity{AccountID: "bot", UserID: "user"}, ChatBindings: map[string]string{"chat": "missing"}}}},
 		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), `workspace_id "missing"`) {
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "invalid chat binding") {
 		t.Fatalf("expected missing workspace_id error, got: %v", err)
 	}
 }
@@ -72,7 +72,7 @@ func TestValidate_RejectsDuplicateIMTypes(t *testing.T) {
 	cfg := &Config{
 		IMs: []IMAdapterConfig{
 			{Wechat: &WechatConfig{}},
-			{Wechat: &WechatConfig{WorkspaceID: "ws1"}},
+			{Wechat: &WechatConfig{Owner: &OwnerIdentity{AccountID: "bot", UserID: "user"}, ChatBindings: map[string]string{"chat": "ws1"}}},
 		},
 		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
@@ -81,7 +81,7 @@ func TestValidate_RejectsDuplicateIMTypes(t *testing.T) {
 	}
 }
 
-func TestValidate_FeishuMultiWorkspace_RequiresChatBindings(t *testing.T) {
+func TestValidate_FeishuMultiWorkspace_AllowsUnboundChats(t *testing.T) {
 	cfg := &Config{
 		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}},
 		Workspaces: []Workspace{
@@ -89,52 +89,33 @@ func TestValidate_FeishuMultiWorkspace_RequiresChatBindings(t *testing.T) {
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "feishu.chat_bindings") {
-		t.Fatalf("expected chat_bindings validation error, got: %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unbound configuration rejected: %v", err)
 	}
 }
 
 func TestValidate_FeishuChatBindingsUnknownWorkspace(t *testing.T) {
 	cfg := &Config{
-		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"oc_1": "missing"}}}},
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", Owner: &OwnerIdentity{AccountID: "app", UserID: "user"}, ChatBindings: map[string]string{"oc_1": "missing"}}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unknown workspace") {
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "invalid chat binding") {
 		t.Fatalf("expected unknown workspace error, got: %v", err)
-	}
-}
-
-func TestValidate_DedupesAllowedOpenIDs_AndAddsOwner(t *testing.T) {
-	cfg := &Config{
-		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{
-			AppID:          "app",
-			AppSecret:      "secret",
-			OwnerOpenID:    "ou_owner",
-			AllowedOpenIDs: []string{"ou_a", "ou_a"},
-		}}},
-		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-	got := cfg.IMs[0].Feishu.AllowedOpenIDs
-	if len(got) != 2 || got[0] != "ou_a" || got[1] != "ou_owner" {
-		t.Fatalf("AllowedOpenIDs = %v", got)
 	}
 }
 
 func TestResolveWorkspace_Wechat_UsesConfiguredWorkspace(t *testing.T) {
 	cfg := &Config{
-		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "ws2"}}},
+		IMs: []IMAdapterConfig{{Wechat: &WechatConfig{Owner: &OwnerIdentity{AccountID: "bot", UserID: "user"}, ChatBindings: map[string]string{"chat": "ws2"}}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
-	ws, err := cfg.ResolveWorkspace("wechat", "any-chat-id")
+	ws, err := cfg.ResolveWorkspace("wechat", "chat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,29 +126,30 @@ func TestResolveWorkspace_Wechat_UsesConfiguredWorkspace(t *testing.T) {
 
 func TestResolveWorkspace_Wechat_ConfiguredWorkspaceMissing(t *testing.T) {
 	cfg := &Config{
-		IMs:        []IMAdapterConfig{{Wechat: &WechatConfig{WorkspaceID: "missing"}}},
+		IMs:        []IMAdapterConfig{{Wechat: &WechatConfig{Owner: &OwnerIdentity{AccountID: "bot", UserID: "user"}, ChatBindings: map[string]string{"chat": "missing"}}}},
 		Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}},
 	}
-	_, err := cfg.ResolveWorkspace("wechat", "any-chat-id")
+	_, err := cfg.ResolveWorkspace("wechat", "chat")
 	if err == nil || !strings.Contains(err.Error(), `workspace_id "missing"`) {
 		t.Fatalf("expected missing workspace error, got: %v", err)
 	}
 }
 
-func TestResolveWorkspace_Feishu_SingleWorkspace(t *testing.T) {
+func TestResolveWorkspace_Feishu_SingleWorkspaceRequiresBinding(t *testing.T) {
 	cfg := &Config{IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret"}}}, Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-	ws, err := cfg.ResolveWorkspace("feishu", "any-chat-id")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := cfg.ResolveWorkspace("feishu", "new-chat"); err == nil {
+		t.Fatal("unbound chat reached the only workspace")
 	}
-	if ws.ID != "ws1" {
-		t.Fatalf("got workspace %q, want %q", ws.ID, "ws1")
+	cfg.IMs[0].Feishu.ChatBindings = map[string]string{"known-chat": "ws1"}
+	ws, err := cfg.ResolveWorkspace("feishu", "known-chat")
+	if err != nil || ws.ID != "ws1" {
+		t.Fatal("existing binding was lost")
 	}
 }
 
 func TestResolveWorkspace_Feishu_MultiWorkspace(t *testing.T) {
 	cfg := &Config{
-		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"oc_2": "ws2"}}}},
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", Owner: &OwnerIdentity{AccountID: "app", UserID: "user"}, ChatBindings: map[string]string{"oc_2": "ws2"}}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
@@ -184,21 +166,21 @@ func TestResolveWorkspace_Feishu_MultiWorkspace(t *testing.T) {
 
 func TestResolveWorkspace_Feishu_NoMatch(t *testing.T) {
 	cfg := &Config{
-		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"oc_1": "ws1"}}}},
+		IMs: []IMAdapterConfig{{Feishu: &FeishuConfig{AppID: "app", AppSecret: "secret", Owner: &OwnerIdentity{AccountID: "app", UserID: "user"}, ChatBindings: map[string]string{"oc_1": "ws1"}}}},
 		Workspaces: []Workspace{
 			{ID: "ws1", Path: "/tmp/ws1"},
 			{ID: "ws2", Path: "/tmp/ws2"},
 		},
 	}
 	_, err := cfg.ResolveWorkspace("feishu", "oc_missing")
-	if err == nil || !strings.Contains(err.Error(), "feishu chat_id") {
+	if err == nil || !strings.Contains(err.Error(), "chat is not bound") {
 		t.Fatalf("expected feishu no-match error, got: %v", err)
 	}
 }
 
 func TestResolveWorkspace_Console_SingleWorkspace(t *testing.T) {
 	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-	ws, err := cfg.ResolveWorkspace("console", "any-chat-id")
+	ws, err := cfg.ResolveWorkspace("console", "chat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -215,19 +197,15 @@ func TestResolveWorkspace_Console_NoMatch(t *testing.T) {
 		},
 	}
 	_, err := cfg.ResolveWorkspace("console", "console-chat")
-	if err == nil || !strings.Contains(err.Error(), "console chat_id") {
+	if err == nil || !strings.Contains(err.Error(), "exactly one workspace") {
 		t.Fatalf("expected console no-match error, got: %v", err)
 	}
 }
 
-func TestResolveWorkspace_OtherSingleWorkspace(t *testing.T) {
+func TestResolveWorkspace_UnknownAdapterRejected(t *testing.T) {
 	cfg := &Config{Workspaces: []Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-	ws, err := cfg.ResolveWorkspace("custom", "custom-chat")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ws.ID != "ws1" {
-		t.Fatalf("got workspace %q, want %q", ws.ID, "ws1")
+	if _, err := cfg.ResolveWorkspace("custom", "chat"); err == nil {
+		t.Fatal("unknown adapter routed")
 	}
 }
 
@@ -279,8 +257,7 @@ func TestLoad_EventVisibilitySubAgentEvents(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	data := `ims:
-  wechat:
-    workspace_id: ws1
+  wechat: {}
 workspaces:
   ws1:
     path: /tmp/ws1
@@ -493,30 +470,4 @@ func TestConfigHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("Feishu allowlist", func(t *testing.T) {
-		fc := &FeishuConfig{}
-		if fc.IsOpenIDAllowed("any") {
-			t.Fatal("empty allowlist should deny")
-		}
-		fc.OwnerOpenID = "ou_owner"
-		if !fc.IsOpenIDAllowed("ou_owner") {
-			t.Fatal("owner should be allowed")
-		}
-		if fc.IsOpenIDAllowed("ou_x") {
-			t.Fatal("non-owner should be denied")
-		}
-		fc.AllowedOpenIDs = []string{"ou_a"}
-		if !fc.IsOpenIDAllowed("ou_a") {
-			t.Fatal("allowlisted user should be allowed")
-		}
-		if fc.IsOpenIDAllowed("ou_x") {
-			t.Fatal("non-allowlisted user should be denied")
-		}
-		if !fc.IsOwner("ou_owner") {
-			t.Fatal("configured owner should be recognized")
-		}
-		if fc.IsOwner("ou_a") || fc.IsOwner("") || (*FeishuConfig)(nil).IsOwner("ou_owner") {
-			t.Fatal("non-owner, empty, and nil config should not be recognized as owner")
-		}
-	})
 }

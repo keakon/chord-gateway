@@ -1,5 +1,7 @@
 # chord-gateway
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md).
+
 [![CI](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/keakon/chord-gateway?display_name=release)](https://github.com/keakon/chord-gateway/releases)
 [![Go](https://img.shields.io/github/go-mod/go-version/keakon/chord-gateway)](https://go.dev/)
@@ -15,7 +17,7 @@
 ## Features
 
 - WeChat iLink support with QR-code login and token persistence (`<state_dir>/wechat/token.json` by default)
-- Feishu bot support with long-lived connection mode, owner allowlist, and event deduplication
+- Feishu bot support with long-lived connection mode, owner pairing, and event deduplication
 - Multiple IM adapters can run together
 - Per-chat and per-workspace session isolation
 - Session pinning and resume commands (`/new`, `/resume`, `/sessions`)
@@ -66,14 +68,14 @@ idle_timeout: 30m
 Run the gateway:
 
 ```bash
-chord-gateway -f config.yaml
+chord-gateway -f config.yaml --pair
 ```
 
 Only YAML config files are supported (`.yaml` or `.yml`).
 
-After the gateway is running, send `/status` from the connected IM chat to verify the route, then send a normal text message to talk to Chord.
+After QR login, send `/bind "/path/to/project" <pairing_code>` in a private bot chat using the code shown in the terminal. Send `/status` to verify, then a normal text task. Later starts need no `--pair`.
 
-Notes: WeChat routes to a single workspace; Feishu inbound handling currently accepts text messages only. See “Support scope / known limitations” for details.
+Notes: Each chat requires explicit binding; Feishu inbound handling currently accepts text messages only. See “Support scope / known limitations” for details.
 
 For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.md).
 
@@ -81,7 +83,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 
 - Source builds require Go 1.27.0+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
 - CI currently builds these targets: `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, and `windows/amd64`.
-- WeChat always routes to one workspace. When multiple workspaces exist, set `ims.wechat.workspace_id` to choose the workspace used by WeChat.
+- Both platforms select workspaces through explicit `chat_bindings`; the paired owner uses `/bind "~/workspace"` in each chat.
 - Feishu multi-workspace routing uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.
 - `/login [platform]` is only useful for adapters that support interactive login renewal. Today that flow is available for WeChat, not Feishu.
 
@@ -89,6 +91,7 @@ For Feishu setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.m
 
 | Command | Description |
 |---|---|
+| `/bind "<directory>" [pairing_code]` | Bind an existing directory; first private pairing requires the terminal code |
 | `/status` | Show current Chord state |
 | `/cancel` | Cancel the current turn |
 | `/allow` / `/deny [reason]` | Approve or deny a pending confirmation |
@@ -122,7 +125,7 @@ See [docs/usage.md](./docs/usage.md) for full command behavior and session seman
 
 `chord-gateway` routes IM messages to a local `chord headless` process that can interact with the configured workspace. Treat IM access as control-plane access to that workspace.
 
-Except during brief testing in a controlled chat, configure a Feishu allowlist (`owner_open_id` and/or `allowed_open_ids`). Running the gateway locally does not restrict who can message the bot through Feishu. Keep Feishu secrets, WeChat token files (`<state_dir>/wechat/token.json` unless `ims.wechat.token_path` is set), and the gateway state directory out of version control. See [docs/permissions-and-safety.md](./docs/permissions-and-safety.md) and [SECURITY.md](./SECURITY.md).
+The paired owner is a trusted local control-plane user. Keep Feishu secrets, WeChat tokens, and gateway state out of version control. See [permissions and safety](./docs/permissions-and-safety.md).
 
 ## License
 

@@ -101,7 +101,7 @@ func TestOutgoingStatusUsesSourceTargetIdentity(t *testing.T) {
 		return record.Status, nil
 	}
 	r := &NotificationRouter{mgr: m, adapter: &stubIMAdapter{typ: "wechat"}}
-	r.observeTakeover(&config.Workspace{ID: "test"}, "chat", p.key, false, nil)
+	r.observeTakeover(&config.Workspace{ID: "test"}, "chat", p.key, false, nil, testChatOperation(t, r.mgr, p.key))
 	if !called {
 		t.Fatal("source transfer not queried")
 	}
@@ -136,7 +136,7 @@ func TestZeroWaitReleasedSourceDoesNotSpawnTarget(t *testing.T) {
 	}
 	r := &NotificationRouter{mgr: m, adapter: &stubIMAdapter{typ: "wechat"}}
 	zero := time.Duration(0)
-	r.observeTakeover(&config.Workspace{ID: "test"}, "chat", p.key, true, &zero)
+	r.observeTakeover(&config.Workspace{ID: "test"}, "chat", p.key, true, &zero, testChatOperation(t, r.mgr, p.key))
 	got, _, _ := m.transfers.Get(p.key)
 	if got.Status.State != "released" || m.GetProcessForKey(p.key) != nil {
 		t.Fatal("zero observer budget started target work")

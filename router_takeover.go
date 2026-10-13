@@ -42,24 +42,28 @@ func parseTakeoverCommand(rest string) IMCommand {
 
 func (r *NotificationRouter) handleTakeover(ws *config.Workspace, chat, key string, cmd IMCommand) {
 	if cmd.Invalid {
-		r.sendText(chat, "⚠️ Usage: /takeover <session-id> [--timeout <duration>] or /takeover status.")
+		r.sendTextForKey(key, chat, "⚠️ Usage: /takeover <session-id> [--timeout <duration>] or /takeover status.")
 		return
 	}
 	if r.mgr == nil {
-		r.sendText(chat, "❌ Process manager not available.")
+		r.sendTextForKey(key, chat, "❌ Process manager not available.")
 		return
 	}
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		r.sendText(chat, "⚠️ Session takeover requires macOS or Linux.")
+		r.sendTextForKey(key, chat, "⚠️ Session takeover requires macOS or Linux.")
+		return
+	}
+	operation, err := r.mgr.captureChatOperation(key)
+	if err != nil {
 		return
 	}
 	if cmd.Action == "status" {
-		go r.observeTakeover(ws, chat, key, false, nil)
+		go r.observeTakeover(ws, chat, key, false, nil, operation)
 		return
 	}
 	m := r.mgr
 	if !m.gatewayManagedSupported() {
-		r.sendText(chat, "⚠️ The configured Chord binary does not support session takeover. Ordinary sessions remain available.")
+		r.sendTextForKey(key, chat, "⚠️ The configured Chord binary does not support session takeover. Ordinary sessions remain available.")
 		return
 	}
 	m.lifecycleGate.RLock()
@@ -67,33 +71,33 @@ func (r *NotificationRouter) handleTakeover(ws *config.Workspace, chat, key stri
 	if m.shuttingDown.Load() {
 		release()
 		m.lifecycleGate.RUnlock()
-		r.sendText(chat, "⚠️ Gateway is shutting down.")
+		r.sendTextForKey(key, chat, "⚠️ Gateway is shutting down.")
 		return
 	}
 	if m.transferBlocked(key) {
 		release()
 		m.lifecycleGate.RUnlock()
-		r.sendText(chat, "⚠️ transfer_busy. Use /takeover status for the existing transfer.")
+		r.sendTextForKey(key, chat, "⚠️ transfer_busy. Use /takeover status for the existing transfer.")
 		return
 	}
 	if p := m.GetProcessForKey(key); p != nil && (p.Alive() || p.cmd == nil && p.stdin != nil) {
 		release()
 		m.lifecycleGate.RUnlock()
-		r.sendText(chat, "⚠️ target_not_ready: this chat already owns a Chord process. Handle that binding explicitly first.")
+		r.sendTextForKey(key, chat, "⚠️ target_not_ready: this chat already owns a Chord process. Handle that binding explicitly first.")
 		return
 	}
 	release()
 	m.lifecycleGate.RUnlock()
-	go r.prepareIncomingTakeover(ws, chat, key, cmd)
+	go r.prepareIncomingTakeover(ws, chat, key, cmd, operation)
 }
 
 // Workspace identity comes from Chord. Resolve it without holding lifecycle
 // locks, then recheck the binding before persisting the guard and contacting
 // the source with a mutating start request.
-func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat, key string, cmd IMCommand) {
+func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat, key string, cmd IMCommand, operation *chatOperation) {
 	m := r.mgr
 	req := takeoverRequest{Action: transferStatePreflight, TransferID: "transfer-" + rand.Text(), SessionID: cmd.SessionID, TargetInstanceID: "binding-" + rand.Text(), Workspace: ws.Path, WorkDir: ws.Path, StateDir: config.Expand(m.Config().ChordStateDir)}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(operation.context(), 10*time.Second)
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -105,12 +109,17 @@ func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat,
 	status, err := m.runTransferCLI(ctx, req)
 	close(done)
 	cancel()
+	releaseChat, gateErr := operation.acquire()
+	if gateErr != nil {
+		return
+	}
+	defer releaseChat()
 	if err != nil {
-		r.sendText(chat, "⚠️ Source preflight was not accepted; no transfer was started. "+status.ErrorCode)
+		r.sendTextForKey(key, chat, "⚠️ Source preflight was not accepted; no transfer was started. "+status.ErrorCode)
 		return
 	}
 	if status.State != transferStatePreflight || status.Workspace == "" || status.SourceRuntimeID == "" || status.TransferID != req.TransferID || status.SessionID != req.SessionID || status.TargetKind != "gateway" || status.TargetInstanceID != req.TargetInstanceID {
-		r.sendText(chat, "⚠️ Source preflight identity was not confirmed; no transfer was started.")
+		r.sendTextForKey(key, chat, "⚠️ Source preflight identity was not confirmed; no transfer was started.")
 		return
 	}
 	m.lifecycleGate.RLock()
@@ -118,17 +127,17 @@ func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat,
 	releaseBinding := func() { release(); m.lifecycleGate.RUnlock() }
 	if m.shuttingDown.Load() {
 		releaseBinding()
-		r.sendText(chat, "⚠️ Gateway is shutting down.")
+		r.sendTextForKey(key, chat, "⚠️ Gateway is shutting down.")
 		return
 	}
 	if m.transferBlocked(key) {
 		releaseBinding()
-		r.sendText(chat, "⚠️ transfer_busy. Use /takeover status for the existing transfer.")
+		r.sendTextForKey(key, chat, "⚠️ transfer_busy. Use /takeover status for the existing transfer.")
 		return
 	}
 	if p := m.GetProcessForKey(key); p != nil && (p.Alive() || p.cmd == nil && p.stdin != nil) {
 		releaseBinding()
-		r.sendText(chat, "⚠️ target_not_ready: this chat already owns a Chord process. Handle that binding explicitly first.")
+		r.sendTextForKey(key, chat, "⚠️ target_not_ready: this chat already owns a Chord process. Handle that binding explicitly first.")
 		return
 	}
 	status.State = "waiting_source"
@@ -138,12 +147,12 @@ func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat,
 	err = m.transfers.update(key, &record, "")
 	releaseBinding()
 	if err != nil {
-		r.sendText(chat, "❌ Could not persist the transfer guard; no transfer was started.")
+		r.sendTextForKey(key, chat, "❌ Could not persist the transfer guard; no transfer was started.")
 		return
 	}
 	r.stopReminder(key)
-	go r.observeTakeover(ws, chat, key, true, cmd.Timeout)
-	r.sendText(chat, "⏳ Transfer recorded: "+record.Status.TransferID+". Use /takeover status to inspect progress.")
+	go r.observeTakeover(ws, chat, key, true, cmd.Timeout, operation)
+	r.sendTextForKey(key, chat, "⏳ Transfer recorded: "+record.Status.TransferID+". Use /takeover status to inspect progress.")
 }
 
 func formatTransferStatus(status TransferStatus) string {
@@ -198,17 +207,25 @@ func formatTransferStatus(status TransferStatus) string {
 
 // A wait budget owns the observer only. Each CLI subprocess is short-lived;
 // ending observation never sends cancel/stop to the source or clears guards.
-func (r *NotificationRouter) observeTakeover(ws *config.Workspace, chat, key string, start bool, budget *time.Duration) {
+func (r *NotificationRouter) observeTakeover(ws *config.Workspace, chat, key string, start bool, budget *time.Duration, operation *chatOperation) {
 	m := r.mgr
 	began := time.Now()
 	last := ""
 	observe := start
-	for {
+	// Each bounded step owns the original gate through CLI completion and
+	// persistence/restoration. Release it before sleeping between observations.
+	step := func(start bool) bool {
+		releaseChat, err := operation.acquire()
+		if err != nil {
+			return false
+		}
+		defer releaseChat()
+
 		record, ok, err := m.transfers.Get(key)
 		localPreparation := false
 		if err != nil {
-			r.sendText(chat, "❌ Transfer storage could not be loaded; automatic input remains blocked.")
-			return
+			r.sendTextForKey(key, chat, "❌ Transfer storage could not be loaded; automatic input remains blocked.")
+			return false
 		}
 		if !ok {
 			if p := m.GetProcessForKey(key); p != nil {
@@ -220,8 +237,8 @@ func (r *NotificationRouter) observeTakeover(ws *config.Workspace, chat, key str
 				}
 			}
 			if !ok {
-				r.sendText(chat, "ℹ️ No pending transfer for this binding.")
-				return
+				r.sendTextForKey(key, chat, "ℹ️ No pending transfer for this binding.")
+				return false
 			}
 		}
 		// A previously started target may become ready after the caller stopped waiting.
@@ -230,29 +247,29 @@ func (r *NotificationRouter) observeTakeover(ws *config.Workspace, chat, key str
 			if observe && budget != nil {
 				restoreWait = min(restoreWait, *budget-time.Since(began))
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), restoreWait)
+			ctx, cancel := context.WithTimeout(operation.context(), restoreWait)
 			var target *ChordProcess
 			target, err = m.restoreTransferredSession(ctx, key, record)
 			cancel()
 			if err != nil {
-				r.sendText(chat, "⚠️ Target restore remains unconfirmed; binding is blocked.")
-				return
+				r.sendTextForKey(key, chat, "⚠️ Target restore remains unconfirmed; binding is blocked.")
+				return false
 			}
 			record.Status.State = "ready_paused"
 			r.clearTransferCards(key)
-			r.sendText(chat, formatPausedTargetStatus(record.Status, target.State()))
-			return
+			r.sendTextForKey(key, chat, formatPausedTargetStatus(record.Status, target.State()))
+			return false
 		}
 		wait := 10 * time.Second
 		if observe && budget != nil && !start {
 			wait = min(wait, *budget-time.Since(began))
 			if wait <= 0 {
 				record.Status.WaitExpired = true
-				r.sendText(chat, formatTransferStatus(record.Status))
-				return
+				r.sendTextForKey(key, chat, formatTransferStatus(record.Status))
+				return false
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), wait)
+		ctx, cancel := context.WithTimeout(operation.context(), wait)
 		done := make(chan struct{})
 		go func() {
 			select {
@@ -269,92 +286,98 @@ func (r *NotificationRouter) observeTakeover(ws *config.Workspace, chat, key str
 		status, cliErr := m.runTransferCLI(ctx, req)
 		close(done)
 		cancel()
+		if !operation.validLocked() {
+			return false
+		}
 		if status.TransferID != "" {
 			if status.TransferID != record.Status.TransferID || status.SessionID != record.Status.SessionID || status.Workspace != record.Status.Workspace || record.Status.TargetKind != status.TargetKind || record.Status.TargetInstanceID != status.TargetInstanceID || record.Status.SourceRuntimeID != "" && !sameTransferIdentity(record.Status, status) {
-				r.sendText(chat, "⚠️ stale_source: transfer identity changed. Binding remains blocked.")
-				return
+				r.sendTextForKey(key, chat, "⚠️ stale_source: transfer identity changed. Binding remains blocked.")
+				return false
 			}
 			record.Status = status
 			if record.Direction == "outgoing" && status.State == transferStatePrepareFailed {
 				if err = m.reopenUnfrozenSource(key, status); err != nil {
-					r.sendText(chat, "⚠️ Could not confirm open source admission. Binding remains blocked.")
+					r.sendTextForKey(key, chat, "⚠️ Could not confirm open source admission. Binding remains blocked.")
 				} else {
-					r.sendText(chat, "ℹ️ Source confirmed transfer was not accepted; input routing reopened.")
+					r.sendTextForKey(key, chat, "ℹ️ Source confirmed transfer was not accepted; input routing reopened.")
 				}
-				return
+				return false
 			}
 			if record.Direction == "incoming" && (status.State == transferStatePrepareFailed || start && status.State == transferStatePreflight && cliErr != nil) {
 				if err = m.transfers.update(key, nil, record.Status.TransferID); err != nil {
-					r.sendText(chat, "❌ Source did not accept transfer; clearing the guard failed.")
+					r.sendTextForKey(key, chat, "❌ Source did not accept transfer; clearing the guard failed.")
 				} else {
-					r.sendText(chat, formatTransferStatus(status)+"\nℹ️ Transfer was not accepted; ordinary chat remains available.")
+					r.sendTextForKey(key, chat, formatTransferStatus(status)+"\nℹ️ Transfer was not accepted; ordinary chat remains available.")
 				}
-				return
+				return false
 			}
 			if err = m.persistObservedTransfer(key, record, localPreparation); err != nil {
-				r.sendText(chat, "⚠️ Transfer binding changed or status could not be persisted. The current binding was preserved.")
-				return
+				r.sendTextForKey(key, chat, "⚠️ Transfer binding changed or status could not be persisted. The current binding was preserved.")
+				return false
 			}
 
 		}
 		if cliErr != nil {
 			if observe && budget != nil && time.Since(began) >= *budget {
 				record.Status.WaitExpired = true
-				r.sendText(chat, formatTransferStatus(record.Status))
-				return
+				r.sendTextForKey(key, chat, formatTransferStatus(record.Status))
+				return false
 			}
-			r.sendText(chat, formatTransferStatus(record.Status)+"\n⚠️ Outcome unconfirmed or rejected. Use /takeover status; do not resend start.")
-			return
+			r.sendTextForKey(key, chat, formatTransferStatus(record.Status)+"\n⚠️ Outcome unconfirmed or rejected. Use /takeover status; do not resend start.")
+			return false
 		}
 		if observe && budget != nil && time.Since(began) >= *budget {
 			status.WaitExpired = true
-			r.sendText(chat, formatTransferStatus(status))
-			return
+			r.sendTextForKey(key, chat, formatTransferStatus(status))
+			return false
 		}
 		if record.Direction == "incoming" && status.State == "released" {
 			restoreWait := transferReadyTimeout
 			if observe && budget != nil {
 				restoreWait = min(restoreWait, *budget-time.Since(began))
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), restoreWait)
+			ctx, cancel := context.WithTimeout(operation.context(), restoreWait)
 			var target *ChordProcess
 			target, err = m.restoreTransferredSession(ctx, key, record)
 			cancel()
 			if err != nil {
-				r.sendText(chat, formatTransferStatus(status)+"\n⚠️ Target restore unconfirmed. Use /takeover status or explicitly /resume after checking the saved session.")
-				return
+				r.sendTextForKey(key, chat, formatTransferStatus(status)+"\n⚠️ Target restore unconfirmed. Use /takeover status or explicitly /resume after checking the saved session.")
+				return false
 			}
 			status.State = "ready_paused"
 			r.clearTransferCards(key)
-			r.sendText(chat, formatPausedTargetStatus(status, target.State()))
-			return
+			r.sendTextForKey(key, chat, formatPausedTargetStatus(status, target.State()))
+			return false
 		}
 		text := formatTransferStatus(status)
 		if record.Interrupted {
 			text += "\nTransfer interrupted by independent process termination. Binding remains blocked; verify the saved session before resuming."
 		}
 		if text != last {
-			r.sendText(chat, text)
+			r.sendTextForKey(key, chat, text)
 			last = text
 		}
 		if !observe || status.State == "save_failed" || status.State == "restore_failed" || status.State == "released" {
-			return
+			return false
 		}
 		if budget != nil && time.Since(began) >= *budget {
 			status.WaitExpired = true
-			r.sendText(chat, formatTransferStatus(status))
-			return
+			r.sendTextForKey(key, chat, formatTransferStatus(status))
+			return false
 		}
+		return true
+	}
+	for step(start) {
 		delay := time.Second
 		if budget != nil {
 			delay = min(delay, *budget-time.Since(began))
-			if delay <= 0 {
-				continue
-			}
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(max(delay, 0))
 		select {
 		case <-timer.C:
+		case <-operation.context().Done():
+			timer.Stop()
+			return
 		case <-m.shutdownSignal():
 			timer.Stop()
 			return
@@ -362,6 +385,7 @@ func (r *NotificationRouter) observeTakeover(ws *config.Workspace, chat, key str
 		start = false
 	}
 }
+
 func (r *NotificationRouter) clearTransferCards(key string) {
 	r.stopReminder(key)
 	r.mu.Lock()
@@ -369,6 +393,11 @@ func (r *NotificationRouter) clearTransferCards(key string) {
 	delete(r.expiredPending, key)
 	delete(r.shownQuestions, key)
 	delete(r.deliveredPrompts, key)
+	for operationKey := range r.questionOperations {
+		if strings.HasPrefix(operationKey, key+"|") {
+			delete(r.questionOperations, operationKey)
+		}
+	}
 	for cardKey := range r.cardHandles {
 		if strings.HasPrefix(cardKey, key+"|") {
 			delete(r.cardHandles, cardKey)
@@ -390,16 +419,16 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 	}
 	if cmd.Type == "new" || cmd.Type == "resume" {
 		if cmd.Type == "resume" && cmd.SessionID == "" {
-			r.sendText(chat, "⚠️ Use /resume <session-id>.")
+			r.sendTextForKey(key, chat, "⚠️ Use /resume <session-id>.")
 			return true
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), transferReadyTimeout)
 		defer cancel()
 		if err := r.mgr.replaceBlockedBinding(ctx, key, cmd.SessionID); err != nil {
-			r.sendText(chat, "❌ Session change was not confirmed. The transfer guard remains in place.")
+			r.sendTextForKey(key, chat, "❌ Session change was not confirmed. The transfer guard remains in place.")
 		} else {
 			r.clearTransferCards(key)
-			r.sendText(chat, "✅ Session loaded; binding reopened.")
+			r.sendTextForKey(key, chat, "✅ Session loaded; binding reopened.")
 		}
 		return true
 	}
@@ -424,7 +453,7 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 			}
 		}
 	}
-	r.sendText(chat, "⚠️ "+ErrSessionTransferred.Error())
+	r.sendTextForKey(key, chat, "⚠️ "+ErrSessionTransferred.Error())
 	return true
 }
 

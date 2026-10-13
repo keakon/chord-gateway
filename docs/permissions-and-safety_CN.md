@@ -1,5 +1,7 @@
 # 权限与安全边界
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 `chord-gateway` 是本地 `chord headless` 进程的远程控制面。任何能向 gateway 发送并被接受的 IM 消息的用户，都可能影响 Chord 在配置工作区中的行为。
 
 ## 安全边界
@@ -20,28 +22,11 @@
 - 保持 Chord 权限和工具审批策略保守。
 - 监控日志中是否出现异常发送者、聊天、命令或工作区路由。
 
-## 飞书访问控制
+## IM 访问控制
 
-请为飞书配置 `owner_open_id` 和/或 `allowed_open_ids`。机器人通过飞书云服务接收消息，因此即使网关只在本机运行，也不代表只有本机用户能访问机器人。
+飞书和微信都只接受已配对 owner 的输入，且聊天必须显式绑定。首次通过前台 `--pair` 和机器人私聊登记 owner；普通启动不会开放配对。运行在本机并不意味着外部用户无法向机器人发消息。
 
-```yaml
-ims:
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_teammate_xxx
-```
-
-行为：
-
-- 如果两个字段都未设置，则不处理任何消息或命令。
-- 只允许列表中的 `open_id`。
-- `owner_open_id` 会自动进入有效 allowlist。
-- 被拒绝的消息会被忽略；审计日志只记录其 `open_id` 和 `chat_id`，不记录消息正文。
-
-要获取自己的 `open_id`，可在私聊或受控测试群中以空 allowlist 启动，发送一条消息，从被拒绝消息的审计日志复制 ID，然后配置 allowlist 并重启。用于发现 ID 的消息不会被处理，其正文也不会写入日志。
+owner 拥有与 gateway 进程相当的本机控制能力，包括已有 shell 命令；配对并不是目录沙箱。仅在可信群聊中绑定机器人，因为回复对群成员可见。账号变化会阻断旧身份，重新授权需停服务后在本机 reset。详见[配对与重置](./pairing_CN.md)。
 
 ## 凭据处理
 
@@ -59,7 +44,7 @@ ims:
 
 飞书多工作区模式下，请配置 `ims.feishu.chat_bindings`，把每个飞书 chat ID 映射到预期 workspace。
 
-微信只支持一个 workspace。如果需要聊天到工作区的独立绑定，请使用飞书。
+微信仅支持私聊，每个聊天同时绑定一个目录，可通过 `/bind` 切换。需要在不同私聊或群聊中分别控制不同目录时，请使用飞书。
 
 ## 事件响应
 
@@ -70,6 +55,6 @@ ims:
 3. 删除或轮换微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）。
 4. 检查 gateway 日志和 Chord session 历史。
 5. 检查配置工作区中的变更。
-6. 使用更严格的 allowlist 和 workspace 范围重新启动。
+6. 在本机 reset 并重新配对可信 owner，核对聊天绑定后再启动服务。
 
 项目漏洞反馈方式见 [SECURITY_CN.md](../SECURITY_CN.md)。

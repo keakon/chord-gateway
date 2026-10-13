@@ -1,5 +1,7 @@
 # Cookbook
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This page collects copyable recipes for installing, configuring, and running `chord-gateway` in common real deployments.
 
 - Chinese version: [cookbook_CN.md](./cookbook_CN.md)
@@ -101,21 +103,22 @@ idle_timeout: 30m
 Run it:
 
 ```bash
-chord-gateway -f ~/.config/chord-gateway/config.yaml
+chord-gateway -f ~/.config/chord-gateway/config.yaml --pair
 ```
 
 On first run, scan the QR code URL printed by the gateway. The reusable WeChat token is stored under `<state_dir>/wechat/token.json` unless `ims.wechat.token_path` is set.
 
+Complete private pairing with `/bind "~/work/project-a" <pairing_code>` before sending tasks.
+
 ## Recipe: Feishu only, one workspace
 
-Use this when any allowed Feishu chat should route to one workspace.
+Use this when explicitly bound Feishu chats should route to one workspace. Authorization alone does not bind a chat.
 
 ```yaml
 ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
 workspaces:
   default:
     path: ~/work/project-a
@@ -130,9 +133,9 @@ Feishu app setup checklist:
 3. Add `card.action.trigger` in callback configuration for interactive cards.
 4. Publish a new app version after changing capabilities, permissions, or event subscriptions.
 5. Add the bot to the target chat.
-6. Send a text message (`text` or `post`) and then `/status`.
+6. Start with `--pair` and send `/bind "~/work/project-a" <pairing_code>` in a private bot chat, then `/status`.
 
-To discover `owner_open_id`, temporarily omit it, send one message, and read `open_id=ou_xxx` from the `feishu: received message` log line. Add the value back to config and restart the gateway.
+For initial setup, omit `owner` and bindings, run `chord-gateway --pair`, and complete private-chat pairing as described in [pairing](./pairing.md). The configured identities shown below represent the saved result.
 
 ## Recipe: Feishu multiple groups, multiple workspaces
 
@@ -140,11 +143,11 @@ Use this when different Feishu groups should control different repositories.
 
 Recommended rollout:
 
-1. Start with the one-workspace Feishu config above.
+1. Complete private pairing with the Feishu setup above.
 2. Create each target Feishu group and add the bot.
 3. Send a text message (`text` or `post`) in the group.
-4. In that same chat, run `/bind <workspace_id> <path>`.
-5. Re-open `config.yaml` and verify that `ims.feishu.chat_bindings` and `workspaces` were written as expected.
+4. In that same chat, run `/bind "<path>"`.
+5. Re-open `config.yaml` and verify that `ims.feishu.chat_bindings` was written as expected.
 
 Example final config:
 
@@ -153,7 +156,7 @@ ims:
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -176,11 +179,13 @@ Use this when WeChat should stay on one fixed workspace while Feishu groups rout
 ims:
   wechat:
     base_url: https://ilinkai.weixin.qq.com
-    workspace_id: project-a
+    owner: {account_id: bot_example, user_id: user_example}
+    chat_bindings:
+      user_example: project-a
   feishu:
     app_id: cli_xxx
     app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
+    owner: {account_id: cli_xxx, user_id: ou_owner_xxx}
     chat_bindings:
       oc_project_a: project-a
       oc_project_b: project-b
@@ -195,7 +200,7 @@ idle_timeout: 30m
 
 Routing behavior:
 
-- All WeChat messages go to `project-a`.
+- The bound WeChat chat goes to `project-a`.
 - Feishu chat `oc_project_a` goes to `project-a`.
 - Feishu chat `oc_project_b` goes to `project-b`.
 
@@ -315,7 +320,7 @@ Before you leave the gateway running unattended:
 - Run `/status` from every IM chat you expect to use.
 - Confirm `chord_path` resolves to the intended Chord binary under the service environment.
 - Confirm the gateway log path and state directory are writable by the service user.
-- For Feishu, configure `owner_open_id` and/or `allowed_open_ids` before unattended use; localhost does not restrict who can message the bot.
+- Pair an owner on each platform and explicitly bind each chat; localhost does not prevent external users from messaging the bot.
 - Keep backups of `config.yaml` and any state directory that contains WeChat token files if you want login state to survive host replacement.
 - Know how to stop the service:
   - systemd user service: `systemctl --user stop chord-gateway`

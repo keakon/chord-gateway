@@ -98,7 +98,7 @@ func TestChordTakeoverContract_LinkedWorktreeAndPreparationRejection(t *testing.
 				t.Cleanup(router.Close)
 				adapter := &stubIMAdapter{typ: "wechat"}
 				router.SetAdapter(adapter)
-				router.observeTakeover(&m.Config().Workspaces[0], "chat-sample", key, false, nil)
+				router.observeTakeover(&m.Config().Workspaces[0], "chat-sample", key, false, nil, testChatOperation(t, router.mgr, key))
 				if m.transferBlocked(key) || p.transferActive() {
 					t.Fatal("production prepare_failed retained input guard")
 				}
@@ -132,7 +132,7 @@ func TestChordTakeoverContract_PreflightRejectsWithoutBlockingChat(t *testing.T)
 	t.Cleanup(router.Close)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat-sample", key, parseTakeoverCommand("missing-session --timeout 0"))
+	router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat-sample", key, parseTakeoverCommand("missing-session --timeout 0"), testChatOperation(t, router.mgr, key))
 	if m.transferBlocked(key) {
 		t.Fatal("production preflight rejection blocked ordinary chat")
 	}
@@ -147,7 +147,7 @@ func TestChordTakeoverContract_PreflightRejectsWithoutBlockingChat(t *testing.T)
 	if err = m.transfers.update(key, &record, ""); err != nil {
 		t.Fatal(err)
 	}
-	router.observeTakeover(&m.Config().Workspaces[0], "chat-sample", key, true, nil)
+	router.observeTakeover(&m.Config().Workspaces[0], "chat-sample", key, true, nil, testChatOperation(t, router.mgr, key))
 	if m.transferBlocked(key) {
 		t.Fatal("production start preflight rejection left a durable guard")
 	}
@@ -220,7 +220,7 @@ func TestChordTakeoverContract_TUISourceRestoresPausedIntoGateway(t *testing.T) 
 	t.Cleanup(router.Close)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat-sample", key, parseTakeoverCommand("sample-session --timeout 0"))
+	router.prepareIncomingTakeover(&m.Config().Workspaces[0], "chat-sample", key, parseTakeoverCommand("sample-session --timeout 0"), testChatOperation(t, router.mgr, key))
 	waitForCondition(t, 20*time.Second, func() bool {
 		record, ok, err := m.transfers.Get(key)
 		return err == nil && ok && record.Status.State == "draining"
@@ -240,7 +240,7 @@ func TestChordTakeoverContract_TUISourceRestoresPausedIntoGateway(t *testing.T) 
 		t.Fatalf("source exit=%v output=%s", err, output.String())
 	}
 	// Resume from the durable checkpoint after the source endpoint has gone.
-	router.observeTakeover(&m.Config().Workspaces[0], "chat-sample", key, false, nil)
+	router.observeTakeover(&m.Config().Workspaces[0], "chat-sample", key, false, nil, testChatOperation(t, router.mgr, key))
 	p := m.GetProcessForKey(key)
 	if p == nil || m.transferBlocked(key) {
 		t.Fatalf("restored binding not ready: %s", adapter.lastMessage().text)

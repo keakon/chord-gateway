@@ -24,7 +24,7 @@ func TestChordStateDirectoryParsesAndExpands(t *testing.T) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if issues := unsupportedConfigFields(&doc); len(issues) != 0 {
+	if issues := UnsupportedConfigFields(&doc); len(issues) != 0 {
 		t.Fatalf("valid takeover config reported unsupported: %v", issues)
 	}
 }

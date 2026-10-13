@@ -1,5 +1,7 @@
 # 使用指南
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档说明如何在 IM 聊天中日常使用 `chord-gateway`。
 
 ## 第一条消息检查清单
@@ -13,20 +15,7 @@
 
 ## 路由模型
 
-gateway 按 IM 会话和工作区隔离 Chord session。
-
-会话绑定键为：
-
-```text
-workspaceID | imType | chatID
-```
-
-示例：
-
-- `default|wechat|user123`
-- `backend|feishu|oc_xxx`
-
-不同聊天会话拥有不同上下文；不同工作区也拥有不同上下文。
+聊天通过 `chat_bindings` 选择工作区。Gateway 按工作区、IM 平台和聊天隔离运行会话；自动恢复 pin 还包含机器人账号和 owner 身份。键以编码形式保存，不应手工拼接。即使使用同一工作区，不同聊天仍保留各自的会话上下文。
 
 ## Session pin 机制
 
@@ -47,6 +36,7 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 
 | 命令 | 说明 |
 |---|---|
+| `/bind "<directory>" [pairing_code]` | 绑定已有目录；首次私聊配对需提供终端配对码 |
 | `/status` | 查看当前 Chord 状态：busy/idle、session、当前角色、phase、最近一次上下文检查点结果、待处理交互及恢复的排队输入 |
 | `/cancel` | 取消当前 turn |
 | `/allow` | 批准待确认请求 |
@@ -64,6 +54,8 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 | `/sessions` | 列出最近 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送新要求给 Chord，待答问题继续保留 |
+
+`/sessions` 在绑定目录中调用 `chord sessions list --json --limit 10`，并传递 `chord_state_dir`。自定义会话根目录和仓库 worktree 的共享会话由 Chord 解析。结果按最近活动时间排序，并标出使用中的会话；查询失败与空列表会分别提示。需要使用提供此命令的 Chord，gateway 不再扫描旧目录。
 
 ## 会话接管
 

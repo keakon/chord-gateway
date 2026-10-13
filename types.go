@@ -319,19 +319,17 @@ type RoleResponse struct {
 
 // IMCommand is a parsed command from IM user.
 type IMCommand struct {
-	Timeout     *time.Duration
-	Type        string   // "local_shell", "send", "status", "cancel", "confirm", "question", "handoff", "role", "new", "resume", "sessions", "todos", "login", "bind"
-	Content     string   // for send/login target
-	RequestID   string   // for confirm/question/handoff
-	Action      string   // for confirm/handoff: "allow"/"deny"/"accept"
-	Reason      string   // for deny: human-readable reason text
-	Agent       string   // for handoff
-	Pool        string   // for handoff model pool
-	Answers     []string // for question
-	SessionID   string   // for resume
-	WorkspaceID string   // for bind
-	Path        string   // for bind workspace path
-	Invalid     bool     // command-specific parse failure (currently used by /bind)
+	Timeout   *time.Duration
+	Type      string   // "local_shell", "send", "status", "cancel", "confirm", "question", "handoff", "role", "new", "resume", "sessions", "todos", "login", "bind"
+	Content   string   // for send/login target
+	RequestID string   // for confirm/question/handoff
+	Action    string   // for confirm/handoff: "allow"/"deny"/"accept"
+	Reason    string   // for deny: human-readable reason text
+	Agent     string   // for handoff
+	Pool      string   // for handoff model pool
+	Answers   []string // for question
+	SessionID string   // for resume
+	Invalid   bool     // command-specific parse failure
 }
 
 // TodoItem represents a todo item from the chord process.
@@ -346,6 +344,10 @@ type TodoItem struct {
 // It replaces the raw (imType, chatID, text) tuple as the primary
 // entry point for the router.
 type IncomingMessage struct {
+	AccountID string `json:"-"`
+	ChatKind  string `json:"-"`
+	ticket    *AdmissionTicket
+
 	IMType     string `json:"im_type"`               // e.g. "wechat", "feishu", "console"
 	ChatID     string `json:"chat_id"`               // chat/group identifier for routing & replies
 	SenderID   string `json:"sender_id"`             // user identifier (open_id, from_user_id, "console")
@@ -482,8 +484,12 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 		s.MCP = nil
 	}
 	s.applyMCPStatus(resp.MCP)
+	// An omitted projection cannot clear known pending work in this session.
+	// Only an explicit summary or a different session replaces that evidence.
+	if s.SessionID != resp.SessionID || resp.PausedInputs != nil {
+		s.PausedInputs = resp.PausedInputs
+	}
 	s.SessionID = resp.SessionID
-	s.PausedInputs = resp.PausedInputs
 	s.setAgentBusy(resp.Busy)
 	s.RunningJobs = resp.RunningJobs
 	s.Phase = resp.Phase

@@ -1,5 +1,7 @@
 # Feishu Guide
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 This guide walks you through setting up **Feishu** (`ims.feishu`) for `chord-gateway`.
 
 - If you want the minimal config quickly, see [Quickstart](../QUICKSTART.md).
@@ -18,7 +20,7 @@ Recommended first-run strategy for beginners:
 
 1. Start with **one workspace**.
 2. Use a private chat or controlled test group for setup.
-3. Start once without an allowlist to discover your ID from the rejected-message audit log; messages are not processed until you configure the allowlist and restart.
+3. Run with `--pair` in the foreground, bind a directory in a private bot chat using the terminal code, then send `/status`.
 
 ## What this integration is
 
@@ -138,106 +140,30 @@ Fix:
 3. Restart the gateway.
 
 
-## Step 4: Configure `chord-gateway`
+## Step 4: Configure and pair
 
-Minimal config:
+Save a minimal configuration:
 
 ```yaml
 ims:
   feishu:
-    app_id: cli_xxx
+    app_id: cli_example
     app_secret: your-app-secret
-    owner_open_id: ou_xxx
-workspaces:
-  default:
-    path: /path/to/project
 ```
 
-A slightly more realistic starter config:
-
-```yaml
-ims:
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    owner_open_id: ou_xxx
-workspaces:
-  default:
-    path: /path/to/project
-chord_path: chord
-idle_timeout: 30m
-```
-
-Start the gateway:
-
-```bash
-chord-gateway -f config.yaml
-```
-
-What to expect on startup:
-
-- the gateway starts normally without `load config` errors
-- Feishu long connection is established
-- logs are written to stderr and also to `<state_dir>/gateway.log`
-
-## Step 5: Verify inbound events and obtain `open_id`
-
-If you do not know your `open_id`, first omit `owner_open_id`, start the gateway, and send a **text message** (`text` or `post`) to the bot. The message will not be processed.
-
-1. Check gateway logs for a line like:
+Run `chord-gateway --config config.yaml --pair` in a foreground terminal. After connection, the terminal displays a pairing code valid for 10 minutes. In a **private chat** with the bot, send:
 
 ```text
-msg="feishu: message from non-allowed open_id, ignoring" open_id=ou_xxx chat_id=oc_xxx
+/bind "~/work/project-a" <pairing_code>
 ```
 
-2. Treat this content-free audit log as the first success checkpoint:
-   - `chat_id=oc_xxx` tells you which Feishu chat the gateway saw
-   - `open_id=ou_xxx` tells you who sent the message
-3. Stop the gateway and configure the owner (localhost does not restrict who can message the bot):
+The directory must already exist. The gateway saves the owner, workspace, and chat binding; send `/status` to verify. Later starts need no `--pair`. If no events arrive, check long connection, subscriptions, scopes, and app publication.
 
-```yaml
-ims:
-  feishu:
-    owner_open_id: ou_xxx
-```
+## Multi-workspace routing and `/bind`
 
-Then restart the gateway.
+The paired owner can add the bot to a group and send `/bind "~/work/project-b"` there. Chats may use different directories or share one directory. Only owner input executes; group members can see replies. Even a single workspace requires explicit binding. Binding never replays previously unbound input.
 
-If you do **not** see the log line, check in this order:
-
-1. Is the app using **long connection**, not webhook mode?
-2. Did you subscribe to `im.message.receive_v1`?
-3. Did you **publish** after the last console change?
-4. Is the bot actually in the DM / group where you sent the message?
-5. Did you send a **text message** (`text` or `post`), not an image/file/sticker?
-
-## Multi-workspace routing with `/bind`
-
-If you have multiple workspaces, configure per-chat routing via `chat_bindings`.
-
-Recommended workflow:
-
-1. Start with one workspace and no `chat_bindings`.
-2. Create the target Feishu group chat, add the bot, and send a text message.
-3. In that same chat, run:
-
-```text
-/bind <workspace_id> <path>
-```
-
-Example:
-
-```text
-/bind project-a ~/work/project-a
-```
-
-4. The gateway updates only `ims.feishu.chat_bindings` and `workspaces`, and writes those sections back to YAML.
-5. Re-open `config.yaml` and confirm the expected mapping was written.
-
-Important boundaries:
-
-- `/bind` does not update allowlists or other adapter settings.
-- Manual edits outside `/bind` still require a gateway restart.
+Finish pending work, inputs, and interactions before switching directories. See [pairing](./pairing.md) for account changes, reset, and failed-write recovery.
 
 ## Known limitations
 

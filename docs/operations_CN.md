@@ -1,5 +1,7 @@
 # 运维说明
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档说明运行和运维 `chord-gateway` 时需要关注的行为。
 
 ## 进程生命周期
@@ -145,11 +147,11 @@ app_id + chat_id + message_id
 
 ## 工作区路由
 
-微信始终路由到一个工作区。如果配置了多个工作区且启用了微信，需要通过 `ims.wechat.workspace_id` 指定微信使用哪个工作区。
+微信和飞书都通过显式 `chat_bindings` 选择工作区；配对后的 owner 在每个聊天使用 `/bind "~/workspace"`。
 
 飞书支持多个工作区，可通过 `ims.feishu.chat_bindings` 把飞书 `chat_id` 映射到 workspace ID。
 
-飞书单工作区时可省略 `chat_bindings`，所有聊天使用该工作区。飞书多工作区时，请为需要路由的聊天配置 `chat_bindings`。
+每个飞书聊天都需要 `chat_bindings` 条目，单工作区也不例外。未绑定的新群只收到提示，请先执行 `/bind` 再发送任务。
 
 ## 事件协议
 

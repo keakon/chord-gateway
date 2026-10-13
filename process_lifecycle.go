@@ -135,13 +135,21 @@ func (p *ChordProcess) handleExit() {
 				log.Infof("[%v] auto-restart cancelled: gateway is shutting down", processLogContext(key, state))
 				return
 			}
+			if p.gate != nil {
+				p.gate.opMu.Lock()
+				defer p.gate.opMu.Unlock()
+				current, _, phase := p.gate.snapshot()
+				if p.lease == nil || current != p.lease || phase != "active" || p.lease.ctx.Err() != nil {
+					return
+				}
+			}
 			// Recheck the exact binding after the delay; a replacement owns its lifecycle.
 			if p.mgr != nil && p.mgr.GetProcessForKey(key) != p {
 				return
 			}
 			// Use the manager to respawn; it handles the procs map.
 			if p.mgr != nil {
-				if _, err := p.mgr.GetOrSpawnForKey(key); err != nil {
+				if _, err := p.mgr.getOrSpawnForKeyChatLocked(key); err != nil {
 					if errors.Is(err, ErrManagerShuttingDown) {
 						log.Debugf("[%v] auto-restart skipped: %v", processLogContext(key, state), err)
 					} else {
@@ -205,7 +213,7 @@ func (m *ChordManager) IdleCheckLoop() {
 			return
 		case <-ticker.C:
 		}
-		timeout := m.cfg.Load().IdleTimeoutDuration()
+		timeout := m.Config().IdleTimeoutDuration()
 		idle := m.collectIdleProcesses(timeout)
 
 		// Close stdin for idle processes to let them exit gracefully.
@@ -251,6 +259,7 @@ func (m *ChordManager) collectIdleProcesses(timeout time.Duration) []*ChordProce
 		p.mu.Lock()
 		m.mu.Lock()
 		if !p.inputBlockedLocked() && m.procs[p.key] == p && p.state.RunningJobs == 0 && p.state.PendingLocalShells == 0 && time.Since(p.lastActivity) > timeout {
+			p.cancelDeliveryLocked()
 			delete(m.procs, p.key)
 			idle = append(idle, p)
 		}

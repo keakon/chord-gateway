@@ -38,7 +38,7 @@ Session takeover additionally requires a Chord build with `chord takeover prefli
 }
 ```
 
-The summary reports the total pending count separately from its bounded entries. The entry count must equal `min(pending_input_count, 8)`; counts cannot be negative. Input and owner IDs must be nonempty, at most 128 bytes, and contain no whitespace or control characters; input IDs must be unique. The gateway displays up to eight entries with owner task, a single-line preview of up to 160 Unicode characters, and attachment count; IDs are also bounded for display. Full input content and attachment data or paths stay in the Chord session, outside takeover CLI status and the gateway's transfer store. A takeover target must return a valid summary with `paused: true` before the binding opens. If an ordinary status response omits the summary, the gateway does not interpret that as an empty queue.
+The summary reports the total pending count separately from its bounded entries. The entry count must equal `min(pending_input_count, 8)`; counts cannot be negative. Input and owner IDs must be nonempty, at most 128 bytes, and contain no whitespace or control characters; input IDs must be unique. The gateway displays up to eight entries with owner task, a single-line preview of up to 160 Unicode characters, and attachment count; IDs are also bounded for display. Full input content and attachment data or paths stay in the Chord session, outside takeover CLI status and the gateway's transfer store. A takeover target must return a valid summary with `paused: true` before the binding opens. If an ordinary status response omits the summary, the gateway retains the last confirmed summary for that session, including its directory-switch guard. Only an explicit empty summary or a session change can clear previously known pending inputs.
 
 The gateway checks the binary's headless flags before requesting takeover. A build without managed-headless support can still run ordinary chat bindings if it meets the contract above, but `/takeover` reports the missing capability. There is no alternate takeover protocol or unsafe fallback. See [usage.md](./usage.md#session-takeover).
 
@@ -46,7 +46,7 @@ Takeover workspace identity comes from the Chord `takeover preflight` response; 
 
 ## Kept compatibility paths
 
-- Session pins still accept the earlier `workspaceID|imType|chatID` storage keys when loading an existing state directory. New keys use the encoded form.
+- Automatic session pins are scoped to the paired account and owner. Earlier unscoped keys are not restored; see the [upgrade notes](../CHANGELOG.md).
 - Unknown YAML fields are ignored, but each one is reported in the gateway log with its line, so a typo or a removed option is noticed. The removed `event_visibility.activity` key therefore has no effect; activity tracking is always enabled.
 - The Chord headless `todos` event is supported. Although Chord also emits an internal
   protocol event named `todos_updated`, the current headless command still surfaces
@@ -67,3 +67,11 @@ The following compatibility paths existed in earlier releases and have been remo
 
 Remove a kept compatibility path only after the supported external configuration /
 protocol version is changed and tests/docs are updated in the same change.
+
+## Session listing
+
+Session listing requires `chord sessions list --json --limit 10`, returning schema version 1, a canonical workspace and a sessions array of IDs, RFC 3339 last-activity timestamps and lock flags. An unsupported command produces an explicit query error, with no legacy directory fallback.
+
+## Chat bindings
+
+Both platforms require owner pairing and explicit chat bindings, including single-workspace deployments. Old authorization fields and the old `/bind` syntax have been removed without automatic migration; see the [upgrade notes](../CHANGELOG.md).

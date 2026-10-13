@@ -139,7 +139,8 @@ func TestWechatImageUploadEncryptionAndContext(t *testing.T) {
 	defer server.Close()
 	a := newTestWechatAdapter(t)
 	a.imCfg.Wechat.BaseURL = server.URL
-	a.contextTokens["sample-user"] = "new-context"
+	a.token.Store(&TokenData{AccountID: "bot"})
+	a.cachePairedContext("bot", "sample-user", "new-context", true)
 	if err := a.SendImage("sample-user", image); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestWechatSendResponseFailureIsNotRetried(t *testing.T) {
 			defer srv.Close()
 			a := newTestWechatAdapter(t)
 			a.imCfg.Wechat.BaseURL = srv.URL
-			if a.sendMessage(ilinkSendMessageRequest{}) == nil {
+			if a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{}) == nil {
 				t.Fatal("invalid or rejected receipt reported success")
 			}
 			if requests.Load() != 1 {
@@ -342,7 +343,7 @@ func TestWechatSendRequiresExplicitReceipt(t *testing.T) {
 			defer srv.Close()
 			a := newTestWechatAdapter(t)
 			a.imCfg.Wechat.BaseURL = srv.URL
-			err := a.sendMessage(ilinkSendMessageRequest{})
+			err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{})
 			if err == nil || errors.Is(err, errDeliveryOutcomeUnknown) != tc.unknown {
 				t.Fatalf("receipt error = %v", err)
 			}
@@ -495,7 +496,7 @@ func TestWechatSendAcceptsExplicitSuccessStatus(t *testing.T) {
 			defer srv.Close()
 			a := newTestWechatAdapter(t)
 			a.imCfg.Wechat.BaseURL = srv.URL
-			if err := a.sendMessage(ilinkSendMessageRequest{}); err != nil {
+			if err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{}); err != nil {
 				t.Fatalf("explicit success rejected: %v", err)
 			}
 		})
@@ -542,6 +543,7 @@ func TestWechatMediaUploadRetryPolicy(t *testing.T) {
 			defer server.Close()
 			a := newTestWechatAdapter(t)
 			a.imCfg.Wechat.BaseURL = server.URL
+			a.cachePairedContext("bot", "sample-user", "context", true)
 			err := a.SendImage("sample-user", imageForUpload(t))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("upload error = %v", err)

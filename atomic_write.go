@@ -11,25 +11,10 @@ const (
 	privateFileMode = 0o600
 )
 
-func writeFileAtomically(path string, data []byte, perm os.FileMode) error {
-	return writeFileAtomicallyInDir(path, data, perm, 0o755, true)
-}
-
 func writePrivateFileAtomically(path string, data []byte) error {
-	return writeFileAtomicallyInDir(path, data, privateFileMode, privateDirMode, false)
-}
-
-func writeFileAtomicallyInDir(path string, data []byte, perm, dirPerm os.FileMode, preserveExistingMode bool) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
+	if err := os.MkdirAll(dir, privateDirMode); err != nil {
 		return fmt.Errorf("mkdir atomic write dir: %w", err)
-	}
-	if info, err := os.Stat(path); err == nil {
-		if preserveExistingMode {
-			perm = info.Mode().Perm()
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat atomic write target: %w", err)
 	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
@@ -45,7 +30,7 @@ func writeFileAtomicallyInDir(path string, data []byte, perm, dirPerm os.FileMod
 		}
 	}()
 
-	if err := tmp.Chmod(perm); err != nil {
+	if err := tmp.Chmod(privateFileMode); err != nil {
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {

@@ -1,5 +1,7 @@
 # 故障排查
 
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+
 本文档覆盖 `chord-gateway` 启动、IM 集成、路由和运行时常见问题。
 
 ## 启动失败
@@ -40,8 +42,8 @@ chord_path: ~/go/bin/chord
 常见原因：
 
 - `workspaces.<id>.path` 不存在。
-- 配置了多个 workspace 并启用了微信，但没有设置 `ims.wechat.workspace_id`。
-- 飞书配置了多个 workspace，但缺少或漏配了 `ims.feishu.chat_bindings`。
+- 微信和飞书都通过显式 `chat_bindings` 选择工作区；配对后的 owner 在每个聊天使用 `/bind "~/workspace"`。
+- 飞书聊天没有对应的 `ims.feishu.chat_bindings` 条目，单 workspace 时也须先绑定。
 - 飞书 `chat_bindings` 中的某个映射指向了错误的 workspace ID。
 
 ## 微信问题
@@ -90,62 +92,13 @@ chord_path: ~/go/bin/chord
 
 检查飞书开放平台中事件订阅方式是否已切换为“使用长连接接收事件”，并确认 gateway 已启动、`app_id`/`app_secret` 正确。
 
-### 消息被忽略
+### 消息被忽略或聊天未绑定
 
-检查：
+确认消息来自当前机器人账号的配对 owner，目标聊天已显式绑定，消息为文本（`text` 或 `post`）。首次配对必须运行前台 `--pair` 并在私聊使用终端配对码；普通启动不会开放配对。
 
-- 如果配置了 allowlist，发送者是否被 `owner_open_id` / `allowed_open_ids` 允许
-- 飞书入站消息是否为文本消息（`text` 或 `post`）；图片/文件/表情等非文本消息会被忽略
-- 目标聊天是否路由到了预期 workspace
+绑定群聊：先完成私聊配对，再把机器人加入可信群，由 owner 在群中发送 `/bind "~/work/project-a"`。目录必须已存在。成功后可在 YAML 的 `chat_bindings` 中查看聊天 ID 和工作区映射；绑定前的消息不会重放。无法切换时检查 `/status` 中的待处理输入、后台任务、交互和会话转移；刷新失败时保留原绑定，恢复连接后重试。
 
-可以从飞书开发者后台或事件 payload 中获取发送者 `open_id`，并加入 allowlist。
-
-### 如何把飞书群绑定到 workspace
-
-推荐步骤：
-
-1. 先用单 workspace 配置启动 gateway，不填写 `chat_bindings`
-2. 在飞书中创建目标群聊并把机器人加入该群
-3. 在群里发送一条文本消息
-4. 直接在该聊天中执行：
-
-```text
-/bind <workspace_id> <path>
-```
-
-5. gateway 只会立即更新内存中的飞书 `chat_bindings` 和 `workspaces`，并把对应的绑定/workspace 变更写回 YAML 配置文件
-
-`/bind` 只接受两个参数。路径必须以 `/`、`~`、Windows 盘符前缀（如 `C:\\` 或 `C:/`）或 UNC 前缀（如 `\\\\server\\share`）开头；展开后必须可访问且必须是目录。多余参数或不可访问路径都会返回错误，且不会修改配置文件。
-
-示例：
-
-```text
-/bind project-a ~/work/project-a
-```
-
-手工编辑 YAML 仍然可行，但修改后仍需要重启 gateway 才会生效。
-
-### 如何找到飞书群聊 `chat_id`
-
-推荐步骤：
-
-1. 先用单 workspace 配置启动 gateway，不填写 `chat_bindings`
-2. 在飞书中创建目标群聊并把机器人加入该群
-3. 在群里发送一条文本消息
-4. 在 gateway 日志中查找：
-
-```text
-msg="feishu: received message" chat_id=oc_xxx open_id=ou_xxx message_id=om_xxx content=hello
-```
-
-其中 `chat_id=oc_xxx` 就是这个群的真实 `chat_id`。
-
-如果有多个 workspace，且你更希望手工编辑 YAML，再把它写回：
-
-```yaml
-chat_bindings:
-  oc_xxx: your-workspace-id
-```
+账号变化或授权恢复见[配对与本机重置](./pairing_CN.md)。不要从不可信消息日志复制身份来绕过配对。
 
 ### 重复消息
 
@@ -157,7 +110,7 @@ chat_bindings:
 
 飞书多 workspace 模式下，请确认 `ims.feishu.chat_bindings` 把每个飞书 chat ID 映射到预期 workspace ID。
 
-飞书单 workspace 且未设置 `chat_bindings` 时，所有聊天会使用该 workspace。
+飞书不会为未绑定聊天选择默认 workspace；即使只有一个工作区，也须由 owner 先绑定聊天。
 
 ### Session 上下文不是预期内容
 

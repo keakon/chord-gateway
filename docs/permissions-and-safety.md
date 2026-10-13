@@ -1,5 +1,7 @@
 # Permissions & Safety
 
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+
 `chord-gateway` is a remote control plane for a local `chord headless` process. Anyone who can send accepted IM messages to the gateway may influence what Chord does in the configured workspace.
 
 ## Security boundary
@@ -20,28 +22,11 @@ Session takeover uses the same accepted IM sender and workspace routing rules. T
 - Keep Chord permissions and tool approvals conservative.
 - Monitor logs for unexpected senders, chats, commands, or workspace routing.
 
-## Feishu access control
+## IM access control
 
-Configure `owner_open_id` and/or `allowed_open_ids` for Feishu. The bot receives messages through Feishu's cloud service, so running the gateway on localhost does not restrict who can reach it.
+Feishu and WeChat accept only the paired owner's input, and each chat requires an explicit binding. Register the owner through foreground `--pair` and a private bot chat. Ordinary startup never opens pairing. Running locally does not prevent external users from messaging the bot.
 
-```yaml
-ims:
-  feishu:
-    app_id: cli_xxx
-    app_secret: your-app-secret
-    owner_open_id: ou_owner_xxx
-    allowed_open_ids:
-      - ou_teammate_xxx
-```
-
-Behavior:
-
-- If neither field is set, no messages or commands are processed.
-- Only listed `open_id`s are allowed.
-- `owner_open_id` is included in the effective allowlist.
-- Rejected messages are ignored after a content-free audit log records their `open_id` and `chat_id`.
-
-To discover your `open_id`, start with an empty allowlist in a private chat or controlled test group, send one message, copy the ID from the rejected-message audit log, then configure the allowlist and restart. The discovery message is not processed and its content is not logged.
+The owner has local control equivalent to the gateway process, including existing shell commands; pairing is not a directory sandbox. Bind only trusted groups because replies are visible to members. Account changes block the old identity; stop the service and reset locally before reauthorization. See [pairing and reset](./pairing.md).
 
 ## Credential handling
 
@@ -59,7 +44,7 @@ Do not commit secrets or state directories to version control. Keep the gateway 
 
 For Feishu multi-workspace mode, configure `ims.feishu.chat_bindings` so each Feishu chat ID maps to the intended workspace.
 
-WeChat supports only one workspace. Use Feishu if you need separate chat-to-workspace bindings.
+WeChat supports private chat only. Each chat binds to one directory at a time and can switch with `/bind`. Use Feishu to control separate directories from different private or group chats.
 
 ## Incident response
 
@@ -70,6 +55,6 @@ If you suspect unauthorized access:
 3. Remove or rotate WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`).
 4. Review gateway logs and Chord session history.
 5. Review changes in configured workspaces.
-6. Restart with a stricter allowlist and workspace scope.
+6. Reset locally, pair a trusted owner again, and verify chat bindings before restarting the service.
 
 To report vulnerabilities in the project, follow [SECURITY.md](../SECURITY.md).

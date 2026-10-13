@@ -932,9 +932,9 @@ func TestProcessKeyRoundTripOpaqueParts(t *testing.T) {
 	}
 }
 
-func TestParseProcessKeyLegacyFormat(t *testing.T) {
+func TestParseProcessKeyRejectsLegacyFormat(t *testing.T) {
 	workspaceID, imType, chatID := parseProcessKey("ws1|feishu|chat-1")
-	if workspaceID != "ws1" || imType != "feishu" || chatID != "chat-1" {
+	if workspaceID != "" || imType != "" || chatID != "" {
 		t.Fatalf("legacy parse = (%q, %q, %q)", workspaceID, imType, chatID)
 	}
 }
@@ -950,21 +950,6 @@ func TestChordManagerSpawnArgsForPinnedSession(t *testing.T) {
 	got := mgr.spawnArgsForKey(key)
 	if len(got) != 2 || got[0] != "--resume" || got[1] != "sess-123" {
 		t.Fatalf("spawnArgsForKey = %v", got)
-	}
-}
-
-func TestChordManagerSpawnArgsForLegacyPinnedSession(t *testing.T) {
-	tmp := t.TempDir()
-	pins := newSessionPinStore(tmp)
-	legacyKey := legacyProcessKeyString("ws1", "wechat", "chat-1")
-	if err := pins.Set(legacyKey, "sess-legacy"); err != nil {
-		t.Fatalf("pin legacy session: %v", err)
-	}
-	mgr := &ChordManager{pins: pins}
-	key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "chat-1"}).String()
-	got := mgr.spawnArgsForKey(key)
-	if len(got) != 2 || got[0] != "--resume" || got[1] != "sess-legacy" {
-		t.Fatalf("spawnArgsForKey legacy = %v", got)
 	}
 }
 

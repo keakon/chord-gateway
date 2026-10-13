@@ -29,21 +29,6 @@ func TestWritePrivateFileAtomicallyUsesPrivatePermissions(t *testing.T) {
 	assertPathMode(t, path, privateFileMode)
 }
 
-func TestWriteFileAtomicallyPreservesExistingMode(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix permission bits are not enforced on Windows")
-	}
-
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("old"), 0o640); err != nil {
-		t.Fatalf("write existing file: %v", err)
-	}
-	if err := writeFileAtomically(path, []byte("new"), 0o644); err != nil {
-		t.Fatalf("writeFileAtomically: %v", err)
-	}
-	assertPathMode(t, path, 0o640)
-}
-
 func assertPathMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)

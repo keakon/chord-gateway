@@ -37,11 +37,11 @@ func TestMessageRedirectIsNotReplayed(t *testing.T) {
 				defer a.dedupe.Close()
 				a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 				a.httpClient = server.Client()
-				_, err = a.sendCardOrFallback("sample-chat", map[string]any{}, "sample prompt")
+				_, err = (&NotificationRouter{adapter: a}).sendCardToTarget(DeliveryTarget{Identity: ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "sample prompt")
 			} else {
 				a := newTestWechatAdapter(t)
 				a.imCfg.Wechat.BaseURL = server.URL
-				err = a.sendMessage(ilinkSendMessageRequest{})
+				err = a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{})
 			}
 			if requests.Load() != 1 || !errors.Is(err, errDeliveryOutcomeUnknown) {
 				t.Fatalf("redirect replayed or classified as rejection: requests=%d err=%v", requests.Load(), err)
@@ -118,7 +118,8 @@ func TestFeishuRejectedCardUsesTextFallback(t *testing.T) {
 			if event == "role" {
 				r.showRoleMenu("sample-chat", key, "first", []RoleInfo{{Name: "first"}, {Name: "second"}}, IncomingMessage{IMType: "feishu"})
 			} else {
-				r.deliverChordEvent(key, "feishu", "sample-chat", event, state, "original prompt")
+				target, _ := r.targetForKey(key)
+				r.deliverChordEvent(target, event, state, "original prompt")
 			}
 			if len(types) != 2 || types[0] != "interactive" || types[1] != "text" {
 				t.Fatalf("rejected card did not use the text fallback: %v", types)
@@ -149,7 +150,7 @@ func TestFeishuCardOutcomeUnknownDoesNotFallback(t *testing.T) {
 	defer a.dedupe.Close()
 	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 	a.httpClient = server.Client()
-	if _, err := a.sendCardOrFallback("sample-chat", map[string]any{}, "original prompt"); !errors.Is(err, errDeliveryOutcomeUnknown) {
+	if _, err := (&NotificationRouter{adapter: a}).sendCardToTarget(DeliveryTarget{Identity: ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "original prompt"); !errors.Is(err, errDeliveryOutcomeUnknown) {
 		t.Fatal("card uncertainty was swallowed", err)
 	}
 	if len(types) != 1 || types[0] != "interactive" {
@@ -206,7 +207,8 @@ func TestFeishuRouterCardFailureNeverReplaysPrompt(t *testing.T) {
 				if event == "role" {
 					r.showRoleMenu("sample-chat", key, "first", []RoleInfo{{Name: "first"}, {Name: "second"}}, IncomingMessage{IMType: "feishu"})
 				} else {
-					r.deliverChordEvent(key, "feishu", "sample-chat", event, state, "original prompt")
+					target, _ := r.targetForKey(key)
+					r.deliverChordEvent(target, event, state, "original prompt")
 				}
 				wantRequests := 2
 				if outcome == "fallback_unknown" {
@@ -232,5 +234,47 @@ func TestFeishuRouterCardFailureNeverReplaysPrompt(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFeishuStaleEventCannotSendOrUpdateCard(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w, `{"code":0,"data":{"message_id":"sample-message"}}`)
+	}))
+	defer server.Close()
+	oldURL := feishuOpenBaseURL
+	feishuOpenBaseURL = server.URL
+	defer func() { feishuOpenBaseURL = oldURL }()
+	for _, event := range []string{"confirm_request", "question_request", "question_resolved", "uncertain_notice"} {
+		t.Run(event, func(t *testing.T) {
+			a := testFeishuAdapter(t, &config.FeishuConfig{})
+			defer a.dedupe.Close()
+			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
+			a.httpClient = server.Client()
+			mgr := newTestChordManager(&config.Config{})
+			r := NewNotificationRouter(mgr)
+			defer r.Close()
+			r.SetAdapter(a)
+			key := (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()
+			old := &ChordProcess{bindingInstanceID: "old"}
+			mgr.procs[key] = old
+			target, _ := r.targetForKey(key)
+			r.recordCardHandle(key, "question", "question-old", &InteractiveCardHandle{MessageID: "old-message"})
+			mgr.removeProcessIfCurrent(key, old)
+			mgr.mu.Lock()
+			mgr.procs[key] = &ChordProcess{bindingInstanceID: "new"}
+			mgr.mu.Unlock()
+			state := ControlState{BindingInstanceID: "old", PendingConfirm: &ConfirmPayload{RequestID: "confirm-old"}, Questions: map[string]*QuestionPayload{"question-old": {RequestID: "question-old", Question: "Choose", Options: []string{"A"}}}, LastQuestionResolved: &QuestionPayload{RequestID: "question-old", Outcome: QuestionResolvedAnswered}}
+			if event == "uncertain_notice" {
+				r.reportFeishuCardFailure(target, errDeliveryOutcomeUnknown)
+			} else {
+				r.deliverChordEvent(target, event, state, "old prompt")
+			}
+			if requests.Load() != 0 {
+				t.Fatalf("stale event made %d HTTP requests", requests.Load())
+			}
+		})
 	}
 }

@@ -1,6 +1,8 @@
 # Quick Start
 
-Use this guide to connect one project to either WeChat or Feishu. Start with one workspace; add more workspaces only after the first chat works.
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md).
+
+Use this guide to connect one project to either WeChat or Feishu. You can register directories from the chat after pairing.
 
 ## 1. Install Chord and the gateway
 
@@ -19,61 +21,49 @@ chord-gateway --version
 
 For prebuilt binaries, source builds, and service setup, see the [Cookbook](./docs/cookbook.md).
 
-## 2. Create one minimal config
+## 2. Choose a platform
 
-Choose one platform below and save its example as `config.yaml`. Replace `/path/to/project` with the project Chord may operate on. Paths may be absolute, start with `~`, use a Windows drive prefix, or use a UNC prefix.
+Save one of these minimal configurations as `config.yaml`.
 
-### Option A: WeChat
+For WeChat:
 
 ```yaml
 ims:
-  wechat:
-    base_url: https://ilinkai.weixin.qq.com
-workspaces:
-  default:
-    path: /path/to/project
-chord_path: chord
-idle_timeout: 30m
+  wechat: {}
 ```
 
-On first run, scan the printed QR-code URL with WeChat. The login token is then stored at `<state_dir>/wechat/token.json` by default.
-
-### Option B: Feishu
+For Feishu:
 
 ```yaml
 ims:
   feishu:
-    app_id: cli_xxx
+    app_id: cli_example
     app_secret: your-app-secret
-    owner_open_id: ou_xxx
-workspaces:
-  default:
-    path: /path/to/project
-chord_path: chord
-idle_timeout: 30m
 ```
 
-Before starting the gateway, configure the Feishu app to use a long connection, subscribe to `im.message.receive_v1`, add the bot to a private chat or controlled test group, and publish the app version. Add `card.action.trigger` if you want interactive confirmation and question cards. See the [Feishu guide](./docs/feishu.md) for exact permissions and console steps.
+For Feishu, enable long connection mode, subscribe to `im.message.receive_v1`, add `card.action.trigger` for interactive cards, and publish the app. See the [Feishu guide](./docs/feishu.md) for permissions and console steps.
 
-Before creating the final config, you can discover your ID safely: start once without `owner_open_id` or `allowed_open_ids`, send a text message, and copy `open_id=ou_xxx` from the `message from non-allowed open_id` log entry. The message is logged without its content and is not processed. Stop the gateway, set that value as `owner_open_id`, then restart. Running the gateway locally does not limit who can message the bot through Feishu.
+## 3. Pair in a private chat
 
-## 3. Run and verify
+Run in a foreground terminal:
 
 ```bash
-chord-gateway -f config.yaml
+chord-gateway -f config.yaml --pair
 ```
 
-After startup:
+Complete WeChat QR login if prompted. After the platform connects, the terminal displays its pairing code. In a private chat with the bot, send:
 
-1. Complete the WeChat QR login, or send a text message from the owner Feishu account.
-2. Send `/status` and confirm the expected workspace is shown.
-3. Send a normal text request to Chord.
+```text
+/bind "~/workspace" <pairing_code>
+```
 
-For Feishu, verify that messages from accounts outside the allowlist are ignored.
+Use an existing directory on the gateway host. The code expires after 10 minutes. The gateway saves the owner and binding; send a task to start Chord there. Other senders are ignored. After pairing, restart normally with `chord-gateway -f config.yaml`, including as a background service.
 
-## 4. Add advanced routing later
+## 4. Bind another chat or directory
 
-WeChat always routes to one workspace. Feishu can map different chats to different workspaces with `/bind` and `chat_bindings`. Follow the [Feishu multi-workspace guide](./docs/feishu.md#multi-workspace-routing-with-bind) after the single-workspace setup works.
+The owner can send `/bind "/path/to/project"` in another chat or in an idle existing chat, without a code. Paired chats use explicit routes on both platforms. Feishu groups can be bound by the owner; group members can see replies. Finish active work and interactions before switching directories.
+
+See [pairing and local reset](./docs/pairing.md) for failed-write recovery, account changes, and reset.
 
 ## 5. State and next steps
 

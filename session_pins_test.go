@@ -21,7 +21,7 @@ func TestChordManager_SpawnArgsForWorkspace_UsesPinnedSessionID(t *testing.T) {
 		t.Fatalf("expected nil args when no pin, got %v", got)
 	}
 
-	if err := m.pins.Set(processKey{workspaceID: "default", imType: "wechat", chatID: "chat"}.String(), "123"); err != nil {
+	if err := m.pins.Set(pinKeyForBinding(cfg, processKey{workspaceID: "default", imType: "wechat", chatID: "chat"}.String()), "123"); err != nil {
 		t.Fatalf("set pin: %v", err)
 	}
 	got := m.spawnArgsForKey(processKey{workspaceID: "default", imType: "wechat", chatID: "chat"}.String())
