@@ -10,7 +10,7 @@ npm install
 npm run dev      # http://localhost:4321/chord-gateway/
 ```
 
-Use Node 22.12+ for local development and CI. `npm run dev` automatically runs `npm run sync` first, and `npm run build` syncs the source Markdown before producing the static site. The sync step converts source Markdown from `../QUICKSTART*.md` and `../docs/*.md` into Starlight content under `src/content/docs/`.
+Use Node 22.12+ for local development and CI. `npm run dev` automatically runs `npm run sync` first, and `npm run build` syncs the source Markdown before producing the static site. The sync step converts source Markdown from `../QUICKSTART*.md`, `../CHANGELOG*.md`, and `../docs/*.md` into Starlight content under `src/content/docs/`.
 
 Synced Markdown output is gitignored. Do not edit generated `src/content/docs/*.md` files directly; edit the source files in the repository root or `../docs/` and rerun sync.
 

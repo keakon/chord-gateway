@@ -25,6 +25,8 @@ const SKIP_DOC_FILES = new Set(['index.md', 'index_CN.md']);
 const ROOT_DOCS = [
   { filename: 'QUICKSTART.md', lang: 'en', slug: 'quickstart' },
   { filename: 'QUICKSTART_CN.md', lang: 'zh', slug: 'quickstart' },
+  { filename: 'CHANGELOG.md', lang: 'en', slug: 'changelog' },
+  { filename: 'CHANGELOG_CN.md', lang: 'zh', slug: 'changelog' },
 ];
 
 function deriveSlug(basename) {
@@ -91,6 +93,11 @@ function linkLangFromSuffix(cn) {
 
 function rewriteRelativeMarkdownLink(target, rest = '') {
   const anchor = rest.startsWith('#') ? rest : '';
+
+  const changelog = target.match(/^(?:\.\.\/|\.\/)CHANGELOG(_CN)?\.md$/);
+  if (changelog) {
+    return sitePath(linkLangFromSuffix(changelog[1]), 'changelog', anchor);
+  }
 
   const quickstart = target.match(/^(?:\.\.\/|\.\/)QUICKSTART(_CN)?\.md$/);
   if (quickstart) {

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page covers common `chord-gateway` startup, IM integration, routing, and runtime issues.
 
@@ -42,7 +42,7 @@ chord_path: ~/go/bin/chord
 Common causes:
 
 - `workspaces.<id>.path` does not exist.
-- Both platforms select workspaces through explicit `chat_bindings`; the paired owner uses `/bind "~/workspace"` in each chat.
+- All platforms select workspaces through explicit `chat_bindings`; use the platform command entry point to bind each target.
 - The Feishu chat is not listed in `ims.feishu.chat_bindings`; this also applies with one workspace.
 - A Feishu `chat_bindings` entry points to the wrong workspace ID.
 
@@ -73,6 +73,18 @@ Then open the returned login link and scan the QR code. When the gateway itself 
 
 Feishu does not need in-chat login or manual renewal; the gateway automatically obtains and refreshes Feishu access tokens from the configured app credentials. If the Feishu connection becomes invalid, check the deployment configuration and Feishu developer console for app credentials, permissions, event subscriptions, and long-connection settings. Do not send or change `app_id` / `app_secret` in an IM chat.
 
+### WeChat tasks waiting or polling paused
+
+`reply_context_missing` means input in this process has not been delivered; a fresh owner `/status` can establish context. Process restart clears the queue without restoring old tasks. Temporary capacity refusal retains the current polling batch until intake can advance its in-memory cursor.
+
+`batch_too_large` means one response exceeds the client budget of 4 MiB or 1,024 items. The WeChat receive loop stops without advancing its cursor; other platforms may keep running. Logs report `IM adapter exited with error type=wechat`. Restart may encounter the same oversized server batch; `/login wechat` does not restart an exited loop. Inspect the platform backlog and original Chord session before acting; do not skip an opaque cursor or blindly resend old tasks.
+
+Unknown input may already have executed. Check `/status` and the original Chord session queue, execution history and results before deciding to resend or restart. Restart cannot cancel work already executed.
+
+## Discord issues
+
+Check DM privacy, explicit @Bot from the paired owner, individual thread binding, and channel/thread permissions. `403` usually requires inspecting permission overrides or private-thread access; `4014` requires checking requested intents. Unlocked archived threads may reactivate on send; locked or deleted threads fail without redirecting output. See the [Discord troubleshooting guide](./discord.md#troubleshooting-and-deployment-checks).
+
 ## Feishu issues
 
 If you have not completed the Feishu console setup yet, start with: [Feishu guide](./feishu.md)
@@ -102,7 +114,11 @@ See [pairing and local reset](./pairing.md) for account changes or authorization
 
 ### Duplicate messages
 
-Feishu may retry event deliveries. The gateway deduplicates by `app_id + chat_id + message_id` and stores data in `<state_dir>/dedupe.json`.
+Feishu may redeliver events. Gateway deduplicates the App ID, chat and business message/card identity within the current process, with no deduplication history after restart.
+
+## DingTalk issues
+
+The first connection waits for same-enterprise private `hello`; a group message cannot unlock pairing. If `Gateway binding check.` fails, do not manually save the target: fix proactive API permissions/application publication (`proactive_send_denied`) or employee scope/group membership (`target_unreachable`), then issue a new `/bind`. Stream registration authentication or tenant mismatch stops reconnects; a proactive API authentication failure only fails the current send and clears its token. Unknown sends and callback 500 responses do not justify automatic replay. See [DingTalk error categories](./dingtalk.md#limits-and-troubleshooting).
 
 ## Routing issues
 
@@ -123,11 +139,7 @@ Use:
 
 Then use `/new` to clear the current binding or `/resume <id>` to pin a known session.
 
-If a normal text message cannot be delivered because the pinned session was removed or is busy, the gateway clears that pin, starts a fresh session, retries the message once, and notifies the chat:
-
-```text
-⚠️ Previous Chord session was not found or is busy. Started a new session and sent your message.
-```
+On WeChat and Feishu, if a pinned session is missing, busy or cannot be restored, accepted input is isolated rather than resent in a fresh session. Check `/status` and the original Chord session, then inspect local ingress records if needed. Explicit `/new` or `/resume` selects a target for future work; it does not replay the isolated request. Send a new task only after checking whether the original request ran.
 
 ## Runtime issues
 
@@ -148,7 +160,7 @@ A question that Chord has closed stays addressable by ID in its session, whateve
 
 If the process disconnects before an outcome arrives, the gateway keeps the known question without inventing an outcome; check `/status` and the session before explicitly retrying the same answer. The gateway reuses the uncertain operation while its retry cache remains available; see [Question interaction](./usage.md#question-interaction) for cache limits and restart behavior. If the answer entry could not open, `/status` retries presentation before displaying it.
 
-Confirmations retain a separate behavior: after a confirmation expires, `/allow` or `/deny` is sent only as follow-up context, never as approval or denial. Ask Chord to reissue the operation if confirmation is still needed.
+On Feishu, expired `/allow` and `/deny` controls are rejected and never become model follow-up context. Check `/status`; ask Chord to issue a new confirmation if the operation still needs approval, or send an explicit new task.
 
 ### A task appears stuck
 
@@ -174,6 +186,14 @@ Check:
 
 WeChat image forwarding has protocol tests, but real-device decryption and display have not yet been verified. When validating a deployment, generate a small image and confirm that it opens in the WeChat client; a successful API receipt alone does not prove that the image renders.
 
+### Intake is empty after restart
+
+This is expected: Gateway keeps intake, deduplication and polling cursors in memory. Old inbox files are not read or upgraded. Chord sessions, configuration, credentials and transfer guards retain their own persistence; see [delivery and restarts](./operations.md#message-delivery-and-restarts).
+
+### A common-ingress input remains received
+
+Check `/status` for a waiting reason and the original input age. An adapter may need a local delivery prerequisite such as a valid reply context or an available account. The common queue preserves order while waiting and isolates inputs after the original 24-hour window; sending another message does not reset that age. WeChat uses this path: the authorized owner can send a fresh `/status` in the original chat to establish context and wake the original queue. New ordinary tasks join behind it. Feishu intake starts empty on process restart.
+
 ### Where are logs and state files?
 
 State directory priority:
@@ -195,3 +215,17 @@ When reporting an issue, include:
 - sanitized config
 - relevant gateway logs
 - the IM platform and mode you are using
+
+All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+
+## WeCom issues
+
+For authentication failures, verify the intelligent bot API long-connection mode and bot ID/secret. For binding probe failures, check scope, target, send permission, and quota, then send `/bind` again. `duplicate_connection` means another deployment replaced the connection; stop it before restarting. `unknown_send` does not prove output was undelivered; inspect the chat and original session. After changing bot ID, stop the service and run `chord-gateway -f config.yaml pairing reset --platform wecom` in a local controlling terminal, type `wecom` to confirm, then pair again. An `endpoint` field is ignored with a warning and cannot select another connection URL. See the [WeCom guide](./wecom.md) for diagnostics and pending real-account acceptance.
+
+## Slack issues
+
+See [Slack installation checks and troubleshooting](./slack.md#installation-checks-and-troubleshooting) for `/chord` conflicts, scope reinstall, identity errors, channel access and unknown sends. Slash commands always target the root; control a thread using a Bot mention inside that thread, with its own binding.
+
+## Telegram issues
+
+See [Telegram troubleshooting](./telegram.md#troubleshooting) for credentials, webhook/poller conflicts, privacy, group migration, and uncertain sends. Group binding uses `/bind@BotUsername`; topics and media are unsupported.

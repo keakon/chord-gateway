@@ -56,6 +56,9 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Fixed
 
+- WeCom answer hints preserve `@request` for copyable replies. Slack now honors per-method `Retry-After` across lookups, identity checks and socket reconnects.
+- Partial-send diagnostics retain unknown delivery outcomes, including cancellation after sending; DingTalk distinguishes token acquisition and pacing failures from uncertain message delivery.
+- Intake capacity checks use a per-chat pending index, avoiding scans of retained completed messages during admission.
 - `/new` and `/resume` now refuse a busy Chord process before the route-change barrier, replying that `/cancel` comes first, instead of failing inside the replacement with a bare reason. Session-change failures also report distinct reasons — busy, transfer in progress, unresolved inputs — instead of one generic `session_change_failed`.
 - `/new` reports `Session created` and `/resume` reports `Session resumed`. Both previously answered `Session selected`, which described neither outcome and read as a failure on `/new`.
 - `/new` and `/resume <id>` are no longer rejected as an expired control target while a workspace's Chord process is still starting up. Sessions that previously failed with `control_target_expired` right after launching or upgrading the gateway now start normally; a control target that captured a runtime identity and then lost it is still refused. Session-change failures and dropped readiness events are now logged with their cause instead of being reported as a bare rejection.

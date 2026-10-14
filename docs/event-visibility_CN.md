@@ -1,6 +1,6 @@
 # Gateway 控制面事件可见性
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 `chord-gateway` 从 `chord headless` 读取 JSONL 事件。必需控制面事件始终订阅并路由。`background_result` 默认订阅、可显式关闭；其余可选事件通过 `event_visibility` 选择启用。
 
@@ -146,9 +146,15 @@ Gateway 解析 JSONL 或读取流失败时，会单独向聊天发送提示。�
 
 普通消息和迟到回复带有关联 ID。写入进程并不代表任务开始；Gateway 根据 `input_result` 回执和始终订阅的 `activity` 更新忙碌状态及提醒。`handled` 表示本地命令已处理，`queued` 表示输入已排队，`started` 表示已创建任务，`rejected` 表示输入未被接受。除 `started` 外，其余回执都不会清除已有任务的忙碌状态。断线时未确认的输入会显示为结果未知；请先核对会话，避免重复发送有副作用的请求。需要支持输入回执的 Chord headless。
 
+微信公共收件的 `received`、等待回复上下文（`reply_context_missing`）和隔离数量由 `/status` 展示，不代表 Chord 已开始任务。当前进程内发送新鲜且已授权的 `/status` 可建立回复上下文并唤醒等待队列；进程重启会清空该队列，但查询不创建模型任务。`consumed` 仅表示收到消费回执；`unknown` 必须在宿主机核查，不能自动重发。已消费任务的输出可能因上下文丢失而发送失败，gateway 不提供持久输出补发队列；在 Chord 原会话查看结果。
+
+## 钉钉文本投递
+
+钉钉以文本呈现命令、权限确认、Question 和后台结果，首版不支持卡片与图片。Stream ACK 表示内存接纳或拒绝，不表示 Chord 已执行；机器人回调在 500 或未 ACK 后不保证重投。主动发送结果未知时不自动重发，详见[钉钉状态与恢复](./dingtalk_CN.md#状态发送与恢复)。
+
 ## 生成图片
 
-Gateway 订阅 `image_result`，接收有界的 `image_artifact` 数据分块，并按顺序向来源会话转发全部图片。微信上传加密媒体；飞书通过 tenant access token 上传消息图片。飞书图片达到或超过 10 MB 时发送保留透明度的缩小 PNG 预览，原图仍保存在 Chord 会话中。
+Gateway 订阅 `image_result`，接收有界的 `image_artifact` 数据分块，并按顺序向来源微信或飞书会话转发全部图片。企业微信和 Discord 首版不支持媒体发送，请在原 Chord 会话查看图片。微信上传加密媒体；飞书通过 tenant access token 上传消息图片。飞书图片达到或超过 10 MB 时发送保留透明度的缩小 PNG 预览，原图仍保存在 Chord 会话中。
 
 这是出站图片投递。gateway 从 IM 接收文本，不会将收到的图片或文件上传到 Chord。通过 TUI 已接纳的附件仍属于移交会话，由 Chord 恢复。
 
@@ -175,3 +181,11 @@ Gateway 订阅 `input_queue_changed`，通过现有状态事件回调发布有�
 输入队列保护也覆盖闲置回收和进程替换，防止这些路径清除待处理输入或结果未知的证据。`/status` 显示主队列数量、暂停状态、存储阻塞及恢复输入的续跑要求。带有保护状态的进程断开后不会自动替换；请先在本机核查原会话，再重启 gateway。
 
 `/new`、`/resume`、目录切换或闲置回收前，如果空闲进程此前报告过非空恢复输入摘要，gateway 会重新查询。必须由覆盖所有 owner 的摘要确认输入已处理；仅主队列为空不足以解除保护。缺失、迟到或查询失败的状态回执不会清除保护，结果未知的输入也不会因此解除阻断。接管目标检查同样覆盖已断线的进程，保留原会话的未解决输入证据。
+
+所有平台共用有界内存收件、授权和投递回执。Gateway 重启后不恢复收件队列、去重记录或轮询游标；结果不确定时，先核查 Chord 原会话再决定是否重发。详见[投递与重启语义](./operations_CN.md#消息投递与重启)。
+
+飞书卡片「已接收」或「处理中」只表示接纳，不表示执行成功。消费及卡片结果以 `input_result` 回执和明确结果事件确认。可重试接纳失败表示未接纳，提交或发送结果不明则需先核查再决定是否重试。卡片更新失败不回滚消费，也不能据此重复提交相同答案；`/status` 会展示公共等待和隔离信息，无运行中的 Chord 进程时也可核查。
+
+## Slack 输出范围
+
+Slack 首版将文本事件、确认与 Question 提示返回原根聊天或 thread，使用 `/chord` 或 thread @Bot 文本命令交互。图片和文件转发、按钮与 modal 延期；`image_result` 不通过 Slack 上传文件。详见 [Slack 指南](./slack_CN.md)。

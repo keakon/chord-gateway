@@ -1,6 +1,6 @@
 # Cookbook
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page collects copyable recipes for installing, configuring, and running `chord-gateway` in common real deployments.
 
@@ -82,7 +82,7 @@ Edit `~/.config/chord-gateway/config.yaml` before starting the gateway.
 Important notes:
 
 - Set `chord_path` to an absolute path if you run under systemd or launchd. Services do not load shell aliases and may have a minimal `PATH`.
-- Keep Feishu `app_secret`, WeChat token files, and the whole state directory out of version control.
+- Keep Discord `bot_token`, Feishu `app_secret`, WeChat token files, and the whole state directory out of version control.
 - Gateway state defaults to `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`.
 
 ## Recipe: WeChat only, one workspace
@@ -170,6 +170,18 @@ idle_timeout: 30m
 ```
 
 `/bind` only updates Feishu chat bindings and workspace definitions. Manual edits to other config fields still require a gateway restart.
+
+## Recipe: Discord DMs, channels, and threads
+
+```yaml
+ims:
+  discord:
+    bot_token: your-bot-token
+    application_id: "123456789012345678"
+chord_path: chord
+```
+
+Install the bot with View Channel, Send Messages, and Send Messages in Threads; keep privileged intents disabled. Run `chord-gateway -f config.yaml --pair`, then privately send `/bind "~/work/project-a" <pairing_code>`. The owner binds each server channel or existing accessible thread with `@Bot /bind "~/work/project-a"`; later commands also use `@Bot`. Each thread has its own route and session. See the [Discord guide](./discord.md) for private-thread access, archived threads, and deployment checks.
 
 ## Recipe: WeChat plus Feishu
 

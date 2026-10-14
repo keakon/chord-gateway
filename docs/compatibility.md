@@ -74,7 +74,7 @@ Session listing requires `chord sessions list --json --limit 10`, returning sche
 
 ## Chat bindings
 
-Both platforms require owner pairing and explicit chat bindings, including single-workspace deployments. Old authorization fields and the old `/bind` syntax have been removed without automatic migration; see the [upgrade notes](../CHANGELOG.md).
+All supported platforms require owner pairing and explicit chat bindings, including single-workspace deployments. Old authorization fields and the old `/bind` syntax have been removed without automatic migration; see the [upgrade notes](../CHANGELOG.md).
 
 ## Cross-repository contract tests
 

@@ -18,3 +18,7 @@ website/node_modules/
 website/dist/
 website/src/content/docs/*.md
 website/src/content/docs/zh/*.md
+
+# Local planning and agent memory
+docs/plans/
+MEMORY.md

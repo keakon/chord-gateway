@@ -14,7 +14,7 @@
 #
 # New installations: pairing needs no owner IDs or workspace routes.
 # Run chord-gateway --pair in a foreground terminal; see docs/pairing.md.
-# Feishu chats require chat_bindings or a successful /bind before use, even with one workspace.
+# All chats require chat_bindings or a successful /bind before use, even with one workspace.
 
 # --- IM Platform Configuration ---
 # Configure adapters explicitly under `ims`.
@@ -25,9 +25,41 @@ ims:
     # Use this only when you want to store the WeChat QR-login session token elsewhere.
     # token_path: ~/.local/state/chord-gateway/wechat/token.json
 
+  # telegram:
+  #   bot_token: your-bot-token
+  # Use BotFather to create the bot; keep group privacy enabled initially.
+  # Existing webhooks must be removed explicitly before polling; see docs/telegram.md.
+
   # feishu:
   #   app_id: cli_xxx
   #   app_secret: xxx
+
+  # wecom:
+  #   bot_id: your-bot-id
+  #   secret: your-bot-secret
+  # WeCom requires intelligent bot API long connection; see docs/wecom.md.
+
+  # slack:
+  #   app_token: your-app-token
+  #   bot_token: your-bot-token
+  #   app_id: your-app-id
+  #   team_id: your-team-id
+  # See docs/slack.md for Socket Mode, Bot scopes, and /chord setup.
+
+  # DingTalk enterprise robot: enable Stream and proactive API permissions, then publish.
+  # First --pair startup: privately send hello before the terminal shows a code.
+  # See docs/dingtalk.md for pending deployment acceptance checks.
+  # dingtalk:
+  #   client_id: your-client-id
+  #   client_secret: your-client-secret
+  #   robot_code: your-robot-code
+  #   corp_id: your-corp-id
+
+  # discord:
+  #   bot_token: your-bot-token
+  #   application_id: "123456789012345678"
+  # Discord uses bot DMs and @Bot in guild channels/threads; no Message Content intent.
+  # Setup and minimal permissions: docs/discord.md.
 
 # Paired /bind registers existing directories and chat bindings here.
 workspaces: {}

@@ -1,6 +1,6 @@
 # Cookbook
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档收集常见真实部署场景下可直接复制的安装、配置和运行示例。
 
@@ -82,7 +82,7 @@ chmod 600 ~/.config/chord-gateway/config.yaml
 注意事项：
 
 - 如果通过 systemd 或 launchd 运行，建议把 `chord_path` 配成绝对路径。服务环境不会加载 shell alias，`PATH` 也可能很小。
-- 不要把飞书 `app_secret`、微信 token 文件或整个状态目录提交到版本控制。
+- 不要把 Discord `bot_token`、飞书 `app_secret`、微信 token 文件或整个状态目录提交到版本控制。
 - gateway 状态默认位于 `${XDG_STATE_HOME:-~/.local/state}/chord-gateway`。
 
 ## 场景：只用微信，一个 workspace
@@ -170,6 +170,18 @@ idle_timeout: 30m
 ```
 
 `/bind` 只会更新飞书聊天绑定和 workspace 定义。手工修改其他配置字段后，仍需要重启 gateway 才会生效。
+
+## 场景：Discord 私聊、频道与 thread
+
+```yaml
+ims:
+  discord:
+    bot_token: your-bot-token
+    application_id: "123456789012345678"
+chord_path: chord
+```
+
+安装 Bot 时授予 View Channel、Send Messages、Send Messages in Threads，保持 privileged intents 关闭。运行 `chord-gateway -f config.yaml --pair`，再在 Bot DM 发送 `/bind "~/work/project-a" <pairing_code>`。Owner 使用 `@Bot /bind "~/work/project-a"` 分别绑定服务器频道与可访问的既有 thread，后续命令也需 @Bot。每个 thread 独立路由和维护会话。私有 thread 访问、归档及部署验收见 [Discord 指南](./discord_CN.md)。
 
 ## 场景：微信 + 飞书
 
@@ -320,7 +332,7 @@ Gateway 自身日志仍会写入 `<state_dir>/gateway.log`；`journalctl` 主要
 - 从每个预期使用的 IM 聊天里执行 `/status`。
 - `chord_path` 在 service 环境下指向预期 Chord 二进制。
 - gateway 日志路径和状态目录对 service 用户可写。
-- 两个平台都需完成 owner 配对，聊天必须显式绑定；本机运行并不限制外部用户向机器人发消息。
+- 所有已支持平台都需完成 owner 配对，聊天必须显式绑定；本机运行并不限制外部用户向机器人发消息。
 - 如果希望迁移机器后保留登录状态，请备份 `config.yaml`，以及包含微信 token 的状态目录。
 - 知道如何停止服务：
   - systemd user service：`systemctl --user stop chord-gateway`

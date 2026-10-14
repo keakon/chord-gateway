@@ -1,6 +1,6 @@
 ---
 title: chord-gateway
-description: 将微信、飞书聊天连接到本地 chord headless 进程，同时把工作区访问、凭据和状态留在自己的机器或服务器上。
+description: 将微信、飞书、Telegram、企业微信、钉钉、Discord、Slack 聊天连接到本地 chord headless 进程，同时把工作区访问、凭据和状态留在自己的机器或服务器上。
 template: splash
 hero:
   tagline: 从 IM 聊天里操控 Chord，同时不把 agent、凭据或工作区访问移出自己的机器或服务器。
@@ -21,7 +21,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="聊天控制面" icon="external">
-    把微信 iLink 或飞书连接到 `chord headless`，即可从 IM 聊天甚至手机上控制 Chord。
+    把微信 iLink、飞书、Telegram、企业微信、钉钉、Discord 或 Slack 连接到 `chord headless`，即可从 IM 聊天甚至手机上控制 Chord。
   </Card>
   <Card title="本地优先边界" icon="seti:lock">
     Chord 进程、工作区文件、运行时状态和凭据都继续保留在你自己的机器或服务器上。
@@ -45,13 +45,13 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     请按 [Chord 官方说明](https://github.com/keakon/chord/blob/main/README_CN.md#三步完成设置)单独安装，并确保 `chord` 在 `PATH` 中；也可以在网关配置里设置 `chord_path`。
   </Card>
   <Card title="2. 选择 IM 平台" icon="random">
-    从 [微信 iLink](/chord-gateway/zh/wechat/) 或 [飞书](/chord-gateway/zh/feishu/) 开始，然后在 `config.yaml` 中只保留需要的 adapter。
+    从 [微信 iLink](/chord-gateway/zh/wechat/)、[飞书](/chord-gateway/zh/feishu/)、[Telegram](/chord-gateway/zh/telegram/)、[企业微信](/chord-gateway/zh/wecom/)、[钉钉](/chord-gateway/zh/dingtalk/) 、[Discord](/chord-gateway/zh/discord/) 或 [Slack](/chord-gateway/zh/slack/) 开始，然后在 `config.yaml` 中只保留需要的 adapter。
   </Card>
   <Card title="3. 启动 gateway" icon="seti:powershell">
     ```bash
-    chord-gateway -f config.yaml
+    chord-gateway -f config.yaml --pair
     ```
-    在已连接的聊天中发送 `/status`，确认路由与 `chord headless` 子进程正常。
+    在 Slack 之外的平台，用终端配对码在私聊发送 `/bind "~/workspace" <pairing_code>`，再用 `/status` 验证绑定。钉钉需先私聊 `hello` 完成身份验证。第一条任务才启动 Chord；之后普通启动无需 `--pair`。 Discord 服务器频道和 thread 中的命令需在开头 `@Bot`。Slack 使用 `/chord bind ...` 和 `/chord status`，thread 命令见接入指南。
   </Card>
 </CardGrid>
 
@@ -67,7 +67,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     [前往 →](/chord-gateway/zh/cookbook/)
   </Card>
   <Card title="IM 接入总览" icon="document">
-    选择微信或飞书，理解路由归属，并避开常见接入陷阱。
+    选择微信、飞书、Telegram、企业微信、钉钉、Discord 或 Slack，理解路由归属，并避开常见接入陷阱。
     [前往 →](/chord-gateway/zh/im/)
   </Card>
   <Card title="配置参考" icon="setting">
@@ -75,7 +75,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     [前往 →](/chord-gateway/zh/configuration/)
   </Card>
   <Card title="故障排查" icon="rocket">
-    启动、微信、飞书、路由和运行时问题检查清单。
+    启动、微信、飞书、企业微信、钉钉、Discord、路由和运行时问题检查清单。
     [前往 →](/chord-gateway/zh/troubleshooting/)
   </Card>
 </CardGrid>

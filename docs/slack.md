@@ -84,7 +84,7 @@ The characters `&`, `<` and `>` in normal messages and thread text commands are 
 
 ## 4. Output and recovery
 
-Replies are plain text. Mentions and links in model output are escaped, automatic unfurling is disabled, and long replies are split into ordered messages. Root and thread output in the same channel share a one-message-per-second budget. A `429` pauses the workspace's affected API method for Slack's `Retry-After`; waiting is cancellable. Socket reconnects reverify identity. Temporary intake contention triggers backoff and retry. Accepted input survives socket reconnects within this process, but is lost on process restart. Uncertain sends are not replayed.
+Replies are plain text. Mentions and links in model output are escaped, automatic unfurling is disabled, and long replies are split into ordered messages. Root and thread output in the same channel share a one-message-per-second budget. A `429` pauses the installation's affected API method for Slack's `Retry-After`, including conversation lookups, identity checks and connection opening. Other methods remain available; cooldowns survive socket reconnects and waits honor cancellation and request deadlines. Socket reconnects reverify identity. Temporary intake contention triggers backoff and retry. Accepted input survives socket reconnects within this process, but is lost on process restart. Uncertain sends are not replayed.
 
 The first version supports text commands and text output. Files, generated-image forwarding, buttons, modals, editing previews, Agent View, Enterprise multi-team installs and Marketplace distribution are deferred. Long-running results use the Bot API rather than an expiring slash `response_url`.
 

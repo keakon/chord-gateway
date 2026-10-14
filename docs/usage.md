@@ -1,8 +1,10 @@
 # Usage
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page covers day-to-day interaction with `chord-gateway` from IM chats.
+
+In Discord server channels and threads, prefix every command below with the actual bot mention, for example `@Bot /status`, `@Bot /allow`, or `@Bot /answer @<id> <answer>`. DMs use the commands directly. Native slash commands and buttons are deferred; each thread needs its own binding. See the [Discord guide](./discord.md).
 
 ## First message checklist
 
@@ -13,6 +15,8 @@ After completing [pairing and binding](./pairing.md):
 3. If a session is already pinned, decide whether to continue it or send `/new`.
 4. Send a normal text request to Chord.
 
+For DingTalk, complete private identity verification and the proactive binding probe first. Only the paired owner can submit commands; group input requires @robot. Confirmations use `/allow`/`/deny`, Questions use `/answer`, and replies/background results are text only. See [DingTalk](./dingtalk.md).
+
 ## Routing model
 
 Each chat selects a workspace through `chat_bindings`. Gateway isolates running sessions by workspace, IM platform, and chat; automatic resume pins follow the same key, so changing the platform account keeps its session. Storage keys are encoded and should not be assembled manually. Different chats retain separate session context even when sharing a workspace.
@@ -22,7 +26,7 @@ Each chat selects a workspace through `chat_bindings`. Gateway isolates running 
 The gateway does not use `chord headless --continue`. Instead, it stores a pinned Chord session ID for each binding.
 
 - If a binding has a pinned session ID, the gateway starts Chord with `--resume <sid>`.
-- If resume fails because the pinned session was removed or is busy, a normal text message is retried in a fresh session and the user is notified.
+- On Feishu, a failed pinned-session restore isolates accepted input for inspection and preserves its target; it does not retry in a fresh session. Check `/status` and the original session before explicitly using `/new` or `/resume`.
 - If no session ID is pinned, the gateway starts a fresh session.
 - `/new` starts fresh. A live binding retains its pin until Chord confirms the session switch.
 - `/resume <sid>` pins the specified session ID for the current binding.
@@ -36,7 +40,13 @@ Before `/new` or `/resume` replaces an idle restored session, the gateway refres
 
 
 `/new` and `/resume` are refused while the process is busy; send `/cancel` and wait for the turn to settle first.
+## Slack command entry points
+
+The command table below shows Gateway syntax. In a Slack root chat, use `/chord status`, `/chord allow`, `/chord answer @<id> <text>`, and the same wrapper for other commands. Within a thread, use `@Bot /status`, `@Bot /allow`, or `@Bot /answer @<id> <text>` instead. Slash commands always target the channel root; every thread needs a separate binding. Channel/thread tasks require an explicit Bot mention. See the [Slack guide](./slack.md).
+
 ## IM commands
+
+Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/question_decline`, `/question_withdraw`, `/question_replace`. In groups, append `@YourBotUsername`; follow the generated hints. See the [Telegram guide](./telegram.md#groups-and-privacy).
 
 | Command | Description |
 |---|---|
@@ -87,7 +97,7 @@ chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
 
 Chord provides the canonical workspace identity, so a linked worktree can transfer within its parent repository while retaining the saved execution directory. A rejected preflight leaves ordinary chat available. When preparation fails before the source freezes, a status query reopens routing only after confirming the same live source; uncertain outcomes keep the binding blocked.
 
-The source stops admitting new execution and waits for requests, tools, and background work that already started to finish and save their results. It does not cancel those operations or start the next model request. Accepted queued input, including attachments submitted through TUI, stays with the session. The gateway accepts text from IM; takeover does not add inbound image or file uploads. Generated-image forwarding to IM remains available. A service or tool waiting for input can keep the transfer pending; status reports the blockers.
+The source stops admitting new execution and waits for requests, tools, and background work that already started to finish and save their results. It does not cancel those operations or start the next model request. Accepted queued input, including attachments submitted through TUI, stays with the session. The gateway accepts text from IM; takeover does not add inbound image or file uploads. Generated-image forwarding to WeChat and Feishu remains available; WeCom and Discord media output is unsupported. A service or tool waiting for input can keep the transfer pending; status reports the blockers.
 
 Transfer notifications prioritize errors, timeouts, and recovery actions. They show the total blocker count and at most three short previews, with the omitted count when needed. For full details, use the [host status command](./operations.md#session-transfer-recovery).
 
@@ -114,7 +124,7 @@ After submitting, the gateway waits for a correlated `question_receipt` and repo
 
 If the presentation command cannot be sent or is rejected, the gateway reports the problem; send `/status` to retry presentation. Status synchronization also closes cards when it observes the result before the corresponding push.
 
-For an unknown answer outcome, check `/status` and explicitly retry the same answer as the same user. While the gateway remains running, it retains up to 128 uncertain question operations for 14 days and reuses their original operation IDs and parameters, including across Chord process restarts. A new Feishu click is accepted; only redelivery of the same callback event is deduplicated. Restarting the gateway clears this retry cache: check the restored session before submitting again. Inputs are never replayed automatically.
+For an unknown answer outcome, check `/status` and explicitly retry the same answer as the same user. While the gateway remains running, it retains up to 128 uncertain question operations for 14 days. An explicit retry of the same operation reuses its original operation ID and parameters while its session runtime remains unchanged. The shared ingress verifies the runtime, session epoch, request, and current version; if the runtime or session changes, inspect the original question before submitting again. Feishu and WeChat both use these shared target checks. A new Feishu click is accepted; only redelivery of the same callback event is deduplicated. Restarting the gateway clears this retry cache: check the restored session before submitting again. Inputs are never replayed automatically.
 
 An accepted historical revision does not by itself mean Chord started work. Open asynchronous questions do not suppress reminders or unrelated alerts while Chord continues other work.
 
@@ -129,17 +139,11 @@ When Chord asks for permission, Feishu can show an interactive confirmation card
 
 Both commands only apply to the currently pending confirmation. If no confirmation is pending, the gateway warns that there is nothing to respond to. If you supply a request ID that does not match the current pending confirmation, the gateway rejects the action as a mismatch.
 
-After a Feishu confirmation button is accepted, the gateway tries to update the original card to show the resolved state. If that update fails, the text confirmation is still sent and the Chord action is not rolled back.
+After submitting a Feishu approval or denial, the original card reports that the request was submitted and Chord acceptance remains unconfirmed; check `/status`. A card update failure does not roll back the submission. An explicitly rejected update may fall back to text; an unknown update outcome does not trigger a duplicate send.
 
 Use `/status` if you are unsure whether a confirmation is pending.
 
-If the pending confirmation expires because Chord becomes idle or the gateway removes the idle process, the gateway sends an expiry notice. A later `/allow` or `/deny` is not sent as an approval or denial. Instead, the gateway forwards it to Chord as follow-up context that explicitly says it must not be treated as confirmation.
-
-The user-facing notice is in English, for example:
-
-```text
-⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.
-```
+On Feishu, expired confirmations and stale controls are rejected instead of being forwarded as model context. Old cards cannot act on a replacement runtime or request. Check `/status`; if you want a new task, send its instructions explicitly. If the original operation still needs approval, ask Chord to issue a new confirmation.
 
 ## Handoff request routing
 
@@ -253,7 +257,7 @@ The gateway pushes important control-plane notifications to active IM channels, 
 - background job results, sent when a background job finishes — usually after the turn already went idle; disable with `event_visibility.background_result: false`
 - error or blocked state
 - tool failure
-- generated images, forwarded to the source chat as Chord produces them
+- generated images, forwarded to the source WeChat or Feishu chat as Chord produces them
 - context-pressure warnings, only when `event_visibility.context_notice` is enabled
 - long-running reminders every 5 minutes while a turn is still busy
 
@@ -269,3 +273,15 @@ A retry counts every retry decision Chord announced during the turn, including f
 Completion notifications also carry a compact summary of the turn that just ended: its duration, the tool calls reported across the main agent and SubAgents, and the retry decisions observed, for example `✅ Chord: Ready for input (1m42s · 12 tools)`. The same summary is appended to the `⏳ Chord: Ready for input; background jobs still running: N` variant. Within the same session, confirmations, handoffs, and cancellation requests preserve the progress accumulated during the active work cycle. An idle cancellation request does not start a work cycle or reminders. Local shell results do not reset agent progress; if shell commands are still pending when agents become idle, the completion notification reports their count and shell reminders continue.
 
 Optional lower-level events are controlled by `event_visibility`. See [event-visibility.md](./event-visibility.md).
+
+See [operations](./operations.md#message-delivery-and-restarts) for common intake and restart semantics. The shared path accepts text commands and authenticated card operations under the same authorization and frozen-target checks. An explicit retry of an unknown Question operation reuses its original operation only when the same user, runtime, session, request, and parameters match and the current target version passes validation; the retry reuses the original operation ID and command parameters, including its original version; it cannot unblock unrelated commands. Redelivery of the same message or callback is deduplicated. A missing card update does not undo a submitted operation.
+
+All platforms share in-memory intake; deduplication lasts within this process and restart does not replay the old queue.
+
+During the process lifetime, pending WeChat tasks with no short-lived reply context remain `received` in their original FIFO order and are not sent to Chord. The authorized owner can send a fresh `/status` in the original chat to establish context and wake delivery without a model call. A new ordinary task joins behind the waiting tasks. `/status` reports `reply_context_missing`, input age and isolation counts. The original 24-hour window still applies; new messages do not extend it. Consumed tasks are never executed again because output failed to arrive; inspect the original session on the host when the outcome is unknown.
+
+On the shared in-memory ingress path, at most four priority controls may overtake the ordinary queue. Processing then follows the ordinary queue's original order, including shell, model, and role commands preceding a task. `/cancel` captures the process, session, and active work observed by Gateway at reception and rejects a target change detected before sending. The existing Chord protocol cancels the work active when Chord handles the command; it cannot atomically restrict cancellation to Gateway's previously observed turn. “Request submitted” does not confirm completed cancellation and does not delete undelivered ingress records.
+
+## WeCom commands and output
+
+WeCom private/group text supports the control commands on this page, with text confirmations and questions restricted to the owner. Binding requires a successful fixed proactive probe; group replies are visible to everyone. This release sends final and background text; cards, media, and streaming replies remain unsupported. Inspect accepted segment count and the original session after failure; unknown output is not replayed. See the [WeCom guide](./wecom.md).

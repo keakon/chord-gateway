@@ -82,6 +82,7 @@ External contacts, cross-enterprise use, custom group webhooks, EVENT subscripti
 | `proactive_send_denied` | Grant proactive API permissions, update available scope, and publish again before a new `/bind`. |
 | `target_unreachable` | Check employee availability and group robot membership before a new `/bind`. |
 | `rate_limited` | Wait for platform limits to recover; Gateway's retry budget is bounded. |
+| `token_unavailable` | Token acquisition failed before sending the message. Check connectivity and API availability; this does not imply an uncertain message delivery. |
 | `unknown_send` | Inspect chat and local state; do not automatically resend the original message. |
 
 ## Deployment acceptance checklist

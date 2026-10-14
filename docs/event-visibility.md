@@ -1,6 +1,6 @@
 # Gateway control-plane event visibility
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 `chord-gateway` reads JSONL events from `chord headless`. Required control-plane events are always subscribed and routed. `background_result` is subscribed by default and can be disabled; the remaining optional events are opt-in through `event_visibility`.
 
@@ -146,9 +146,15 @@ See [operations.md](./operations.md) for log details.
 
 Normal messages and late replies carry correlation IDs. Writing to the process does not mean work started. Gateway follows `input_result` receipts and always-subscribed `activity` to update busy state and reminders. `handled` means a local command was consumed, `queued` means input was queued, `started` means a turn was created, and `rejected` means input was rejected. Receipts other than `started` never clear existing active work. Disconnects report unconfirmed inputs; check the session before resending requests with side effects. Requires Chord headless with input receipts.
 
+WeChat shared ingress `received` state, missing reply context (`reply_context_missing`) and isolation counts appear in `/status`; they do not mean Chord started a task. A fresh authorized `/status` can establish context and wake input waiting in the current process, without a model task. Restart clears that intake queue. `consumed` only confirms a consumption receipt; `unknown` requires inspection on the host and is never automatically resent. Lost context can prevent output from a consumed task from arriving. Gateway has no durable result resend queue; inspect the original Chord session.
+
+## DingTalk text delivery
+
+DingTalk renders commands, confirmations, Questions, and background results as text; cards and images are outside the first version. Stream acknowledgment reflects in-memory acceptance or rejection, not Chord execution. Robot callbacks do not promise redelivery after a 500 or missing acknowledgment. Unknown outbound results are not automatically resent. See [DingTalk](./dingtalk.md#state-sending-and-recovery).
+
 ## Generated images
 
-The gateway subscribes to `image_result` and receives bounded `image_artifact` chunks. Images go to the source chat in order: WeChat uploads encrypted media; Feishu uploads message images with a tenant access token. All returned images are forwarded. Feishu images at or above 10 MB use a reduced PNG preview preserving transparency; originals remain in the Chord session.
+The gateway subscribes to `image_result` and receives bounded `image_artifact` chunks. Images go to the source chat in order: WeChat uploads encrypted media; Feishu uploads message images with a tenant access token. WeChat and Feishu forward all returned images. WeCom and Discord do not support media delivery in this release; view images in the original Chord session. Feishu images at or above 10 MB use a reduced PNG preview preserving transparency; originals remain in the Chord session.
 
 This is outbound image delivery. The gateway accepts text input from IM; it does not upload incoming images or files to Chord. Attachments already accepted through TUI remain part of the transferred session and are restored by Chord.
 
@@ -173,3 +179,11 @@ Authentication and connection are reported separately. A connected server can st
 Gateway subscribes to `input_queue_changed` and publishes accepted queue changes through its state-event callback. Queue views are bound to runtime/session/epoch and ordered by `view_version`; a storage block can change without a durable revision change. A missing projection is unknown, while an empty input list replaces a previously known queue. `input_result: unknown` ends the send-receipt wait, warns the chat, and remains counted as unconfirmed in `/status` and disconnect notices. It neither marks the agent busy nor retries the input. Pending inputs, a blocked queue, and unconfirmed outcomes prevent directory switching, idle-timeout retirement, and process replacement. `/status` shows the main queue count and gate, storage blocks, and restored-input continuation requirements. A disconnected guarded process is not automatically replaced. Inspect the original session on the host before resending; after resolving an uncertain outcome, restart the gateway to clear its conservative guard. Platform message sends remain ordinary next-request inputs; queue editing and control remain in the local Chord TUI.
 
 Before `/new`, `/resume`, a directory switch or idle retirement, an idle process with a previously nonempty restored input summary is queried again. The all-owner summary must confirm completion; an empty main queue alone is insufficient. A missing, stale or failed status response preserves the guard, as do uncertain receipts. Incoming takeover also checks disconnected target processes and preserves their unresolved input evidence.
+
+All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+
+Feishu card “received” or “processing” notices report intake, not execution success. `input_result` receipts and typed result events settle consumption and card outcomes. Retryable intake means the operation was not accepted; an uncertain commit or send requires inspection before resubmitting. A failed card update does not roll back consumption or justify sending the same answer again. `/status` includes shared waiting and isolation information, including when no Chord process is running.
+
+## Slack output scope
+
+Slack returns text events, confirmation and Question prompts to the original root chat or thread. Interact through `/chord` or thread Bot-mention commands. Image/file forwarding, buttons and modals are deferred; `image_result` does not upload a file through Slack. See the [Slack guide](./slack.md).

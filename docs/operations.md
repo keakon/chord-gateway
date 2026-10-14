@@ -139,7 +139,7 @@ Only bot DMs and explicit @Bot channel/thread text are accepted, without the pri
 
 Text/post messages and authenticated cards use in-memory intake. `message:<message_id>` and `card:<event_id>` are scoped by App ID and deduplicated within this process. A successful platform response indicates acceptance or definite refusal, not completed Chord execution; a failed card update does not undo a submitted operation.
 
-Text shares eight concurrent sends, a five-minute deadline and a 64 KiB / 32-segment limit per output; control replies have 15 seconds. Explicit HTTP 429 retries only the rejected segment; unknown outcomes stop sending, with partial failures visible in `/status`. See [Feishu](./feishu.md).
+Text shares eight concurrent sends, a five-minute deadline and a 64 KiB / 32-segment limit per output; control replies have 15 seconds. Explicit HTTP 429 retries only the rejected segment; unknown outcomes stop sending, with partial failures visible in `/status`. When delivery remains unconfirmed, cancellation does not replace the `unknown_send` diagnostic; confirmed segment counts cover only platform-accepted segments. See [Feishu](./feishu.md).
 
 ## Workspace routing
 

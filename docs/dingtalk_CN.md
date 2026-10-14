@@ -82,6 +82,7 @@ chord-gateway pairing reset --platform dingtalk --config /path/to/config.yaml
 | `proactive_send_denied` | 开通主动 API 权限、修正可用范围并重新发布，再发送新的 `/bind`。 |
 | `target_unreachable` | 核对员工可用范围和机器人是否已入群，再发送新的 `/bind`。 |
 | `rate_limited` | 等待平台额度恢复；Gateway 重试次数有上限。 |
+| `token_unavailable` | 消息发送前获取 token 失败；检查网络与 API 可用性。这不表示消息投递结果未知。 |
 | `unknown_send` | 检查聊天与本机状态，不自动重发原消息。 |
 
 ## 部署验收清单

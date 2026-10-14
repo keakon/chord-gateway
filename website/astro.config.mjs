@@ -11,7 +11,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'chord-gateway',
-      description: 'Connect WeChat and Feishu chats to local chord headless processes.',
+      description: 'Connect WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, and Slack chats to local chord headless processes.',
       social: [
         { icon: 'github', label: 'GitHub', href: repo },
       ],
@@ -38,6 +38,11 @@ export default defineConfig({
           items: [
             { slug: 'wechat', translations: { 'zh-CN': '微信 iLink' } },
             { slug: 'feishu', translations: { 'zh-CN': '飞书' } },
+            { slug: 'telegram', translations: { 'zh-CN': 'Telegram' } },
+            { slug: 'wecom', translations: { 'zh-CN': '企业微信' } },
+            { slug: 'dingtalk', translations: { 'zh-CN': '钉钉' } },
+            { slug: 'discord', translations: { 'zh-CN': 'Discord' } },
+            { slug: 'slack', translations: { 'zh-CN': 'Slack' } },
           ],
         },
         {
@@ -55,6 +60,7 @@ export default defineConfig({
             { slug: 'configuration', translations: { 'zh-CN': '配置参考' } },
             { slug: 'operations', translations: { 'zh-CN': '运维说明' } },
             { slug: 'compatibility', translations: { 'zh-CN': '兼容策略' } },
+            { slug: 'changelog', translations: { 'zh-CN': '更新日志' } },
           ],
         },
         {

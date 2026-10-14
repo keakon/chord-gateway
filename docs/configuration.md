@@ -1,6 +1,6 @@
 # Configuration Reference
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This document is the field-by-field reference for `chord-gateway` configuration.
 
@@ -8,7 +8,7 @@ This document is the field-by-field reference for `chord-gateway` configuration.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `ims` | object | yes | - | IM adapter map. Supported keys are `wechat` and `feishu`. |
+| `ims` | object | yes | - | IM adapter map. Available adapters are `wechat`, `feishu`, `telegram`, `wecom`, `dingtalk`, `discord`, and `slack`. |
 | `workspaces` | object | no | - | Workspace map keyed by workspace ID. Values define only the workspace path. |
 | `chord_path` | string | no | `chord` | Path to the Chord binary. Supports `~` expansion. |
 | `chord_state_dir` | string | no | Chord's default state directory | Chord state directory shared by managed headless and takeover CLI; set it to match a TUI using custom `--state-dir`. Supports `~` expansion. |
@@ -49,6 +49,11 @@ Supported adapter keys:
 
 - `wechat`
 - `feishu`
+- `telegram`
+- `wecom`
+- `dingtalk`
+- `discord`
+- `slack`
 
 At most one config per adapter type is allowed.
 
@@ -89,9 +94,77 @@ Feishu uses long connection mode to receive events:
 - Subscribe to `im.message.receive_v1` under event subscriptions.
 - Add `card.action.trigger` under callback configuration if you want interactive Feishu cards for confirm/question flows.
 
+### Telegram configuration (`ims.telegram`)
+
+Task guide: [Telegram integration](./telegram.md)
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bot_token` | string | yes | BotFather-issued token; custom API endpoints are not configurable |
+| `owner` | object | after pairing | Numeric Bot ID as `account_id` and numeric owner user ID as `user_id`, both stored as strings |
+| `chat_bindings` | object | after binding | Numeric chat ID string → workspace ID; retain the minus sign for groups |
+
+Uses Bot API long polling. An existing webhook blocks startup and is never automatically deleted. Start with only `bot_token`; foreground `--pair` and private `/bind` save authorization.
+
+### WeCom Config (`ims.wecom`)
+
+See the [WeCom guide](./wecom.md). Requires the intelligent bot API long connection. The endpoint is fixed at `wss://openws.work.weixin.qq.com`. An `endpoint` YAML field is unsupported: it is ignored with a warning and cannot override this address.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bot_id` | string | yes | Intelligent bot ID |
+| `secret` | string | yes | Intelligent bot secret |
+| `owner` | object | after pairing | `account_id` and `user_id`, written by pairing |
+| `chat_bindings` | object | after binding | Encoded chat ID → workspace ID, written by `/bind` |
+
+Initial pairing and later binds require a successful fixed-message probe ACK before saving. Secret rotation preserves the owner when the bot ID stays the same. A changed bot ID requires stopping the service and running `chord-gateway -f config.yaml pairing reset --platform wecom` in a local controlling terminal; type `wecom` to confirm, then pair again.
+
+### DingTalk Config (`ims.dingtalk`)
+
+Deployment guide: [DingTalk](./dingtalk.md). All four identity/credential fields are required; the robot code is never inferred.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `client_id` | string | yes | Enterprise internal-app AppKey |
+| `client_secret` | string | yes | Enterprise internal-app AppSecret |
+| `robot_code` | string | yes | Robot code from the console |
+| `corp_id` | string | yes | Enterprise ID |
+| `owner` | object | after pairing | `account_id`, `user_id` |
+| `chat_bindings` | object | after binding | Gateway-encoded target ID → workspace ID, saved by `/bind` |
+
+The first Stream connection needs an employee private `hello` to verify identity before the terminal shows a pairing code. Candidate targets receive a proactive probe before binding. Webhook, API host, and Stream endpoint overrides are not configurable. Access tokens stay in memory.
+
+### Discord Config (`ims.discord`)
+
+Task guide: [Discord bot guide](./discord.md)
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `bot_token` | string | yes | - | Discord bot token; protect as a secret |
+| `application_id` | string | yes | - | Application ID belonging to the authenticated bot |
+| `owner` | object | after pairing | - | `account_id` is the authenticated bot user ID; `user_id` is the paired owner |
+| `chat_bindings` | object | after binding | - | DM, text channel, or thread ID → workspace ID |
+
+Discord uses bot DMs and explicit @Bot messages in server channels/threads. There is no `message_content` switch and no privileged intent requirement. Each thread needs its own binding and access permission; no parent-channel fallback is used. Install with View Channel, Send Messages, and Send Messages in Threads.
+
+### Slack Config (`ims.slack`)
+
+Task guide: [Slack guide](./slack.md)
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `app_token` | string | yes | App-level token with `connections:write` |
+| `bot_token` | string | yes | Bot installation token |
+| `app_id` | string | yes | App ID verified against the Bot and Socket Mode hello |
+| `team_id` | string | yes | Workspace/team ID verified by `auth.test` |
+| `owner` | object | after pairing | Verified account identity and owner user ID |
+| `chat_bindings` | object | after binding | Root channel ID or encoded thread target → workspace ID |
+
+Use `/chord bind ...` in root chats and `@Bot /bind ...` inside a thread. Each root and thread requires its own binding. All four credentials are required; endpoints are fixed and cannot be overridden in YAML. See the Slack guide for scopes, installation and supported targets.
+
 ### Authorization and binding
 
-Both platforms accept only the paired owner's input. Start with `chord-gateway --pair` and send `/bind "~/workspace" <pairing_code>` in a private bot chat. An existing owner uses `/bind "~/workspace"` in each new chat. All chats require explicit binding, including single-workspace deployments.
+All platforms accept only the paired owner's input. Start with `chord-gateway --pair`: WeChat/Feishu/WeCom/DingTalk private pairing uses `/bind "~/workspace" <pairing_code>`; Slack App DM pairing uses `/chord bind "~/workspace" <pairing_code>`. Later bindings omit the code. Slack roots use `/chord bind ...` and threads use `@Bot /bind ...` inside that thread. All chats require explicit binding, including single-workspace deployments.
 
 Binding registers an existing directory and enables the route only after saving YAML. Directories are reused by filesystem identity, never created or cloned. Resolve pending inputs, background work, and interactions before switching directories. See [pairing](./pairing.md) for path and recovery rules. Stop the service before manual configuration edits, then restart.
 
@@ -123,7 +196,7 @@ Validation rules:
 
 The gateway uses an IM-owned routing model:
 
-- Both WeChat and Feishu define `chat_bindings`.
+- All supported platforms define `chat_bindings`.
 - Workspaces do not contain IM-specific routing fields.
 
 This keeps workspace definitions stable while each IM adapter declares how it maps incoming chats to workspaces.
@@ -170,13 +243,12 @@ Additional path behavior:
 - `session_pins_file`, `ims.wechat.token_path`, `chord_path`, `chord_state_dir`, and `workspaces.<id>.path` support `~` expansion.
 - The gateway does not watch for external config file changes. Config is loaded at startup.
 - Unsupported or removed YAML keys, including fields inherited through anchors and merges, are reported in the gateway log with their source line and ignored; the file still loads.
-- `/bind` is the only built-in path that updates Feishu `chat_bindings` in memory and writes those same sections back to the YAML config file immediately. Other config changes still require a restart. `/bind` requires an existing directory path and may normalize YAML formatting while preserving common comments.
+- `/bind` updates the selected platform owner and `chat_bindings` only after durable YAML writeback. Local `pairing reset --platform <platform>` removes that platform identity and bindings. Other config changes still require a restart. `/bind` requires an existing directory path and may normalize YAML formatting while preserving common comments.
 
 State data includes:
 
 - logs
 - WeChat token files (`<state_dir>/wechat/token.json` by default)
-- Feishu dedupe store (`<state_dir>/dedupe.json`)
 - session pins (`<state_dir>/session-pins.json` by default)
 - session transfer guards (`<state_dir>/session-transfers.json`)
 
@@ -270,3 +342,7 @@ In this example:
 - the bound WeChat chat `user_example` goes to `project-a`
 - Feishu chat `oc_project_a` goes to `project-a`
 - Feishu chat `oc_project_b` goes to `project-b`
+
+All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+
+Account locks use verified stable account identities and cover local instances under the same OS user. Cross-host deployments still require a single active instance.

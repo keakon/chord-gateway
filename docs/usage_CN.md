@@ -1,8 +1,10 @@
 # 使用指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档说明如何在 IM 聊天中日常使用 `chord-gateway`。
+
+Discord 服务器频道和 thread 中，下列命令需在开头带真实 Bot mention，例如 `@Bot /status`、`@Bot /allow`、`@Bot /answer @<id> <answer>`；DM 中直接发送。原生 slash command 与按钮延期，每个 thread 需独立绑定，详见 [Discord 指南](./discord_CN.md)。
 
 ## 第一条消息检查清单
 
@@ -13,6 +15,8 @@
 3. 如果当前绑定已有固定会话，决定继续使用，或发送 `/new` 开始新会话。
 4. 发送普通文本请求给 Chord。
 
+钉钉需先完成私聊身份验证与主动绑定探测；只有配对 owner 可发命令，群输入需 @机器人。权限确认用 `/allow`/`/deny`，Question 用 `/answer`，回复与后台结果仅支持文本，详见[钉钉指南](./dingtalk_CN.md)。
+
 ## 路由模型
 
 聊天通过 `chat_bindings` 选择工作区。Gateway 按工作区、IM 平台和聊天隔离运行会话；自动恢复 pin 使用同样的键，更换平台账号也会延续原会话。键以编码形式保存，不应手工拼接。即使使用同一工作区，不同聊天仍保留各自的会话上下文。
@@ -22,7 +26,7 @@
 gateway 不使用 `chord headless --continue`，而是为每个绑定保存一个 pinned Chord session ID。
 
 - 如果当前绑定已有 pinned session ID，gateway 会用 `--resume <sid>` 启动 Chord。
-- 如果 pinned session 已被清理或被占用导致 resume 失败，普通文本消息会自动改用新 session 重试，并提示用户。
+- 飞书的 pinned session 恢复失败时，已接纳输入会隔离供核查，并保留原目标，不自动换新 session 重试。先查看 `/status` 和原会话，再显式使用 `/new` 或 `/resume`。
 - 如果没有 pinned session ID，gateway 会启动一个新 session。
 - `/new` 会启动新 session；运行中的绑定会保留原 pin，直到 Chord 确认会话已切换。
 - `/resume <sid>` 会把指定 session ID pin 到当前绑定。
@@ -36,7 +40,13 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 
 
 进程忙碌时 `/new` 与 `/resume` 会被拒绝；先发送 `/cancel`，等待当前 turn 结束。
+## Slack 命令入口
+
+下表展示 Gateway 命令语法。Slack 根聊天使用 `/chord status`、`/chord allow`、`/chord answer @<id> <text>`，其他命令同样加 `/chord` 包装；thread 内使用 `@Bot /status`、`@Bot /allow`、`@Bot /answer @<id> <text>`。slash 始终作用于频道根目标，各 thread 需独立绑定。频道/thread 任务必须显式 @Bot。详见 [Slack 指南](./slack_CN.md)。
+
 ## IM 命令
+
+Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/question_decline`、`/question_withdraw`、`/question_replace`。群里再添加 `@YourBotUsername`，按自动生成的提示操作即可，详见 [Telegram 指南](./telegram_CN.md#群聊与-privacy)。
 
 | 命令 | 说明 |
 |---|---|
@@ -80,7 +90,7 @@ chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
 
 工作区身份由 Chord 确认，因此 linked worktree 可以在所属主仓库内移交，同时保留会话保存的执行目录。预检拒绝不会阻断普通聊天；若准备在源端冻结前失败，状态查询只有确认仍是同一个存活源进程后才重新开放路由。结果不明时，绑定继续保持阻断。
 
-源端停止接纳新的执行，等待已经开始的请求、工具和后台工作结束并保存结果，不会取消这些操作，也不会派发下一次模型请求。已经接纳的排队输入，包括通过 TUI 提交的附件，随会话保留。gateway 从 IM 接收文本；接管不增加入站图片或文件上传能力，生成图片仍可转发到 IM。服务进程或等待输入的工具可能让移交持续等待；状态查询会显示具体阻塞项。
+源端停止接纳新的执行，等待已经开始的请求、工具和后台工作结束并保存结果，不会取消这些操作，也不会派发下一次模型请求。已经接纳的排队输入，包括通过 TUI 提交的附件，随会话保留。gateway 从 IM 接收文本；接管不增加入站图片或文件上传能力，生成图片仍可转发到微信或飞书，企业微信和 Discord 暂不支持媒体输出。服务进程或等待输入的工具可能让移交持续等待；状态查询会显示具体阻塞项。
 
 接管通知优先保留错误、超时和恢复操作提示，显示阻塞项总数和最多三条简短预览，并在省略时标明数量。完整详情请使用[宿主机状态查询命令](./operations_CN.md#会话移交恢复)。
 
@@ -107,7 +117,7 @@ IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题�
 
 答题入口的展示确认命令无法发送或被拒绝时，网关会提示原因；发送 `/status` 可重试展示。即使状态快照先于结果事件到达，卡片也会按已确认的结果收口。
 
-答案结果未知时，先查看 `/status`，再由同一用户主动重试同一答案。网关运行期间会保留最多 128 个未确认的问题操作，保留期为 14 天；即使 Chord 子进程重启，重试仍复用原操作 ID 和参数。飞书的新点击可以再次提交，只有同一回调事件的重复投递会被去重。重启网关会清空这份重试缓存，之后再次提交前应先核对恢复后的会话。输入不会自动重放。
+答案结果未知时，先查看 `/status`，再由同一用户主动重试同一答案。网关运行期间会保留最多 128 个未确认的问题操作，保留期为 14 天。在原会话的运行实例未变化时，主动重试同一操作会复用原操作 ID 和参数。公共收件会核对运行实例、会话代次、请求及当前版本；运行实例或会话变化后，应先核查原问题再提交。飞书和微信均已使用这项公共目标校验。飞书的新点击可以再次提交，只有同一回调事件的重复投递会被去重。重启网关会清空这份重试缓存，之后再次提交前应先核对恢复后的会话。输入不会自动重放。
 
 历史修订被接受，并不代表 Chord 已开始工作。异步问题保持开放时，不会阻断其他工作期间的提醒或无关告警。
 
@@ -120,17 +130,11 @@ IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题�
 - `/allow` 批准
 - `/deny [reason]` 拒绝；可选原因会转发给 Chord
 
-飞书确认按钮被接受后，gateway 会尽力更新原始卡片为最终状态；如果更新失败，仍会发送文本确认，且不会回滚 Chord 动作。
+飞书批准或拒绝请求提交后，原卡片会显示请求已提交，尚未确认 Chord 接受；请通过 `/status` 核查。卡片更新失败不会回滚提交；平台明确拒绝更新时可改用文本提示，更新结果未知时不重复发送。
 
 如果不确定是否有待确认请求，可以先发送 `/status`。
 
-如果待确认请求因为 Chord 进入 idle 或 gateway 清理空闲进程而过期，gateway 会发送一条英文失效提示。之后再发送 `/allow` 或 `/deny` 时，不会被当作批准或拒绝执行；gateway 只会把它作为后续上下文转发给 Chord，并明确说明不能把该消息视为确认结果。
-
-用户可见提示示例：
-
-```text
-⚠️ The pending confirmation has expired. Your response was sent as a follow-up message, not as an approval or denial.
-```
+飞书上的过期确认和失效控制会被拒绝，不再作为模型上下文转发；旧卡片不能作用于替换后的运行实例或请求。先查看 `/status`；需要新任务时明确发送任务内容。原操作仍需确认时，请让 Chord 重新发起确认。
 
 ## Handoff 请求路由
 
@@ -244,7 +248,7 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 - 后台任务结果：后台任务结束时推送，通常在 turn 已进入 idle 之后；可用 `event_visibility.background_result: false` 关闭
 - 错误或 blocked 状态
 - 工具失败
-- 生成图片：Chord 产出后转发到来源会话
+- 生成图片：Chord 产出后转发到来源微信或飞书会话
 - 上下文压力提示：仅在启用 `event_visibility.context_notice` 时推送
 - 任务长时间仍在处理时，每 5 分钟发送一次提醒
 
@@ -261,3 +265,15 @@ gateway 会向活跃 IM 推送重要控制面通知，包括：
 完成通知也会附带刚结束 turn 的紧凑摘要：时长、主 agent 与 SubAgent 报告的工具调用数、以及观察到的重试次数，例如 `✅ Chord: Ready for input (1m42s · 12 tools)`；`⏳ Chord: Ready for input; background jobs still running: N` 变体同样会附加该摘要。同一会话内的确认、交接和取消操作会保留当前工作周期内已经累计的进度。空闲时请求取消不会启动工作周期或提醒。本地 shell 的结果不会重置 agent 进度；若 agent 空闲时仍有 shell 命令未返回，完成通知会显示其数量，并继续 shell 提醒。
 
 可选的低层事件由 `event_visibility` 控制。详见 [event-visibility_CN.md](./event-visibility_CN.md)。
+
+公共收件与重启语义见[运维说明](./operations_CN.md#消息投递与重启)。公共链路对文本命令和已认证卡片操作使用同一授权与冻结目标校验。主动重试结果未知的 Question 操作时，仅在用户、运行实例、会话、请求和参数匹配，且当前目标版本通过校验时复用原操作 ID 和命令参数（包括原版本），不能因此放行无关命令；同一消息或回调的重投仍会去重。卡片更新未送达不撤销已提交操作。
+
+所有平台共享内存收件；去重只在当前进程内有效，重启不重放旧队列。
+
+微信在运行期缺少短期回复上下文时，当前内存队列中的任务保持 `received` 和原 FIFO，尚不交付给 Chord。已授权 owner 在原聊天发送新鲜的 `/status` 可建立上下文并唤醒交付，查询本身不会调用模型；普通新任务排在旧任务后。`/status` 显示等待原因 `reply_context_missing`、输入年龄及隔离数量。等待超过原 24 小时窗口会隔离，新消息不延长这个窗口。已消费任务不会因回复失败再次执行；结果未知时先在宿主机核对原会话。
+
+在公共内存收件链路中，最多四个优先控制请求可以越过普通队列；随后按普通队列原顺序处理，包括排在任务前的 shell、模型和角色设置命令。`/cancel` 在接收时捕获 Gateway 当前观察到的进程、会话和活动工作，发送前若发现目标变化则拒绝。现有 Chord 协议取消的是它处理命令时的当前活动工作，无法原子地限定为 Gateway 先前观察到的 turn；“请求已提交”不表示取消已经完成，也不会删除尚未交付的收件。
+
+## 企业微信命令与输出
+
+企业微信私聊和群文本支持本页现有控制命令，以文本进行确认与问答；只有 owner 可执行。绑定需固定主动探测成功，群回复对所有成员可见。首版只发送最终文本和后台文本结果，卡片、媒体及流式回复尚未支持。失败时先查已接受段数与原会话；结果未知不会自动重发。见[企业微信指南](./wecom_CN.md)。

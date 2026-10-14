@@ -38,7 +38,7 @@ Rotating the secret preserves the owner if the bot ID stays the same. Changing t
 
 ## Replies and failures
 
-Replies use proactive `aibot_send_msg` with an explicit private/group type, avoiding the platform’s group-first interpretation of private targets. Gateway renders safe text, escaping Markdown controls and removing notification semantics; it does not generate links, images, or cards. Segments have a conservative 1024 UTF-8 byte budget after rendering, preserve Unicode boundaries, and are limited to 32 per output with a truncation notice. The original Chord session retains the full result.
+Replies use proactive `aibot_send_msg` with an explicit private/group type, avoiding the platform’s group-first interpretation of private targets. Gateway escapes Markdown controls and neutralizes angle-bracket mention syntax. Plain `@` is preserved so `/answer @request 1` remains copyable. It does not generate links, images, or cards. Segments have a conservative 1024 UTF-8 byte budget after rendering, preserve Unicode boundaries, and are limited to 32 per output with a truncation notice. The original Chord session retains the full result.
 
 Sends are spaced at least four seconds per chat, with an account limit of two per second and burst one. Each segment waits for the preceding successful ACK. An output has a five-minute total deadline. These are project budgets and throttles; actual permissions and quotas require testing in the target enterprise.
 

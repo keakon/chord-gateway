@@ -1,6 +1,6 @@
 ---
 title: chord-gateway
-description: Connect WeChat and Feishu chats to local chord headless processes while keeping workspace access and credentials under your control.
+description: Connect WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, and Slack chats to local chord headless processes while keeping workspace access and credentials under your control.
 template: splash
 hero:
   tagline: Operate Chord from IM chats without moving the agent, credentials, or workspace access out of your own machine or server.
@@ -21,7 +21,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="Chat control plane" icon="external">
-    Connect WeChat iLink or Feishu to `chord headless` and control Chord from an IM chat, including mobile devices.
+    Connect WeChat iLink, Feishu, Telegram, WeCom, DingTalk, Discord, or Slack to `chord headless` and control Chord from an IM chat, including mobile devices.
   </Card>
   <Card title="Local-first boundary" icon="seti:lock">
     Chord processes, workspace files, runtime state, and credentials stay on your machine or server.
@@ -45,13 +45,13 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     Install [Chord](https://github.com/keakon/chord#three-step-setup) separately and make sure `chord` is on `PATH`, or set `chord_path` in the gateway config.
   </Card>
   <Card title="2. Choose an IM platform" icon="random">
-    Start with [WeChat iLink](/chord-gateway/wechat/) or [Feishu](/chord-gateway/feishu/), then keep only the adapter you need in `config.yaml`.
+    Start with [WeChat iLink](/chord-gateway/wechat/), [Feishu](/chord-gateway/feishu/), [Telegram](/chord-gateway/telegram/), [WeCom](/chord-gateway/wecom/), [DingTalk](/chord-gateway/dingtalk/), [Discord](/chord-gateway/discord/), or [Slack](/chord-gateway/slack/), then keep only the adapter you need in `config.yaml`.
   </Card>
   <Card title="3. Run the gateway" icon="seti:powershell">
     ```bash
-    chord-gateway -f config.yaml
+    chord-gateway -f config.yaml --pair
     ```
-    Send `/status` from the connected chat to verify routing and the `chord headless` child process.
+    On platforms other than Slack, send `/bind "~/workspace" <pairing_code>` privately with the code shown in the terminal, then `/status` to verify the binding. DingTalk first needs a private `hello` to verify identity. Your first task starts Chord; later starts do not need `--pair`. In Discord server channels and threads, prefix commands with `@Bot`. Slack uses `/chord bind ...` and `/chord status`; see its guide for thread commands.
   </Card>
 </CardGrid>
 
@@ -67,7 +67,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     [Open →](/chord-gateway/cookbook/)
   </Card>
   <Card title="IM integration overview" icon="document">
-    Decide between WeChat and Feishu, understand route ownership, and avoid common setup traps.
+    Decide between WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, and Slack, understand route ownership, and avoid common setup traps.
     [Open →](/chord-gateway/im/)
   </Card>
   <Card title="Configuration reference" icon="setting">
@@ -75,7 +75,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     [Open →](/chord-gateway/configuration/)
   </Card>
   <Card title="Troubleshooting" icon="rocket">
-    Startup, WeChat, Feishu, routing, and runtime issue checklists.
+    Startup, WeChat, Feishu, WeCom, DingTalk, Discord, routing, and runtime issue checklists.
     [Open →](/chord-gateway/troubleshooting/)
   </Card>
 </CardGrid>
