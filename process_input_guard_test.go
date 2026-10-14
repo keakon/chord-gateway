@@ -51,7 +51,7 @@ func TestIncomingTakeoverPreservesDisconnectedInputEvidence(t *testing.T) {
 					r.mgr.mu.Unlock()
 					return TransferStatus{State: transferStatePreflight, TransferID: req.TransferID, SessionID: req.SessionID, SourceRuntimeID: "source", Workspace: ws.Path, TargetKind: "gateway", TargetInstanceID: req.TargetInstanceID}, nil
 				}
-				if err := r.mgr.pins.Set(pinKeyForBinding(r.getConfig(), key), "original"); err != nil {
+				if err := r.mgr.pins.Set(pinKeyForBinding(key), "original"); err != nil {
 					t.Fatal(err)
 				}
 				cmd := parseTakeoverCommand("replacement --timeout 0")
@@ -79,7 +79,7 @@ func TestIncomingTakeoverPreservesDisconnectedInputEvidence(t *testing.T) {
 				if calls > 1 || phase != "preflight" && calls != 0 {
 					t.Fatalf("source calls: %d", calls)
 				}
-				if r.mgr.GetProcessForKey(key) != p || p.stoppedByGateway || r.mgr.pins.Get(pinKeyForBinding(r.getConfig(), key)) != "original" {
+				if r.mgr.GetProcessForKey(key) != p || p.stoppedByGateway || r.mgr.pins.Get(pinKeyForBinding(key)) != "original" {
 					t.Fatal("lost original process or pin")
 				}
 				if phase != "restore" && phase != "explicit replacement" && r.mgr.transferBlocked(key) {

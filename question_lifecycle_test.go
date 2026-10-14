@@ -51,33 +51,20 @@ func TestQuestionStateRejectsStaleUpdates(t *testing.T) {
 func TestFeishuQuestionCallbackKeepsCardUntilResolved(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
 	a := testFeishuAdapter(t, fc)
-	defer a.dedupe.Close()
-	msg := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
-	a.messageQueues[feishuMessageShard(msg)] = make(chan IncomingMessage, 1)
+
 	for _, requestID := range []string{"q-1", "q-2"} {
 		event := makeFeishuCardActionEvent("ou_owner", "oc_chat1", requestID, "answer")
 		event.Event.Action.Value["type"] = "question"
 		event.Event.Action.Value["value"] = "first"
 		response, err := a.handleCardActionEvent(context.Background(), event)
-		if err != nil || response == nil || response.Toast == nil || response.Card != nil {
+		if err != nil || response == nil || response.Toast == nil || response.Card != nil || response.Toast.Type != "info" {
 			t.Fatalf("response=%+v err=%v", response, err)
 		}
-		want := "info"
-		if requestID == "q-2" {
-			want = "error"
-		}
-		if response.Toast.Type != want {
-			t.Fatalf("toast=%+v, want %s", response.Toast, want)
-		}
 	}
-	<-a.messageQueues[feishuMessageShard(msg)]
-	event := makeFeishuCardActionEvent("ou_owner", "oc_chat1", "q-2", "answer")
-	event.Event.Action.Value["type"] = "question"
-	event.Event.Action.Value["value"] = "first"
-	response, err := a.handleCardActionEvent(context.Background(), event)
-	if err != nil || response == nil || response.Toast == nil || response.Toast.Type != "info" || response.Card != nil {
-		t.Fatalf("retry response=%+v err=%v", response, err)
+	if got := len(feishuTestQueue(a, IncomingMessage{})); got != 2 {
+		t.Fatalf("accepted callbacks=%d", got)
 	}
+
 }
 
 func TestQuestionSnapshotDoesNotConsumeCloseOrRevision(t *testing.T) {

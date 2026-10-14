@@ -64,9 +64,12 @@ func (r *NotificationRouter) handleSessions(ws *config.Workspace, chatID string,
 		r.sendTextForIM(r.replyPlatform(platform), chatID, "⚠️ Could not query sessions. Check the host and ensure Chord supports sessions list --json.")
 		return
 	}
+	r.sendTextForIM(r.replyPlatform(platform), chatID, formatSessionList(sessions))
+}
+
+func formatSessionList(sessions []sessionListEntry) string {
 	if len(sessions) == 0 {
-		r.sendTextForIM(r.replyPlatform(platform), chatID, "📂 No sessions found.")
-		return
+		return "📂 No sessions found."
 	}
 	var lines []string
 	for _, session := range sessions {
@@ -76,5 +79,5 @@ func (r *NotificationRouter) handleSessions(ws *config.Workspace, chatID string,
 		}
 		lines = append(lines, fmt.Sprintf("• %s (%s)%s", session.ID, session.LastActive.Local().Format("2006-01-02 15:04"), suffix))
 	}
-	r.sendTextForIM(r.replyPlatform(platform), chatID, "📂 Recent sessions:\n"+strings.Join(lines, "\n"))
+	return "📂 Recent sessions:\n" + strings.Join(lines, "\n")
 }

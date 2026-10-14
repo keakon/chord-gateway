@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/keakon/golog/log"
 )
 
 type sessionPinStore struct {
@@ -45,9 +47,32 @@ func (s *sessionPinStore) Load() error {
 	if pins == nil {
 		pins = make(map[string]string)
 	}
+	// Keys from the retired identity-scoped layout, and keys from the pre-v2
+	// pipe-joined layout (which always contains "|"; v2: base64url keys never
+	// do), can never be reached by a binding again: parseProcessKey only
+	// addresses v2: keys and Get matches exactly. They are dropped rather than
+	// rewritten so no key silently moves to a different identity; every other
+	// entry is preserved as-is. Dropped entries are counted, never logged.
+	dropped := 0
+	for key := range pins {
+		if strings.HasPrefix(key, retiredPinKeyPrefix) || strings.Contains(key, "|") {
+			delete(pins, key)
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		log.Warnf("discarding retired session pin entries count=%d", dropped)
+	}
 	s.mu.Lock()
 	s.pins = pins
 	s.mu.Unlock()
+	if dropped > 0 {
+		// Persist the cleanup while still holding persistMu (savePins does
+		// not lock) so retired entries do not linger on disk.
+		if err := s.savePins(maps.Clone(pins)); err != nil {
+			log.Warnf("persist cleaned session pins: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -71,8 +96,8 @@ func (s *sessionPinStore) savePins(pins map[string]string) error {
 	return nil
 }
 
-// Get returns the pinned sessionID for a process key (workspaceID|imType|chatID).
-// Returns the empty string if no pin exists.
+// Get returns the pinned sessionID for a process key (processKey.String(),
+// v2: encoded). Returns the empty string if no pin exists.
 func (s *sessionPinStore) Get(key string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -45,7 +45,7 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 
 ## 当前保留的兼容路径
 
-- 自动恢复 pin 按机器人账号和 owner 隔离。旧无作用域键不再恢复，详见[升级说明](../CHANGELOG_CN.md)。
+- 自动恢复 pin 按工作区和路由记录，因此在同一路由上更换平台账号时会延续原会话。本机 `pairing reset` 会连同 owner 和绑定一起清除该平台的自动 pin,重置后的路由从新会话开始。按配对身份隔离 pin 的版本所写入的条目，以及当前解析器不再寻址的 `v2:` 前管道符旧布局条目，在加载时被丢弃，不会改写到其他身份，详见[升级说明](../CHANGELOG_CN.md)。换 owner 重新配对会按单用户部署设计继承原会话；如需隔离请用 `/new` 或删除 pin。
 - YAML 中未知字段会被忽略，但会在 gateway 日志中带行号报告，便于发现拼写错误或已移除的字段。已移除的 `event_visibility.activity` 字段不再生效，活动状态跟踪始终启用。
 - 仍接受 Chord headless 对外发出的 `todos` 事件。虽然 Chord 内部也存在名为 `todos_updated` 的协议事件，但当前 headless 对外协议仍暴露 `todos`，gateway 会继续按该外部事件名处理。
 

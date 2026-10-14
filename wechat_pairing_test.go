@@ -33,8 +33,18 @@ func TestWechatPairedReadinessRequiresSuccess(t *testing.T) {
 			a.imCfg = *r.getConfig().IMConfigByType("wechat")
 			a.msgRouter = r
 			a.token.Store(&TokenData{AccountID: "bot", Token: "test-token", BaseURL: "https://example.invalid"})
+			store := NewIngressStore()
+			service := NewIngressService(store, r)
+			if err := service.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { service.Close(); store.Close() })
+			calls := 0
 			a.httpClient.Transport = imageRoundTripper(func(*http.Request) (*http.Response, error) {
-				a.cancel()
+				calls++
+				if calls > 1 {
+					a.cancel()
+				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
 			})
 			a.monitorLoop(a.ctx)
@@ -85,24 +95,10 @@ func TestWechatPairedRejectsLateAccountResponse(t *testing.T) {
 	r, _ := pairedTestRouter(t)
 	a := &WechatAdapter{imCfg: *r.getConfig().IMConfigByType("wechat"), msgRouter: r, storageDir: t.TempDir(), replyContexts: map[string]wechatReplyContext{}}
 	old := &TokenData{AccountID: "bot", Token: "old"}
-	current := &TokenData{AccountID: "different", Token: "new"}
-	a.token.Store(current)
-	a.handleIncomingMessage(ilinkMessage{MessageType: ilinkMessageTypeUser, FromUserID: "sender", MessageID: "101", ContextToken: "context", ItemList: []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "/bind /tmp/project invalid"}}}}, old)
-	if len(a.replyContexts) != 0 {
-		t.Fatal("late response populated account context")
-	}
-	a.syncBuf = "old-cursor"
-	a.savePairedSyncBuf(old)
-	if _, err := os.Stat(a.syncBufPath()); !os.IsNotExist(err) {
-		t.Fatal("late response saved cursor")
-	}
-	a.savePairedSyncBuf(current)
-	if got := a.loadSyncBuf(); got != "old-cursor" {
-		t.Fatal("current cursor missing")
-	}
-	a.token.Store(old)
-	if got := a.loadSyncBuf(); got != "" {
-		t.Fatal("cursor crossed account scope")
+	a.token.Store(&TokenData{AccountID: "different", Token: "new"})
+	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("101", "sender", "/bind /tmp/project invalid", "context"), old)
+	if result.Disposition != ReceiveRetryable || result.Reason != "transport_identity_changed" || len(a.replyContexts) != 0 {
+		t.Fatal("late response affected account", result)
 	}
 }
 
@@ -146,50 +142,38 @@ func TestResetTransferGuardPreservesIdentity(t *testing.T) {
 func TestWechatBindPreservesBoundReplyContext(t *testing.T) {
 	for _, command := range []string{"same_directory", "busy", "invalid"} {
 		t.Run(command, func(t *testing.T) {
-			r, code := pairedTestRouter(t)
-			directory := t.TempDir()
-			dispatchPairingTest(r, IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "owner", SenderID: "owner", MessageID: "pair", Text: fmt.Sprintf("/bind %q %s", directory, code)})
-			ws, err := r.getConfig().ResolveWorkspace("wechat", "owner")
+			a, s, p, _ := newWechatIngressTest(t)
+			ws, err := s.router.getConfig().ResolveWorkspace("wechat", "owner")
 			if err != nil {
 				t.Fatal(err)
 			}
-			key := (processKey{workspaceID: ws.ID, imType: "wechat", chatID: "owner"}).String()
-			a := newTestWechatAdapter(t)
-			a.imCfg = *r.getConfig().IMConfigByType("wechat")
-			a.msgRouter = r
-			a.token.Store(&TokenData{AccountID: "bot", BaseURL: "https://example.invalid"})
-			a.dedupe, err = NewDedupeStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer a.dedupe.Close()
-			sends := 0
-			a.httpClient.Transport = imageRoundTripper(func(*http.Request) (*http.Response, error) {
-				sends++
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ret":0}`)), Header: make(http.Header)}, nil
-			})
-			r.SetAdapter(a)
-			a.cachePairedContext("bot", "owner", "task-context", true)
-			text := fmt.Sprintf("/bind %q", directory)
+			text := fmt.Sprintf("/bind %q", ws.Path)
 			if command == "busy" {
-				r.mgr.procs[key] = &ChordProcess{state: ControlState{Busy: true}}
+				p.mu.Lock()
+				p.state.Busy = true
+				p.mu.Unlock()
 				text = fmt.Sprintf("/bind %q", t.TempDir())
 			} else if command == "invalid" {
 				text = "/bind"
 			}
-			a.handleIncomingMessage(ilinkMessage{MessageType: ilinkMessageTypeUser, FromUserID: "owner", MessageID: "102", ContextToken: "bind-context", ItemList: []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: text}}}})
+			a.cachePairedContext("bot", "owner", "task-context", true)
+			result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("102", "owner", text, "bind-context"), a.token.Load())
+			if result.Disposition != ReceiveAccepted {
+				t.Fatal(result)
+			}
+			waitIngressCondition(t, func() bool { record, err := s.store.Get(result.RecordID); return err == nil && record.Terminal() })
 			cacheKey := compositeKey("bot", "owner")
+			a.mu.Lock()
 			entry := a.replyContexts[cacheKey]
-			if !entry.bound || entry.token != "bind-context" {
-				t.Fatal("bind demoted or lost the bound reply context")
+			if !entry.bound || entry.token != "bind-context" || !entry.committed {
+				a.mu.Unlock()
+				t.Fatal("bind demoted or lost bound reply context")
 			}
 			entry.expires = time.Now().Add(-time.Second)
 			a.replyContexts[cacheKey] = entry
+			a.mu.Unlock()
 			if err := a.SendTextContext(context.Background(), "owner", "task result"); err != nil {
 				t.Fatal(err)
-			}
-			if sends != 2 {
-				t.Fatalf("sent %d messages, want bind reply and task result", sends)
 			}
 		})
 	}

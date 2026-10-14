@@ -57,6 +57,13 @@
 - 群聊场景下请确认机器人已经 **加入目标群聊**，否则群里发消息不会触发事件。
 - gateway 目前只处理 **文本消息**（包括 `text` 和 `post`）；入站的图片/文件等非文本消息会被忽略。生成图片的出站转发见[事件可见性](./event-visibility_CN.md#生成图片)。
 
+部署前值得了解的平台侧限制：
+
+- 长连接仅支持 **企业自建应用**；商店应用必须使用开发者服务器。
+- 每个事件必须在 **3 秒** 内处理完成，否则飞书会重推。gateway 会尽快确认并异步处理；被重推的事件在当前进程内按 `message_id` 去重。
+- 推送为 **集群模式**：同一个应用运行多个客户端时，每个事件只会被其中 **一个** 客户端收到。
+- 单个应用最多保持 **50** 条长连接。
+
 ## 第 2 步：启用交互卡片回调（强烈建议）
 
 `chord-gateway` 会在确认/提问流程中使用飞书交互卡片。
@@ -83,10 +90,11 @@
 
 - **接收消息事件**（用于订阅 `im.message.receive_v1`）
   - 这几项**不是三选一**：飞书按场景分别判断推送范围，你用到哪种场景就要开哪个：
-    - 只用 **私聊**：`im:message.p2p_msg:readonly`
-    - 用 **群聊并 @ 机器人**（仅用户消息）：`im:message.group_at_msg:readonly`
+    - 只用 **私聊**：`im:message.p2p_msg:readonly`（或 `im:message.p2p_msg`）
+    - 用 **群聊并 @ 机器人**（仅用户消息）：`im:message.group_at_msg:readonly`（或 `im:message.group_at_msg`）
     - 用 **群聊并 @ 机器人**（含其他机器人消息）：`im:message.group_at_msg.include_bot:readonly`
-    - 需要接收 **群内所有消息**（能力更强，属于敏感权限）：`im:message.group_msg`
+    - 需要接收 **群内所有用户消息**（属于敏感权限）：`im:message.group_msg`
+    - 需要接收 **群内所有消息（含其他机器人消息）**（属于敏感权限）：`im:message.group_msg.include_bot:read`
 
 > 如果私聊和群聊都要用，**两种权限都要开**。只开私聊权限时，群里 @ 机器人会静默收不到任何消息。
 
@@ -105,7 +113,7 @@
 }
 ```
 
-`im:resource` 用于上传生成图片；不用图片转发时可以省略。已有应用新增此权限后，需要发布新的应用版本。生图能力在 Chord 中启用，Chord 构建还须支持[兼容策略](./compatibility_CN.md)中的图片传输协议。
+`im:resource` 用于上传生成图片（上传接口接受不超过 10 MB 的图片，且只支持有限格式）；不用图片转发时可以省略。已有应用新增此权限后，需要发布新的应用版本。生图能力在 Chord 中启用，Chord 构建还须支持[兼容策略](./compatibility_CN.md)中的图片传输协议。
 
 如果还要用群聊，往 `tenant` 数组里追加 `im:message.group_at_msg:readonly`
 （或 `im:message.group_msg`）。
@@ -117,6 +125,7 @@
   这两个接口都接受 `im:message` 或 `im:message:send_as_bot`，因此**不需要**额外开
   `im:message:update`。
 - 不同企业/租户策略可能需要管理员审批。
+- 平台限额：消息接口整体允许 1000 次/分钟、50 次/秒，对同一用户或群组约 5 次/秒。文本消息上限 150 KB，卡片/富文本消息上限 30 KB。卡片只能在发送后 14 天内更新，单条消息更新频控 5 次/秒。gateway 会把过长的回复拆成每条不超过 4000 字符的消息。
 
 ### 3.2 任何变更后都要发布（最容易遗漏）
 
@@ -126,7 +135,7 @@
 
 常见表现：
 
-- 长连接已建立，但始终没有 `feishu: received message` 日志。
+- 长连接已建立，但始终收不到文本或卡片事件；检查飞书控制台中的订阅与权限。
 - 私聊正常但群聊毫无反应：只开了私聊接收权限，没有开对应的群聊接收权限。
 - gateway 发送消息时报错，例如：`feishu API error: code=... msg=...`。
 - 确认/提问按钮点了有效，但卡片始终不变成“已解决”状态：通常是卡片更新失败（仅支持更新发送后 14 天内的消息）。
@@ -163,9 +172,23 @@ ims:
 
 目录切换需等待工作、输入和交互完成。账号变化、配对重置与保存失败恢复见[配对指南](./pairing_CN.md)。
 
+## 接纳与运行期去重
+
+text/post 与可信卡片回调共用内存收件和 Chord 消费回执。飞书可能重推同一事件，因此按 `message_id`（gateway 的做法）而不是 `event_id` 去重。重复消息或同一回调在当前进程内去重；Gateway 重启后没有去重历史或恢复队列。旧去重文件不再读取或导入。App ID、owner、绑定和 session pin 继续使用原配置。
+
+普通群与话题群都按群授权；非 Question 卡片等待命令终态后更新结果，平台接纳提示不等于执行完成。旧控制目标、过期回调和恢复失败的 pin 不会自动改投新会话。未知结果先核查 `/status` 与 Chord 原会话。见[投递语义](./operations_CN.md#消息投递与重启)。
+
 ## 已知限制
 
 - 飞书入站处理目前仅支持 **文本消息**（`text` 和 `post`）；非文本消息会被忽略。
+
+## 官方文档参考
+
+- [使用长连接接收事件](https://open.feishu.cn/document/server-docs/event-subscription-guide/event-subscription-configure-/request-url-configuration-case)
+- [接收消息事件（`im.message.receive_v1`）](https://open.feishu.cn/document/server-docs/im-v1/message/events/receive)
+- [发送消息](https://open.feishu.cn/document/server-docs/im-v1/message/create)与[更新已发送的消息卡片](https://open.feishu.cn/document/server-docs/im-v1/message-card/patch)
+- [上传图片](https://open.feishu.cn/document/server-docs/im-v1/image/create)
+- [API 权限列表](https://open.feishu.cn/document/server-docs/application-scope/scope-list)
 
 ## 故障排查
 

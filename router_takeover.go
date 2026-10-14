@@ -439,8 +439,19 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), transferReadyTimeout)
 		defer cancel()
+		finish := func() error { return nil }
+		if r.ingressStore != nil && msg.ticket != nil {
+			var err error
+			finish, err = r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+			if err != nil {
+				r.sendTextForKey(key, chat, "⚠️ Undelivered inputs block this session change. Inspect the local inbox first.")
+				return true
+			}
+		}
 		if err := r.mgr.replaceBlockedBinding(ctx, key, cmd.SessionID); err != nil {
 			r.sendTextForKey(key, chat, "❌ Session change was not confirmed. The transfer guard remains in place.")
+		} else if finish() != nil {
+			r.sendTextForKey(key, chat, "⚠️ Session changed but the route commit is unconfirmed; inspect the local inbox.")
 		} else {
 			r.clearTransferCards(key)
 			r.sendTextForKey(key, chat, "✅ Session loaded; binding reopened.")

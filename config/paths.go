@@ -18,8 +18,6 @@ type Paths struct {
 	StateDir string
 	// LogFile is the resolved path to the gateway log file.
 	LogFile string
-	// DedupeDir is the directory for Feishu deduplication persistence.
-	DedupeDir string
 }
 
 // XDG default values.
@@ -92,15 +90,11 @@ func Resolve(configHomeOverride, configFileOverride, stateDirOverride, logFileOv
 		logFile = filepath.Join(stateDir, defaultLogFile)
 	}
 
-	// --- DedupeDir (feishu deduplication state) ---
-	dedupeDir := stateDir
-
 	return &Paths{
 		ConfigHome: configHome,
 		ConfigFile: configFile,
 		StateDir:   stateDir,
 		LogFile:    logFile,
-		DedupeDir:  dedupeDir,
 	}, nil
 }
 

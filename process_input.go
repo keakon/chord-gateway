@@ -32,8 +32,33 @@ type InputResultPayload struct {
 // SendUserMessage records only correlation IDs. A successful write is not
 // evidence that Chord consumed the input or started model work.
 func (p *ChordProcess) SendUserMessage(content string) error {
+	return p.SendUserMessageWithRequestID(content, "input-"+rand.Text())
+}
+
+// SendUserMessageWithRequestID preserves the durable caller correlation ID.
+func (p *ChordProcess) SendUserMessageWithRequestID(content, requestID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if requestID == "" {
+		return fmt.Errorf("empty input request ID")
+	}
+	if p.inputReceiptBlocked {
+		return ErrInputReceiptBackpressure
+	}
+	if _, exists := p.pendingInputs[requestID]; exists {
+		return fmt.Errorf("input request already pending")
+	}
+	if observer := p.inputObservers[requestID]; observer != nil {
+		if p.state.PendingConfirm != nil && isDoneTool(p.state.PendingConfirm.ToolName) {
+			return errIngressDonePending
+		}
+		if !p.inputObserverMatchesLocked(observer) {
+			return fmt.Errorf("input receipt identity changed")
+		}
+		if observer.receipt.Status != "" {
+			return fmt.Errorf("input receipt already resolved or uncertain")
+		}
+	}
 	if p.inputBlockedLocked() {
 		return ErrSessionTransferred
 	}
@@ -45,7 +70,7 @@ func (p *ChordProcess) SendUserMessage(content string) error {
 	}
 	// Chord also uses input IDs for durable question lifecycle operations.
 	// They must stay unique when this process resumes an existing session.
-	id := "input-" + rand.Text()
+	id := requestID
 	data, err := json.Marshal(map[string]string{"type": "send", "content": content, "request_id": id})
 	if err != nil {
 		return err
@@ -56,7 +81,11 @@ func (p *ChordProcess) SendUserMessage(content string) error {
 	p.pendingInputs[id] = struct{}{}
 	err = p.writeCommandLocked(data)
 	if err != nil {
-		delete(p.pendingInputs, id)
+		if p.inputObservers[id] == nil {
+			delete(p.pendingInputs, id)
+		} else {
+			p.queueInputReceiptLocked(id, inputUnknown, "delivery_outcome_unknown")
+		}
 	}
 	return err
 }
@@ -76,14 +105,22 @@ func (p *ChordProcess) applyInputResult(env *HeadlessEnvelope, now time.Time) bo
 	default:
 		return false
 	}
-	if _, ok := p.pendingInputs[result.RequestID]; !ok {
+	if observer := p.inputObservers[result.RequestID]; observer != nil && !p.inputObserverMatchesLocked(observer) {
 		return false
 	}
-	delete(p.pendingInputs, result.RequestID)
+	observed := p.observeInputResultLocked(&result)
+	if _, ok := p.pendingInputs[result.RequestID]; !ok && !observed {
+		return false
+	}
+	if !observed {
+		delete(p.pendingInputs, result.RequestID)
+	}
 	if result.Status == inputUnknown {
 		// This correlated outcome remains uncertain even when a newer state
 		// push overtook the receipt. Do not lose it or infer agent activity.
-		p.state.UnconfirmedInputs++
+		if !observed {
+			p.state.UnconfirmedInputs++
+		}
 		p.state.LastInputResult = &result
 		return true
 	}
@@ -101,6 +138,12 @@ func (p *ChordProcess) applyInputResult(env *HeadlessEnvelope, now time.Time) bo
 }
 
 func (p *ChordProcess) abandonPendingInputs() {
-	p.state.UnconfirmedInputs += len(p.pendingInputs)
-	p.pendingInputs = nil
+	for id := range p.pendingInputs {
+		if p.inputObservers[id] == nil {
+			p.state.UnconfirmedInputs++
+			delete(p.pendingInputs, id)
+		} else {
+			p.queueInputReceiptLocked(id, inputUnknown, "process_exited")
+		}
+	}
 }

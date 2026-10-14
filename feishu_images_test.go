@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	larkdispatcher "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
-
 	"github.com/keakon/chord-gateway/config"
 )
 
@@ -22,7 +20,7 @@ func (f imageRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 
 func TestFeishuImageUploadOutlivesJSONTimeout(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{})
-	defer a.dedupe.Close()
+
 	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 	uploads, sends := 0, 0
 	a.httpClient = &http.Client{
@@ -65,7 +63,7 @@ func TestFeishuDisconnectCancelsImageUpload(t *testing.T) {
 			a := testFeishuAdapter(t, &config.FeishuConfig{})
 			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 			connected := make(chan struct{})
-			a.runLongConn = func(ctx context.Context, _ *larkdispatcher.EventDispatcher) error {
+			a.runLongConn = func(ctx context.Context) error {
 				close(connected)
 				<-ctx.Done()
 				return ctx.Err()

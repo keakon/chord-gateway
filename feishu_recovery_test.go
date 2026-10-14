@@ -32,7 +32,7 @@ func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("%s/%d/persistent=%t", phase, tc.status, tc.persistent), func(t *testing.T) {
 				a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-				defer a.dedupe.Close()
+
 				a.accessToken, a.tokenExpireAt = "old-token", time.Now().Add(time.Hour)
 				var tokens, targetRequests atomic.Int32
 				target := "/open-apis/im/v1/messages"
@@ -79,7 +79,7 @@ func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
 
 func TestFeishuTokenCallerCancellationKeepsSharedRefresh(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-	defer a.dedupe.Close()
+
 	started, release := make(chan struct{}), make(chan struct{})
 	var requests atomic.Int32
 	a.httpClient = &http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {

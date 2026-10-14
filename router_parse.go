@@ -2,6 +2,18 @@ package main
 
 import "strings"
 
+// commandForIncomingMessage keeps text and authenticated platform actions on
+// the same command model. Admission still decides whether the caller is allowed.
+func commandForIncomingMessage(msg IncomingMessage) IMCommand {
+	if msg.ForceText {
+		return IMCommand{Type: "send", Content: msg.Text}
+	}
+	if msg.InternalAction != nil {
+		return commandFromInternalAction(msg.InternalAction)
+	}
+	return parseIMCommand(msg.Text)
+}
+
 func parseIMCommand(text string) IMCommand {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "!") {

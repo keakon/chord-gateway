@@ -18,6 +18,7 @@ import (
 
 var errBindBusy = errors.New("binding has active work")
 var errBindBlocked = errors.New("binding shutdown could not be confirmed")
+var errBindOutcomeUnknown = errors.New("binding route persistence outcome is unknown")
 
 const bindBusyMessage = "Finish or cancel active work and wait for it to stop before binding another directory."
 const bindBlockedMessage = "Binding is paused because shutdown could not be confirmed. Check the local gateway and restart."
@@ -26,6 +27,7 @@ type BindResult struct {
 	Directory         string
 	PreviousDirectory string
 	First, Already    bool
+	ConfigOutcome     CommitOutcome
 }
 type BindingService struct{ router *NotificationRouter }
 
@@ -46,9 +48,8 @@ func findBindingWorkspace(cfg *config.Config, path string, info os.FileInfo) (st
 	return found, nil
 }
 
-func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t AdmissionTicket, args []string) (BindResult, error) {
+func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t AdmissionTicket, args []string) (result BindResult, err error) {
 	r := b.router
-	result := BindResult{}
 	if !r.admission.Valid(t) {
 		return result, errPairingDenied
 	}
@@ -88,6 +89,9 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 	if phase == "blocked" || phase == "switching" {
 		return result, errBindBlocked
 	}
+	if err = b.probeBindingLocked(ctx, t, path, info); err != nil {
+		return result, err
+	}
 	oldKey := ""
 	if oldID != "" {
 		oldKey = (processKey{workspaceID: oldID, imType: msg.IMType, chatID: msg.ChatID}).String()
@@ -96,11 +100,32 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 	if workspaceID != "" {
 		newKey = (processKey{workspaceID: workspaceID, imType: msg.IMType, chatID: msg.ChatID}).String()
 	}
+	finishIngressChange, ingressErr := r.beginIngressRouteChange(ctx, t.Identity)
+	if ingressErr != nil {
+		return result, ingressErr
+	}
+	defer func() {
+		// An unpublished config snapshot cannot settle a route after an
+		// uncertain replacement. Leave changing for startup reconciliation.
+		if r.mgr.store.faulted.Load() {
+			err = errors.Join(err, errConfigFaulted)
+			g.mu.Lock()
+			g.phase = "blocked"
+			g.mu.Unlock()
+			return
+		}
+		if finishErr := finishIngressChange(); finishErr != nil {
+			err = errors.Join(err, fmt.Errorf("%w: %w", errBindOutcomeUnknown, finishErr))
+			g.mu.Lock()
+			g.phase = "blocked"
+			g.mu.Unlock()
+		}
+	}()
 	if err = r.prepareBindingSwitch(ctx, g, oldKey, newKey); err != nil {
 		return result, err
 	}
 	result.First = im.OwnerIdentity() == nil
-	_, err = r.mgr.store.Commit(ctx, ConfigMutation{
+	result.ConfigOutcome, err = r.mgr.store.Commit(ctx, ConfigMutation{
 		Check: func() error {
 			if !r.admission.Valid(t) {
 				return errPairingDenied
@@ -219,42 +244,13 @@ func (r *NotificationRouter) dispatchPaired(msg IncomingMessage) {
 			return
 		}
 		result, err := (&BindingService{router: r}).Bind(context.Background(), msg, t, args)
-		if err != nil {
-			if errors.Is(err, errPairingDenied) {
-				return
-			}
-			text := "Binding was not changed. Check the local gateway and try again."
-			if result.PreviousDirectory != "" {
-				text = fmt.Sprintf("Binding was not changed. Still bound to %s. Send a new task to continue.", displayBindingDirectory(result.PreviousDirectory))
-			}
-			switch {
-			case errors.Is(err, errInputStatusUnknown):
-				text = "Could not refresh pending input state. Binding was not changed; check /status and retry."
-			case errors.Is(err, errBindBusy):
-				text = bindBusyMessage
-			case errors.Is(err, errUnresolvedInputs):
-				text = "Binding was not changed. Input state is unresolved. Check /status for queue or storage details, then inspect the original session on the host."
-			case errors.Is(err, errBindBlocked):
-				text = bindBlockedMessage
-			case errors.Is(err, errBindDirectory):
-				text = bindDirectoryMessage
-			case errors.Is(err, errConfigChanged):
-				text = "Configuration changed on disk. Restart the gateway before binding."
-			}
+		if text := bindingReply(result, err); text != "" {
 			r.sendPairingReply(msg, text)
-			return
 		}
-		text := fmt.Sprintf("Bound to %s.", displayBindingDirectory(result.Directory))
-		if result.First {
-			text = fmt.Sprintf("Paired and bound to %s. Send a task to start.", displayBindingDirectory(result.Directory))
-		} else if result.Already {
-			text = fmt.Sprintf("Already bound to %s.", displayBindingDirectory(result.Directory))
-		}
-		r.sendPairingReply(msg, text)
 		return
 	}
 	if t.Kind == "owner_unbound" {
-		r.sendPairingReply(msg, "This chat is not bound. Send /bind <directory>.")
+		r.sendPairingReply(msg, "This chat is not bound. Send "+r.commandHint(msg.IMType, CommandTarget{ChatID: msg.ChatID, ChatKind: msg.ChatKind}, "/bind <directory>")+".")
 		return
 	}
 	t.gate.opMu.Lock()
@@ -284,4 +280,40 @@ func displayBindingDirectory(path string) string {
 		return string(runes[:509]) + "..."
 	}
 	return string(runes)
+}
+
+// bindingReply preserves actionable binding diagnostics across ingress paths.
+// Unknown persistence outcomes are classified by the caller before formatting.
+func bindingReply(result BindResult, err error) string {
+	if err != nil {
+		if errors.Is(err, errPairingDenied) {
+			return ""
+		}
+		text := "Binding was not changed. Check the local gateway and try again."
+		if result.PreviousDirectory != "" {
+			text = fmt.Sprintf("Binding was not changed. Still bound to %s. Send a new task to continue.", displayBindingDirectory(result.PreviousDirectory))
+		}
+		switch {
+		case errors.Is(err, errInputStatusUnknown):
+			text = "Could not refresh pending input state. Binding was not changed; check /status and retry."
+		case errors.Is(err, errBindBusy):
+			text = bindBusyMessage
+		case errors.Is(err, errUnresolvedInputs):
+			text = "Binding was not changed. Input state is unresolved. Check /status for queue or storage details, then inspect the original session on the host."
+		case errors.Is(err, errBindBlocked):
+			text = bindBlockedMessage
+		case errors.Is(err, errBindDirectory):
+			text = bindDirectoryMessage
+		case errors.Is(err, errConfigChanged):
+			text = "Configuration changed on disk. Restart the gateway before binding."
+		}
+		return text
+	}
+	if result.First {
+		return fmt.Sprintf("Paired and bound to %s. Send a task to start.", displayBindingDirectory(result.Directory))
+	}
+	if result.Already {
+		return fmt.Sprintf("Already bound to %s.", displayBindingDirectory(result.Directory))
+	}
+	return fmt.Sprintf("Bound to %s.", displayBindingDirectory(result.Directory))
 }

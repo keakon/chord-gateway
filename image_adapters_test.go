@@ -299,7 +299,7 @@ func TestFeishuImageSendRequiresConfirmedReceipt(t *testing.T) {
 			feishuOpenBaseURL = srv.URL
 			defer func() { feishuOpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-			defer a.dedupe.Close()
+
 			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 			a.httpClient = srv.Client()
 			err := a.SendImage("sample-chat", imageForUpload(t))
@@ -381,7 +381,7 @@ func TestFeishuImageSendRefreshRequiresFreshReceipt(t *testing.T) {
 			feishuOpenBaseURL = srv.URL
 			defer func() { feishuOpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-			defer a.dedupe.Close()
+
 			a.accessToken, a.tokenExpireAt = "old-token", time.Now().Add(time.Hour)
 			a.httpClient = srv.Client()
 			err := a.SendImage("sample-chat", imageForUpload(t))
@@ -419,7 +419,7 @@ func TestFeishuUploadRequiresExplicitSuccess(t *testing.T) {
 			feishuOpenBaseURL = srv.URL
 			defer func() { feishuOpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-			defer a.dedupe.Close()
+
 			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 			a.httpClient = srv.Client()
 			data := testImageBytes(t)
@@ -478,7 +478,7 @@ func TestFeishuPreviewNoteFailureKeepsConfirmedDelivery(t *testing.T) {
 	feishuOpenBaseURL = srv.URL
 	defer func() { feishuOpenBaseURL = oldURL }()
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-	defer a.dedupe.Close()
+
 	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 	a.httpClient = srv.Client()
 	if err := a.SendImage("sample-chat", img); err != nil {

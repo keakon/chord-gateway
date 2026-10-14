@@ -1,5 +1,5 @@
 // Package main is the chord gateway — a lightweight control plane
-// that connects IM platforms (WeChat, Feishu, etc.) to chord headless
+// that connects IM platforms (WeChat, Feishu, Slack, etc.) to chord headless
 // processes via stdio JSON protocol.
 package main
 

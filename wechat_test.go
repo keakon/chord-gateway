@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,13 +21,7 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	storageDir := filepath.Join(dir, "wechat")
-	dedupe, err := NewDedupeStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { dedupe.Close() })
 	a := &WechatAdapter{
-		dedupe:        dedupe,
 		imCfg:         config.IMAdapterConfig{Wechat: &config.WechatConfig{}},
 		storageDir:    storageDir,
 		tokenFile:     filepath.Join(storageDir, "token.json"),
@@ -37,6 +30,7 @@ func newTestWechatAdapter(t *testing.T) *WechatAdapter {
 		ctx:           ctx,
 		cancel:        cancel,
 	}
+	t.Cleanup(a.closeIngressAccount)
 	a.token.Store(&TokenData{Token: "sample-token", AccountID: "bot"})
 	return a
 }
@@ -230,7 +224,7 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 			case strings.Contains(r.URL.Path, "get_bot_qrcode"):
 				_, _ = io.WriteString(w, `{"qrcode":"qr-id","qrcode_img_content":"https://qr"}`)
 			case strings.Contains(r.URL.Path, "get_qrcode_status"):
-				_, _ = io.WriteString(w, `{"status":"confirmed","bot_token":"tok","baseurl":"https://api","ilink_bot_id":"acc","ilink_user_id":"u1"}`)
+				_, _ = io.WriteString(w, `{"status":"confirmed","bot_token":"tok","baseurl":"https://api","ilink_bot_id":"bot","ilink_user_id":"u1"}`)
 			default:
 				t.Fatalf("unexpected path %s", r.URL.Path)
 			}
@@ -277,49 +271,37 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 }
 
 func TestWechatAdapter_MessageHandling(t *testing.T) {
-	t.Run("handleIncomingMessage stores context and forwards text", func(t *testing.T) {
-		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wechat: &config.WechatConfig{}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-		mgr := newTestChordManager(cfg)
-		sender := &stubIMAdapter{typ: "wechat"}
-		stdin := &captureWriteCloser{}
-		key := (processKey{workspaceID: "ws1", imType: "wechat", chatID: "user-1"}).String()
-		mgr.procs[key] = &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, cmd: &exec.Cmd{Process: &os.Process{Pid: os.Getpid()}}}
-		router := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string)}
-		cfg.IMs[0].Wechat.Owner = &config.OwnerIdentity{AccountID: "bot", UserID: "user-1"}
-		cfg.IMs[0].Wechat.ChatBindings = map[string]string{"user-1": "ws1"}
-		store := &ConfigStore{}
-		store.snapshot.Store(cfg)
-		router.admission = NewAdmission(NewPairingService(store, false, nil))
-		mgr.admission = router.admission
-		if err := router.admission.pairing.PlatformReady("wechat", "bot"); err != nil {
-			t.Fatal(err)
+	t.Run("common ingress stores context and delivers normalized text", func(t *testing.T) {
+		a, service, _, writer := newWechatIngressTest(t)
+		msg := IncomingMessage{SenderID: "owner", ChatID: "owner"}
+		_ = service
+		result := a.receiveIncomingMessage(a.ctx, ilinkMessage{
+			FromUserID: msg.SenderID, MessageID: "103", MessageType: ilinkMessageTypeUser, ContextToken: "ctx-1",
+			ItemList: []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "hello"}}, {Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "world"}}},
+		}, a.token.Load())
+		if result.Disposition != ReceiveAccepted {
+			t.Fatal(result)
 		}
-		t.Cleanup(router.admission.Close)
-
-		a := newTestWechatAdapter(t)
-		a.msgRouter = router
-		a.notifier = router
-
-		a.handleIncomingMessage(ilinkMessage{
-			FromUserID:   "user-1",
-			MessageID:    "103",
-			MessageType:  ilinkMessageTypeUser,
-			ContextToken: "ctx-1",
-			ItemList:     []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "hello"}}, {Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "world"}}},
+		waitIngressCondition(t, func() bool {
+			for _, entry := range writer.snapshot() {
+				if entry["type"] == "send" && entry["content"] == "hello\nworld" {
+					return true
+				}
+			}
+			return false
 		})
-		if token := a.replyContexts[compositeKey("bot", "user-1")].token; token != "ctx-1" {
-			t.Fatalf("context token = %q", token)
-		}
-		out := stdin.String()
-		if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, `"content":"hello\nworld"`) {
-			t.Fatalf("stdin = %q", out)
+		a.mu.Lock()
+		contextToken := a.replyContexts[compositeKey("bot", msg.ChatID)].token
+		a.mu.Unlock()
+		if contextToken != "ctx-1" {
+			t.Fatalf("context token = %q", contextToken)
 		}
 	})
 
 	t.Run("ignores non-user and empty-text messages", func(t *testing.T) {
 		a := newTestWechatAdapter(t)
-		a.handleIncomingMessage(ilinkMessage{MessageType: ilinkMessageTypeBot, FromUserID: "u1"})
-		a.handleIncomingMessage(ilinkMessage{MessageType: ilinkMessageTypeUser, FromUserID: "u1", ItemList: []ilinkItem{{Type: 99}}})
+		a.receiveIncomingMessage(a.ctx, ilinkMessage{MessageType: ilinkMessageTypeBot, FromUserID: "u1"}, a.token.Load())
+		a.receiveIncomingMessage(a.ctx, ilinkMessage{MessageType: ilinkMessageTypeUser, FromUserID: "u1", ItemList: []ilinkItem{{Type: 99}}}, a.token.Load())
 		if len(a.replyContexts) != 0 {
 			t.Fatalf("context tokens = %#v", a.replyContexts)
 		}
@@ -473,7 +455,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 				_, _ = io.WriteString(w, `{"qrcode":"qr-id","qrcode_img_content":"https://qr"}`)
 			case strings.Contains(r.URL.Path, "get_qrcode_status"):
 				getStatus++
-				_, _ = io.WriteString(w, `{"status":"confirmed","bot_token":"new-tok","baseurl":"`+serverURL+`","ilink_bot_id":"acc","ilink_user_id":"u1"}`)
+				_, _ = io.WriteString(w, `{"status":"confirmed","bot_token":"new-tok","baseurl":"`+serverURL+`","ilink_bot_id":"bot","ilink_user_id":"u1"}`)
 			default:
 				t.Fatalf("unexpected path %s", r.URL.Path)
 			}
@@ -483,7 +465,10 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 
 		a := newTestWechatAdapter(t)
 		a.imCfg.Wechat.BaseURL = ts.URL
-		a.token.Store(&TokenData{Token: "old-tok", BaseURL: ts.URL, AccountID: "old-acc", UserID: "old-user", SavedAt: "old"})
+		service, _, _, _ := ingressTestService(t)
+		a.msgRouter = service.router
+		a.token.Store(&TokenData{Token: "old-tok", BaseURL: ts.URL, AccountID: "bot", UserID: "old-user", SavedAt: "old"})
+		t.Cleanup(a.closeIngressAccount)
 		a.saveToken()
 		ctx, ctxCancel := context.WithCancel(context.Background())
 		cancel = ctxCancel
@@ -496,7 +481,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 			t.Fatalf("getUpdates=%d getQR=%d getStatus=%d", getUpdates, getQR, getStatus)
 		}
 		tok := a.token.Load()
-		if tok == nil || tok.Token != "new-tok" || tok.AccountID != "acc" {
+		if tok == nil || tok.Token != "new-tok" || tok.AccountID != "bot" {
 			t.Fatalf("token after re-login = %#v", tok)
 		}
 		loaded := a.loadToken()
@@ -505,22 +490,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		}
 	})
 
-	t.Run("sync buf persistence round trip and invalid file", func(t *testing.T) {
-		a := newTestWechatAdapter(t)
-		a.syncBuf = "next-buf"
-		a.saveSyncBuf()
-		if got := a.loadSyncBuf(); got != "next-buf" {
-			t.Fatalf("loadSyncBuf = %q", got)
-		}
-		if err := os.WriteFile(a.syncBufPath(), []byte("not-json"), 0o600); err != nil {
-			t.Fatalf("write invalid sync buf file: %v", err)
-		}
-		if got := a.loadSyncBuf(); got != "" {
-			t.Fatalf("invalid sync buf should return empty string, got %q", got)
-		}
-	})
-
-	t.Run("NewWechatAdapter loads persisted files", func(t *testing.T) {
+	t.Run("NewWechatAdapter loads credentials without starting legacy writers", func(t *testing.T) {
 		dir := t.TempDir()
 		wechatDir := filepath.Join(dir, "wechat")
 		if err := os.MkdirAll(wechatDir, 0o700); err != nil {
@@ -544,7 +514,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 			t.Fatalf("NewWechatAdapter error = %v", err)
 		}
 		tok := a.token.Load()
-		if tok == nil || tok.Token != "tok" || a.syncBuf != "sync-1" {
+		if tok == nil || tok.Token != "tok" || a.syncBuf != "" {
 			t.Fatalf("adapter token=%#v syncBuf=%q", tok, a.syncBuf)
 		}
 	})

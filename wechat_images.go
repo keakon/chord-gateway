@@ -82,13 +82,34 @@ func encryptILinkImage(data, key []byte) ([]byte, error) {
 }
 
 func (a *WechatAdapter) SendImage(chatID string, image *ReceivedImage) error {
-	return a.SendImageContext(a.ctx, chatID, image)
+	return a.SendImageContext(a.adapterContext(), chatID, image)
 }
 func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, image *ReceivedImage) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	a.mu.Lock()
+	stopped, connection := a.stopped, a.ctx
+	a.mu.Unlock()
+	if stopped {
+		return context.Canceled
+	}
+	ctx, cancelConnection := context.WithCancel(ctx)
+	defer cancelConnection()
+	if connection != nil {
+		stop := context.AfterFunc(connection, cancelConnection)
+		defer stop()
+		if connection.Err() != nil {
+			cancelConnection()
+		}
+	}
 	account := a.token.Load()
+	if account == nil {
+		return fmt.Errorf("account unavailable")
+	}
+	if expected, ok := ctx.Value(replyAccountContextKey{}).(string); ok && account.AccountID != expected {
+		return fmt.Errorf("account changed")
+	}
 	release, err := acquireImageUpload(ctx)
 	if err != nil {
 		return err
@@ -111,6 +132,9 @@ func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, ima
 		return err
 	}
 	post := func(path string, body any) (*http.Response, error) {
+		if a.token.Load() != account {
+			return nil, fmt.Errorf("account changed")
+		}
 		return a.apiPostSnapshot(ctx, account, path, body)
 	}
 	resp, err := post("ilink/bot/getuploadurl", map[string]any{"filekey": hex.EncodeToString(fileKey), "media_type": 1, "to_user_id": chatID, "rawsize": len(data), "rawfilemd5": hex.EncodeToString(digest[:]), "filesize": len(ciphertext), "no_need_thumb": true, "aeskey": keyHex, "base_info": ilinkBaseInfo{ChannelVersion: ilinkChannelVersion}})
@@ -139,6 +163,9 @@ func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, ima
 	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 		return fmt.Errorf("invalid WeChat media upload URL")
 	}
+	if a.token.Load() != account {
+		return fmt.Errorf("account changed")
+	}
 	ctx, cancel := context.WithTimeout(ctx, ilinkMediaUploadTimeout)
 	defer cancel()
 	downloadParam, err := a.uploadILinkMedia(ctx, uploadURL, ciphertext)
@@ -149,10 +176,6 @@ func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, ima
 	a.mu.Lock()
 	token := ""
 
-	if account == nil {
-		a.mu.Unlock()
-		return fmt.Errorf("account unavailable")
-	}
 	reply := a.replyContexts[compositeKey(account.AccountID, chatID)]
 	if reply.bound || time.Now().Before(reply.expires) {
 		token = reply.token

@@ -18,9 +18,6 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/gorilla/websocket"
-	larkdispatcher "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
-	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
-	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/keakon/chord-gateway/config"
@@ -28,8 +25,6 @@ import (
 
 const (
 	feishuMaxTextLen       = 4000
-	feishuQueueSize        = 256
-	feishuDispatchShards   = 8
 	feishuDefaultPing      = 2 * time.Minute
 	feishuDefaultReconnect = 2 * time.Minute
 	feishuFragmentTTL      = 5 * time.Second
@@ -82,7 +77,7 @@ type FeishuAdapter struct {
 	notifier  SessionLoginNotifier // delivers async session/login notices
 
 	// Outbound HTTP keeps receipt validation, error classification and media
-	// deadlines under the adapter's control. The SDK handles inbound events;
+	// deadlines under the adapter's control. Inbound events use shared ingress;
 	// an unconfirmed outbound message is never replayed.
 	httpClient *http.Client
 
@@ -90,11 +85,13 @@ type FeishuAdapter struct {
 	tokenExpireAt time.Time
 	mu            sync.Mutex
 	tokenRefresh  *feishuTokenRefresh
+	textSender    *IMTextSender
 	ctx           context.Context
 	cancel        context.CancelFunc
 
-	connMu sync.Mutex
-	conn   *websocket.Conn
+	connMu     sync.Mutex
+	conn       *websocket.Conn
+	generation *feishuConnectionGeneration
 
 	writeMu sync.Mutex
 
@@ -104,14 +101,13 @@ type FeishuAdapter struct {
 	intervalMu        sync.RWMutex
 	pingInterval      time.Duration
 	reconnectInterval time.Duration
-	runLongConn       func(context.Context, *larkdispatcher.EventDispatcher) error
+	runLongConn       func(context.Context) error
 
-	// Async message queues. A chat always hashes to the same shard, preserving
-	// per-chat ordering while allowing unrelated chats to make progress.
-	messageQueues [feishuDispatchShards]chan IncomingMessage
-	queueMetrics  queueMetrics
-	dedupe        *DedupeStore
-	wg            sync.WaitGroup
+	// The gateway owns in-memory acceptance and dispatch. This adapter only owns
+	// transport generations and bounded response workers.
+	connectDone   chan struct{}
+	stopped       bool
+	activeAccount string
 }
 
 type feishuTokenRefresh struct {
@@ -136,17 +132,7 @@ func NewFeishuAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
 	}
-	for i := range a.messageQueues {
-		a.messageQueues[i] = make(chan IncomingMessage, feishuQueueSize)
-	}
 	a.runLongConn = a.runLongConnection
-
-	// Initialize dedupe store.
-	dedupe, err := NewDedupeStore(paths.DedupeDir)
-	if err != nil {
-		return nil, fmt.Errorf("feishu: init dedupe store: %w", err)
-	}
-	a.dedupe = dedupe
 
 	return a, nil
 }
@@ -168,67 +154,83 @@ func (a *FeishuAdapter) StartLogin() (string, error) {
 	return "", ErrLoginNotSupported
 }
 
-// Connect starts the adapter: validates credentials, starts the async queue
-// consumer, establishes a Feishu long connection, and blocks until Disconnect
-// is called or a fatal error occurs.
+// Connect validates credentials, locks and prepares the account, and supervises
+// its long connection until Disconnect or a fatal error.
 func (a *FeishuAdapter) Connect() error {
-	if a.msgRouter == nil {
-		return fmt.Errorf("feishu: router not configured")
+	r, ok := a.msgRouter.(*NotificationRouter)
+	if !ok || r.ingress == nil || !r.ingress.Available() {
+		return fmt.Errorf("feishu: in-memory ingress is required")
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
-	a.ctx = ctx
-	a.cancel = cancel
-	a.mu.Unlock()
-	defer cancel()
-	defer a.closeConn()
-	defer a.dedupe.Close()
-
-	// Get initial access token to validate credentials.
-	if _, err := a.getAccessToken(ctx); err != nil {
-		log.Errorf("feishu: failed to get access token error=%v", err)
+	if a.stopped || a.connectDone != nil {
+		a.mu.Unlock()
 		cancel()
+		return fmt.Errorf("feishu: adapter already started or stopped")
+	}
+	a.ctx, a.cancel = ctx, cancel
+	done := make(chan struct{})
+	a.connectDone = done
+	a.mu.Unlock()
+	var accountLocks *instanceLocks
+	defer close(done)
+	defer func() {
+		cancel()
+		a.closeConn()
+		a.mu.Lock()
+		refresh := a.tokenRefresh
+		a.mu.Unlock()
+		if refresh != nil {
+			<-refresh.done
+		}
+		if accountLocks != nil {
+			accountLocks.Close()
+		}
+	}()
+	fc := a.feishuConfig()
+	if fc == nil || fc.AppID == "" {
+		return fmt.Errorf("feishu: missing account identity")
+	}
+	account := fc.AppID
+	a.mu.Lock()
+	a.activeAccount = account
+	a.mu.Unlock()
+	if _, err := a.getAccessToken(ctx); err != nil {
 		if a.notifier != nil {
 			a.notifier.HandleSessionExpired("feishu")
 		}
 		return fmt.Errorf("feishu: initial access token: %w", err)
 	}
-
-	// Start one consumer per stable chat shard.
-	a.wg.Add(len(a.messageQueues))
-	for _, queue := range a.messageQueues {
-		go a.queueConsumer(ctx, queue)
+	var err error
+	accountLocks, err = AcquireIMAccountLock("feishu", account)
+	if err != nil {
+		return fmt.Errorf("feishu: account lock: %w", err)
 	}
-
-	dispatcher := larkdispatcher.NewEventDispatcher("", "").
-		OnP2MessageReceiveV1(a.handleMessageEvent).
-		OnP2CardActionTrigger(a.handleCardActionEvent)
-	dispatcher.Config.Logger = feishuSafeEventLogger{}
-
+	if err := a.prepareIngressAccount(ctx, r, account); err != nil {
+		return fmt.Errorf("feishu: prepare in-memory ingress: %w", err)
+	}
 	for {
-		err := a.runLongConn(ctx, dispatcher)
+		if fc := a.feishuConfig(); fc == nil || fc.AppID != account {
+			return fmt.Errorf("feishu: account identity changed; restart required")
+		}
+		err := a.runLongConn(ctx)
 		if ctx.Err() != nil {
-			a.wg.Wait()
 			return nil
 		}
 		if err != nil {
 			var clientErr *larkws.ClientError
 			if errors.As(err, &clientErr) {
-				cancel()
-				a.wg.Wait()
 				return fmt.Errorf("feishu long connection: %w", err)
 			}
 			log.Warnf("feishu: long connection dropped, retrying error=%v retry_in=%v", err, a.currentReconnectInterval())
 		}
 		if !sleepCtx(ctx, a.currentReconnectInterval()) {
-			a.wg.Wait()
 			return nil
 		}
 	}
 }
 
-func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkdispatcher.EventDispatcher) error {
+func (a *FeishuAdapter) runLongConnection(ctx context.Context) error {
 	connURL, err := a.getLongConnURL(ctx)
 	if err != nil {
 		return err
@@ -248,23 +250,29 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkd
 		return fmt.Errorf("feishu long connection dial failed")
 	}
 	defer conn.Close()
+	conn.SetReadLimit(1 << 20)
 
-	connCtx, cancelPing := context.WithCancel(ctx)
-	defer cancelPing()
-
-	a.setConn(conn)
+	generation := a.startGeneration(ctx, conn)
 	defer a.clearConn(conn)
+	defer generation.close()
+	if generation.ctx.Err() != nil {
+		return nil
+	}
 
 	log.Infof("feishu adapter: long connection established")
 	if r, ok := a.msgRouter.(*NotificationRouter); ok && r.admission != nil {
-		if err := r.admission.pairing.PlatformReady("feishu", a.feishuConfig().AppID); err != nil {
+		fc := a.feishuConfig()
+		if fc == nil || !a.matchesActiveAccount(fc.AppID) {
+			return fmt.Errorf("feishu: account identity changed during connection")
+		}
+		if err := r.admission.pairing.PlatformReady("feishu", fc.AppID); err != nil {
 			return err
 		}
 		defer r.admission.pairing.PlatformUnavailable("feishu")
 	}
 
 	pingErrCh := make(chan error, 1)
-	go a.pingLoop(connCtx, conn, int32(serviceID), pingErrCh)
+	generation.wg.Go(func() { a.pingLoop(generation.ctx, conn, int32(serviceID), pingErrCh) })
 
 	for {
 		mt, msg, err := conn.ReadMessage()
@@ -285,7 +293,7 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkd
 			log.Warnf("feishu: ignoring non-binary websocket message message_type=%v", mt)
 			continue
 		}
-		if err := a.handleWSFrame(ctx, conn, dispatcher, msg); err != nil {
+		if err := a.handleWSFrame(generation.ctx, conn, msg); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -296,8 +304,8 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context, dispatcher *larkd
 
 func (a *FeishuAdapter) getLongConnURL(ctx context.Context) (string, error) {
 	fc := a.feishuConfig()
-	if fc == nil {
-		return "", fmt.Errorf("feishu: config missing")
+	if fc == nil || !a.matchesActiveAccount(fc.AppID) {
+		return "", fmt.Errorf("feishu: account config missing or changed")
 	}
 	reqBody := map[string]string{
 		"AppID":     fc.AppID,
@@ -418,12 +426,13 @@ func (a *FeishuAdapter) pingLoop(ctx context.Context, conn *websocket.Conn, serv
 			case errCh <- fmt.Errorf("feishu long connection ping: %w", err):
 			default:
 			}
+			_ = conn.Close()
 			return
 		}
 	}
 }
 
-func (a *FeishuAdapter) handleWSFrame(ctx context.Context, conn *websocket.Conn, dispatcher *larkdispatcher.EventDispatcher, msg []byte) error {
+func (a *FeishuAdapter) handleWSFrame(ctx context.Context, conn *websocket.Conn, msg []byte) error {
 	var frame larkws.Frame
 	if err := frame.Unmarshal(msg); err != nil {
 		return fmt.Errorf("feishu long connection unmarshal frame: %w", err)
@@ -434,7 +443,7 @@ func (a *FeishuAdapter) handleWSFrame(ctx context.Context, conn *websocket.Conn,
 		a.handleControlFrame(frame)
 		return nil
 	case larkws.FrameTypeData:
-		return a.handleDataFrame(ctx, conn, dispatcher, frame)
+		return a.handleDataFrame(ctx, conn, frame)
 	default:
 		return nil
 	}
@@ -456,7 +465,7 @@ func (a *FeishuAdapter) handleControlFrame(frame larkws.Frame) {
 	}
 }
 
-func (a *FeishuAdapter) handleDataFrame(ctx context.Context, conn *websocket.Conn, dispatcher *larkdispatcher.EventDispatcher, frame larkws.Frame) error {
+func (a *FeishuAdapter) handleDataFrame(ctx context.Context, conn *websocket.Conn, frame larkws.Frame) error {
 	hs := larkws.Headers(frame.Headers)
 	sum := hs.GetInt(larkws.HeaderSum)
 	seq := hs.GetInt(larkws.HeaderSeq)
@@ -472,56 +481,18 @@ func (a *FeishuAdapter) handleDataFrame(ctx context.Context, conn *websocket.Con
 		}
 	}
 
-	var err error
-	var rsp any
-	start := time.Now()
 	switch larkws.MessageType(msgType) {
 	case larkws.MessageTypeEvent, larkws.MessageTypeCard:
-		rsp, err = dispatcher.Do(ctx, payload)
-		if err != nil {
-			var notFoundErr *larkdispatcher.NotFoundEventHandlerErr
-			if errors.As(err, &notFoundErr) {
-				log.Debugf("feishu: no handler for subscribed event")
-				err = nil
-			}
-		}
+		return a.submitDataFrame(ctx, conn, frame, payload)
 	default:
 		return nil
 	}
-	bizRT := time.Since(start).Milliseconds()
-	hs.Add(larkws.HeaderBizRt, strconv.FormatInt(bizRT, 10))
-
-	resp := larkws.NewResponseByCode(http.StatusOK)
-	if err != nil {
-		resp = larkws.NewResponseByCode(http.StatusInternalServerError)
-	} else if rsp != nil {
-		resp.Data, err = json.Marshal(rsp)
-		if err != nil {
-			resp = larkws.NewResponseByCode(http.StatusInternalServerError)
-		}
-	}
-
-	if err != nil {
-		log.Errorf("feishu: handle long connection message failed bytes=%v", len(payload))
-	}
-
-	respPayload, marshalErr := json.Marshal(resp)
-	if marshalErr != nil {
-		return fmt.Errorf("feishu long connection marshal response: %w", marshalErr)
-	}
-	frame.Payload = respPayload
-	frame.Headers = hs
-	bs, marshalFrameErr := frame.Marshal()
-	if marshalFrameErr != nil {
-		return fmt.Errorf("feishu long connection marshal frame: %w", marshalFrameErr)
-	}
-	if writeErr := a.writeBinary(conn, bs); writeErr != nil {
-		return fmt.Errorf("feishu long connection write response: %w", writeErr)
-	}
-	return nil
 }
 
 func (a *FeishuAdapter) combinePayload(msgID string, sum, seq int, chunk []byte) []byte {
+	if msgID == "" || sum < 1 || sum > 128 || seq < 0 || seq >= sum || len(chunk) > 1<<20 {
+		return nil
+	}
 	now := time.Now()
 	a.fragmentsMu.Lock()
 	defer a.fragmentsMu.Unlock()
@@ -534,12 +505,23 @@ func (a *FeishuAdapter) combinePayload(msgID string, sum, seq int, chunk []byte)
 
 	buf, ok := a.fragments[msgID]
 	if !ok || len(buf.parts) != sum {
+		if !ok && len(a.fragments) >= 128 {
+			return nil
+		}
 		buf = feishuFragmentBuffer{
 			parts:     make([][]byte, sum),
 			expiresAt: now.Add(feishuFragmentTTL),
 		}
 	}
-	if seq < 0 || seq >= sum {
+	// Count incomplete buffers too: waiting for a missing part must not let
+	// retained chunks exceed the complete-message budget.
+	total := len(chunk)
+	for index, part := range buf.parts {
+		if index != seq {
+			total += len(part)
+		}
+	}
+	if total > 1<<20 {
 		delete(a.fragments, msgID)
 		return nil
 	}
@@ -547,12 +529,10 @@ func (a *FeishuAdapter) combinePayload(msgID string, sum, seq int, chunk []byte)
 	buf.expiresAt = now.Add(feishuFragmentTTL)
 	a.fragments[msgID] = buf
 
-	total := 0
 	for _, part := range buf.parts {
 		if len(part) == 0 {
 			return nil
 		}
-		total += len(part)
 	}
 
 	payload := make([]byte, 0, total)
@@ -566,13 +546,16 @@ func (a *FeishuAdapter) combinePayload(msgID string, sum, seq int, chunk []byte)
 func (a *FeishuAdapter) writeBinary(conn *websocket.Conn, data []byte) error {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
-	return conn.WriteMessage(websocket.BinaryMessage, data)
-}
-
-func (a *FeishuAdapter) setConn(conn *websocket.Conn) {
 	a.connMu.Lock()
-	defer a.connMu.Unlock()
-	a.conn = conn
+	stale := a.conn != nil && a.conn != conn
+	a.connMu.Unlock()
+	if stale {
+		return fmt.Errorf("feishu: stale connection generation")
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(feishuWriteTimeout)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.BinaryMessage, data)
 }
 
 func (a *FeishuAdapter) clearConn(conn *websocket.Conn) {
@@ -580,15 +563,19 @@ func (a *FeishuAdapter) clearConn(conn *websocket.Conn) {
 	defer a.connMu.Unlock()
 	if conn == nil || a.conn == conn {
 		a.conn = nil
+		a.generation = nil
 	}
 }
 
 func (a *FeishuAdapter) closeConn() {
 	a.connMu.Lock()
-	defer a.connMu.Unlock()
-	if a.conn != nil {
-		_ = a.conn.Close()
-		a.conn = nil
+	conn, generation := a.conn, a.generation
+	a.connMu.Unlock()
+	if generation != nil {
+		generation.cancel()
+	}
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 
@@ -598,247 +585,27 @@ func (a *FeishuAdapter) SendText(chatID, text string) error {
 	return a.SendTextContext(a.connectionContext(), chatID, text)
 }
 func (a *FeishuAdapter) SendTextContext(ctx context.Context, chatID, text string) error {
-	chunks := splitText(text, feishuMaxTextLen)
-	for i, chunk := range chunks {
-		if _, err := a.sendMessageContext(ctx, chatID, "text", map[string]string{"text": chunk}, false); err != nil {
-			return fmt.Errorf("send chunk %d/%d: %w", i+1, len(chunks), err)
-		}
+	sender, err := a.feishuTextSender()
+	if err != nil {
+		return err
 	}
-	return nil
+	return sender.Send(ctx, a.connectionContext(), nil, chatID, text, false)
 }
 
-// Disconnect signals the adapter to stop and shuts down the long connection.
-// dedupe is closed by Connect's deferred cleanup; we only need to cancel here.
+// Disconnect closes acceptance and joins transport/response workers. The shared
+// ingress database remains owned by the gateway.
 func (a *FeishuAdapter) Disconnect() {
 	a.mu.Lock()
-	cancel := a.cancel
+	a.stopped = true
+	cancel, done := a.cancel, a.connectDone
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
 	a.closeConn()
-}
-
-// queueConsumer reads messages from the queue and dispatches them.
-func (a *FeishuAdapter) queueConsumer(ctx context.Context, queue <-chan IncomingMessage) {
-	defer a.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			// Drain remaining messages from the queue.
-			for {
-				select {
-				case msg := <-queue:
-					a.dispatchMessage(msg)
-					a.queueMetrics.processed.Add(1)
-				default:
-					return
-				}
-			}
-		case msg := <-queue:
-			a.dispatchMessage(msg)
-			a.queueMetrics.processed.Add(1)
-		}
+	if done != nil {
+		<-done
 	}
-}
-
-// dispatchMessage routes a queued message through the router.
-func (a *FeishuAdapter) dispatchMessage(msg IncomingMessage) {
-	log.Debugf("feishu: dispatching queued message chat_id=%v sender_id=%v message_id=%v", msg.ChatID,
-		msg.SenderID,
-		msg.MessageID,
-	)
-	if a.msgRouter != nil {
-		a.msgRouter.HandleIncomingMessage(msg)
-	}
-}
-
-func (a *FeishuAdapter) handleMessageEvent(_ context.Context, event *larkim.P2MessageReceiveV1) error {
-	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Sender == nil || event.Event.Sender.SenderId == nil {
-		return nil
-	}
-
-	message := event.Event.Message
-	messageType := derefString(message.MessageType)
-	contentRaw := derefString(message.Content)
-	contentText, err := parseFeishuMessageText(messageType, contentRaw)
-	if err != nil {
-		log.Errorf("feishu: failed to parse message content bytes=%v", len(contentRaw))
-		return nil
-	}
-	if strings.TrimSpace(contentText) == "" {
-		log.Debugf("feishu: ignoring empty message msg_type=%v", messageType)
-		return nil
-	}
-
-	fc := a.feishuConfig()
-	if fc == nil {
-		return nil
-	}
-	appID := fc.AppID
-	senderOpenID := derefString(event.Event.Sender.SenderId.OpenId)
-	chatID := derefString(message.ChatId)
-	messageID := derefString(message.MessageId)
-
-	msg := IncomingMessage{IMType: "feishu", AccountID: appID, ChatKind: pairedChatKind(derefString(message.ChatType)), ChatID: chatID, SenderID: senderOpenID, MessageID: messageID, Text: contentText, AppID: appID}
-	if derefString(event.Event.Sender.SenderType) != "user" {
-		return nil
-	}
-	if event.EventV2Base != nil && event.EventV2Base.Header != nil && event.EventV2Base.Header.AppID != "" && event.EventV2Base.Header.AppID != appID {
-		return nil
-	}
-	var allowed bool
-	msg, allowed = admittedMessage(a.msgRouter, msg)
-	if !allowed {
-		return nil
-	}
-
-	dedupeKey := scopedMessageKey("feishu", appID, chatID, messageID)
-
-	if !a.dedupe.TryBegin(dedupeKey) {
-		log.Debugf("feishu: duplicate message, skipping message_id=%v chat_id=%v", messageID, chatID)
-		return nil
-	}
-
-	log.Debugf("feishu: accepted message bytes=%v", len(contentText))
-	if a.enqueueIncomingMessage(msg) {
-		a.dedupe.Commit(dedupeKey)
-	} else {
-		a.dedupe.Release(dedupeKey)
-	}
-	return nil
-}
-
-func (a *FeishuAdapter) handleCardActionEvent(_ context.Context, event *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
-	if event == nil || event.Event == nil || event.Event.Action == nil || event.Event.Context == nil {
-		return nil, nil
-	}
-
-	chatID := event.Event.Context.OpenChatID
-	fc := a.feishuConfig()
-	if fc == nil {
-		return nil, nil
-	}
-	senderOpenID := ""
-	if event.Event.Operator != nil {
-		senderOpenID = event.Event.Operator.OpenID
-	}
-
-	if event.EventV2Base != nil && event.EventV2Base.Header != nil && event.EventV2Base.Header.AppID != "" && event.EventV2Base.Header.AppID != fc.AppID {
-		return nil, nil
-	}
-	owner := fc.Owner
-	if owner == nil || owner.AccountID != fc.AppID || owner.UserID != senderOpenID {
-		return nil, nil
-	}
-
-	requestID, _ := event.Event.Action.Value["request_id"].(string)
-	actionType, _ := event.Event.Action.Value["type"].(string)
-	action, _ := event.Event.Action.Value["action"].(string)
-	value, _ := event.Event.Action.Value["value"].(string)
-	contextIMType, _ := event.Event.Action.Value["im_type"].(string)
-	contextChatID, _ := event.Event.Action.Value["chat_id"].(string)
-	if requestID == "" || actionType == "" || contextChatID == "" || contextIMType != "feishu" || contextChatID != chatID {
-		log.Warnf("feishu: stale/wrong-context card action ignored request_id=%v chat_id=%v context_chat_id=%v action_type=%v", requestID, chatID, contextChatID, actionType)
-		return nil, nil
-	}
-	formAnswers, err := feishuQuestionFormAnswers(event.Event.Action.FormValue)
-	if err != nil {
-		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "error", Content: "Could not read your selection. Please reply with /answer instead."}}, nil
-	}
-	if event.Event.Action.Name == feishuQuestionSubmitName && len(formAnswers) == 0 {
-		// The submit button was clicked with nothing checked. Answer the click
-		// directly instead of dispatching an empty answer, so the user gets
-		// immediate feedback; no state changed, so nothing is deduped.
-		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "warning", Content: "Select at least one option, then submit."}}, nil
-	}
-	if !isValidFeishuCardAction(actionType, action, value, formAnswers) {
-		log.Warnf("feishu: invalid card action ignored request_id=%v chat_id=%v action_type=%v action=%v", requestID, chatID, actionType, action)
-		return nil, nil
-	}
-
-	// Deduplicate transport redelivery, not a later deliberate click. Question
-	// retries are correlated with their original Core operation by the router.
-	if event.EventV2Base == nil || event.EventV2Base.Header == nil || event.EventV2Base.Header.EventID == "" {
-		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "error", Content: "Could not identify this interaction. Please try again."}}, nil
-	}
-	eventID := event.EventV2Base.Header.EventID
-	dedupeKey := scopedMessageKey("feishu-card", fc.AppID, chatID, eventID)
-
-	if !a.dedupe.TryBegin(dedupeKey) {
-		log.Debugf("feishu: duplicate card action, skipping request_id=%v action_type=%v chat_id=%v", requestID, actionType, chatID)
-		return nil, nil
-	}
-
-	bindingInstanceID, _ := event.Event.Action.Value["binding_instance_id"].(string)
-	msg := IncomingMessage{IMType: "feishu", ChatID: chatID, SenderID: senderOpenID, MessageID: eventID, AppID: fc.AppID, InternalAction: &InternalAction{BindingInstanceID: bindingInstanceID, Type: actionType, Action: action, RequestID: requestID, Value: value, Values: formAnswers, Handle: InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
-	msg.AccountID = fc.AppID
-	msg.ChatKind = "group"
-	var allowed bool
-	msg, allowed = admittedMessage(a.msgRouter, msg)
-	if !allowed {
-		a.dedupe.Release(dedupeKey)
-		return nil, nil
-	}
-
-	if a.enqueueIncomingMessage(msg) {
-		a.dedupe.Commit(dedupeKey)
-	} else {
-		a.dedupe.Release(dedupeKey)
-		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "error", Content: "Could not queue your response. Please try again."}}, nil
-	}
-	if actionType == "question" {
-		// Keep the question usable until Chord publishes its terminal event.
-		return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "Received. Processing..."}}, nil
-	}
-	return &larkcallback.CardActionTriggerResponse{Toast: &larkcallback.Toast{Type: "info", Content: "Received. Processing..."}, Card: &larkcallback.Card{Type: "raw", Data: buildFeishuResolvedCard("Processing", "⌛ Your response was received and is being processed.", "blue")}}, nil
-}
-
-func (a *FeishuAdapter) enqueueIncomingMessage(msg IncomingMessage) bool {
-	queue := a.messageQueues[feishuMessageShard(msg)]
-	select {
-	case queue <- msg:
-		a.queueMetrics.enqueued.Add(1)
-		return true
-	default:
-		a.queueMetrics.full.Add(1)
-		log.Errorf("feishu: message queue full, dropping message chat_id=%v message_id=%v", msg.ChatID, msg.MessageID)
-		return false
-	}
-}
-
-func (a *FeishuAdapter) metricsSnapshot() queueMetricsSnapshot {
-	if a == nil {
-		return queueMetricsSnapshot{}
-	}
-	depth := 0
-	maxDepth := 0
-	capacity := 0
-	for _, queue := range a.messageQueues {
-		queued := len(queue)
-		depth += queued
-		if queued > maxDepth {
-			maxDepth = queued
-		}
-		capacity += cap(queue)
-	}
-	return a.queueMetrics.snapshot(depth, maxDepth, capacity)
-}
-
-func feishuMessageShard(msg IncomingMessage) int {
-	const offset64 = uint64(14695981039346656037)
-	const prime64 = uint64(1099511628211)
-	hash := offset64
-	for i := 0; i < len(msg.AppID); i++ {
-		hash ^= uint64(msg.AppID[i])
-		hash *= prime64
-	}
-	hash *= prime64
-	for i := 0; i < len(msg.ChatID); i++ {
-		hash ^= uint64(msg.ChatID[i])
-		hash *= prime64
-	}
-	return int(hash % uint64(feishuDispatchShards))
 }
 
 // --- Access token management ---
@@ -859,9 +626,19 @@ func (a *FeishuAdapter) connectionContext() context.Context {
 	return context.Background()
 }
 
+func (a *FeishuAdapter) matchesActiveAccount(account string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return !a.stopped && (a.activeAccount == "" || a.activeAccount == account)
+}
+
 func (a *FeishuAdapter) getAccessToken(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	fc := a.feishuConfig()
+	if fc == nil || !a.matchesActiveAccount(fc.AppID) {
+		return "", fmt.Errorf("feishu: account config missing or changed")
 	}
 	a.mu.Lock()
 	if a.accessToken != "" && time.Now().Before(a.tokenExpireAt) {
@@ -907,8 +684,8 @@ func (a *FeishuAdapter) getAccessToken(ctx context.Context) (string, error) {
 
 func (a *FeishuAdapter) fetchAccessToken(ctx context.Context) (string, time.Time, error) {
 	fc := a.feishuConfig()
-	if fc == nil {
-		return "", time.Time{}, fmt.Errorf("feishu: config missing")
+	if fc == nil || !a.matchesActiveAccount(fc.AppID) {
+		return "", time.Time{}, fmt.Errorf("feishu: account config missing or changed")
 	}
 	body, err := json.Marshal(map[string]string{
 		"app_id":     fc.AppID,
@@ -981,6 +758,11 @@ func (a *FeishuAdapter) doFeishuJSONRequest(ctx context.Context, method, url str
 	}
 	defer resp.Body.Close()
 
+	// Only the shared text sender retries explicit rate-limit rejections. Card
+	// and image outcomes keep their existing conservative classification.
+	if resp.StatusCode == http.StatusTooManyRequests && isFeishuTextRequest(reqBody) {
+		return &IMRateLimitError{RetryAfter: feishuTextRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+	}
 	if isAmbiguousDeliveryStatus(resp.StatusCode) {
 		return fmt.Errorf("%w: feishu HTTP %d", errDeliveryOutcomeUnknown, resp.StatusCode)
 	}
@@ -1046,3 +828,5 @@ func (a *FeishuAdapter) updateInteractiveMessageContext(ctx context.Context, mes
 	var result FeishuSendResponse
 	return a.doFeishuJSONRequest(ctx, http.MethodPatch, requestURL, reqBody, &result, retry)
 }
+
+var _ IMTextMetricsProvider = (*FeishuAdapter)(nil)

@@ -79,12 +79,18 @@ idle_timeout: 30m
 
 - 日志
 - 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）
-- 微信同步游标（`<state_dir>/wechat/sync-buf.json`）
-- 飞书去重存储
 - session pin 存储
 - 会话移交阻断（`session-transfers.json`）
 
-gateway 会通过原子替换写入 WeChat token / sync 状态、飞书去重状态、session pin 和移交阻断，避免在崩溃或异常重启时留下截断的状态文件。
+Gateway 原子保存微信 token、session pin 和移交保护；入站队列、去重与轮询游标只存内存。
+
+## 升级与停止服务
+
+停服前通过 `/status` 检查待处理输入，并在 Chord 原会话核对未知结果。重启会清空 Gateway 内存队列，不能用重启代替核查。升级前备份配置、凭据、session pin 和移交保护；Chord 会话由 Chord 自己保存。
+
+旧版本的 `dedupe.json`、微信 `sync-buf.json` 和开发版本的 `im-ingress.db` 不再读取、导入或更新，也不会自动删除。首次启动即使用空收件状态；旧消息若由平台再次送达，可能重复执行。回退旧版前先核对会话结果，不要依赖陈旧游标防重。
+
+同主机、同 OS 用户的同账号只能运行一个实例；跨用户或主机部署需要自行保证单实例。微信同账号续期在当前进程内保留游标；切换账号需本机 reset 后重新配对。
 
 ## 配置文件解析
 
@@ -108,9 +114,9 @@ gateway 会记录关键路由阶段：
 - `gateway event` – 从 `chord headless` stdout 解析出的原始事件
 - `gateway routing event` – router 对某个绑定的处理决策
 - `gateway sending notification` – 尝试向 IM 发送通知
-- `performance queue=...` – 每 5 分钟记录的队列指标，覆盖 outbound 通知分片与飞书入站分发，包含队列 `depth`、`max_depth`、`full`、`closed`、`blocked`，以及阻塞入队的等待时长（`blocked_wait_total`、`blocked_wait_total_delta`、`blocked_wait_max`、`blocked_slow`、`blocked_slow_delta`）。其中 `*_total` 和 `blocked_slow` 是进程生命周期累计值；判断近期 provider 是否停滞时应看对应的 `_delta`。`max_depth` 是采样时最深的分片深度，不是历史最大值。
+- `performance queue=...` – 每 5 分钟记录的队列指标，覆盖 outbound 通知分片，包含队列 `depth`、`max_depth`、`full`、`closed`、`blocked`，以及阻塞入队的等待时长（`blocked_wait_total`、`blocked_wait_total_delta`、`blocked_wait_max`、`blocked_slow`、`blocked_slow_delta`）。其中 `*_total` 和 `blocked_slow` 是进程生命周期累计值；判断近期 provider 是否停滞时应看对应的 `_delta`。`max_depth` 是采样时最深的分片深度，不是历史最大值。
 
-等待时长只在队列容量等待结束时记录，包括成功入队和 dispatcher 关闭两种情况；不包含等待分片生产者锁的时间，也不代表端到端投递延迟。因此，仍在持续的阻塞可能对应为零的等待时长 delta，应同时检查 `depth`、`max_depth`、`blocked` 和 `processed_delta`。`blocked_wait_max` 是生命周期内已结束等待的最大时长；`blocked_slow` 统计已结束且达到一秒的等待。飞书入站队列满时不会等待，因此其等待指标保持为零。背压也可能来自流量突增，而不一定是 provider 停滞。
+等待时长只在队列容量等待结束时记录，包括成功入队和 dispatcher 关闭两种情况；不包含等待分片生产者锁的时间，也不代表端到端投递延迟。因此，仍在持续的阻塞可能对应为零的等待时长 delta，应同时检查 `depth`、`max_depth`、`blocked` 和 `processed_delta`。`blocked_wait_max` 是生命周期内已结束等待的最大时长；`blocked_slow` 统计已结束且达到一秒的等待。背压也可能来自流量突增，而不一定是 provider 停滞。
 
 常用字段包括：
 
@@ -123,33 +129,15 @@ gateway 会记录关键路由阶段：
 - phase
 - last outcome
 
-## 飞书异步分发和去重
+## 飞书接纳与去重
 
-飞书事件处理采用长连接模式加异步分发：
+text/post 和可信卡片回调共用内存收件。`message:<message_id>` 与 `card:<event_id>` 按 App ID 隔离，当前进程内去重。平台成功响应表示接纳或明确拒绝，不证明 Chord 执行完成；卡片更新失败不撤销已经提交的操作。
 
-- gateway 会维护一个长期存活的飞书 websocket 连接。
-- 实际路由到 `chord headless` 的操作通过进程内有界队列完成。
-- 重复投递会由轻量去重存储过滤。
-
-聊天消息的去重 key 基于：
-
-```text
-app_id + chat_id + message_id
-```
-
-去重数据持久化到：
-
-```text
-<state_dir>/dedupe.json
-```
-
-卡片回调改用 `app_id + card + event_id` 去重。同一回调的重复投递会被忽略，用户再次点击相同答案仍可重试结果未知的提交。操作重试行为见[问题交互](./usage_CN.md#问答交互)。
-
-当前去重 TTL 为 24 小时。
+文本发送共用最多 8 个并发、5 分钟总期限和每条 64 KiB / 32 段限制；控制回复期限为 15 秒。明确的 HTTP 429 只重试被拒绝段；未知结果停止发送，`/status` 显示部分失败。见[飞书指南](./feishu_CN.md)。
 
 ## 工作区路由
 
-微信和飞书都通过显式 `chat_bindings` 选择工作区；配对后的 owner 在每个聊天使用 `/bind "~/workspace"`。
+所有平台都通过显式 `chat_bindings` 选择工作区；owner 使用对应平台命令入口分别绑定各目标。
 
 飞书支持多个工作区，可通过 `ims.feishu.chat_bindings` 把飞书 `chat_id` 映射到 workspace ID。
 
@@ -189,4 +177,18 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 
 飞书卡片发送结果未确认时，Gateway 发送提示，不再把原提示重复转为文本。请先检查聊天记录；未收到问题入口时可发送 `/status`，角色菜单可发送 `/role` 重新查看。消息请求不会跟随重定向，非预期 HTTP 状态按结果未确认处理。平台明确拒绝卡片时，仍会发送文本入口。`/status` 展示 Chord 状态并可重新打开问题入口，不会查询平台投递回执。
 
-图片转发需要 Chord 已启用内置生图，或对话模型已配置获准的服务端生图工具。Gateway 无需额外启用生图配置。飞书机器人需要图片上传（`im:resource`）与机器人消息发送（`im:message:send_as_bot`）权限。平台上传失败或发送结果未确认时会分别提示，不自动重发或重新生图。结果未确认时请先检查聊天记录，原图仍可在 Chord 中查看。
+微信和飞书的图片转发需要 Chord 已启用内置生图，或对话模型已配置获准的服务端生图工具。Gateway 无需额外启用生图配置。飞书机器人需要图片上传（`im:resource`）与机器人消息发送（`im:message:send_as_bot`）权限。平台上传失败或发送结果未确认时会分别提示，不自动重发或重新生图。结果未确认时请先检查聊天记录，原图仍可在 Chord 中查看。
+
+## 消息投递与重启
+
+Gateway 是 IM 转发与控制面集成层。入站队列、去重、平台游标、临时回复上下文和投递回执只保存在内存；Chord 负责会话和任务状态。Gateway 不提供跨重启收件恢复，也不保证跨重启不丢消息或不重复执行。
+
+平台 ACK 只确认 Gateway 已在内存接纳或明确拒绝；`consumed` 表示 Chord 接纳输入，不表示任务成功。ACK 后、Chord 接纳前退出可能丢输入；Chord 接纳后、平台确认前断开可能产生重投。各平台重投能力不同，不能依靠“不 ACK”保证重投，也不能把 Chord request ID 当作跨重启幂等键。
+
+运行期同聊天保持顺序、冻结控制目标并重新检查授权。`unknown` 表示任务可能已经执行，不自动重发；先用 `/status` 并核对 Chord 原会话。当前路由的隔离输入阻止继续投递；显式切换不会把旧输入授权给新会话。缺少 IM 回复不代表操作未执行。
+
+默认每聊天最多 64 条待处理输入，每账号 1,024 条 / 16 MiB，全局 4,096 条 / 64 MiB；未知与隔离记录计入上限。授权 `/status` 有一条数量预留，但仍受字节上限约束。轮询不能越过前面未接纳的输入；等待容量释放。全部记录另受 100,000 条及约 64 MiB 序列化大小预算限制，实际堆内存含索引等开销。终态清空正文，去重记录保留 24 小时并在后续接纳时回收；未决记录不自动淘汰。输入超过原始 24 小时投递窗口会隔离。
+
+`/status` 展示等待、隔离与发送失败；运行指标记录接纳结果和回执。控制回复在排队和发送间共享 15 秒预算，拥塞可能丢掉回复，但不撤销操作。没有离线 `ingress` 数据库维护命令。停止前核查未决输入；结果确认后，重启可清空内存阻断，但不能取消或撤销已经交给 Chord 的任务。
+
+配置、登录凭据、session pin 和移交保护仍按各自用途保存。绑定配置写入结果未知时，停服并核对 YAML 与 Chord 会话后再操作；不要删除移交保护来解除阻断。

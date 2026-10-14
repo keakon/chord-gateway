@@ -68,6 +68,12 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		}
 		cfg := store.Snapshot()
 		console, _ := cmd.Flags().GetBool("console")
+		var ingressStore *IngressStore
+		if !console {
+			ingressStore = NewIngressStore()
+			// Stop workers before releasing their process-local state.
+			defer ingressStore.Close()
+		}
 		if console && len(cfg.Workspaces) != 1 {
 			return fmt.Errorf("console requires exactly one workspace")
 		}
@@ -132,6 +138,14 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		router := NewNotificationRouter(mgr)
 		router.admission = NewAdmission(NewPairingService(store, pair, terminal))
 		mgr.admission = router.admission
+		var ingress *IngressService
+		if ingressStore != nil {
+			ingress = NewIngressService(ingressStore, router)
+			defer ingress.Close()
+			if err := ingress.Start(context.Background()); err != nil {
+				return fmt.Errorf("start IM ingress: %w", err)
+			}
+		}
 
 		// Create and start the IM adapter(s)
 		var adapter IMAdapter
@@ -172,11 +186,19 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		var shutdownOnce sync.Once
 		shutdown := func() {
 			shutdownOnce.Do(func() {
+				if ingress != nil {
+					ingress.Close()
+				}
 				shutdownGateway(adapter, mgr, router, 2*time.Second)
 			})
 		}
-		defer shutdown()
+		shutdownDone := make(chan struct{})
+		defer func() {
+			stop()
+			<-shutdownDone
+		}()
 		go func() {
+			defer close(shutdownDone)
 			select {
 			case <-ctx.Done():
 			case <-store.Fatal():
@@ -204,6 +226,7 @@ func shutdownGateway(adapter IMAdapter, mgr *ChordManager, router *NotificationR
 	}
 	if mgr != nil {
 		mgr.StopAll(grace)
+		mgr.WaitInputReceiptsShutdown()
 	}
 	if router != nil {
 		router.Close()

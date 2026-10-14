@@ -69,10 +69,6 @@ type queueMetricsSnapshot struct {
 	MaxDepth int
 }
 
-type queueMetricsProvider interface {
-	metricsSnapshot() queueMetricsSnapshot
-}
-
 func (m *queueMetrics) snapshot(depth, maxDepth, capacity int) queueMetricsSnapshot {
 	if m == nil {
 		return queueMetricsSnapshot{Depth: depth, MaxDepth: maxDepth, Capacity: capacity}
@@ -92,24 +88,6 @@ func (m *queueMetrics) snapshot(depth, maxDepth, capacity int) queueMetricsSnaps
 	}
 }
 
-func (s *queueMetricsSnapshot) add(other queueMetricsSnapshot) {
-	s.Enqueued += other.Enqueued
-	s.Processed += other.Processed
-	s.Full += other.Full
-	s.Closed += other.Closed
-	s.Blocked += other.Blocked
-	s.BlockedWaitTotal += other.BlockedWaitTotal
-	if other.BlockedWaitMax > s.BlockedWaitMax {
-		s.BlockedWaitMax = other.BlockedWaitMax
-	}
-	s.BlockedSlow += other.BlockedSlow
-	s.Depth += other.Depth
-	s.Capacity += other.Capacity
-	if other.MaxDepth > s.MaxDepth {
-		s.MaxDepth = other.MaxDepth
-	}
-}
-
 func (s queueMetricsSnapshot) active() bool {
 	return s.Enqueued != 0 || s.Processed != 0 || s.Full != 0 || s.Closed != 0 || s.Blocked != 0 ||
 		s.BlockedWaitTotal != 0 || s.BlockedSlow != 0 || s.Depth != 0
@@ -125,19 +103,18 @@ func reportQueueMetrics(ctx context.Context, router *NotificationRouter, adapter
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var previousOutbound queueMetricsSnapshot
-	var previousInbound queueMetricsSnapshot
 	for {
 		select {
 		case <-ticker.C:
-			logQueueMetrics(router, adapter, logf, &previousOutbound, &previousInbound)
+			logQueueMetrics(router, adapter, logf, &previousOutbound)
 		case <-ctx.Done():
-			logQueueMetrics(router, adapter, logf, &previousOutbound, &previousInbound)
+			logQueueMetrics(router, adapter, logf, &previousOutbound)
 			return
 		}
 	}
 }
 
-func logQueueMetrics(router *NotificationRouter, adapter IMAdapter, logf func(string, ...any), previousOutbound, previousInbound *queueMetricsSnapshot) {
+func logQueueMetrics(router *NotificationRouter, adapter IMAdapter, logf func(string, ...any), previousOutbound *queueMetricsSnapshot) {
 	if router != nil && router.outbound != nil {
 		snapshot := router.outbound.metricsSnapshot()
 		if snapshot.active() {
@@ -145,28 +122,7 @@ func logQueueMetrics(router *NotificationRouter, adapter IMAdapter, logf func(st
 		}
 		*previousOutbound = snapshot
 	}
-	var inbound queueMetricsSnapshot
-	collectFeishuQueueMetrics(adapter, &inbound)
-	if inbound.active() {
-		logQueueMetricsSnapshot(logf, "feishu_inbound", inbound, inbound.delta(*previousInbound))
-	}
-	*previousInbound = inbound
-}
-
-func collectFeishuQueueMetrics(adapter IMAdapter, total *queueMetricsSnapshot) {
-	switch a := adapter.(type) {
-	case interface {
-		IMAdapter
-		queueMetricsProvider
-	}:
-		if a.Type() == "feishu" {
-			total.add(a.metricsSnapshot())
-		}
-	case *MultiAdapter:
-		for _, child := range a.adapters {
-			collectFeishuQueueMetrics(child, total)
-		}
-	}
+	logIMMetrics(router, adapter, logf)
 }
 
 func (s queueMetricsSnapshot) delta(previous queueMetricsSnapshot) queueMetricsSnapshot {

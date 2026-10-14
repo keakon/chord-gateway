@@ -8,6 +8,15 @@ import (
 
 const mcpStatusChangedEvent = "mcp_status_changed"
 
+// mcpAllAvailableSummary is what a snapshot with nothing to report formats to.
+// It confirms a recovery, so it is only pushed after this process has already
+// reported an MCP problem; a fresh process's first summary is silenced (see the
+// mcp_status_changed handling in process_protocol.go).
+const mcpAllAvailableSummary = "all enabled servers are available"
+
+// mcpAllAvailableNotification is the rendered notification of that summary.
+const mcpAllAvailableNotification = "MCP: " + mcpAllAvailableSummary
+
 type MCPServerRef struct {
 	WorkspaceID string `json:"workspace_id"`
 	Owner       string `json:"owner"`

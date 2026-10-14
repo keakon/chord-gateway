@@ -79,12 +79,18 @@ State data includes:
 
 - logs
 - WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`)
-- WeChat sync cursor (`<state_dir>/wechat/sync-buf.json`)
-- Feishu dedupe store
 - session pin store
 - session transfer guards (`session-transfers.json`)
 
-The gateway writes WeChat token/sync state, Feishu dedupe state, session-pin state, and transfer guards with atomic file replacement so crashes or abrupt restarts do not leave truncated state files behind.
+Gateway atomically saves login tokens, session pins and transfer guards. Input queues, deduplication and polling progress stay in memory.
+
+## Upgrades and stopping the service
+
+Check `/status` for pending input and inspect uncertain results in the original Chord session before stopping. Restart clears Gateway's in-memory queue and is not a substitute for reconciliation. Back up configuration, credentials, session pins and transfer guards before upgrading; Chord owns its own saved sessions.
+
+Old `dedupe.json`, WeChat `sync-buf.json` and development `im-ingress.db` files are no longer read, imported or updated, and are not automatically deleted. Intake starts empty; old messages redelivered by a platform may execute again. Before rolling back, reconcile session outcomes instead of relying on stale cursors to prevent duplicates.
+
+One account permits one instance per host and OS user; enforce exclusivity across users or hosts yourself. Same-account WeChat renewal preserves the cursor within this process; changing accounts requires local reset and pairing again.
 
 ## Config file resolution
 
@@ -108,9 +114,9 @@ The gateway logs important routing stages:
 - `gateway event` – raw event parsed from `chord headless` stdout
 - `gateway routing event` – router-side handling decision for a binding
 - `gateway sending notification` – outbound IM send attempt
-- `performance queue=...` – queue metrics logged every 5 minutes for outbound notification shards and Feishu inbound dispatch, including queue `depth`, `max_depth`, `full`, `closed`, `blocked`, and how long blocked enqueues waited (`blocked_wait_total`, `blocked_wait_total_delta`, `blocked_wait_max`, `blocked_slow`, `blocked_slow_delta`). The `*_total` and `blocked_slow` fields are process-lifetime counters; use their `_delta` fields to identify recent provider stalls. `max_depth` is the deepest shard at the time of the sample, not a historical maximum.
+- `performance queue=...` – queue metrics logged every 5 minutes for outbound notification shards, including queue `depth`, `max_depth`, `full`, `closed`, `blocked`, and how long blocked enqueues waited (`blocked_wait_total`, `blocked_wait_total_delta`, `blocked_wait_max`, `blocked_slow`, `blocked_slow_delta`). The `*_total` and `blocked_slow` fields are process-lifetime counters; use their `_delta` fields to identify recent provider stalls. `max_depth` is the deepest shard at the time of the sample, not a historical maximum.
 
-Wait durations are recorded only when a blocked queue-capacity wait ends, either by enqueueing or by dispatcher shutdown. They exclude time waiting for the shard producer lock and do not measure end-to-end delivery latency. An ongoing stall may therefore leave wait-duration deltas at zero; also inspect `depth`, `max_depth`, `blocked`, and `processed_delta`. `blocked_wait_max` is the lifetime maximum of completed waits, and `blocked_slow` counts completed waits of at least one second. Feishu inbound dispatch does not wait on a full queue, so its wait metrics remain zero. Backpressure can also reflect traffic bursts, not only a stalled provider.
+Wait durations are recorded only when a blocked queue-capacity wait ends, either by enqueueing or by dispatcher shutdown. They exclude time waiting for the shard producer lock and do not measure end-to-end delivery latency. An ongoing stall may therefore leave wait-duration deltas at zero; also inspect `depth`, `max_depth`, `blocked`, and `processed_delta`. `blocked_wait_max` is the lifetime maximum of completed waits, and `blocked_slow` counts completed waits of at least one second. Backpressure can also reflect traffic bursts, not only a stalled provider.
 
 Useful fields include:
 
@@ -123,33 +129,15 @@ Useful fields include:
 - phase
 - last outcome
 
-## Feishu async dispatch and dedupe
+## Feishu intake and deduplication
 
-Feishu event handling uses long connection mode plus async dispatch:
+Text/post messages and authenticated cards use in-memory intake. `message:<message_id>` and `card:<event_id>` are scoped by App ID and deduplicated within this process. A successful platform response indicates acceptance or definite refusal, not completed Chord execution; a failed card update does not undo a submitted operation.
 
-- The gateway maintains a long-lived Feishu websocket connection.
-- Incoming events are routed to `chord headless` through an in-process bounded queue.
-- Duplicate deliveries are filtered by a lightweight dedupe store.
-
-For chat messages, the dedupe key is based on:
-
-```text
-app_id + chat_id + message_id
-```
-
-Deduplication data is persisted to:
-
-```text
-<state_dir>/dedupe.json
-```
-
-Card callbacks use `app_id + card + event_id` instead. Redelivery of one callback is ignored, while a new click with the same answer can retry an uncertain submission. See [Question interaction](./usage.md#question-interaction) for operation retry behavior.
-
-The current dedupe TTL is 24 hours.
+Text shares eight concurrent sends, a five-minute deadline and a 64 KiB / 32-segment limit per output; control replies have 15 seconds. Explicit HTTP 429 retries only the rejected segment; unknown outcomes stop sending, with partial failures visible in `/status`. See [Feishu](./feishu.md).
 
 ## Workspace routing
 
-Both platforms select workspaces through explicit `chat_bindings`; the paired owner uses `/bind "~/workspace"` in each chat.
+All platforms select workspaces through explicit `chat_bindings`; use the platform command entry point to bind each target.
 
 Feishu supports multiple workspaces through `ims.feishu.chat_bindings`, which maps Feishu `chat_id` values to workspace IDs.
 
@@ -189,4 +177,18 @@ Optional events are controlled by `event_visibility`. `background_result` is sub
 
 If a Feishu card send is unconfirmed, the gateway sends a diagnostic instead of repeating its prompt as text. Check the chat first; use `/status` to reopen a missing question entry, or `/role` to request a role menu. Message requests do not follow redirects; unexpected HTTP statuses are unconfirmed. Explicitly rejected cards still use the text fallback. `/status` shows Chord state and can reopen question entries; it does not query platform delivery receipts.
 
-Generated image delivery requires a Chord configuration with image generation enabled or an authorized native image tool. No separate gateway image-generation setting is required. Feishu bot permissions must include image upload (`im:resource`) and bot message sending (`im:message:send_as_bot`). A failed platform upload or unconfirmed send is reported without automatic resending or image regeneration. If a send is unconfirmed, check the chat before taking further action; the original remains available in Chord.
+Generated image delivery to WeChat or Feishu requires a Chord configuration with image generation enabled or an authorized native image tool. No separate gateway image-generation setting is required. Feishu bot permissions must include image upload (`im:resource`) and bot message sending (`im:message:send_as_bot`). A failed platform upload or unconfirmed send is reported without automatic resending or image regeneration. If a send is unconfirmed, check the chat before taking further action; the original remains available in Chord.
+
+## Message delivery and restarts
+
+Gateway integrates IM transport with the Chord control plane. Its inbox, deduplication, polling cursors, temporary reply contexts and delivery receipts live only in memory; Chord owns session and task state. Gateway does not restore intake after restart and does not guarantee loss-free or duplicate-free delivery across restarts.
+
+A platform ACK confirms in-memory acceptance or definite refusal; `consumed` means Chord accepted input, not that the task succeeded. Exiting after ACK but before Chord acceptance can lose input; losing confirmation after Chord acceptance can cause redelivery. Platforms differ in redelivery behavior: withholding ACK is not a universal retry guarantee, and a Chord request ID is not a cross-restart idempotency key.
+
+Within one process, intake preserves per-chat order, freezes control targets and rechecks authorization. `unknown` means execution may already have occurred and is never automatically resent; inspect `/status` and the original Chord session. Quarantine on the current route pauses delivery; explicit switching never authorizes old input for a new session. A missing IM reply does not prove that an operation failed to execute.
+
+Defaults allow 64 pending records per chat, 1,024 / 16 MiB per account and 4,096 / 64 MiB globally, including unknown and quarantined records. An authorized `/status` has one extra count slot but still obeys byte limits. Polling cannot skip earlier unaccepted input; wait for capacity. All records also share a 100,000-record and approximately 64 MiB serialized-size budget; actual heap usage includes indexes and other overhead. Terminal records clear their bodies; deduplication lasts 24 hours and is reclaimed on subsequent intake. Unresolved records are never silently evicted. Inputs beyond their original 24-hour delivery window are quarantined.
+
+`/status` shows waiting, isolation and send failures; runtime metrics count acceptance and receipt outcomes. Control replies share 15 seconds across queueing and sending; congestion may drop a reply without undoing the operation. There is no offline `ingress` database maintenance CLI. Reconcile pending input before stopping; after checking outcomes, restarting clears in-memory guards but cannot cancel or undo work already handed to Chord.
+
+Configuration, login credentials, session pins and transfer guards retain their own persistence. If a binding configuration write is uncertain, stop and compare YAML and Chord sessions before acting; do not delete transfer guards to force progress.

@@ -10,11 +10,21 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Breaking changes
 
+- Gateway intake, deduplication and polling cursors are memory-only and are not restored after restart; loss or duplication across restarts is possible. Old deduplication and cursor files are no longer imported. Configuration, login credentials, session pins and transfer guards remain saved; Chord owns its sessions. Reconcile pending input before stopping; see [delivery semantics](./docs/operations.md#message-delivery-and-restarts).
+
 - Feishu and WeChat now use one paired owner and explicit chat bindings, including single-workspace deployments. Removed legacy mode and `access_mode`, `owner_open_id`, `allowed_open_ids`, and WeChat `workspace_id`; configurations containing them fail with an explicit error. Replaced `/bind <workspace_id> <path>` with `/bind "<existing-directory>"`; first private-chat pairing also requires the terminal code. Old authorization is not migrated automatically.
 - Upgrading an existing deployment: stop the gateway, finish or resolve outstanding session transfers, and back up YAML and runtime state. Remove the fields above and clear `chat_bindings` on unpaired platforms; keep workspaces and Chord sessions. Move old unscoped `session-pins.json` (or custom `session_pins_file`) to a backup location to avoid restoring under an old identity. Start with `--pair`, pair privately, then rebind each chat. Old `workspaceID|imType|chatID` pins are no longer read; verify `/sessions` before explicitly using `/resume` for historical sessions. Do not delete unresolved transfer state.
 - Local stdin/stdout now requires explicit `--console`, exactly one configured workspace, and no `--pair`. Missing WeChat tokens trigger QR login instead of implicitly selecting console mode.
 
 ### Added
+
+
+
+
+
+
+
+- All platforms share bounded in-memory intake, process-local deduplication, authorization checks, per-chat ordering and Chord consumption receipts. Unknown outcomes are not replayed; `/status` reports waiting and isolation reasons.
 
 - Added owner pairing (`--pair`), directory-based `/bind`, and local `pairing reset`. Directory switches preserve existing configuration and wait for outstanding work and session transfers to be resolved. Temporary connection loss preserves accepted owner inputs and replies; account, directory, and process changes prevent stale output from being sent under a new identity. Text and image delivery distinguish explicit rejection from unknown outcomes without automatically resending uncertain messages.
 
@@ -26,11 +36,23 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- WeChat advances an in-memory cursor after each batch is admitted. Same-account renewal preserves progress; missing reply context waits for a fresh owner message. Oversized batches stop that receiver with a diagnostic without skipping the cursor.
+
+- Feishu text/post and authenticated cards use shared in-memory intake and receipts. Topic groups use group authorization; non-Question cards update after command settlement rather than treating intake as completion. Question forms, role cards and image output remain available.
+
+- Feishu text sends now share the common global concurrency and five-minute deadline, with 64 KiB/32-segment limits and visible truncation notices. Explicit HTTP 429 rejections retry only the rejected segment with cancellable waits; partial failures retain the confirmed segment count, and unknown outcomes are never replayed.
+
+
 - Completion notifications now append a compact summary of the turn that just ended (duration, tool calls, retries), including the `⏳ Chord: Ready for input; background jobs still running: N` variant. Long-running reminders now report the elapsed turn time, a coarse stage such as `running tools` or `retrying`, and the tool and retry counts observed since the work cycle started. Confirmations, handoffs, and cancellation requests preserve the accumulated progress within the same session. Local shell work is tracked separately and does not reset agent progress; completion notifications show any shell commands still running. Transport-level phases such as `connecting` stay hidden.
 
 - Unsupported YAML config keys are now reported in the gateway log with their line and ignored instead of doing nothing silently: typos and removed options such as `event_visibility.activity` are visible at startup while the rest of the file still loads.
 
 ### Fixed
+
+- `/new` and `/resume` now refuse a busy Chord process before the route-change barrier, replying that `/cancel` comes first, instead of failing inside the replacement with a bare reason. Session-change failures also report distinct reasons — busy, transfer in progress, unresolved inputs — instead of one generic `session_change_failed`.
+- `/new` reports `Session created` and `/resume` reports `Session resumed`. Both previously answered `Session selected`, which described neither outcome and read as a failure on `/new`.
+- `/new` and `/resume <id>` are no longer rejected as an expired control target while a workspace's Chord process is still starting up. Sessions that previously failed with `control_target_expired` right after launching or upgrading the gateway now start normally; a control target that captured a runtime identity and then lost it is still refused. Session-change failures and dropped readiness events are now logged with their cause instead of being reported as a bare rejection.
+- Automatic session pins are keyed by workspace and route again, no longer by paired identity. Re-binding a chat or moving to a different platform account keeps its session instead of silently starting a new one. Local `pairing reset` is the explicit exception: it clears the platform's automatic pins along with the owner and bindings, so a reset route starts without the old session. Pins written by the identity-scoped layout are discarded on load rather than rewritten onto another identity.
 
 - Startup configuration warnings reach both stderr and the configured gateway log after resource locks are acquired.
 
@@ -39,6 +61,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Pending durable inputs, blocked queues and uncertain receipts prevent directory switches, idle retirement and session replacement, including takeover into a disconnected binding. Before `/new`, `/resume`, directory switches and idle retirement, the gateway refreshes previously observed restored input summaries so completed work does not leave stale guards. `/status` explains queue blocks even after disconnection; requests are never automatically replayed.
 
 - Requesting cancellation while idle no longer marks the process busy or starts repeated working reminders. Pending local shell commands remain busy across agent idle events and status snapshots, and are excluded from idle-timeout cleanup.
+
 
 ## v0.3.3 – 2026-10-12
 

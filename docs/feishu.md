@@ -57,6 +57,13 @@ Notes:
 - In group chats, make sure the bot is actually **added to the group**, otherwise it will not receive messages there.
 - The gateway currently only processes **text** (including `text` and `post`); inbound images/files are ignored. Generated images are delivered outbound as described in [Event visibility](./event-visibility.md#generated-images).
 
+Platform-side limits worth knowing before you deploy:
+
+- Long connection is available to **self-built apps** only; store apps must use a developer server.
+- Each event must be handled within **3 seconds**, otherwise Feishu pushes it again. The gateway acknowledges quickly and processes asynchronously; re-delivered events are deduplicated by `message_id` within the running process.
+- Delivery is **cluster mode**: when the same app runs several clients, only one of them receives each event.
+- One app may hold at most **50** long connections.
+
 ## Step 2: Enable interactive cards (recommended)
 
 `chord-gateway` can show interactive cards for confirm/question flows.
@@ -84,10 +91,11 @@ one by one, click **Batch import** and paste the JSON below.
 - **Receive message events** (required for `im.message.receive_v1`). These are
   **not** alternatives — Feishu decides what to push per scenario, so grant one
   scope for **each** scenario you use:
-  - **DM with the bot**: `im:message.p2p_msg:readonly`
-  - **Group chats, @ the bot** (user messages only): `im:message.group_at_msg:readonly`
+  - **DM with the bot**: `im:message.p2p_msg:readonly` (or `im:message.p2p_msg`)
+  - **Group chats, @ the bot** (user messages only): `im:message.group_at_msg:readonly` (or `im:message.group_at_msg`)
   - **Group chats, @ the bot** (including messages from other bots): `im:message.group_at_msg.include_bot:readonly`
-  - **All group messages** (more powerful, treated as sensitive): `im:message.group_msg`
+  - **All group messages** (user messages only; sensitive): `im:message.group_msg`
+  - **All group messages** (including messages from other bots; sensitive): `im:message.group_msg.include_bot:read`
 
 > If you use both DMs and group chats, grant **both** the DM scope and the group
 > scope. A DM-only app silently receives nothing in group chats.
@@ -107,7 +115,7 @@ DM-only setup, including generated-image delivery:
 }
 ```
 
-The `im:resource` scope permits uploading generated images. You may omit it if you do not use image delivery. After adding this permission to an existing app, publish a new app version. Image generation must be enabled in Chord, and the Chord build must support the image delivery contract in [Compatibility](./compatibility.md).
+The `im:resource` scope permits uploading generated images (the upload API accepts images up to 10 MB in a limited set of formats). You may omit it if you do not use image delivery. After adding this permission to an existing app, publish a new app version. Image generation must be enabled in Chord, and the Chord build must support the image delivery contract in [Compatibility](./compatibility.md).
 
 If you also use group chats, add `im:message.group_at_msg:readonly` (or
 `im:message.group_msg`) to the `tenant` array.
@@ -119,6 +127,7 @@ Notes:
   Both accept `im:message` or `im:message:send_as_bot`, so the dedicated
   `im:message:update` scope is **not** required.
 - Tenant policies vary. The console may require admin approval for some scopes.
+- Platform limits: the messages API allows 1000 calls/minute and 50/second overall, and roughly 5 requests/second to the same user or group. Text messages are limited to 150 KB, and card/post messages to 30 KB. A card can only be updated within 14 days of sending, at 5 requests/second per message. The gateway splits long replies into messages of at most 4000 characters.
 
 ### 3.2 Publish after any change (easy to miss)
 
@@ -128,7 +137,7 @@ After changing **capabilities / permissions / event subscriptions**, you must **
 
 Common symptoms:
 
-- The gateway establishes long connection, but never logs `feishu: received message`.
+- The gateway establishes long connection, but receives no text or card events; check subscriptions and scopes in the Feishu console.
 - DMs work but group chats produce nothing: the DM receive scope was granted without the matching group scope.
 - The gateway logs API errors when sending messages, e.g. `feishu API error: code=... msg=...`.
 - Confirmation/question buttons work, but the card never changes to the resolved state: usually a card update failure (only messages sent within 14 days can be updated).
@@ -165,9 +174,23 @@ The paired owner can add the bot to a group and send `/bind "~/work/project-b"` 
 
 Finish pending work, inputs, and interactions before switching directories. See [pairing](./pairing.md) for account changes, reset, and failed-write recovery.
 
+## Intake and process-local deduplication
+
+Text/post and authenticated cards share in-memory intake and Chord consumption receipts. Feishu may re-push an event, so deduplicate by `message_id` (as the gateway does) rather than `event_id`. Messages and callbacks are deduplicated within this process; Gateway restart has no deduplication history or recovery queue. Old deduplication files are not read or imported. App ID, owner, bindings and session pins retain their configuration.
+
+Ordinary and topic groups use group authorization. Non-Question cards update after the command reaches its terminal outcome; platform acceptance is not completed execution. Stale control targets, expired callbacks and failed pin restoration never silently redirect input to a new session. Inspect `/status` and the original Chord session for uncertain results. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+
 ## Known limitations
 
 - Inbound handling currently accepts only **text messages** (`text` and `post`). Non-text messages are ignored.
+
+## Official references
+
+- [Receive events with a long connection](https://open.feishu.cn/document/server-docs/event-subscription-guide/event-subscription-configure-/request-url-configuration-case)
+- [Receive message event (`im.message.receive_v1`)](https://open.feishu.cn/document/server-docs/im-v1/message/events/receive)
+- [Send message](https://open.feishu.cn/document/server-docs/im-v1/message/create) and [update a sent message card](https://open.feishu.cn/document/server-docs/im-v1/message-card/patch)
+- [Upload image](https://open.feishu.cn/document/server-docs/im-v1/image/create)
+- [API permission list](https://open.feishu.cn/document/server-docs/application-scope/scope-list)
 
 ## Troubleshooting
 

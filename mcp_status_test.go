@@ -157,3 +157,42 @@ func TestMCPNotificationsSkipIntermediateAndDuplicateViews(t *testing.T) {
 		t.Fatal("new view inherited notification suppression")
 	}
 }
+
+func TestMCPNotificationSkipsFirstAvailableSummary(t *testing.T) {
+	var messages []string
+	p := &ChordProcess{onEvent: func(_ string, event string, state ControlState) {
+		if event == mcpStatusChangedEvent {
+			messages = append(messages, formatMCPNotification(state.MCP))
+		}
+	}}
+	healthy := mcpSnapshotFixture("view", 1)
+	server := &healthy.Servers[0]
+	server.Auth, server.Connection, server.Catalog, server.ScopeRequirements = "ready", "connected", "ready", nil
+	send := func() {
+		raw, err := json.Marshal(healthy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.processEnvelope(&HeadlessEnvelope{Type: mcpStatusChangedEvent, Seq: healthy.Version, Payload: raw})
+		healthy.Version++
+	}
+	send()
+	send()
+	if len(messages) != 0 {
+		t.Fatalf("fresh process announced the initial summary: %v", messages)
+	}
+	server.Auth, server.Connection, server.Catalog = "reauth_required", "connected", "ready"
+	send()
+	if len(messages) != 1 || !strings.Contains(messages[0], "chord mcp login sample") {
+		t.Fatalf("problem not reported: %v", messages)
+	}
+	server.Auth = "ready"
+	send()
+	if len(messages) != 2 || messages[1] != mcpAllAvailableNotification {
+		t.Fatalf("recovery not reported once: %v", messages)
+	}
+	send()
+	if len(messages) != 2 {
+		t.Fatalf("recovery repeated: %v", messages)
+	}
+}

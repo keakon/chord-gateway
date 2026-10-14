@@ -13,7 +13,7 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-func (r *NotificationRouter) formatNotification(eventType string, state ControlState) string {
+func (r *NotificationRouter) formatNotification(eventType string, state ControlState, hints ...func(string) string) string {
 	switch eventType {
 	case "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released":
 		if state.Transfer != nil {
@@ -36,7 +36,7 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 		return r.formatHeadlessNotification(state)
 
 	case "confirm_request":
-		return r.formatConfirmNotification(state)
+		return r.formatConfirmNotification(state, hints...)
 
 	case "question_revision":
 		q := state.questionForNotification()
@@ -45,15 +45,15 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 		}
 		return truncate("✅ Historical answer updated (" + q.RequestID + "): " + strings.Join(q.RevisionResult.Selected, ", "))
 	case "question_request":
-		return r.formatQuestionNotification(state)
+		return r.formatQuestionNotification(state, hints...)
 
 	case "question_resolved":
-		return r.formatQuestionResolvedNotification(state)
+		return r.formatQuestionResolvedNotification(state, hints...)
 	case "question_presentation_error":
 		return "⚠️ " + state.LastError
 
 	case "handoff_request":
-		return r.formatHandoffNotification(state)
+		return r.formatHandoffNotification(state, hints...)
 
 	case "handoff_cancelled":
 		return r.formatHandoffCancelledNotification(state)
@@ -312,13 +312,13 @@ func (r *NotificationRouter) formatHeadlessNotification(state ControlState) stri
 	return truncate("❓ " + msg)
 }
 
-func (r *NotificationRouter) formatConfirmNotification(state ControlState) string {
+func (r *NotificationRouter) formatConfirmNotification(state ControlState, hints ...func(string) string) string {
 	if state.PendingConfirm == nil {
 		return ""
 	}
 	c := state.PendingConfirm
 	if isDoneTool(c.ToolName) {
-		return r.formatDoneConfirmNotification(c)
+		return r.formatDoneConfirmNotification(c, hints...)
 	}
 	var sb strings.Builder
 	sb.WriteString("🔧 Confirm required: ")
@@ -339,7 +339,7 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState) strin
 			sb.WriteString(p)
 		}
 	}
-	sb.WriteString("\nReply /allow or /deny [reason]")
+	sb.WriteString("\nReply " + commandHint("/allow", hints) + " or " + commandHint("/deny [reason]", hints))
 	return truncate(sb.String())
 }
 
@@ -359,7 +359,7 @@ func doneConfirmReportReason(c *ConfirmPayload) (report, reason string) {
 	return report, reason
 }
 
-func (r *NotificationRouter) formatDoneConfirmNotification(c *ConfirmPayload) string {
+func (r *NotificationRouter) formatDoneConfirmNotification(c *ConfirmPayload, hints ...func(string) string) string {
 	if c == nil {
 		return ""
 	}
@@ -374,7 +374,7 @@ func (r *NotificationRouter) formatDoneConfirmNotification(c *ConfirmPayload) st
 		sb.WriteString("\n\n")
 		sb.WriteString(report)
 	}
-	sb.WriteString("\n\nReply /allow to finish, or /deny <reason> to continue.")
+	sb.WriteString("\n\nReply " + commandHint("/allow", hints) + " to finish, or " + commandHint("/deny <reason>", hints) + " to continue.")
 	return truncate(sb.String())
 }
 
@@ -469,7 +469,7 @@ func summarizeToolArgs(toolName, argsJSON string) string {
 	return truncateLine(argsJSON, 200)
 }
 
-func (r *NotificationRouter) formatHandoffNotification(state ControlState) string {
+func (r *NotificationRouter) formatHandoffNotification(state ControlState, hints ...func(string) string) string {
 	if state.PendingHandoff == nil {
 		return ""
 	}
@@ -509,11 +509,11 @@ func (r *NotificationRouter) formatHandoffNotification(state ControlState) strin
 			}
 		}
 	}
-	sb.WriteString("\n\nReply /handoff <agent> [model_pool] to execute, /handoff to use the default, or /handoff-deny <reason> to reject.")
+	sb.WriteString("\n\nReply " + commandHint("/handoff <agent> [model_pool]", hints) + " to execute, " + commandHint("/handoff", hints) + " to use the default, or " + commandHint("/handoff-deny <reason>", hints) + " to reject.")
 	return sb.String()
 }
 
-func (r *NotificationRouter) formatQuestionNotification(state ControlState) string {
+func (r *NotificationRouter) formatQuestionNotification(state ControlState, hints ...func(string) string) string {
 	if state.questionForNotification() == nil {
 		return ""
 	}
@@ -541,11 +541,11 @@ func (r *NotificationRouter) formatQuestionNotification(state ControlState) stri
 		sb.WriteString(" (multi-select)")
 	}
 	if len(q.Options) == 0 {
-		sb.WriteString("\nReply /answer @" + q.RequestID + " <answer>")
+		sb.WriteString("\nReply " + commandHint("/answer @"+q.RequestID+" <answer>", hints))
 	} else if q.Multiple {
-		sb.WriteString("\nReply /answer @" + q.RequestID + " 1,2")
+		sb.WriteString("\nReply " + commandHint("/answer @"+q.RequestID+" 1,2", hints))
 	} else {
-		sb.WriteString("\nReply /answer @" + q.RequestID + " 1")
+		sb.WriteString("\nReply " + commandHint("/answer @"+q.RequestID+" 1", hints))
 	}
 	return truncate(sb.String())
 }
@@ -553,7 +553,7 @@ func (r *NotificationRouter) formatQuestionNotification(state ControlState) stri
 // formatQuestionResolvedNotification reports a pending question that chord
 // closed. Only answered means the submitted answer was accepted; the rest are
 // terminal states where no answer was recorded.
-func (r *NotificationRouter) formatQuestionResolvedNotification(state ControlState) string {
+func (r *NotificationRouter) formatQuestionResolvedNotification(state ControlState, hints ...func(string) string) string {
 	p := state.LastQuestionResolved
 	if p == nil {
 		return ""
@@ -565,7 +565,7 @@ func (r *NotificationRouter) formatQuestionResolvedNotification(state ControlSta
 	case QuestionResolvedAnswered:
 		message = "✅ The answer was accepted: " + strings.Join(p.Selected, ", ")
 	case QuestionResolvedNoResponse:
-		message = "⌛ No answer before the deadline. You can still revise this question by ID, for example /answer @" + p.RequestID + " <answer>; the original outcome stays."
+		message = "⌛ No answer before the deadline. You can still revise this question by ID, for example " + commandHint("/answer @"+p.RequestID+" <answer>", hints) + "; the original outcome stays."
 	}
 	return truncate("Question: " + p.RequestID + "\n" + message)
 }

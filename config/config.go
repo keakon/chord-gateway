@@ -59,6 +59,12 @@ func (v EventVisibility) BackgroundResultEnabled() bool {
 
 // IMAdapterConfig describes one IM adapter in the gateway config.
 type IMAdapterConfig struct {
+	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
+	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
+	Wecom    *WecomConfig    `yaml:"wecom,omitempty"`
+	Dingtalk *DingtalkConfig `yaml:"dingtalk,omitempty"`
+	Slack    *SlackConfig    `yaml:"slack,omitempty"`
+
 	Wechat *WechatConfig `yaml:"wechat,omitempty"`
 	Feishu *FeishuConfig `yaml:"feishu,omitempty"`
 }
@@ -66,6 +72,16 @@ type IMAdapterConfig struct {
 // Type returns the normalized adapter type name for this config entry.
 func (im IMAdapterConfig) Type() string {
 	switch {
+	case im.Telegram != nil:
+		return "telegram"
+	case im.Discord != nil:
+		return "discord"
+	case im.Wecom != nil:
+		return "wecom"
+	case im.Dingtalk != nil:
+		return "dingtalk"
+	case im.Slack != nil:
+		return "slack"
 	case im.Wechat != nil:
 		return "wechat"
 	case im.Feishu != nil:
@@ -94,6 +110,49 @@ type FeishuConfig struct {
 	AppSecret string `yaml:"app_secret"`
 
 	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+}
+
+type TelegramConfig struct {
+	Owner        *OwnerIdentity    `yaml:"owner,omitempty"`
+	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+	fields       accessFields
+	BotToken     string `yaml:"bot_token"`
+}
+
+type DiscordConfig struct {
+	Owner         *OwnerIdentity    `yaml:"owner,omitempty"`
+	ChatBindings  map[string]string `yaml:"chat_bindings,omitempty"`
+	fields        accessFields
+	BotToken      string `yaml:"bot_token"`
+	ApplicationID string `yaml:"application_id"`
+}
+
+type WecomConfig struct {
+	Owner        *OwnerIdentity    `yaml:"owner,omitempty"`
+	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+	fields       accessFields
+	BotID        string `yaml:"bot_id"`
+	Secret       string `yaml:"secret"`
+}
+
+type DingtalkConfig struct {
+	Owner        *OwnerIdentity    `yaml:"owner,omitempty"`
+	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+	fields       accessFields
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	RobotCode    string `yaml:"robot_code"`
+	CorpID       string `yaml:"corp_id"`
+}
+
+type SlackConfig struct {
+	Owner        *OwnerIdentity    `yaml:"owner,omitempty"`
+	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+	fields       accessFields
+	AppToken     string `yaml:"app_token"`
+	BotToken     string `yaml:"bot_token"`
+	AppID        string `yaml:"app_id"`
+	TeamID       string `yaml:"team_id"`
 }
 
 // Workspace defines a project directory.
@@ -167,6 +226,61 @@ func parseIMsNode(node *yaml.Node) ([]IMAdapterConfig, error) {
 		}
 		seen[typ] = true
 		switch typ {
+		case "telegram":
+			var entry TelegramConfig
+			if err := valueNode.Decode(&entry); err != nil {
+				return nil, fmt.Errorf("parse ims.telegram: %w", err)
+			}
+			var err error
+			entry.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, IMAdapterConfig{Telegram: &entry})
+		case "discord":
+			var entry DiscordConfig
+			if err := valueNode.Decode(&entry); err != nil {
+				return nil, fmt.Errorf("parse ims.discord: %w", err)
+			}
+			var err error
+			entry.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, IMAdapterConfig{Discord: &entry})
+		case "wecom":
+			var entry WecomConfig
+			if err := valueNode.Decode(&entry); err != nil {
+				return nil, fmt.Errorf("parse ims.wecom: %w", err)
+			}
+			var err error
+			entry.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, IMAdapterConfig{Wecom: &entry})
+		case "dingtalk":
+			var entry DingtalkConfig
+			if err := valueNode.Decode(&entry); err != nil {
+				return nil, fmt.Errorf("parse ims.dingtalk: %w", err)
+			}
+			var err error
+			entry.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, IMAdapterConfig{Dingtalk: &entry})
+		case "slack":
+			var entry SlackConfig
+			if err := valueNode.Decode(&entry); err != nil {
+				return nil, fmt.Errorf("parse ims.slack: %w", err)
+			}
+			var err error
+			entry.fields, err = parseAccessFields(valueNode)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, IMAdapterConfig{Slack: &entry})
 		case "wechat":
 			var wc WechatConfig
 			var err error
@@ -366,7 +480,29 @@ func (c *Config) Validate() error {
 		if typ == "" {
 			return fmt.Errorf("ims entries must contain exactly one platform config")
 		}
-		if im.Wechat != nil && im.Feishu != nil {
+		count := 0
+		if im.Wechat != nil {
+			count++
+		}
+		if im.Feishu != nil {
+			count++
+		}
+		if im.Telegram != nil {
+			count++
+		}
+		if im.Discord != nil {
+			count++
+		}
+		if im.Wecom != nil {
+			count++
+		}
+		if im.Dingtalk != nil {
+			count++
+		}
+		if im.Slack != nil {
+			count++
+		}
+		if count != 1 {
 			return fmt.Errorf("ims entries must contain exactly one platform config")
 		}
 		imCounts[typ]++

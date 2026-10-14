@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -189,7 +188,12 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		return
 	}
 	if cmd.Action == "interact" || cmd.Action == "decline" || cmd.Action == "withdraw_requirement" || cmd.Action == "replace_requirement" {
-		action := map[string]any{"type": "question", "action": cmd.Action, "request_id": q.RequestID, "operation_id": questionUserOperationID(msg, q.RequestID, cmd.Action), "user_text": cmd.Content, "replacement_id": cmd.Reason}
+		action, err := questionOperationCommand(msg, q, cmd, &IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
+		if err != nil {
+			r.sendTextForKey(procKey, chatID, "⚠️ Invalid question action.")
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		receipt, err := r.waitQuestionOperation(ctx, procKey, msg.SenderID, proc, action)
@@ -358,11 +362,11 @@ func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg IncomingMes
 		r.sendTextForKey(procKey, chatID, "⚠️ This selection no longer matches the question. Check /status and try again.")
 		return false
 	}
-	action := "answer"
-	if q.Outcome != "" {
-		action = "revise"
+	cmd, err := questionOperationCommand(msg, q, IMCommand{Type: "question", Answers: answers}, &IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
+	if err != nil {
+		return false
 	}
-	cmd := map[string]any{"type": "question", "request_id": q.RequestID, "answers": answer.values, "custom": answer.custom, "action": action, "operation_id": questionUserOperationID(msg, q.RequestID, action)}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	receipt, err := r.waitQuestionOperation(ctx, procKey, msg.SenderID, proc, cmd)
@@ -418,25 +422,12 @@ func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID stri
 		return
 	}
 
-	// A card button carries the exact role name, so it must never take the
-	// numeric-menu branch: a role literally named "2" would otherwise resolve
-	// to whatever sits at position 2. Plain-text replies keep the
-	// number-or-name semantics documented for /role.
-	fromCard := incoming.InternalAction != nil && incoming.InternalAction.Type == "role"
-	var name string
-	if n, atoiErr := strconv.Atoi(target); atoiErr == nil && !fromCard {
-		// Numeric menu choice: map against the freshly fetched list.
-		if n < 1 || n > len(roles) {
-			r.sendTextForKey(procKey, chatID, "⚠️ Invalid role selection. Send /role to see the current roles.")
-			return
-		}
-		name = strings.TrimSpace(roles[n-1].Name)
-	} else {
-		name = strings.TrimSpace(target)
-		if !roleNameAvailable(name, roles) {
-			r.replyRoleResult(chatID, incoming, procKey, "Role unavailable", fmt.Sprintf("⚠️ %q is not an available role. Send /role to see the available roles.", name), "grey")
-			return
-		}
+	name, err := selectRoleName(target, roles, incoming.InternalAction != nil && incoming.InternalAction.Type == "role")
+	if err != nil {
+		text := err.Error()
+		text = strings.ToUpper(text[:1]) + text[1:] + "."
+		r.replyRoleResult(chatID, incoming, procKey, "Role unavailable", "⚠️ "+text, "grey")
+		return
 	}
 
 	if name == current {
@@ -500,7 +491,7 @@ func (r *NotificationRouter) resolveRoleCard(incoming IncomingMessage, procKey, 
 
 // buildRoleMenuText renders the numbered role list used by text platforms and
 // as the card fallback.
-func buildRoleMenuText(current string, roles []RoleInfo) string {
+func buildRoleMenuText(current string, roles []RoleInfo, hints ...func(string) string) string {
 	var sb strings.Builder
 	if strings.TrimSpace(current) != "" {
 		fmt.Fprintf(&sb, "🎭 Current role: %s\n", strings.TrimSpace(current))
@@ -519,7 +510,7 @@ func buildRoleMenuText(current string, roles []RoleInfo) string {
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
-	sb.WriteString("Reply /role <number> or /role <name> to switch.")
+	sb.WriteString("Reply " + commandHint("/role <number>", hints) + " or " + commandHint("/role <name>", hints) + " to switch.")
 	return truncate(sb.String())
 }
 

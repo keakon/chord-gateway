@@ -282,7 +282,7 @@ func buildFeishuQuestionCard(chatID string, q *QuestionPayload, cardCtx feishuCa
 	if len(contextLines) > 0 {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": strings.Join(contextLines, "\n")})
 	}
-	baseValue := map[string]any{"type": "question", "action": "answer", "request_id": q.RequestID, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "binding_instance_id": cardCtx.BindingInstanceID, "issued_at": time.Now().Unix()}
+	baseValue := map[string]any{"type": "question", "action": "answer", "request_id": q.RequestID, "version": q.Version, "chat_id": chatID, "im_type": "feishu", "workspace_id": cardCtx.WorkspaceID, "session_id": cardCtx.SessionID, "process_key": cardCtx.ProcessKey, "binding_instance_id": cardCtx.BindingInstanceID, "issued_at": time.Now().Unix()}
 	if q.Multiple {
 		elements = append(elements, buildFeishuQuestionForm(q, baseValue))
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "Check one or more options, then click Submit. You can also reply /answer @" + q.RequestID + " 1,3."})

@@ -173,7 +173,7 @@ func TestPausedInputsVisibleThroughTargetRestoreAndStatusCommand(t *testing.T) {
 	for _, want := range []string{"ready_paused", "Pending inputs: 2", "main · input-1", "Review the document", "task-2 · input-2"} {
 		requireContains(t, text, want)
 	}
-	if m.transferBlocked(key) || m.pins.Get(pinKeyForBinding(cfg, key)) != "session-1" || strings.Contains(text, "Pending inputs: 99") {
+	if m.transferBlocked(key) || m.pins.Get(pinKeyForBinding(key)) != "session-1" || strings.Contains(text, "Pending inputs: 99") {
 		t.Fatal("target was not published from its own paused input snapshot")
 	}
 	router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: "/status"})

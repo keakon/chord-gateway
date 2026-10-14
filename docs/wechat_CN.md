@@ -67,6 +67,8 @@ idle_timeout: 30m
 3. 打开该链接并用微信扫码。
 4. 登录后，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`，使用终端显示的配对码和已存在的目录；再发送 `/status` 验证。
 
+二维码登录窗口为 5 分钟。若打印出的二维码在扫码前过期，gateway 会自动重新获取（最多刷新三次）并打印新的二维码链接。登录返回的端点必须与 `ims.wechat.base_url` 一致；scheme 或 host 不同会被拒绝。
+
 可以把 `/status` 视为第一阶段成功标志。理想的首轮结果是：
 
 - gateway 能正常启动，没有配置错误
@@ -81,24 +83,25 @@ idle_timeout: 30m
 
 gateway 按服务端 `message_id` 去重；顶层 ID 缺失时使用消息项的 `msg_id`，并按机器人账号和发送者隔离。数字或字符串形式的 uint64 ID 均保留完整精度，外发使用的 `client_id` 不作为入站消息 ID。
 
-## 运行时状态：token 与同步游标
+## 入站与出站消息
 
-微信接入会在 gateway 状态目录下维护两类关键运行时状态文件：
+- **入站**：只有 **文本项** 会变成命令或任务。iLink 协议还定义了图片、语音、文件和视频项，gateway 一律忽略，不会上传到 Chord。
+- **出站文本**：超过 2048 个字符（按 Unicode 码点计）的回复会拆成多条消息发送，优先在换行处断开。
+- **出站图片**：生成的图片会加密上传到微信 CDN（AES-128-ECB），再以图片消息投递。见[生成图片](./event-visibility_CN.md#生成图片)。
+- 每个微信聊天都按**与发送者的私聊**处理；本接入不含群聊路由。
+- 文本与图片投递都需要该聊天有可用的回复上下文，见[等待回复上下文](#等待回复上下文)。
 
-- **Token 文件（接近凭据级别）**
-  - 默认：`<state_dir>/wechat/token.json`
-  - 可通过 `ims.wechat.token_path` 覆盖
+## 运行时状态与升级
 
-- **同步游标（不是凭据，但仍属于敏感元数据）**
-  - 路径：`<state_dir>/wechat/sync-buf.json`
-  - 用途：保存 `get_updates_buf`，用于恢复轮询进度，避免重启后重复处理旧消息。
+登录 token 仍保存在默认路径或 `ims.wechat.token_path`。收件、去重、轮询游标和短期回复 `context_token` 只保存在内存；旧去重与游标文件不再导入。升级前先处理待执行输入，备份配置、token、session pin 和移交保护，详见[运维说明](./operations_CN.md#升级与停止服务)。
 
-运维注意：
+一批中所有支持的消息确定接纳、重复或拒绝后才推进内存游标；暂时无法接纳时保留本批并等待。进程重启清空队列和游标，可能丢消息或收到平台重投，不能保证跨重启去重。同账号续期在当前进程内保留游标；跨账号不继承权限与上下文。同主机同 OS 用户同账号只能运行一个实例。
 
-- 这两个文件都会通过“原子替换”写入，避免崩溃导致的截断文件。
-- 不要把它们提交到版本控制。
-- 如果你迁移部署并希望保持连续性，建议同时迁移这两个文件。
-- 除非你非常清楚冲突风险，否则不要让多个 gateway 实例共用同一份微信状态文件。
+## 等待回复上下文
+
+进程启动时回复上下文为空，owner 的新消息或 `/status` 可以建立上下文。运行期上下文失效时，待投递任务留在原队列；`/status` 显示 `reply_context_missing`，新上下文不会延长原 24 小时投递窗口。重启不恢复这个队列。
+
+未知结果先查看 Chord 原会话。回复上下文丢失可能导致完成结果无法发送，Gateway 不会因此重做任务或补发旧结果。超大轮询响应的处理见[排障](./troubleshooting_CN.md#微信任务等待或轮询暂停)。
 
 ## 续期 / 重新登录
 
@@ -108,6 +111,8 @@ gateway 检测到微信 session 过期后，会：
 
 - 清理已保存 token
 - 自动启动二维码登录流程
+
+iLink API 用 `ret` 或 `errcode` 为 `-14` 表示会话已失效。gateway 将该值视为过期，丢弃已保存的 token 并回到二维码登录。
 
 ### 从其他 IM 手动续期（多 IM 模式）
 
@@ -131,6 +136,15 @@ gateway 会返回微信二维码登录链接。扫码后会更新 token，通常
 - 每个微信聊天同一时刻只路由到一个 workspace。owner 可用 `/bind` 切换目录。
 - 微信 iLink 依赖外部 iLink API，稳定性与可用性可能不如纯 Bot 平台。
   - 如果你对稳定性/风控风险敏感，不建议用主号测试。
+
+## 官方协议参考
+
+gateway 实现的是微信 ClawBot 插件所用的微信 iLink Bot API：
+
+- [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) — 官方插件仓库；其 [`docs/protocol.md`](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md) 记录了后端协议（端点、请求头、消息与媒体模型）。
+- [clawbot 相关接口](https://developers.weixin.qq.com/doc/aispeech/knowledge/openapi/Clawbotrelated.html) — 微信官方开发者文档中的 clawbot 相关接口说明。
+
+上述文档描述平台契约；本指南中的保证——同账号单实例、进程内去重、等待回复上下文及其 24 小时窗口——属于 gateway 行为，而非平台承诺。
 
 ## 故障排查
 

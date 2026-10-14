@@ -109,6 +109,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	var sessionPin string
 	var deferredLog func(string, ControlState)
 	var questionEvents []questionEvent
+	var ingressQuestionReceipt *QuestionReceipt
 
 	switch env.Type {
 	case "input_queue_changed":
@@ -139,15 +140,27 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				break
 			}
 			if strings.TrimSpace(payload.SessionID) == "" {
+				deferredLog = func(key string, _ ControlState) { log.Warnf("drop ready event: empty session id key=%s", key) }
 				break
 			}
 			if p.expectedSessionID != "" && payload.SessionID != p.expectedSessionID {
+				sessionID, expected := payload.SessionID, p.expectedSessionID
+				deferredLog = func(key string, _ ControlState) {
+					log.Warnf("drop ready event: session %q != expected %q key=%s", sessionID, expected, key)
+				}
 				break
 			}
-			if p.restoringTransferID != "" && (payload.TransferID != p.restoringTransferID || payload.BindingInstanceID != p.bindingInstanceID || env.Type != "ready_paused" && payload.State != "ready_paused") {
+			if p.restoringTransferID != "" && (payload.TransferID != p.restoringTransferID || payload.BindingInstanceID != p.bindingInstanceID || (env.Type != "ready_paused" && payload.State != "ready_paused")) {
+				transferID, expected := payload.TransferID, p.restoringTransferID
+				deferredLog = func(key string, _ ControlState) {
+					log.Warnf("drop ready_paused event: transfer identity mismatch key=%s transfer=%q expected=%q", key, transferID, expected)
+				}
 				break
 			}
 			if p.restoringTransferID != "" && (payload.RuntimeID == "" || payload.SessionEpoch == nil || inputs == nil || !inputs.Paused) {
+				deferredLog = func(key string, _ ControlState) {
+					log.Warnf("drop ready_paused event: incomplete paused projection key=%s", key)
+				}
 				break
 			}
 			p.runtimeID = payload.RuntimeID
@@ -252,6 +265,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	case "question_receipt":
 		var receipt QuestionReceipt
 		if json.Unmarshal(env.Payload, &receipt) == nil {
+			ingressQuestionReceipt = &receipt
 			if ch := p.questionWaiters[receipt.OperationID]; ch != nil {
 				select {
 				case ch <- receipt:
@@ -403,7 +417,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			identity := snapshot.BindingID + "\n" + text
 			if text != "" && identity != p.lastMCPNotification {
 				p.lastMCPNotification = identity
-				eventType = mcpStatusChangedEvent
+				// A fresh process starting a session reports its first MCP
+				// view as fully available. That summary reports nothing that
+				// changed for the chat, so it is not pushed; unavailable
+				// servers and later recoveries still notify once each.
+				if text != mcpAllAvailableNotification || p.mcpNotified {
+					p.mcpNotified = true
+					eventType = mcpStatusChangedEvent
+				}
 			}
 			if len(snapshot.Servers) == 0 {
 				p.lastMCPNotification = ""
@@ -633,13 +654,20 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	// Capture callback params under lock, then invoke outside lock to prevent
 	// deadlock: onEvent → router → proc.Alive/SendCommand → p.mu.
 	var (
-		onEvent = p.onEvent
-		key     = p.key
-		state   = p.state // copy
+		onEvent           = p.onEvent
+		key               = p.key
+		state             = p.state // copy
+		onQuestionReceipt = p.onQuestionReceipt
 	)
 	// Queue projections are replaced, never mutated internally. Copy only
 	// when publishing to a caller that may mutate its own snapshot.
 	p.mu.Unlock()
+	if ingressQuestionReceipt != nil && onQuestionReceipt != nil && !onQuestionReceipt(p, *ingressQuestionReceipt) {
+		p.mu.Lock()
+		p.inputReceiptBlocked = true
+		p.state.LastError = "input_receipt_backpressure: question receipt application unavailable; check ingress and the original session"
+		p.mu.Unlock()
+	}
 
 	if deferredLog != nil {
 		deferredLog(key, state)

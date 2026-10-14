@@ -41,8 +41,8 @@ workspaces:
 				checkOther(store.Snapshot())
 				paths := &config.Paths{StateDir: t.TempDir()}
 				pins := newSessionPinStore(paths.StateDir)
-				ownPin := pinKeyForBinding(store.Snapshot(), key)
-				otherPin := pinKeyForBinding(store.Snapshot(), (processKey{workspaceID: "original", imType: "feishu", chatID: "existing-chat"}).String())
+				ownPin := pinKeyForBinding(key)
+				otherPin := pinKeyForBinding((processKey{workspaceID: "original", imType: "feishu", chatID: "existing-chat"}).String())
 				for pin, session := range map[string]string{ownPin: "own-session", otherPin: "other-session"} {
 					if err := pins.Set(pin, session); err != nil {
 						t.Fatal(err)

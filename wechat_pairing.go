@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ type wechatReplyContext struct {
 	token         string
 	used, expires time.Time
 	bound         bool
+	committed     bool
+	accountEpoch  uint64
 }
 
 // The server ID is uint64 on the wire. json.Number accepts both numeric and
@@ -45,7 +48,7 @@ func (a *WechatAdapter) pairingRouter() *NotificationRouter {
 func (a *WechatAdapter) publishToken(token *TokenData) {
 	r := a.pairingRouter()
 	if r == nil || r.admission == nil {
-		a.token.Store(token)
+		a.swapPollingToken(token)
 		return
 	}
 	p := r.admission.pairing
@@ -79,9 +82,10 @@ func (a *WechatAdapter) publishToken(token *TokenData) {
 		a.mu.Lock()
 
 		a.replyContexts = map[string]wechatReplyContext{}
+		a.ingressPending = nil
 		a.mu.Unlock()
 	}
-	a.token.Store(token)
+	a.swapPollingToken(token)
 	p.store.txMu.Unlock()
 	if changed {
 		go r.stopPairedPlatform("wechat")
@@ -150,27 +154,15 @@ func (a *WechatAdapter) apiPostSnapshot(ctx context.Context, token *TokenData, p
 	return a.httpClient.Do(req)
 }
 
-func (a *WechatAdapter) rememberPairedContext(msg IncomingMessage, token string) {
-	if token == "" || msg.ticket == nil {
-		return
-	}
-	r := a.pairingRouter()
-	if r == nil || r.admission == nil || !r.admission.Valid(*msg.ticket) {
-		return
-	}
-	im := r.getConfig().IMConfigByType("wechat")
-	owner := im.OwnerIdentity()
-	// Bind requests from an already bound owner must not demote the task's
-	// reply context, even when the bind is idempotent, invalid, or busy.
-	bound := owner != nil && owner.AccountID == msg.AccountID && owner.UserID == msg.SenderID && im.Bindings()[msg.ChatID] != ""
-	a.cachePairedContext(msg.AccountID, msg.ChatID, token, bound)
-}
-
 func (a *WechatAdapter) cachePairedContext(account, chat, token string, bound bool) {
-	now := time.Now()
-	key := compositeKey(account, chat)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.cachePairedContextLocked(account, chat, token, bound)
+}
+
+func (a *WechatAdapter) cachePairedContextLocked(account, chat, token string, bound bool) {
+	now := time.Now()
+	key := compositeKey(account, chat)
 	if a.replyContexts == nil {
 		a.replyContexts = map[string]wechatReplyContext{}
 	}
@@ -197,7 +189,7 @@ func (a *WechatAdapter) cachePairedContext(account, chat, token string, bound bo
 	if previous, exists := a.replyContexts[key]; (!exists || previous.bound != bound) && count >= limit {
 		delete(a.replyContexts, oldestKey)
 	}
-	a.replyContexts[key] = wechatReplyContext{token: token, used: now, expires: now.Add(30 * time.Second), bound: bound}
+	a.replyContexts[key] = wechatReplyContext{token: token, used: now, expires: now.Add(30 * time.Second), bound: bound, committed: true}
 }
 
 func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) error {
@@ -210,6 +202,11 @@ func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) 
 	}
 	key := compositeKey(token.AccountID, chat)
 	a.mu.Lock()
+	if a.stopped {
+		a.mu.Unlock()
+		return errors.New("wechat adapter stopped")
+	}
+	adapterCtx := a.ctx
 	reply, ok := a.replyContexts[key]
 	if ok {
 		reply.used = time.Now()
@@ -219,8 +216,24 @@ func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) 
 	if !ok || (!reply.bound && !time.Now().Before(reply.expires)) {
 		return errors.New("reply context unavailable; wait for the next inbound message")
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	if adapterCtx == nil {
+		adapterCtx = context.Background()
+	}
+	stop := context.AfterFunc(adapterCtx, cancel)
+	defer stop()
+	defer cancel()
+	if adapterCtx.Err() != nil {
+		cancel()
+	}
 	for i, part := range splitText(text, ilinkMaxMessageLen) {
 		body := ilinkSendMessageRequest{Msg: ilinkMessage{ToUserID: chat, ClientID: fmt.Sprintf("chord-gateway-%d-%d", time.Now().UnixNano(), i), MessageType: ilinkMessageTypeBot, MessageState: ilinkMessageStateFinish, ContextToken: reply.token, ItemList: []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: part}}}}}
+		a.mu.Lock()
+		stopped := a.stopped
+		a.mu.Unlock()
+		if stopped {
+			return errors.New("wechat adapter stopped")
+		}
 		if a.token.Load() != token {
 			return errors.New("account changed")
 		}
@@ -231,15 +244,33 @@ func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) 
 	return nil
 }
 
-func (a *WechatAdapter) savePairedSyncBuf(expected *TokenData) {
+// clearTokenSnapshot cannot erase a replacement credential when an old polling
+// request discovers that its captured session expired.
+func (a *WechatAdapter) clearTokenSnapshot(expected *TokenData) bool {
 	r := a.pairingRouter()
-	if r == nil || r.admission == nil {
-		return
+	if r != nil && r.admission != nil {
+		r.admission.pairing.store.txMu.Lock()
+		defer r.admission.pairing.store.txMu.Unlock()
 	}
-	r.admission.pairing.store.txMu.Lock()
-	defer r.admission.pairing.store.txMu.Unlock()
+	a.mu.Lock()
 	if expected == nil || a.token.Load() != expected {
-		return
+		a.mu.Unlock()
+		return false
 	}
-	a.saveSyncBuf()
+	if a.pollCancel != nil {
+		a.pollCancel()
+		a.pollCancel, a.pollToken = nil, nil
+	}
+	a.token.Store(nil)
+	a.mu.Unlock()
+	if r != nil && r.admission != nil {
+		p := r.admission.pairing
+		p.mu.Lock()
+		if state := p.platforms["wechat"]; state != nil {
+			state.ready = false
+		}
+		p.mu.Unlock()
+	}
+	_ = os.Remove(a.tokenFile)
+	return true
 }

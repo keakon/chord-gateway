@@ -20,8 +20,8 @@ func newPairingCommand(paths *config.Paths, configFile *string) *cobra.Command {
 	pairing := &cobra.Command{Use: "pairing", Short: "Manage local pairing identity"}
 	var platform string
 	reset := &cobra.Command{Use: "reset", Short: "Clear one platform identity and automatic session pins", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if platform != "feishu" && platform != "wechat" {
-			return errors.New("--platform must be feishu or wechat")
+		if !supportedIMPlatform(platform) {
+			return errors.New("--platform must name a supported IM platform")
 		}
 		store, locks, err := loadLockedConfiguration(*configFile, paths)
 		if err != nil {
@@ -54,7 +54,7 @@ func newPairingCommand(paths *config.Paths, configFile *string) *cobra.Command {
 		_, err = fmt.Fprintln(terminal, "Pairing reset completed. Start the gateway with --pair to register an owner in a private chat.")
 		return err
 	}}
-	reset.Flags().StringVar(&platform, "platform", "", "Platform to reset: feishu or wechat")
+	reset.Flags().StringVar(&platform, "platform", "", "Platform to reset: wechat, feishu, telegram, discord, wecom, dingtalk, slack")
 	pairing.AddCommand(reset)
 	return pairing
 }

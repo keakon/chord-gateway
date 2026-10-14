@@ -47,6 +47,20 @@ func TestDeliveryPreservesCallerContext(t *testing.T) {
 				defer cancel()
 				entered := make(chan struct{})
 				probe := &contextProbeAdapter{send: func(got context.Context) error {
+					if got.Value(replyAccountContextKey{}) != "bot" {
+						t.Error("original account identity lost")
+					}
+					if flow {
+						captured, ok := got.Value(outboundReplyContextKey{}).(ReplyPermit)
+						if !ok || captured.ticket.Identity != ticket.Identity || got.Value(outboundDeliveryContextKey{}) != nil {
+							t.Error("flow authority was not captured exclusively")
+						}
+					} else {
+						captured, ok := got.Value(outboundDeliveryContextKey{}).(DeliveryTarget)
+						if !ok || captured != target || got.Value(outboundReplyContextKey{}) != nil {
+							t.Error("binding authority was not captured exclusively")
+						}
+					}
 					if got.Value(valueKey{}) != "request" {
 						t.Error("caller values lost")
 					}

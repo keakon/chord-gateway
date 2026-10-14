@@ -125,11 +125,10 @@ func TestPairingBindAndReset(t *testing.T) {
 		t.Fatal("directory not reused")
 	}
 	key := (processKey{workspaceID: ws.ID, imType: "wechat", chatID: "chat"}).String()
-	scoped := pinKeyForBinding(r.getConfig(), key)
-	if scoped == key {
-		t.Fatal("pin not scoped")
+	if scoped := pinKeyForBinding(key); scoped != key {
+		t.Fatalf("pin key = %q, want the bare binding key %q", scoped, key)
 	}
-	if err := r.mgr.pins.Set(scoped, "session"); err != nil {
+	if err := r.mgr.pins.Set(key, "session"); err != nil {
 		t.Fatal(err)
 	}
 	paths := &config.Paths{StateDir: filepath.Dir(r.mgr.pins.path)}
@@ -183,7 +182,10 @@ func TestPairedRebindInvalidatesOldTicket(t *testing.T) {
 	}
 }
 
-func TestPairedPinNeverUsesUnscopedIdentity(t *testing.T) {
+// A pin belongs to the workspace and route, not the platform account: the same
+// chat under a re-paired account must continue its conversation instead of
+// silently starting over.
+func TestPairedPinSurvivesAccountChange(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	dir := t.TempDir()
 	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
@@ -196,8 +198,8 @@ func TestPairedPinNeverUsesUnscopedIdentity(t *testing.T) {
 	if err = r.mgr.pins.Set(key, "old-session"); err != nil {
 		t.Fatal(err)
 	}
-	if args := r.mgr.spawnArgsForKey(key); len(args) != 0 {
-		t.Fatal("restored legacy identity pin")
+	if got := r.mgr.spawnArgsForKey(key); len(got) != 2 || got[0] != "--resume" || got[1] != "old-session" {
+		t.Fatalf("spawn args = %v, want the pinned session to be resumed", got)
 	}
 }
 

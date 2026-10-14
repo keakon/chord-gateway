@@ -107,14 +107,16 @@ func (r *ilinkGetUpdatesResponse) statusKind() ilinkGetUpdatesStatus {
 
 // ilinkMessage represents a single WeChat iLink message.
 type ilinkMessage struct {
-	MessageID    json.Number `json:"message_id,omitempty"`
-	FromUserID   string      `json:"from_user_id,omitempty"`
-	ToUserID     string      `json:"to_user_id,omitempty"`
-	ClientID     string      `json:"client_id,omitempty"`
-	MessageType  int         `json:"message_type,omitempty"`
-	MessageState int         `json:"message_state,omitempty"`
-	ContextToken string      `json:"context_token,omitempty"`
-	ItemList     []ilinkItem `json:"item_list,omitempty"`
+	ingressCapture *ingressCapture `json:"-"` // control target frozen at polling receipt
+	receivedAt     time.Time       `json:"-"` // first observation in its retained polling batch
+	MessageID      json.Number     `json:"message_id,omitempty"`
+	FromUserID     string          `json:"from_user_id,omitempty"`
+	ToUserID       string          `json:"to_user_id,omitempty"`
+	ClientID       string          `json:"client_id,omitempty"`
+	MessageType    int             `json:"message_type,omitempty"`
+	MessageState   int             `json:"message_state,omitempty"`
+	ContextToken   string          `json:"context_token,omitempty"`
+	ItemList       []ilinkItem     `json:"item_list,omitempty"`
 }
 
 // ilinkItem represents an item in a message.
@@ -153,21 +155,28 @@ type TokenData struct {
 
 // WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
-	replyContexts map[string]wechatReplyContext
-	dedupe        *DedupeStore
+	replyContexts        map[string]wechatReplyContext
+	ingressReadinessWake func()
+	ingressPending       map[string]*wechatIngressPending
 
-	imCfg       config.IMAdapterConfig
-	msgRouter   MessageRouter
-	notifier    SessionLoginNotifier
-	token       atomic.Pointer[TokenData]
-	syncAccount string
-	syncBuf     string // monitorLoop-only: written/read from a single goroutine
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	storageDir  string
-	tokenFile   string
-	httpClient  *http.Client
+	imCfg         config.IMAdapterConfig
+	msgRouter     MessageRouter
+	notifier      SessionLoginNotifier
+	token         atomic.Pointer[TokenData]
+	syncAccount   string
+	syncBuf       string // monitorLoop-only: written/read from a single goroutine
+	mu            sync.Mutex
+	connectMu     sync.Mutex
+	pollCancel    context.CancelFunc // protected by mu
+	pollToken     *TokenData         // protected by mu
+	stopped       bool               // protected by mu; terminal polling scope
+	ctx           context.Context
+	cancel        context.CancelFunc
+	storageDir    string
+	accountLock   *instanceLocks // owned by the single polling supervisor
+	accountLockID string
+	tokenFile     string
+	httpClient    *http.Client
 }
 
 // NewWechatAdapter creates a new WeChat iLink adapter.
@@ -193,19 +202,6 @@ func NewWechatAdapter(_ *config.Config, imCfg config.IMAdapterConfig, paths *con
 		log.Infof("wechat ilink: loaded saved token account_id=%v", token.AccountID)
 	}
 
-	// Try to load saved sync buf.
-
-	var err error
-	a.dedupe, err = NewDedupeStore(filepath.Join(paths.StateDir, "wechat-dedupe"))
-	if err != nil {
-		return nil, err
-	}
-
-	a.syncBuf = a.loadSyncBuf()
-	if token := a.token.Load(); token != nil {
-		a.syncAccount = token.AccountID
-	}
-
 	return a, nil
 }
 
@@ -222,7 +218,7 @@ func (a *WechatAdapter) StartLogin() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get QR code: %w", err)
 	}
-	go a.pollQRStatusForRelogin(a.ctx, qr.QRCode)
+	go a.pollQRStatusForRelogin(a.adapterContext(), qr.QRCode)
 	return qr.QRCodeImgContent, nil
 }
 
@@ -284,12 +280,35 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 // Connect starts the adapter and blocks until Disconnect is called or a fatal
 // error occurs. Missing credentials start QR login.
 func (a *WechatAdapter) Connect() error {
-	if a.dedupe != nil {
-		defer a.dedupe.Close()
+	if !a.connectMu.TryLock() {
+		return fmt.Errorf("wechat polling supervisor is already running")
 	}
+	defer a.connectMu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		// Stop delivery before releasing the cross-instance account lock. The
+		// shared dispatcher can remain alive for other IM adapters after this
+		// supervisor exits, including on a fatal polling/checkpoint error.
+		a.mu.Lock()
+		a.stopped = true
+		a.replyContexts = nil
+		a.ingressPending = nil
+		if a.pollCancel != nil {
+			a.pollCancel()
+			a.pollCancel, a.pollToken = nil, nil
+		}
+		a.mu.Unlock()
+		cancel()
+		if r := a.pairingRouter(); r != nil && r.admission != nil {
+			r.admission.pairing.PlatformUnavailable("wechat")
+		}
+		a.closeIngressAccount()
+	}()
+	a.mu.Lock()
+	a.stopped = false
 	a.ctx = ctx
 	a.cancel = cancel
+	a.mu.Unlock()
 
 	return a.connectILink(ctx)
 }
@@ -302,8 +321,7 @@ func (a *WechatAdapter) connectILink(ctx context.Context) error {
 		}
 	}
 
-	a.monitorLoop(ctx)
-	return nil
+	return a.monitorLoop(ctx)
 }
 
 // SendText sends a plain text message to the specified chat (user ID).
@@ -314,9 +332,22 @@ func (a *WechatAdapter) SendText(chatID, text string) error {
 
 // Disconnect signals the adapter to stop.
 func (a *WechatAdapter) Disconnect() {
-	if a.cancel != nil {
-		a.cancel()
+	a.mu.Lock()
+	cancel := a.cancel
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
+}
+
+func (a *WechatAdapter) adapterContext() context.Context {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // --- Helpers ---
@@ -379,7 +410,7 @@ func (a *WechatAdapter) apiGet(path string) (*http.Response, error) {
 		return nil, fmt.Errorf("no base URL configured")
 	}
 	url := baseURL + "/" + path
-	req, err := http.NewRequestWithContext(a.ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(a.adapterContext(), http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -388,7 +419,7 @@ func (a *WechatAdapter) apiGet(path string) (*http.Response, error) {
 }
 
 func (a *WechatAdapter) apiPost(path string, body any) (*http.Response, error) {
-	return a.apiPostSnapshot(a.ctx, a.token.Load(), path, body)
+	return a.apiPostSnapshot(a.adapterContext(), a.token.Load(), path, body)
 }
 
 // --- QR Login ---
@@ -544,105 +575,6 @@ func (a *WechatAdapter) getQRCodeStatus(qrcode string) (*ilinkQRCodeStatusRespon
 
 // --- Long-poll Monitor ---
 
-func (a *WechatAdapter) monitorLoop(ctx context.Context) {
-	consecutiveFailures := 0
-	pairingErrorReported := false
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		capturedToken := a.token.Load()
-		if capturedToken != nil && a.syncAccount != capturedToken.AccountID {
-			a.syncBuf = ""
-			a.syncAccount = capturedToken.AccountID
-		}
-		resp, err := a.getUpdates()
-		if capturedToken != a.token.Load() {
-			a.syncBuf = ""
-			continue
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			consecutiveFailures++
-			log.Errorf("wechat ilink: getupdates error error=%v consecutive_failures=%v max=%v", err,
-				consecutiveFailures,
-				ilinkMaxRetries,
-			)
-			if consecutiveFailures >= ilinkMaxRetries {
-				log.Warnf("wechat ilink: backing off after consecutive failures delay=%v", ilinkBackoffDelay)
-				consecutiveFailures = 0
-				sleepCtx(ctx, ilinkBackoffDelay)
-			} else {
-				sleepCtx(ctx, ilinkRetryDelay)
-			}
-			continue
-		}
-
-		switch resp.statusKind() {
-		case ilinkGetUpdatesStatusSessionExpired:
-			log.Warnf("wechat ilink: session expired (errcode=-14), clearing token and re-login")
-			a.clearToken()
-			if err := a.login(ctx); err != nil {
-				log.Errorf("wechat ilink: re-login failed error=%v", err)
-				a.notifySessionExpired()
-				sleepCtx(ctx, ilinkBackoffDelay)
-			}
-			continue
-		case ilinkGetUpdatesStatusError:
-			consecutiveFailures++
-			log.Warnf("wechat ilink: getupdates API error ret=%v errcode=%v consecutive_failures=%v", resp.Ret,
-				resp.ErrCode,
-				consecutiveFailures,
-			)
-			if consecutiveFailures >= ilinkMaxRetries {
-				log.Warnf("wechat ilink: backing off after consecutive failures delay=%v", ilinkBackoffDelay)
-				consecutiveFailures = 0
-				sleepCtx(ctx, ilinkBackoffDelay)
-			} else {
-				sleepCtx(ctx, ilinkRetryDelay)
-			}
-			continue
-		case ilinkGetUpdatesStatusOK, ilinkGetUpdatesStatusEmpty:
-			consecutiveFailures = 0
-		}
-
-		// Only successful authenticated responses authorize inbound messages.
-		if resp.Ret != 0 || resp.ErrCode != 0 {
-			sleepCtx(ctx, ilinkRetryDelay)
-			continue
-		}
-		r := a.pairingRouter()
-		if r == nil || r.admission == nil || capturedToken == nil {
-			continue
-		}
-		if err := r.admission.pairing.PlatformReady("wechat", capturedToken.AccountID); err != nil {
-			if !pairingErrorReported {
-				log.Warnf("wechat: paired access unavailable; check the account identity or terminal pairing setup")
-				pairingErrorReported = true
-			}
-			continue
-		}
-
-		// Update sync buf.
-		if resp.GetUpdatesBuf != "" && resp.GetUpdatesBuf != a.syncBuf {
-			a.syncBuf = resp.GetUpdatesBuf
-
-			a.savePairedSyncBuf(capturedToken)
-		}
-
-		// Process messages.
-		for _, msg := range resp.Msgs {
-			a.handleIncomingMessage(msg, capturedToken)
-		}
-	}
-}
-
 // notifySessionExpired logs the session expiry and notifies the router so
 // other IM adapters can inform the user. The WeChat session is expired so we
 // cannot notify through WeChat itself.
@@ -651,89 +583,6 @@ func (a *WechatAdapter) notifySessionExpired() {
 	if a.notifier != nil {
 		a.notifier.HandleSessionExpired("wechat")
 	}
-}
-
-func (a *WechatAdapter) getUpdates() (*ilinkGetUpdatesResponse, error) {
-	reqBody := ilinkGetUpdatesRequest{
-		GetUpdatesBuf: a.syncBuf,
-		BaseInfo: ilinkBaseInfo{
-			ChannelVersion: ilinkChannelVersion,
-		},
-	}
-
-	resp, err := a.apiPost("ilink/bot/getupdates", reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	var result ilinkGetUpdatesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &result, nil
-}
-
-func (a *WechatAdapter) handleIncomingMessage(msg ilinkMessage, captured ...*TokenData) {
-	// Only handle user messages (not our own bot messages).
-	if msg.MessageType != ilinkMessageTypeUser {
-		return
-	}
-
-	// Extract text from item_list.
-	var textParts []string
-	for _, item := range msg.ItemList {
-		if item.Type == ilinkItemTypeText && item.TextItem != nil && item.TextItem.Text != "" {
-			textParts = append(textParts, item.TextItem.Text)
-		}
-	}
-	if len(textParts) == 0 {
-		return
-	}
-
-	text := strings.Join(textParts, "\n")
-	log.Infof("wechat ilink: received message from=%v text_len=%v", msg.FromUserID, len(text))
-
-	incoming := IncomingMessage{
-		IMType:    "wechat",
-		ChatID:    msg.FromUserID,
-		SenderID:  msg.FromUserID,
-		MessageID: msg.inboundMessageID(),
-		Text:      text,
-	}
-
-	token := a.token.Load()
-	if len(captured) > 0 {
-		if captured[0] != token {
-			return
-		}
-		token = captured[0]
-	}
-	if token == nil {
-		return
-	}
-	incoming.AccountID = token.AccountID
-	incoming.ChatKind = "private"
-	var allowed bool
-	incoming, allowed = admittedMessage(a.msgRouter, incoming)
-	if !allowed {
-		return
-	}
-	if a.dedupe == nil {
-		return
-	}
-	key := scopedMessageKey("wechat", token.AccountID, msg.FromUserID, incoming.MessageID)
-	if !a.dedupe.TryBegin(key) {
-		return
-	}
-	a.dedupe.Commit(key)
-	a.rememberPairedContext(incoming, msg.ContextToken)
-
-	a.msgRouter.HandleIncomingMessage(incoming)
 }
 
 // --- Sending Messages ---
@@ -822,63 +671,6 @@ func (a *WechatAdapter) saveToken() {
 	}
 	if err := writePrivateFileAtomically(a.tokenFile, data); err != nil {
 		log.Errorf("wechat ilink: failed to save token error=%v", err)
-	}
-}
-
-// --- Sync Buf Persistence ---
-
-func (a *WechatAdapter) syncBufPath() string {
-	return filepath.Join(a.storageDir, "sync-buf.json")
-}
-
-func (a *WechatAdapter) loadSyncBuf() string {
-	path := a.syncBufPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var obj struct {
-		GetUpdatesBuf string `json:"get_updates_buf"`
-		Version       int    `json:"version,omitempty"`
-		AccountID     string `json:"account_id,omitempty"`
-	}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return ""
-	}
-
-	token := a.token.Load()
-	if token == nil || obj.Version != 1 || obj.AccountID != token.AccountID {
-		return ""
-	}
-
-	return obj.GetUpdatesBuf
-}
-
-func (a *WechatAdapter) saveSyncBuf() {
-	if err := os.MkdirAll(a.storageDir, 0o700); err != nil {
-		log.Errorf("wechat ilink: failed to create storage dir error=%v", err)
-		return
-	}
-	obj := struct {
-		GetUpdatesBuf string `json:"get_updates_buf"`
-		Version       int    `json:"version,omitempty"`
-		AccountID     string `json:"account_id,omitempty"`
-	}{GetUpdatesBuf: a.syncBuf}
-
-	token := a.token.Load()
-	if token == nil {
-		return
-	}
-	obj.Version = 1
-	obj.AccountID = token.AccountID
-
-	data, err := json.Marshal(obj)
-	if err != nil {
-		log.Errorf("wechat ilink: failed to marshal sync buf error=%v", err)
-		return
-	}
-	if err := writePrivateFileAtomically(a.syncBufPath(), data); err != nil {
-		log.Errorf("wechat ilink: failed to save sync buf error=%v", err)
 	}
 }
 

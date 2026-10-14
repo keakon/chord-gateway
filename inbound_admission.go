@@ -1,9 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/json"
-	"strings"
 	"sync"
 	"time"
 )
@@ -64,11 +61,15 @@ func (a *Admission) gate(id ChatIdentity, workspace string, epoch uint64) *ChatG
 }
 
 func (a *Admission) Authorize(msg IncomingMessage) (AdmissionTicket, bool) {
+	return a.authorize(msg, true)
+}
+
+func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (AdmissionTicket, bool) {
 	p := a.pairing
 	cfg := p.store.Snapshot()
 	im := cfg.IMConfigByType(msg.IMType)
 	ticket := AdmissionTicket{Identity: ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}, SenderID: msg.SenderID, ReceivedAt: p.now()}
-	if im == nil || p.store.faulted.Load() || msg.AccountID == "" || msg.ChatID == "" || msg.SenderID == "" || msg.MessageID == "" || (msg.ChatKind != "private" && msg.ChatKind != "group") {
+	if im == nil || p.store.faulted.Load() || msg.AccountID == "" || msg.ChatID == "" || msg.SenderID == "" || msg.MessageID == "" || !isValidIngressChatKind(msg) {
 		return ticket, false
 	}
 	p.mu.Lock()
@@ -85,7 +86,7 @@ func (a *Admission) Authorize(msg IncomingMessage) (AdmissionTicket, bool) {
 			return ticket, false
 		}
 		switch {
-		case isBindCommand(msg.Text):
+		case !msg.ForceText && isBindCommand(msg.Text):
 			ticket.Kind = "paired_bind"
 		case im.Bindings()[msg.ChatID] == "":
 			ticket.Kind = "owner_unbound"
@@ -93,20 +94,22 @@ func (a *Admission) Authorize(msg IncomingMessage) (AdmissionTicket, bool) {
 			ticket.Kind = "paired_task"
 		}
 	} else {
-		if msg.ChatKind != "private" || msg.InternalAction != nil || !isBindCommand(msg.Text) {
+		if msg.ChatKind != "private" || msg.InternalAction != nil || msg.ForceText || !isBindCommand(msg.Text) {
 			p.mu.Unlock()
 			return ticket, false
 		}
-		replenished := int(p.now().Sub(state.refilled) / (2 * time.Second))
-		if replenished > 0 {
-			state.tokens = min(30, state.tokens+replenished)
-			state.refilled = state.refilled.Add(time.Duration(replenished) * 2 * time.Second)
+		if chargePairing {
+			replenished := int(p.now().Sub(state.refilled) / (2 * time.Second))
+			if replenished > 0 {
+				state.tokens = min(30, state.tokens+replenished)
+				state.refilled = state.refilled.Add(time.Duration(replenished) * 2 * time.Second)
+			}
+			if state.tokens == 0 {
+				p.mu.Unlock()
+				return ticket, false
+			}
+			state.tokens--
 		}
-		if state.tokens == 0 {
-			p.mu.Unlock()
-			return ticket, false
-		}
-		state.tokens--
 		args, err := parsePairedBindArgs(msg.Text)
 		if err != nil || len(args) != 2 || !p.codeValid(state, args[1]) {
 			p.mu.Unlock()
@@ -169,20 +172,4 @@ func admittedMessage(router MessageRouter, msg IncomingMessage) (IncomingMessage
 		return msg, true
 	}
 	return msg, false
-}
-
-func pairedChatKind(raw string) string {
-	switch strings.ToLower(raw) {
-	case "p2p", "private":
-		return "private"
-	case "group":
-		return "group"
-	default:
-		return ""
-	}
-}
-
-func scopedMessageKey(parts ...string) string {
-	data, _ := json.Marshal(parts)
-	return base64.RawURLEncoding.EncodeToString(data)
 }

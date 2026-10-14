@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/keakon/golog/log"
 )
@@ -71,32 +72,60 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, process
 }
 
 func (r *NotificationRouter) updateFeishuCardForTarget(msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
-	processKey := target.ProcessKey
-	ctx, done, err := r.deliveryContext(context.Background(), target)
+	return r.updateFeishuCardForTargetContext(context.Background(), msg, target, requestType, requestID, card)
+}
+
+func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Context, msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
+	updated, _ := r.patchFeishuCardForTargetContext(ctx, msg, target, requestType, requestID, card, true)
+	return updated
+}
+
+// Preserve handles until a confirmed terminal patch. A failed or uncertain
+// patch can be reconciled by a later trusted result instead of stranding the
+// original card, and uncertain writes must not trigger the same text fallback.
+func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context, msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any, terminal bool) (bool, error) {
+	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer done()
 	if msg.IMType != "feishu" {
-		return false
+		return false, nil
 	}
 	feishu := r.findFeishuAdapter()
 	if feishu == nil {
-		return false
+		return false, nil
 	}
-	stored, ok := r.takeCardHandle(processKey, requestType, requestID)
-	handle := stored
+	key := cardHandleKey(target.ProcessKey, requestType, requestID)
+	r.mu.Lock()
+	entry, ok := r.cardHandles[key]
+	if ok && time.Since(entry.recordedAt) > interactiveCardHandleTTL {
+		delete(r.cardHandles, key)
+		ok = false
+	}
+	r.mu.Unlock()
+	handle := InteractiveCardHandle{}
+	if ok {
+		handle = entry.handle
+	}
 	if msg.InternalAction != nil {
-		handle = mergeCardHandles(stored, msg.InternalAction.Handle)
+		handle = mergeCardHandles(handle, msg.InternalAction.Handle)
 	}
-	if !ok && (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
-		return false
+	if strings.TrimSpace(handle.MessageID) == "" {
+		return false, nil
 	}
 	if err := feishu.updateInteractiveMessageContext(ctx, handle.MessageID, card, false); err != nil {
 		log.Warnf("feishu: failed to update interactive card request_id=%v request_type=%v message_id=%v error=%v", requestID, requestType, handle.MessageID, err)
-		return false
+		return false, err
 	}
-	return true
+	if terminal && ok {
+		r.mu.Lock()
+		if current, exists := r.cardHandles[key]; exists && current.recordedAt == entry.recordedAt {
+			delete(r.cardHandles, key)
+		}
+		r.mu.Unlock()
+	}
+	return true, nil
 }
 
 // resolveFeishuCard patches the previously-sent interactive Feishu card with a

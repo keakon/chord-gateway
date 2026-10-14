@@ -46,7 +46,7 @@ Takeover workspace identity comes from the Chord `takeover preflight` response; 
 
 ## Kept compatibility paths
 
-- Automatic session pins are scoped to the paired account and owner. Earlier unscoped keys are not restored; see the [upgrade notes](../CHANGELOG.md).
+- Automatic session pins are keyed by workspace and route, so changing the platform account on an existing route keeps its session. Local `pairing reset` clears that platform's automatic pins together with the owner and bindings, so a reset route starts without the old session. Pins written by a release that scoped keys to the paired identity, and pins in the pre-`v2:` pipe-joined layout the current parser no longer addresses, are discarded on load rather than rewritten; see the [upgrade notes](../CHANGELOG.md). Re-pairing to a different owner inherits the previous session by design for single-user deployments; use `/new` or delete the pin for isolation.
 - Unknown YAML fields are ignored, but each one is reported in the gateway log with its line, so a typo or a removed option is noticed. The removed `event_visibility.activity` key therefore has no effect; activity tracking is always enabled.
 - The Chord headless `todos` event is supported. Although Chord also emits an internal
   protocol event named `todos_updated`, the current headless command still surfaces

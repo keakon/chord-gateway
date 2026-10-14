@@ -31,9 +31,6 @@ func TestResolve_XDGDefaults(t *testing.T) {
 	if p.ConfigHome != filepath.Join(home, ".config", "chord-gateway") {
 		t.Errorf("ConfigHome = %q", p.ConfigHome)
 	}
-	if p.DedupeDir != wantState {
-		t.Errorf("DedupeDir = %q, want %q", p.DedupeDir, wantState)
-	}
 }
 
 func TestResolve_ConfigHomeOverride(t *testing.T) {
@@ -91,9 +88,6 @@ func TestResolve_StateDirOverride(t *testing.T) {
 	}
 	if p.LogFile != filepath.Join(explicit, "gateway.log") {
 		t.Errorf("LogFile = %q", p.LogFile)
-	}
-	if p.DedupeDir != explicit {
-		t.Errorf("DedupeDir = %q", p.DedupeDir)
 	}
 }
 

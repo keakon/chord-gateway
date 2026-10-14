@@ -2316,7 +2316,7 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 				defer func() { roleSwitchTimeout = oldTimeout }()
 			}
 			feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
-			defer feishu.dedupe.Close()
+
 			var patchedPath, patchedBody, sentText string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
@@ -2389,7 +2389,7 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 
 func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
 	feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
-	defer feishu.dedupe.Close()
+
 	var patchedPath, patchedBody, sentText string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2678,7 +2678,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("feishu plain send keeps question card", func(t *testing.T) {
 		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}
-		paths := &config.Paths{StateDir: t.TempDir(), DedupeDir: t.TempDir()}
+		paths := &config.Paths{StateDir: t.TempDir()}
 		mgr := NewChordManager(cfg, paths)
 		stdin := &captureWriteCloser{}
 		key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
@@ -2686,7 +2686,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
 		feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}})
-		defer feishu.dedupe.Close()
+
 		var patchedPath string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {

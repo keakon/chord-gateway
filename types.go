@@ -357,7 +357,9 @@ type IncomingMessage struct {
 	SenderName string `json:"sender_name,omitempty"` // display name (optional)
 	MessageID  string `json:"message_id,omitempty"`  // platform message ID for deduplication
 	Text       string `json:"text"`                  // message text content
-	AppID      string `json:"app_id,omitempty"`      // feishu app_id for multi-account dedupe
+	// ForceText preserves text-only addressing semantics supplied by the transport.
+	ForceText bool   `json:"-"`
+	AppID     string `json:"app_id,omitempty"` // feishu app_id for multi-account dedupe
 
 	// InternalAction carries trusted structured commands from platform callbacks.
 	// User-authored text must not set this field; parseIMCommand handles that path.
@@ -366,6 +368,7 @@ type IncomingMessage struct {
 
 type InternalAction struct {
 	BindingInstanceID string
+	Version           uint64
 	Type              string
 	Action            string
 	RequestID         string

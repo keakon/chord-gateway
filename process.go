@@ -30,7 +30,6 @@ type ChordProcess struct {
 	gate  *ChatGate
 
 	waitDone chan struct{}
-	pinKey   string
 
 	bindingInstanceID   string
 	runtimeID           string
@@ -68,8 +67,18 @@ type ChordProcess struct {
 	// synthetic sync-skip pairs or superseded plans' late outcomes.
 	compactionPlanID      string
 	pendingInputs         map[string]struct{}
+	inputObservers        map[string]*processInputObserver
+	inputReceiptQueue     []string
+	inputReceiptWorker    bool
+	inputReceiptBlocked   bool
+	inputReceiptShutdown  bool
+	inputReceiptDone      chan struct{}
 	questionEventVersions map[string]uint64
 	lastMCPNotification   string
+	// mcpNotified records whether this process has pushed any MCP
+	// notification. The all-available summary is only pushed as a recovery
+	// after a problem was reported; see process_protocol.go.
+	mcpNotified bool
 
 	// Auto-restart on crash
 	autoRestart      bool
@@ -88,8 +97,9 @@ type ChordProcess struct {
 	// request id, and roleWaiters wakes every waiter with the same payload, so
 	// two concurrent waits could consume each other's response. It is held only
 	// for the Chord round-trip, not for IM card/text I/O.
-	roleMu          sync.Mutex
-	questionWaiters map[string]chan QuestionReceipt
+	roleMu            sync.Mutex
+	questionWaiters   map[string]chan QuestionReceipt
+	onQuestionReceipt func(*ChordProcess, QuestionReceipt) bool
 }
 
 var ErrManagerShuttingDown = errors.New("chord manager is shutting down")
@@ -133,7 +143,8 @@ func (t *tailBuffer) String() string {
 
 // ChordManager manages chord headless processes, one per workspace.
 type ChordManager struct {
-	admission *Admission
+	inputReceiptProcesses sync.Map // process pointers with durable receipt observers
+	admission             *Admission
 
 	store *ConfigStore
 
@@ -291,7 +302,7 @@ func (m *ChordManager) spawnArgsForKey(key string) []string {
 	if m == nil || m.pins == nil {
 		return nil
 	}
-	sid := strings.TrimSpace(m.pins.Get(pinKeyForBinding(m.Config(), key)))
+	sid := strings.TrimSpace(m.pins.Get(pinKeyForBinding(key)))
 	if sid == "" {
 		return nil
 	}
@@ -302,7 +313,7 @@ func (m *ChordManager) clearSessionPinForKey(key string) error {
 	if m == nil || m.pins == nil {
 		return nil
 	}
-	return m.pins.Set(pinKeyForBinding(m.Config(), key), "")
+	return m.pins.Set(pinKeyForBinding(key), "")
 }
 
 // cancelDeliveryLocked retires output when the manager removes this runtime.
@@ -522,7 +533,6 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 
 	p := &ChordProcess{
 		waitDone:            make(chan struct{}),
-		pinKey:              pinKeyForBinding(m.Config(), key),
 		bindingInstanceID:   instance,
 		workspacePath:       "",
 		restoringTransferID: transferID,

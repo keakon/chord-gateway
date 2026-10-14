@@ -15,7 +15,7 @@ After completing [pairing and binding](./pairing.md):
 
 ## Routing model
 
-Each chat selects a workspace through `chat_bindings`. Gateway isolates running sessions by workspace, IM platform, and chat; automatic resume pins also include the bot account and owner identity. Storage keys are encoded and should not be assembled manually. Different chats retain separate session context even when sharing a workspace.
+Each chat selects a workspace through `chat_bindings`. Gateway isolates running sessions by workspace, IM platform, and chat; automatic resume pins follow the same key, so changing the platform account keeps its session. Storage keys are encoded and should not be assembled manually. Different chats retain separate session context even when sharing a workspace.
 
 ## Session pinning
 
@@ -28,12 +28,14 @@ The gateway does not use `chord headless --continue`. Instead, it stores a pinne
 - `/resume <sid>` pins the specified session ID for the current binding.
 - An in-band session switch (`session_switched`) re-points the pin at the newly active session, so later spawns resume the session the runtime actually runs.
 
-Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pins_file` is configured.
+Session pins are persisted in `<state_dir>/session-pins.json` unless `session_pins_file` is configured. A pin is keyed by workspace and route, so changing the platform account on an existing route keeps its session. Local `pairing reset` clears the platform's automatic pins along with the owner and bindings, so a reset route starts without the previous session.
 
 A pending or completed session transfer takes precedence over a pin. Ordinary messages cannot restart that binding or fall back to a fresh session. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard.
 
 Before `/new` or `/resume` replaces an idle restored session, the gateway refreshes any previously nonempty input summary. Failed refreshes and unresolved input outcomes preserve the original session and pin. `/takeover` cannot bypass this protection when the old process has disconnected.
 
+
+`/new` and `/resume` are refused while the process is busy; send `/cancel` and wait for the turn to settle first.
 ## IM commands
 
 | Command | Description |
@@ -217,9 +219,7 @@ Start fresh:
 
 ```text
 You: /new
-Gateway: 🆕 /new sent to chord process.
-# If no Chord process is currently usable:
-Gateway: 🆕 New session started.
+Gateway: Session created: 20261015145318085
 ```
 
 ## Multi-IM login

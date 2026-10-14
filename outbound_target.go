@@ -142,6 +142,8 @@ func (r *NotificationRouter) SendFlowReply(ctx context.Context, permit ReplyPerm
 	parent := state.ctx
 	p.mu.Unlock()
 	ctx = context.WithValue(ctx, replyAccountContextKey{}, permit.Identity.AccountID)
+	ctx = context.WithValue(ctx, outboundDeliveryContextKey{}, nil)
+	ctx = context.WithValue(ctx, outboundReplyContextKey{}, permit)
 	ctx, cancel := context.WithDeadline(ctx, permit.ExpiresAt)
 	defer cancel()
 	if parent != nil {
@@ -194,7 +196,11 @@ func (r *NotificationRouter) deliveryContext(parent context.Context, target Deli
 	if !r.validTarget(target) {
 		return nil, nil, context.Canceled
 	}
-	ctx, cancel := context.WithCancel(parent)
+	if target.paired {
+		parent = context.WithValue(parent, replyAccountContextKey{}, target.Identity.AccountID)
+	}
+	parent = context.WithValue(parent, outboundReplyContextKey{}, nil)
+	ctx, cancel := context.WithCancel(context.WithValue(parent, outboundDeliveryContextKey{}, target))
 	var stops []func() bool
 	watch := func(source context.Context) {
 		stops = append(stops, context.AfterFunc(source, cancel))
@@ -254,7 +260,11 @@ func (r *NotificationRouter) deliveryContext(parent context.Context, target Deli
 }
 
 func (r *NotificationRouter) sendCardToTarget(target DeliveryTarget, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
-	ctx, done, err := r.deliveryContext(context.Background(), target)
+	return r.sendCardToTargetContext(context.Background(), target, card, fallback)
+}
+
+func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target DeliveryTarget, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
+	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -301,3 +311,8 @@ func (r *NotificationRouter) ensureOwnedGate(platform, chat, workspace string) {
 }
 
 type replyAccountContextKey struct{}
+
+// Captured authority lets transports validate their exact destination without
+// upgrading a queued output to the current binding or an unrelated flow.
+type outboundDeliveryContextKey struct{}
+type outboundReplyContextKey struct{}

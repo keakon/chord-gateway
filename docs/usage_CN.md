@@ -15,7 +15,7 @@
 
 ## 路由模型
 
-聊天通过 `chat_bindings` 选择工作区。Gateway 按工作区、IM 平台和聊天隔离运行会话；自动恢复 pin 还包含机器人账号和 owner 身份。键以编码形式保存，不应手工拼接。即使使用同一工作区，不同聊天仍保留各自的会话上下文。
+聊天通过 `chat_bindings` 选择工作区。Gateway 按工作区、IM 平台和聊天隔离运行会话；自动恢复 pin 使用同样的键，更换平台账号也会延续原会话。键以编码形式保存，不应手工拼接。即使使用同一工作区，不同聊天仍保留各自的会话上下文。
 
 ## Session pin 机制
 
@@ -28,12 +28,14 @@ gateway 不使用 `chord headless --continue`，而是为每个绑定保存一�
 - `/resume <sid>` 会把指定 session ID pin 到当前绑定。
 - 进程内会话切换（`session_switched`）会把 pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
 
-Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `session_pins_file` 配置。
+Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `session_pins_file` 配置。pin 按工作区和路由记录，因此在同一路由上更换平台账号时会延续原会话。本机 `pairing reset` 会连同 owner 和绑定一起清除该平台的自动 pin,重置后的路由从新会话开始。
 
 进行中或已经完成的会话移交优先于 pin：普通消息不能重新拉起该绑定，也不会改用新会话。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功；失败时保留阻断。
 
 `/new` 或 `/resume` 替换空闲的恢复会话前，gateway 会刷新此前非空的输入摘要。刷新失败或输入结果仍不确定时，保留原会话和 pin。旧进程断线后，`/takeover` 也不能绕过这项保护。
 
+
+进程忙碌时 `/new` 与 `/resume` 会被拒绝；先发送 `/cancel`，等待当前 turn 结束。
 ## IM 命令
 
 | 命令 | 说明 |
@@ -208,9 +210,7 @@ Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may
 
 ```text
 You: /new
-Gateway: 🆕 /new sent to chord process.
-# 如果当前没有可用 Chord 进程：
-Gateway: 🆕 New session started.
+Gateway: Session created: 20261015145318085
 ```
 
 ## 多 IM 登录

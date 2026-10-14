@@ -24,13 +24,16 @@ const (
 // It parses incoming IM messages as commands, dispatches them to chord processes,
 // and routes chord events back to IM users as notifications.
 type NotificationRouter struct {
-	admission *Admission
+	admission    *Admission
+	ingressStore *IngressStore
+	ingress      *IngressService
 
 	mgr       *ChordManager
 	adapter   IMAdapter // protected by adapterMu
 	adapterMu sync.RWMutex
 
-	mu sync.RWMutex
+	mu                sync.RWMutex
+	questionReceiptMu sync.Mutex // serializes durable Question receipt settlement
 
 	// Per-binding chatID tracking: key -> chatID.
 	lastKeyChatID         map[string]string
@@ -85,6 +88,7 @@ func (r *NotificationRouter) SetAdapter(adapter IMAdapter) {
 	r.adapterMu.Lock()
 	r.adapter = adapter
 	r.adapterMu.Unlock()
+	r.installIngressReadinessNotifier(adapter)
 }
 
 // currentAdapter returns the active IM adapter, or nil if not yet set.
@@ -439,34 +443,8 @@ func (r *NotificationRouter) handleTodos(ws *config.Workspace, chatID string, im
 // handleLogin initiates a login flow for the specified IM adapter.
 // If no target is specified, lists the adapters that support login.
 func (r *NotificationRouter) handleLogin(chatID, target string, platform ...string) {
-	target = config.NormalizeIMType(target)
-	if target == "" {
-		options := r.availableLoginTargets()
-		if len(options) == 0 {
-			r.sendTextForIM(r.replyPlatform(platform), chatID, "⚠️ No IM adapter supports login renewal.")
-			return
-		}
-		r.sendTextForIM(r.replyPlatform(platform), chatID, "Usage: /login <platform>\nSupported platforms: "+strings.Join(options, ", "))
-		return
-	}
-
-	adapter := r.findAdapterByType(target)
-	if adapter == nil {
-		r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", config.NormalizeIMType(target)))
-		return
-	}
-
-	qrURL, err := adapter.StartLogin()
-	if err != nil {
-		if errors.Is(err, ErrLoginNotSupported) {
-			r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("⚠️ %s does not support login renewal via /login.", imDisplayName(target)))
-			return
-		}
-		r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("❌ Failed to get %s login link: %v", imDisplayName(target), err))
-		return
-	}
-
-	r.sendTextForIM(r.replyPlatform(platform), chatID, fmt.Sprintf("⚠️ Click the link to scan and renew %s login:\n%s", imDisplayName(target), qrURL))
+	text, _ := r.loginReply(target)
+	r.sendTextForIM(r.replyPlatform(platform), chatID, text)
 }
 
 func (r *NotificationRouter) availableLoginTargets() []string {
@@ -594,7 +572,9 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		len(state.LastAssistantText),
 	)
 
-	msg := r.formatNotification(eventType, state)
+	msg := r.formatNotification(eventType, state, func(command string) string {
+		return r.commandHint(imType, commandTargetForChat(imType, chatID), command)
+	})
 	willSend := msg != ""
 	msgLen := len(msg)
 	log.Infof("[%v] gateway routing decision event=%v assistant_text_len=%v message_len=%v will_send=%v", processLogContext(key, state),
@@ -699,8 +679,10 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 			}
 		}
 		if eventType == "question_resolved" {
-			if r.resolveQuestionCard(target, state) {
-				r.markVisibleOutput(key)
+			if updated, err := r.resolveQuestionCard(target, state); updated || errors.Is(err, errDeliveryOutcomeUnknown) {
+				if updated {
+					r.markVisibleOutput(key)
+				}
 				return
 			}
 		}
@@ -715,18 +697,19 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 // resolveQuestionCard patches the interactive question card for a request that
 // chord just closed. It reports whether a card was actually updated; when the
 // question was delivered as text (no stored handle) the caller falls back to
-// sending the close notification as text.
-func (r *NotificationRouter) resolveQuestionCard(target DeliveryTarget, state ControlState) bool {
+// sending the close notification as text. An uncertain patch must not trigger
+// that fallback, because the original card may already have been updated.
+func (r *NotificationRouter) resolveQuestionCard(target DeliveryTarget, state ControlState) (bool, error) {
 	p := state.LastQuestionResolved
 	if p == nil {
-		return false
+		return false, nil
 	}
 	title, message, template := questionResolvedCardStatus(p.Outcome)
 	if p.Outcome == QuestionResolvedDefaulted || p.Outcome == QuestionResolvedAnswered {
 		message += "\n" + strings.Join(p.Selected, ", ")
 	}
 	message += "\nQuestion: " + p.RequestID
-	return r.updateFeishuCardForTarget(IncomingMessage{IMType: "feishu"}, target, "question", p.RequestID, buildFeishuResolvedCard(title, message, template))
+	return r.patchFeishuCardForTargetContext(context.Background(), IncomingMessage{IMType: "feishu"}, target, "question", p.RequestID, buildFeishuResolvedCard(title, message, template), true)
 }
 
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a
@@ -866,6 +849,16 @@ func imDisplayName(imType string) string {
 		return "WeChat"
 	case "feishu":
 		return "Feishu"
+	case "telegram":
+		return "Telegram"
+	case "discord":
+		return "Discord"
+	case "wecom":
+		return "WeCom"
+	case "dingtalk":
+		return "DingTalk"
+	case "slack":
+		return "Slack"
 	default:
 		return imType
 	}

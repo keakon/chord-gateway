@@ -21,6 +21,7 @@ type pairingPlatform struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	presentation             PlatformPresentation
 	account                  string
 	epoch                    uint64
 	ready, changed, consumed bool
@@ -48,6 +49,10 @@ func NewPairingService(store *ConfigStore, enabled bool, terminal io.Writer) *Pa
 }
 
 func (p *PairingService) PlatformReady(platform, accountID string) error {
+	return p.PlatformReadyWithPresentation(platform, accountID, PlatformPresentation{Platform: platform})
+}
+
+func (p *PairingService) PlatformReadyWithPresentation(platform, accountID string, presentation PlatformPresentation) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if accountID == "" {
@@ -69,6 +74,8 @@ func (p *PairingService) PlatformReady(platform, accountID string) error {
 		state.nonce = [16]byte{}
 		return errPairingDenied
 	}
+	presentation.Platform = platform
+	state.presentation = presentation
 	if state.changed {
 		return errPairingDenied
 	}
@@ -102,7 +109,7 @@ func (p *PairingService) PlatformReady(platform, accountID string) error {
 	}
 	state.nonceID = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:])
 	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(state.nonce[:])
-	prompt := fmt.Sprintf("%s: In a private chat, send /bind \"~/workspace\" %s\nValid for 10 minutes. Later bindings do not need a code.\n", platform, code)
+	prompt := fmt.Sprintf("%s: In a private chat, send %s\nValid for 10 minutes. Later bindings do not need a code.\n", platform, FormatCommandHint(presentation, CommandTarget{ChatKind: "private"}, fmt.Sprintf("/bind \"~/workspace\" %s", code)))
 	n, err := io.WriteString(p.terminal, prompt)
 	if err != nil || n != len(prompt) {
 		state.nonce = [16]byte{}

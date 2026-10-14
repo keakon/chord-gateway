@@ -71,17 +71,50 @@ func parseAccessFields(node *yaml.Node) (accessFields, error) {
 
 // Bindings returns the configured explicit routes.
 func (im *IMAdapterConfig) Bindings() map[string]string {
+	if im.Telegram != nil {
+		return im.Telegram.ChatBindings
+	}
+	if im.Discord != nil {
+		return im.Discord.ChatBindings
+	}
+	if im.Wecom != nil {
+		return im.Wecom.ChatBindings
+	}
+	if im.Dingtalk != nil {
+		return im.Dingtalk.ChatBindings
+	}
+	if im.Slack != nil {
+		return im.Slack.ChatBindings
+	}
+
 	if im.Feishu != nil {
 		return im.Feishu.ChatBindings
 	}
 	if im.Wechat != nil {
 		return im.Wechat.ChatBindings
 	}
+
 	return nil
 }
 
 // OwnerIdentity returns the paired owner, if registered.
 func (im *IMAdapterConfig) OwnerIdentity() *OwnerIdentity {
+	if im.Telegram != nil {
+		return im.Telegram.Owner
+	}
+	if im.Discord != nil {
+		return im.Discord.Owner
+	}
+	if im.Wecom != nil {
+		return im.Wecom.Owner
+	}
+	if im.Dingtalk != nil {
+		return im.Dingtalk.Owner
+	}
+	if im.Slack != nil {
+		return im.Slack.Owner
+	}
+
 	if im.Feishu != nil {
 		return im.Feishu.Owner
 	}
@@ -94,6 +127,22 @@ func (im *IMAdapterConfig) OwnerIdentity() *OwnerIdentity {
 func (c *Config) validateAccess(im *IMAdapterConfig) error {
 	owner := im.OwnerIdentity()
 	fields := accessFields{}
+	if im.Telegram != nil {
+		fields = im.Telegram.fields
+	}
+	if im.Discord != nil {
+		fields = im.Discord.fields
+	}
+	if im.Wecom != nil {
+		fields = im.Wecom.fields
+	}
+	if im.Dingtalk != nil {
+		fields = im.Dingtalk.fields
+	}
+	if im.Slack != nil {
+		fields = im.Slack.fields
+	}
+
 	if im.Feishu != nil {
 		fields = im.Feishu.fields
 	}
@@ -115,6 +164,21 @@ func (c *Config) validateAccess(im *IMAdapterConfig) error {
 	}
 	if f := im.Feishu; f != nil && (f.AppID == "" || f.AppSecret == "") {
 		return errors.New("ims.feishu.app_id and app_secret are required")
+	}
+	if f := im.Telegram; f != nil && (strings.TrimSpace(f.BotToken) == "") {
+		return errors.New("ims.telegram requires bot_token")
+	}
+	if f := im.Discord; f != nil && (strings.TrimSpace(f.BotToken) == "" || strings.TrimSpace(f.ApplicationID) == "") {
+		return errors.New("ims.discord requires bot_token, application_id")
+	}
+	if f := im.Wecom; f != nil && (strings.TrimSpace(f.BotID) == "" || strings.TrimSpace(f.Secret) == "") {
+		return errors.New("ims.wecom requires bot_id, secret")
+	}
+	if f := im.Dingtalk; f != nil && (strings.TrimSpace(f.ClientID) == "" || strings.TrimSpace(f.ClientSecret) == "" || strings.TrimSpace(f.RobotCode) == "" || strings.TrimSpace(f.CorpID) == "") {
+		return errors.New("ims.dingtalk requires client_id, client_secret, robot_code, corp_id")
+	}
+	if f := im.Slack; f != nil && (strings.TrimSpace(f.AppToken) == "" || strings.TrimSpace(f.BotToken) == "" || strings.TrimSpace(f.AppID) == "" || strings.TrimSpace(f.TeamID) == "") {
+		return errors.New("ims.slack requires app_token, bot_token, app_id, team_id")
 	}
 	return nil
 }

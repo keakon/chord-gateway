@@ -31,6 +31,21 @@ Start here: [WeChat iLink guide](./wechat.md)
 
 Start here: [Feishu guide](./feishu.md)
 
+## Local console mode
+
+To use Chord locally without connecting any IM platform, start with `--console`:
+
+```bash
+chord-gateway -f config.yaml --console
+```
+
+- `--console` cannot be combined with `--pair` and requires **exactly one** workspace. The `ims` section is ignored and no platform credentials are used.
+- No pairing or chat binding is needed: the single workspace is used directly, and `/bind` is not available (it prints usage instead).
+- Each non-empty line on stdin is handled as one command or task, for example `/status`; replies are printed to stdout as `[console] <text>`.
+- Console input is a local control plane and bypasses the paired-owner check; run it only on a trusted host.
+
+See [pairing](./pairing.md) and the [configuration reference](./configuration.md).
+
 ## Connection and routing
 
 Configure `ims.wechat: {}`, or Feishu `app_id` / `app_secret` with long connection and event subscriptions. Run `chord-gateway --pair`. Complete WeChat QR login if prompted; the terminal displays a code after each platform connects. Send `/bind "~/workspace" <pairing_code>` in a private bot chat, then `/status` to verify.

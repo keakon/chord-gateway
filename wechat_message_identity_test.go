@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -36,12 +37,12 @@ func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 	a.imCfg = *r.getConfig().IMConfigByType("wechat")
 	a.msgRouter = r
 	a.token.Store(&TokenData{AccountID: "bot"})
-	var err error
-	a.dedupe, err = NewDedupeStore(t.TempDir())
-	if err != nil {
+	store := NewIngressStore()
+	service := NewIngressService(store, r)
+	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defer a.dedupe.Close()
+	t.Cleanup(func() { service.Close(); store.Close() })
 	text, _ := json.Marshal(fmt.Sprintf("/bind %q %s", t.TempDir(), code))
 	// Replay a full getupdates response, with no client_id and a uint64 ID
 	// beyond float64's exact range. Every subsequent wire encoding is the
@@ -52,8 +53,21 @@ func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &response); err != nil {
 			t.Fatal(err)
 		}
-		a.handleIncomingMessage(response.Msgs[0])
+		result := a.receiveIncomingMessage(t.Context(), response.Msgs[0], a.token.Load())
+		if result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate {
+			t.Fatal(result)
+		}
+		waitIngressCondition(t, func() bool {
+			record, err := store.Get(result.RecordID)
+			return err == nil && record.State == "completed"
+		})
 	}
+	waitIngressCondition(t, func() bool {
+		adapter := r.currentAdapter().(*pairingTestAdapter)
+		adapter.mu.Lock()
+		defer adapter.mu.Unlock()
+		return len(adapter.messages) == 1
+	})
 	owner := r.getConfig().IMConfigByType("wechat").OwnerIdentity()
 	if owner == nil || owner.UserID != "owner" {
 		t.Fatal("server-ID-only message did not pair")
@@ -66,5 +80,18 @@ func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 	}
 	if len(r.mgr.procs) != 0 {
 		t.Fatal("pairing or redelivery started a process")
+	}
+}
+
+func TestWechatIngressBusinessIdentitySeparatesSenders(t *testing.T) {
+	for _, pair := range [][2]string{{"sender", "id"}, {"sender:other", "id"}, {"sender", "other:id"}, {"sender\"", "id"}} {
+		id := wechatIngressBusinessID(pair[0], pair[1])
+		var parts []string
+		if err := json.Unmarshal([]byte(id[len("message:"):]), &parts); err != nil || len(parts) != 2 || parts[0] != pair[0] || parts[1] != pair[1] {
+			t.Fatal(id, parts, err)
+		}
+	}
+	if wechatIngressBusinessID("first", "42") == wechatIngressBusinessID("second", "42") {
+		t.Fatal("different senders share a business identity")
 	}
 }

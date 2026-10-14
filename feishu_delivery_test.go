@@ -34,7 +34,7 @@ func TestMessageRedirectIsNotReplayed(t *testing.T) {
 				feishuOpenBaseURL = server.URL
 				defer func() { feishuOpenBaseURL = oldURL }()
 				a := testFeishuAdapter(t, &config.FeishuConfig{})
-				defer a.dedupe.Close()
+
 				a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 				a.httpClient = server.Client()
 				_, err = (&NotificationRouter{adapter: a}).sendCardToTarget(DeliveryTarget{Identity: ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "sample prompt")
@@ -102,7 +102,7 @@ func TestFeishuRejectedCardUsesTextFallback(t *testing.T) {
 			feishuOpenBaseURL = server.URL
 			defer func() { feishuOpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{})
-			defer a.dedupe.Close()
+
 			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 			a.httpClient = server.Client()
 			key := processKey{workspaceID: "test", imType: "feishu", chatID: "sample-chat"}.String()
@@ -147,7 +147,7 @@ func TestFeishuCardOutcomeUnknownDoesNotFallback(t *testing.T) {
 	feishuOpenBaseURL = server.URL
 	defer func() { feishuOpenBaseURL = oldURL }()
 	a := testFeishuAdapter(t, &config.FeishuConfig{})
-	defer a.dedupe.Close()
+
 	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 	a.httpClient = server.Client()
 	if _, err := (&NotificationRouter{adapter: a}).sendCardToTarget(DeliveryTarget{Identity: ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "original prompt"); !errors.Is(err, errDeliveryOutcomeUnknown) {
@@ -191,7 +191,7 @@ func TestFeishuRouterCardFailureNeverReplaysPrompt(t *testing.T) {
 				feishuOpenBaseURL = server.URL
 				defer func() { feishuOpenBaseURL = oldURL }()
 				a := testFeishuAdapter(t, &config.FeishuConfig{})
-				defer a.dedupe.Close()
+
 				a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 				a.httpClient = server.Client()
 				key := processKey{workspaceID: "test", imType: "feishu", chatID: "sample-chat"}.String()
@@ -250,7 +250,7 @@ func TestFeishuStaleEventCannotSendOrUpdateCard(t *testing.T) {
 	for _, event := range []string{"confirm_request", "question_request", "question_resolved", "uncertain_notice"} {
 		t.Run(event, func(t *testing.T) {
 			a := testFeishuAdapter(t, &config.FeishuConfig{})
-			defer a.dedupe.Close()
+
 			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 			a.httpClient = server.Client()
 			mgr := newTestChordManager(&config.Config{})

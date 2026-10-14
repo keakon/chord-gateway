@@ -76,12 +76,27 @@ func (d *outboundDispatcher) enqueueTaskContext(ctx context.Context, key string,
 	defer d.producers.Done()
 
 	shard := stableShard(key, len(d.queues))
-	select {
-	case <-ctx.Done():
-		return outboundClosed
-	case <-d.done:
-		return outboundClosed
-	case <-d.sendMu[shard]:
+	if block {
+		select {
+		case <-ctx.Done():
+			return outboundClosed
+		case <-d.done:
+			return outboundClosed
+		case <-d.sendMu[shard]:
+		}
+	} else {
+		// A waiting producer owns ordering. Nonblocking callers must report
+		// backpressure, not wait behind it or bypass it and reorder output.
+		select {
+		case <-ctx.Done():
+			return outboundClosed
+		case <-d.done:
+			return outboundClosed
+		case <-d.sendMu[shard]:
+		default:
+			d.metrics.full.Add(1)
+			return outboundFull
+		}
 	}
 	defer func() { d.sendMu[shard] <- struct{}{} }()
 	queue := d.queues[shard]

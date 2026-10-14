@@ -9,19 +9,6 @@ import (
 	"time"
 )
 
-type metricsTestAdapter struct {
-	typeName string
-	snapshot queueMetricsSnapshot
-}
-
-func (a *metricsTestAdapter) Connect() error                        { return nil }
-func (a *metricsTestAdapter) SendText(string, string) error         { return nil }
-func (a *metricsTestAdapter) Disconnect()                           {}
-func (a *metricsTestAdapter) Type() string                          { return a.typeName }
-func (a *metricsTestAdapter) SupportsLoginRenewal() bool            { return false }
-func (a *metricsTestAdapter) StartLogin() (string, error)           { return "", ErrLoginNotSupported }
-func (a *metricsTestAdapter) metricsSnapshot() queueMetricsSnapshot { return a.snapshot }
-
 func TestQueueMetricsSnapshot(t *testing.T) {
 	var metrics queueMetrics
 	metrics.enqueued.Add(3)
@@ -76,38 +63,18 @@ func TestQueueMetricsActiveTracksBlockedWaits(t *testing.T) {
 	}
 }
 
-func TestCollectFeishuQueueMetricsAggregatesMultiAdapter(t *testing.T) {
-	first := &metricsTestAdapter{typeName: "feishu", snapshot: queueMetricsSnapshot{Enqueued: 2, Processed: 1, Depth: 1, MaxDepth: 3, Capacity: 8, BlockedWaitTotal: 10 * time.Millisecond, BlockedWaitMax: 5 * time.Millisecond, BlockedSlow: 1}}
-	second := &metricsTestAdapter{typeName: "feishu", snapshot: queueMetricsSnapshot{Enqueued: 3, Processed: 3, Full: 1, MaxDepth: 5, Capacity: 8, BlockedWaitTotal: 20 * time.Millisecond, BlockedWaitMax: 25 * time.Millisecond}}
-	wechat := &metricsTestAdapter{typeName: "wechat", snapshot: queueMetricsSnapshot{Enqueued: 100, Processed: 100, Capacity: 8, MaxDepth: 99}}
-	multi := &MultiAdapter{adapters: []IMAdapter{first, second, wechat}}
-	var got queueMetricsSnapshot
-	collectFeishuQueueMetrics(multi, &got)
-	want := queueMetricsSnapshot{
-		Enqueued:         5,
-		Processed:        4,
-		Full:             1,
-		BlockedWaitTotal: 30 * time.Millisecond,
-		BlockedWaitMax:   25 * time.Millisecond,
-		BlockedSlow:      1,
-		Depth:            1,
-		MaxDepth:         5,
-		Capacity:         16,
-	}
-	if got != want {
-		t.Fatalf("aggregate = %#v, want %#v", got, want)
-	}
-}
-
 func TestReportQueueMetricsLogsFinalSnapshotOnCancel(t *testing.T) {
-	adapter := &metricsTestAdapter{typeName: "feishu", snapshot: queueMetricsSnapshot{Enqueued: 2, Processed: 2, Capacity: 8}}
+	dispatcher := &outboundDispatcher{}
+	dispatcher.metrics.enqueued.Add(2)
+	dispatcher.metrics.processed.Add(2)
+	router := &NotificationRouter{outbound: dispatcher}
 	ctx, cancel := context.WithCancel(context.Background())
 	var mu sync.Mutex
 	var logs []string
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		reportQueueMetrics(ctx, nil, adapter, time.Hour, func(format string, args ...any) {
+		reportQueueMetrics(ctx, router, nil, time.Hour, func(format string, args ...any) {
 			mu.Lock()
 			logs = append(logs, fmt.Sprintf(format, args...))
 			mu.Unlock()
@@ -121,7 +88,7 @@ func TestReportQueueMetricsLogsFinalSnapshotOnCancel(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(logs) != 1 || !strings.Contains(logs[0], "queue=feishu_inbound") || !strings.Contains(logs[0], "enqueued=2") {
+	if len(logs) != 1 || !strings.Contains(logs[0], "queue=outbound") || !strings.Contains(logs[0], "enqueued=2") {
 		t.Fatalf("final logs = %v", logs)
 	}
 }

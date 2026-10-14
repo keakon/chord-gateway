@@ -439,6 +439,10 @@ func (p *ChordProcess) markTransferInterrupted() {
 	}
 }
 
+// errProcessBusy marks a replacement refused because the live process still
+// runs a turn. Callers match it with errors.Is to report a distinct reason.
+var errProcessBusy = errors.New("process is busy")
+
 // Replace ordinary sessions under the same lifecycle boundary as preparation.
 // An implicit reconnect cannot stop a source that has begun transferring.
 func (m *ChordManager) replaceOrdinarySession(key, session string) (*ChordProcess, error) {
@@ -470,12 +474,12 @@ func (m *ChordManager) replaceOrdinarySession(key, session string) (*ChordProces
 			return nil, errUnresolvedInputs
 		}
 		if busy {
-			return nil, errors.New("process is busy")
+			return nil, errProcessBusy
 		}
 	}
 	if session != "" {
 		if m.pins != nil {
-			if err := m.pins.Set(pinKeyForBinding(m.Config(), key), session); err != nil {
+			if err := m.pins.Set(pinKeyForBinding(key), session); err != nil {
 				return nil, err
 			}
 		}
@@ -507,7 +511,7 @@ func (m *ChordManager) discardFailedResume(key string, p *ChordProcess, session 
 	m.removeProcessIfCurrent(key, p)
 	p.TerminateGroup(2 * time.Second)
 	if m.pins != nil {
-		if err := m.pins.ClearIf(pinKeyForBinding(m.Config(), key), session); err != nil {
+		if err := m.pins.ClearIf(pinKeyForBinding(key), session); err != nil {
 			log.Warnf("clear failed resume pin: %v", err)
 		}
 	}
