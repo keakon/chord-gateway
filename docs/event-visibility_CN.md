@@ -114,7 +114,7 @@ Gateway 在保留 `background_result` 和 `context_notice` 正文的同时，也
 
 ## 完成通知
 
-`assistant_message` 是发送到 IM 的主要最终回复。
+`assistant_message` 是发送到 IM 的主要最终回复，会替换缓存的 assistant 正文。Gateway 不展示流式预览，也不订阅 `assistant_rollback`；最终回复不依赖先收到回滚事件。
 
 SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent ID）和任务 ID。`agent_done` 始终订阅并发送权威完成摘要，因此也能覆盖只有工具调用、没有 assistant 文本的完成轮次。
 

@@ -105,3 +105,27 @@ func TestReadLoopDoesNotReportExpectedShutdownAsTransportFailure(t *testing.T) {
 		})
 	}
 }
+
+// The gateway subscribes to final assistant messages, not rollback previews.
+// The rollback case also covers the optional decoder path, not subscription.
+func TestContinuationFinalMessageReplacesPendingText(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		name := "default_subscription"
+		if rollback {
+			name = "optional_rollback_event"
+		}
+		t.Run(name, func(t *testing.T) {
+			p := &ChordProcess{state: ControlState{LastAssistantText: "pending"}}
+			if rollback {
+				p.processEnvelope(&HeadlessEnvelope{Type: "assistant_rollback", Payload: json.RawMessage(`{}`)})
+				if p.State().LastAssistantText != "" {
+					t.Fatal("rollback retained pending text")
+				}
+			}
+			p.processEnvelope(&HeadlessEnvelope{Type: "assistant_message", Payload: json.RawMessage(`{"text":"final result"}`)})
+			if got := p.State().LastAssistantText; got != "final result" {
+				t.Fatalf("final text=%q", got)
+			}
+		})
+	}
+}

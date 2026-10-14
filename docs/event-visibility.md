@@ -114,7 +114,7 @@ Internal-event counts are currently based on gateway-tracked progress events suc
 
 ## Completion notifications
 
-`assistant_message` is the primary final response sent to IM.
+`assistant_message` is the primary final response sent to IM and replaces cached assistant text. The gateway does not display streaming previews or subscribe to `assistant_rollback`; a final response does not depend on receiving a rollback event first.
 
 SubAgent `assistant_message` events are labeled with their agent type (falling back to agent ID) and task ID. `agent_done` is always subscribed and sends the authoritative completion summary; this also covers tool-only completion turns that have no assistant text.
 
