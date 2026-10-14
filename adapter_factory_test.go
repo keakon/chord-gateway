@@ -28,6 +28,18 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 		}
 	})
 
+	t.Run("telegram", func(t *testing.T) {
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Telegram: &config.TelegramConfig{BotToken: "123:test-token"}}}}
+		adapter, err := NewIMAdapter(cfg, paths, nil)
+		if err != nil {
+			t.Fatalf("NewIMAdapter() error = %v", err)
+		}
+		defer adapter.Disconnect()
+		if _, ok := adapter.(*TelegramAdapter); !ok || adapter.Type() != "telegram" {
+			t.Fatalf("adapter = %T, type = %q", adapter, adapter.Type())
+		}
+	})
+
 	t.Run("feishu", func(t *testing.T) {
 		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{AppID: "app", AppSecret: "secret"}}}}
 		adapter, err := NewIMAdapter(cfg, paths, nil)

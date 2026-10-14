@@ -18,6 +18,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Added Telegram Bot API polling with private/group text, owner pairing, controls, output splitting and throttling. Existing webhooks block startup and are not deleted automatically. See [Telegram](./docs/telegram.md).
 
 - Added WeCom intelligent bot long connections with private/group text, binding probes, background replies and account exclusion. Network failures reconnect with backoff; connection replacement stops contention.
 - Added single-workspace Slack Socket Mode with owner DM/channel/thread input, root `/chord` commands, mention-based thread controls, independent bindings, text escaping and throttling. Intake reserves time for ACK and diagnoses unconfirmed acceptance. See [Slack](./docs/slack.md).

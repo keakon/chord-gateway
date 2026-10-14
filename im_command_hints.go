@@ -24,15 +24,15 @@ func FormatCommandHint(p PlatformPresentation, target CommandTarget, command str
 		}
 		return "@" + name + " " + command + " (select the bot from Slack's @ menu)"
 	case "telegram":
+		name, args, hasArgs := strings.Cut(command, " ")
+		name = telegramCommandAlias(name, true)
 		if target.ChatKind == "group" && p.BotUsername != "" {
-			name, args, hasArgs := strings.Cut(command, " ")
 			name += "@" + strings.TrimPrefix(p.BotUsername, "@")
-			if hasArgs {
-				name += " " + args
-			}
-			return name
 		}
-		return command
+		if hasArgs {
+			name += " " + args
+		}
+		return name
 	case "discord", "wecom", "dingtalk":
 		if target.ChatKind != "group" && !target.Thread {
 			return command

@@ -33,6 +33,8 @@ func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, path
 		return NewDiscordAdapter(cfg, imCfg, paths, router)
 	case "slack":
 		return NewSlackAdapter(cfg, imCfg, paths, router)
+	case "telegram":
+		return NewTelegramAdapter(cfg, imCfg, paths, router)
 	default:
 		return nil, fmt.Errorf("unsupported IM type: %s", imCfg.Type())
 	}

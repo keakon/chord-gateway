@@ -44,6 +44,7 @@ If you need all group text delivered, disable privacy in BotFather and re-add th
 Group commands such as `/status@YourBotUsername`, `/cancel@YourBotUsername`, `/allow@YourBotUsername`, and `/answer@YourBotUsername @<id> <text>` have the same meaning as private commands. Generated command hints include the current bot suffix. Commands addressed to other bots are ignored; paths, `@`, and slashes in ordinary tasks are preserved. See the [usage guide](./usage.md) for all commands and session recovery.
 
 Telegram uses `/handoff_deny`, `/question_interact`, `/question_withdraw`, and `/question_replace` for commands whose shared names contain a hyphen. Add `@YourBotUsername` in groups, for example `/handoff_deny@YourBotUsername <reason>`. Generated hints use these names in both private chats and groups. Legacy hyphenated forms with a bot suffix are rejected.
+Telegram uses `/handoff_deny`, `/question_interact`, `/question_decline`, `/question_withdraw`, and `/question_replace` for commands whose shared names contain a hyphen. Add `@YourBotUsername` in groups, for example `/handoff_deny@YourBotUsername <reason>`. Generated hints use these names in both private chats and groups. Legacy hyphenated forms with a bot suffix are rejected.
 
 Confirmations, answers, and cancellation keep the target observed when Gateway receives the batch, including during admission retries. If that target changes before execution, the old operation is refused; inspect `/status` before sending a new command. `/status` also shows the latest partial output failure and the number of accepted segments. Do not resend the task just to recover missing output; inspect the original Chord session.
 
@@ -64,6 +65,7 @@ Messages, deduplication and pending offsets stay in memory. Offsets advance only
 Only ordinary text tasks retain a body digest for conflict detection. Control commands and unsupported inputs retain identity-based deduplication evidence without parameter hashes, including pairing codes and answers; duplicate controls never execute again. Parameter-only differences in an otherwise identical control identity are not compared within this process.
 
 Network failures retry with exponential backoff and jitter. Brief successes do not reset the delay; a minute of successful requests does. An explicit Telegram `retry_after` takes precedence and remains cancellable. A 409 right after a local restart retries briefly (the previous server-side long poll survives up to its 25s timeout); a persistent 409 means a true second poller and stays fatal.
+Network failures retry with exponential backoff and jitter. Brief successes do not reset the delay; a minute of successful requests does. An explicit Telegram `retry_after` takes precedence and remains cancellable.
 
 Telegram retains unreceived updates for at most **24 hours**; longer outages can lose messages. After at least a week without updates, new update IDs may be randomly reset. Gateway acknowledges current batches rather than relying on a permanent maximum ID. See the official [getUpdates](https://core.telegram.org/bots/api#getupdates) and [Update](https://core.telegram.org/bots/api#update) documentation.
 
@@ -74,6 +76,7 @@ Telegram retains unreceived updates for at most **24 hours**; longer outages can
 | `getMe` 401 | Verify or regenerate the BotFather token, update configuration, and restart |
 | `webhook_conflict` | This bot has a webhook. Stop its previous service and explicitly clear the webhook before starting; Gateway never deletes it automatically or drops pending updates |
 | `poller_conflict` / 409 | Stop other polling processes for the bot, including instances on other hosts. A single 409 immediately after a local restart is the stale server-side long poll and retries on its own; only a persistent 409 needs action |
+| `poller_conflict` / 409 | Stop other polling processes for the bot, including instances on other hosts |
 | Group text absent but commands arrive | Check privacy; reply to the bot to send tasks in default mode |
 | 403 | Check whether the bot is blocked, removed from the group, or unable to access the target |
 | `chat_migrated` | Have the owner explicitly bind the new supergroup; old group authorization is not copied |
