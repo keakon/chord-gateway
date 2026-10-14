@@ -66,6 +66,18 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 			t.Fatalf("adapter type = %T", adapter)
 		}
 	})
+
+	t.Run("discord", func(t *testing.T) {
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Discord: &config.DiscordConfig{BotToken: "example-token", ApplicationID: "123456789012345678"}}}}
+		adapter, err := NewIMAdapter(cfg, paths, nil)
+		if err != nil {
+			t.Fatalf("NewIMAdapter() error = %v", err)
+		}
+		defer adapter.Disconnect()
+		if got := adapter.Type(); got != "discord" {
+			t.Fatalf("adapter.Type() = %q", got)
+		}
+	})
 }
 
 func TestNewIMAdapter_WithSingleActiveIMUsesAdapterConfig(t *testing.T) {

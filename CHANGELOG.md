@@ -23,6 +23,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Added DingTalk internal-app Stream text and proactive replies. Each process start requires a private owner identity probe; existing bindings remain. Tokens and verification are memory-only. Temporary reconnects preserve accepted work within the process, and unknown sends are not retried. See [DingTalk](./docs/dingtalk.md).
 
+- Discord bot integration with outbound Gateway connection, private owner pairing, explicit @Bot text input in server channels and existing public/private threads, and process-local message-ID deduplication. Each thread has its own binding. Minimal permissions need no Message Content privileged intent; output suppresses mention notifications and link embeds. Unlocked archived threads can reactivate on send. Native interactions, buttons, attachments, previews, and automatic thread creation remain deferred; real-account deployment checks are documented in the [Discord guide](./docs/discord.md).
 
 
 

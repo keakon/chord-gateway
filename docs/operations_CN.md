@@ -129,6 +129,12 @@ gateway 会记录关键路由阶段：
 - phase
 - last outcome
 
+## Discord 连接与投递
+
+连接前核验应用与 Bot 身份；同账号本机互斥。临时断线尝试 Resume，进程重启不恢复 Gateway 队列。每个 WebSocket 消息上限为 16 MiB，这是客户端资源限制；超限会中断连接并记录错误。Resume 最多暂存 128 个有效事件，溢出后须核查原会话。
+
+只接收 Bot DM 和显式 @Bot 的频道/thread 文本，不申请 Message Content 特权 intent。每个 thread 独立绑定，回复保留在原 thread；未锁定的归档 thread 可能因发送恢复活跃。见 [Discord 指南](./discord_CN.md)。
+
 ## 飞书接纳与去重
 
 text/post 和可信卡片回调共用内存收件。`message:<message_id>` 与 `card:<event_id>` 按 App ID 隔离，当前进程内去重。平台成功响应表示接纳或明确拒绝，不证明 Chord 执行完成；卡片更新失败不撤销已经提交的操作。

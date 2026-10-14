@@ -3,6 +3,9 @@ module github.com/keakon/chord-gateway
 go 1.27.0
 
 require (
+	github.com/disgoorg/disgo v0.19.6
+	github.com/disgoorg/json/v2 v2.0.0
+	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/keakon/golog v0.4.1
 	github.com/larksuite/oapi-sdk-go/v3 v3.10.0
@@ -13,7 +16,10 @@ require (
 )
 
 require (
+	github.com/disgoorg/omit v1.0.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/sasha-s/go-csync v0.0.0-20240107134140-fcbab37b09ad // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 )

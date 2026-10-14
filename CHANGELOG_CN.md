@@ -23,6 +23,7 @@
 
 - 新增钉钉内部应用 Stream 文本与主动回复：每次启动先由 owner 私聊验证同企业身份，原有绑定保留；token 与验证结果只存内存。临时重连保留当前进程内已接纳工作，未知发送不重试。详见[钉钉指南](./docs/dingtalk_CN.md)。
 
+- 新增 Discord Bot 接入：向外建立 Gateway 连接，私聊 owner 配对，服务器频道与既有公开/私有 thread 中显式 @Bot 文本输入，以及进程内消息 ID 去重。每个 thread 独立绑定，最小权限无需 Message Content privileged intent；输出不触发 mention 通知或链接 embed。未锁定归档 thread 可因发送恢复活跃。原生 interaction、按钮、附件、预览和自动创建 thread 延期；真实账号部署检查见 [Discord 指南](./docs/discord_CN.md)。
 
 
 

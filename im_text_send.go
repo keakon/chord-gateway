@@ -305,3 +305,14 @@ func (s *IMTextSender) segments(text string) ([]string, error) {
 	}
 	return rendered, nil
 }
+
+func imUTF16Units(text string) int {
+	n := 0
+	for _, r := range text {
+		n++
+		if r > 0xffff {
+			n++
+		}
+	}
+	return n
+}

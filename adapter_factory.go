@@ -29,6 +29,8 @@ func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, path
 		return NewWecomAdapter(cfg, imCfg, paths, router)
 	case "dingtalk":
 		return NewDingtalkAdapter(cfg, imCfg, paths, router)
+	case "discord":
+		return NewDiscordAdapter(cfg, imCfg, paths, router)
 	default:
 		return nil, fmt.Errorf("unsupported IM type: %s", imCfg.Type())
 	}

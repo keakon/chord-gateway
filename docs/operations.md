@@ -129,6 +129,12 @@ Useful fields include:
 - phase
 - last outcome
 
+## Discord connection and delivery
+
+The application and bot identities are verified before connecting; a local account lock excludes competing receivers. Temporary disconnections may Resume; process restarts do not restore Gateway's queue. Each WebSocket message has a 16 MiB client resource limit; exceeding it interrupts the connection with a diagnostic. Resume buffers at most 128 useful events; inspect the original session after overflow.
+
+Only bot DMs and explicit @Bot channel/thread text are accepted, without the privileged Message Content intent. Each thread binds independently and keeps its replies; sending may reactivate an unlocked archived thread. See [Discord](./discord.md).
+
 ## Feishu intake and deduplication
 
 Text/post messages and authenticated cards use in-memory intake. `message:<message_id>` and `card:<event_id>` are scoped by App ID and deduplicated within this process. A successful platform response indicates acceptance or definite refusal, not completed Chord execution; a failed card update does not undo a submitted operation.
