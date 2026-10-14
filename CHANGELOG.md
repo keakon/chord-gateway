@@ -20,6 +20,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 
 - Added WeCom intelligent bot long connections with private/group text, binding probes, background replies and account exclusion. Network failures reconnect with backoff; connection replacement stops contention.
+- Added single-workspace Slack Socket Mode with owner DM/channel/thread input, root `/chord` commands, mention-based thread controls, independent bindings, text escaping and throttling. Intake reserves time for ACK and diagnoses unconfirmed acceptance. See [Slack](./docs/slack.md).
 
 - Added DingTalk internal-app Stream text and proactive replies. Each process start requires a private owner identity probe; existing bindings remain. Tokens and verification are memory-only. Temporary reconnects preserve accepted work within the process, and unknown sends are not retried. See [DingTalk](./docs/dingtalk.md).
 
@@ -38,6 +39,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - `event_visibility.background_result` can now turn off the chat pushes for finished background job results. They remain enabled by default, and the durable result stays in the Chord session when disabled.
 
 ### Changed
+
+- Starting a session (`/new`, `/resume`) no longer pushes an `MCP: all enabled servers are available` notice. That summary only confirms a recovery after the process reported an MCP problem; a fresh process's first view stays in `/status` and `/mcp status`. Unavailable servers and later recoveries are still notified once.
 
 - WeChat advances an in-memory cursor after each batch is admitted. Same-account renewal preserves progress; missing reply context waits for a fresh owner message. Oversized batches stop that receiver with a diagnostic without skipping the cursor.
 

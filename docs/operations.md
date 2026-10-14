@@ -1,6 +1,6 @@
 # Operations
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a private chat with the bot. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page describes runtime behavior that matters when operating `chord-gateway`.
 
@@ -184,6 +184,10 @@ Optional events are controlled by `event_visibility`. `background_result` is sub
 If a Feishu card send is unconfirmed, the gateway sends a diagnostic instead of repeating its prompt as text. Check the chat first; use `/status` to reopen a missing question entry, or `/role` to request a role menu. Message requests do not follow redirects; unexpected HTTP statuses are unconfirmed. Explicitly rejected cards still use the text fallback. `/status` shows Chord state and can reopen question entries; it does not query platform delivery receipts.
 
 Generated image delivery to WeChat or Feishu requires a Chord configuration with image generation enabled or an authorized native image tool. No separate gateway image-generation setting is required. Feishu bot permissions must include image upload (`im:resource`) and bot message sending (`im:message:send_as_bot`). A failed platform upload or unconfirmed send is reported without automatic resending or image regeneration. If a send is unconfirmed, check the chat before taking further action; the original remains available in Chord.
+
+## Slack operations
+
+Reconnect rechecks Bot/App identity. Invalid credentials, identity mismatch or disabled Socket Mode stop the connection until corrected locally. Intake waits up to two seconds, leaving time to send an ACK. Confirmed acceptance, duplicates and definite refusals receive one ACK; unconfirmed intake records a diagnostic. Temporary disconnection preserves the current process queue; restart clears it. See [Slack](./slack.md).
 
 ## Message delivery and restarts
 

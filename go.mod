@@ -9,6 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/keakon/golog v0.4.1
 	github.com/larksuite/oapi-sdk-go/v3 v3.10.0
+	github.com/slack-go/slack v0.30.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0

@@ -125,7 +125,7 @@ func (r *NotificationRouter) ReceiveIngress(ctx context.Context, envelope Ingres
 }
 
 // PrepareIngressAccount is called after transport identity verification, before
-// PlatformReady. It never executes recovered input ahead of current admission.
+// PlatformReady. Pending work is released only after current admission is ready.
 func (r *NotificationRouter) PrepareIngressAccount(ctx context.Context, platform, account string) error {
 	if r.ingress == nil {
 		return errIngressClosed

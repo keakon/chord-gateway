@@ -1,6 +1,6 @@
 # 运维说明
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档说明运行和运维 `chord-gateway` 时需要关注的行为。
 
@@ -184,6 +184,10 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 飞书卡片发送结果未确认时，Gateway 发送提示，不再把原提示重复转为文本。请先检查聊天记录；未收到问题入口时可发送 `/status`，角色菜单可发送 `/role` 重新查看。消息请求不会跟随重定向，非预期 HTTP 状态按结果未确认处理。平台明确拒绝卡片时，仍会发送文本入口。`/status` 展示 Chord 状态并可重新打开问题入口，不会查询平台投递回执。
 
 微信和飞书的图片转发需要 Chord 已启用内置生图，或对话模型已配置获准的服务端生图工具。Gateway 无需额外启用生图配置。飞书机器人需要图片上传（`im:resource`）与机器人消息发送（`im:message:send_as_bot`）权限。平台上传失败或发送结果未确认时会分别提示，不自动重发或重新生图。结果未确认时请先检查聊天记录，原图仍可在 Chord 中查看。
+
+## Slack 运维
+
+重连时重新核验 Bot/App 身份。无效凭据、身份不匹配或停用 Socket Mode 会停止连接，需本机修正。接纳等待预算为 2 秒，为 ACK 发送留出时间；只有确定接纳、重复或明确拒绝时回复一次 ACK，超时记录诊断。临时断线保留当前进程内队列，进程重启清空。见 [Slack 指南](./slack_CN.md)。
 
 ## 消息投递与重启
 

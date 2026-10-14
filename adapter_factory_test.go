@@ -103,3 +103,16 @@ func TestNewAdapterFromConfig_UnsupportedType(t *testing.T) {
 		t.Fatalf("newAdapterFromConfig() adapter=%#v err=%v", adapter, err)
 	}
 }
+
+func TestNewIMAdapter_CreatesSlackWithoutConnecting(t *testing.T) {
+	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Slack: &config.SlackConfig{
+		AppToken: "app-token-placeholder", BotToken: "bot-token-placeholder", AppID: "app-example", TeamID: "team-example",
+	}}}}
+	adapter, err := NewIMAdapter(cfg, testPaths(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := adapter.(*SlackAdapter); !ok || adapter.Type() != "slack" {
+		t.Fatalf("adapter = %T", adapter)
+	}
+}
