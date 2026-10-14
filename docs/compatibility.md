@@ -75,3 +75,15 @@ Session listing requires `chord sessions list --json --limit 10`, returning sche
 ## Chat bindings
 
 Both platforms require owner pairing and explicit chat bindings, including single-workspace deployments. Old authorization fields and the old `/bind` syntax have been removed without automatic migration; see the [upgrade notes](../CHANGELOG.md).
+
+## Cross-repository contract tests
+
+The full test suite exercises a real Chord CLI and, for TUI takeover, a Chord test binary containing `TestTakeoverProcessRoundTrip`. Both must come from a compatible Chord revision. CI clones Chord's remote `main`; push the required Chord protocol and fixture changes there before running Gateway CI. A local Chord commit does not update that checkout. Missing capabilities must fail the contract tests, not be skipped or emulated.
+
+To test a specific source checkout locally:
+
+```bash
+CHORD_GATEWAY_CONTRACT_CHORD_REPO=../chord go test ./...
+```
+
+An explicit `CHORD_GATEWAY_CONTRACT_CHORD_BIN` takes precedence, followed by an explicit `CHORD_GATEWAY_CONTRACT_CHORD_REPO`. With neither set, tests use `chord` from PATH, or build the adjacent checkout when no binary is installed. `CHORD_GATEWAY_CONTRACT_CHORD_HELPER_BIN` can select a prebuilt TUI fixture; otherwise it is built from the selected source checkout. Keep the CLI and fixture revisions aligned. `go test -short ./...` omits these cross-repository tests and does not establish protocol compatibility.

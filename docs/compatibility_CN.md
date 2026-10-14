@@ -68,3 +68,15 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 ## 聊天绑定
 
 飞书和微信统一要求 owner 配对与显式聊天绑定，单工作区也不例外。旧授权字段和旧 `/bind` 已移除，不自动迁移；详见[升级说明](../CHANGELOG_CN.md)。
+
+## 跨仓库契约测试
+
+完整测试会运行真实 Chord CLI；TUI 接管还需要包含 `TestTakeoverProcessRoundTrip` 的 Chord 测试二进制，两者必须来自兼容的 Chord 版本。CI 克隆 Chord 远端 `main`，因此应先把所需的协议和测试 fixture 改动推送到该分支，再运行 Gateway CI。本地提交不会更新 CI 使用的源码。缺少能力应当导致契约测试失败，不应跳过测试或模拟兼容。
+
+本地测试指定源码目录：
+
+```bash
+CHORD_GATEWAY_CONTRACT_CHORD_REPO=../chord go test ./...
+```
+
+显式 `CHORD_GATEWAY_CONTRACT_CHORD_BIN` 优先级最高，其次是显式 `CHORD_GATEWAY_CONTRACT_CHORD_REPO`。两者都未设置时，优先使用 PATH 中的 `chord`，没有已安装二进制才构建相邻仓库。可通过 `CHORD_GATEWAY_CONTRACT_CHORD_HELPER_BIN` 指定预编译的 TUI fixture，否则从选定的源码目录构建；CLI 与 fixture 应保持版本一致。`go test -short ./...` 不运行这些跨仓库测试，不能证明协议兼容。

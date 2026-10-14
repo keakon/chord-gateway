@@ -38,6 +38,7 @@ jobs:
       - name: Test
         env:
           MIN_COVERAGE: "70.0"
+          CHORD_GATEWAY_CONTRACT_CHORD_REPO: ${{ github.workspace }}/../chord
         shell: bash
         run: |
           set -euo pipefail

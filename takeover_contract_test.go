@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,13 @@ func TestChordTakeoverContract_TUISourceRestoresPausedIntoGateway(t *testing.T) 
 			t.Fatalf("build source fixture: %v: %s", err, output)
 		}
 	}
+	// Older Chord test binaries exit successfully when -test.run matches nothing.
+	// Check the fixture exists instead of waiting for a marker it cannot write.
+	list := exec.CommandContext(t.Context(), helper, "-test.list=^TestTakeoverProcessRoundTrip$")
+	listed, err := list.CombinedOutput()
+	if err != nil || !slices.Contains(strings.Fields(string(listed)), "TestTakeoverProcessRoundTrip") {
+		t.Fatalf("Chord source fixture is missing TestTakeoverProcessRoundTrip; use the same takeover-capable Chord revision for the CLI and helper: error=%v output=%s", err, listed)
+	}
 	workspace, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -195,8 +203,8 @@ func TestChordTakeoverContract_TUISourceRestoresPausedIntoGateway(t *testing.T) 
 	defer cancel()
 	source := exec.CommandContext(ctx, helper, "-test.run=^TestTakeoverProcessRoundTrip$", "-test.timeout=40s")
 	source.Env = append(loginShellEnv(), "CHORD_TAKEOVER_TEST_PROCESS=source-tui", "CHORD_TAKEOVER_TEST_WORKSPACE="+workspace, "CHORD_SESSIONS_DIR="+filepath.Join(m.Config().ChordStateDir, "sessions"))
-	var output bytes.Buffer
-	source.Stdout, source.Stderr = &output, &output
+	output := newTailBuffer(32 * 1024)
+	source.Stdout, source.Stderr = output, output
 	stdin, err := source.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -204,18 +212,30 @@ func TestChordTakeoverContract_TUISourceRestoresPausedIntoGateway(t *testing.T) 
 	if err = source.Start(); err != nil {
 		t.Fatal(err)
 	}
-	waited := false
+	finished := make(chan struct{})
+	var sourceErr error
+	go func() {
+		sourceErr = source.Wait()
+		close(finished)
+	}()
 	t.Cleanup(func() {
 		_ = stdin.Close()
-		if !waited {
+		select {
+		case <-finished:
+		default:
 			_ = source.Process.Kill()
-			_ = source.Wait()
+			<-finished
 		}
 	})
 	waitForCondition(t, 20*time.Second, func() bool {
+		select {
+		case <-finished:
+			t.Fatalf("TUI source fixture exited before accepting its draft: %v\n%s", sourceErr, output.String())
+		default:
+		}
 		_, err := os.Stat(filepath.Join(workspace, "queued-input"))
 		return err == nil
-	}, "source accepted draft", func() string { return "TUI fixture did not queue its draft" })
+	}, "source accepted draft", output.String)
 	router := NewNotificationRouter(m)
 	t.Cleanup(router.Close)
 	adapter := &stubIMAdapter{typ: "wechat"}
@@ -234,8 +254,8 @@ func TestChordTakeoverContract_TUISourceRestoresPausedIntoGateway(t *testing.T) 
 	if err = os.WriteFile(filepath.Join(workspace, "release-request"), []byte("ready"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = source.Wait()
-	waited = true
+	<-finished
+	err = sourceErr
 	if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() != sessionTransferExitCode {
 		t.Fatalf("source exit=%v output=%s", err, output.String())
 	}

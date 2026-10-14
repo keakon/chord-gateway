@@ -297,14 +297,16 @@ func overrideLoginShellEnv(t *testing.T, chordConfigHome, chordStateDir string) 
 
 func mustChordBinary(t *testing.T) string {
 	t.Helper()
-	// Prefer an explicitly configured binary, then the user's PATH, so contract tests
-	// can exercise the same chord executable a developer or CI job already selected.
-	// Fall back to building the adjacent chord repo when no installed binary exists.
+	// Explicit selections take precedence over PATH. In particular, selecting a
+	// source checkout must not accidentally exercise an older installed binary.
 	if chordBin := os.Getenv("CHORD_GATEWAY_CONTRACT_CHORD_BIN"); chordBin != "" {
 		if _, err := os.Stat(chordBin); err != nil {
 			t.Fatalf("CHORD_GATEWAY_CONTRACT_CHORD_BIN %q is not usable: %v", chordBin, err)
 		}
 		return chordBin
+	}
+	if os.Getenv("CHORD_GATEWAY_CONTRACT_CHORD_REPO") != "" {
+		return buildChordBinary(t, mustChordRepoRoot(t))
 	}
 	if chordBin, err := exec.LookPath("chord"); err == nil {
 		return chordBin

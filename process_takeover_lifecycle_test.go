@@ -159,7 +159,8 @@ func TestExplicitReplacementTimeoutAllowsExplicitRetry(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() { result <- m.replaceBlockedBinding(ctx, key, "session-2") }()
-	waitTakeoverLifecycleEvent(t, events, "error")
+	// The deadline may expire before stdout delivers the booting event. Assert
+	// the timeout and cleanup, not scheduler-dependent progress before timeout.
 	select {
 	case err := <-result:
 		if !errors.Is(err, context.DeadlineExceeded) {
