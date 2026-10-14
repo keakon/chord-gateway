@@ -67,6 +67,10 @@ func instanceResources(path string, cfg *config.Config, paths *config.Paths) ([]
 
 type instanceLocks struct{ files []*os.File }
 
+// Tests replace this before starting workers; production always uses the
+// per-user directory, shared across configurations and state directories.
+var instanceLockCacheDir = os.UserCacheDir
+
 func (l *instanceLocks) Close() {
 	for i := len(l.files) - 1; i >= 0; i-- {
 		releaseInstanceLock(l.files[i])
@@ -75,7 +79,7 @@ func (l *instanceLocks) Close() {
 	l.files = nil
 }
 func acquireInstanceLocks(resources []string) (*instanceLocks, error) {
-	cache, err := os.UserCacheDir()
+	cache, err := instanceLockCacheDir()
 	if err != nil {
 		return nil, err
 	}

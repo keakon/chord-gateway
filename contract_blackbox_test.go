@@ -334,24 +334,48 @@ func mustChordRepoRoot(t *testing.T) string {
 	return root
 }
 
+// Each build configuration gets one immutable executable for this test process.
+var contractBuilds sync.Map
+
+type contractBuild struct {
+	once sync.Once
+	path string
+	err  error
+}
+
 func buildChordBinary(t *testing.T, chordRepo string) string {
 	t.Helper()
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "chord-test")
-	if runtime.GOOS == "windows" {
-		binPath += ".exe"
-	}
-	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, "./cmd/chord")
-	cmd.Dir = chordRepo
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
-	output, err := cmd.CombinedOutput()
+	root, err := filepath.Abs(chordRepo)
 	if err != nil {
-		if os.Getenv("CHORD_GATEWAY_CONTRACT_CHORD_REPO") != "" {
-			t.Fatalf("build chord binary: %v\n%s", err, string(output))
-		}
-		t.Skipf("skipping cross-repo contract test: sibling chord repo at %s is not currently buildable: %v\n%s", chordRepo, err, string(output))
+		t.Fatal(err)
 	}
-	return binPath
+	value, _ := contractBuilds.LoadOrStore(root, &contractBuild{})
+	build := value.(*contractBuild)
+	build.once.Do(func() {
+		dir, err := os.MkdirTemp(testProcessRoot, "chord-build-")
+		if err != nil {
+			build.err = err
+			return
+		}
+		build.path = filepath.Join(dir, "chord-test")
+		if runtime.GOOS == "windows" {
+			build.path += ".exe"
+		}
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", build.path, "./cmd/chord")
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			build.err = fmt.Errorf("build chord binary: %w\n%s", err, output)
+		}
+	})
+	if build.err != nil {
+		if os.Getenv("CHORD_GATEWAY_CONTRACT_CHORD_REPO") != "" {
+			t.Fatal(build.err)
+		}
+		t.Skipf("sibling Chord is not buildable: %v", build.err)
+	}
+	return build.path
 }
 
 func mustWriteChordTestConfig(t *testing.T, chordHome string) {

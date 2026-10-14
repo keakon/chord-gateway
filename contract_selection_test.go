@@ -39,6 +39,10 @@ func TestContractExplicitRepoOverridesInstalledBinary(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(output)) != "selected-source" {
 		t.Fatalf("explicit source was not selected: binary=%s output=%s error=%v", selected, output, err)
 	}
+	// The cached executable outlives individual test fixtures and is reused read-only.
+	if reused := mustChordBinary(t); reused != selected {
+		t.Fatalf("build was not shared: %s != %s", reused, selected)
+	}
 	// A deliberately supplied binary remains the strongest selection.
 	t.Setenv("CHORD_GATEWAY_CONTRACT_CHORD_BIN", installed)
 	if got := mustChordBinary(t); got != installed {

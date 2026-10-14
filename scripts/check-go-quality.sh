@@ -6,6 +6,7 @@ cd "$repo_root"
 
 coverage_file="${COVERAGE_FILE:-coverage.out}"
 min_coverage="${MIN_COVERAGE:-70.0}"
+test_timeout="${GO_TEST_TIMEOUT:-5m}"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "go not found in PATH" >&2
@@ -32,8 +33,11 @@ if [[ -n "$goimports_diff" ]]; then
   exit 1
 fi
 
-echo "==> go test -short -timeout=2m -coverprofile=${coverage_file} ./..."
-go test -short -timeout=2m -coverprofile="$coverage_file" ./...
+echo "==> go test -short -timeout=${test_timeout} -coverprofile=${coverage_file} ./..."
+go test -short -timeout="$test_timeout" -coverprofile="$coverage_file" ./...
+
+echo "==> go test -race -short -timeout=${test_timeout} ./..."
+go test -race -short -timeout="$test_timeout" ./...
 
 echo "==> go tool cover -func=${coverage_file}"
 cover_output="$(go tool cover -func="$coverage_file")"
