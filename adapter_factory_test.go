@@ -54,6 +54,18 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 			t.Fatalf("StartLogin() error = %v", err)
 		}
 	})
+
+	t.Run("dingtalk", func(t *testing.T) {
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Dingtalk: dingtalkIdentityTestConfig()}}}
+		adapter, err := NewIMAdapter(cfg, paths, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer adapter.Disconnect()
+		if _, ok := adapter.(*DingtalkAdapter); !ok || adapter.Type() != "dingtalk" {
+			t.Fatalf("adapter type = %T", adapter)
+		}
+	})
 }
 
 func TestNewIMAdapter_WithSingleActiveIMUsesAdapterConfig(t *testing.T) {

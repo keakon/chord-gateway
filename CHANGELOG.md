@@ -21,6 +21,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Added WeCom intelligent bot long connections with private/group text, binding probes, background replies and account exclusion. Network failures reconnect with backoff; connection replacement stops contention.
 
+- Added DingTalk internal-app Stream text and proactive replies. Each process start requires a private owner identity probe; existing bindings remain. Tokens and verification are memory-only. Temporary reconnects preserve accepted work within the process, and unknown sends are not retried. See [DingTalk](./docs/dingtalk.md).
 
 
 
