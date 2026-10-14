@@ -19,6 +19,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 ### Added
 
 
+- Added WeCom intelligent bot long connections with private/group text, binding probes, background replies and account exclusion. Network failures reconnect with backoff; connection replacement stops contention.
 
 
 

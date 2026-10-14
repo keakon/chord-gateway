@@ -25,6 +25,8 @@ func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, path
 		return NewWechatAdapter(cfg, imCfg, paths, router)
 	case "feishu":
 		return NewFeishuAdapter(cfg, imCfg, paths, router)
+	case "wecom":
+		return NewWecomAdapter(cfg, imCfg, paths, router)
 	default:
 		return nil, fmt.Errorf("unsupported IM type: %s", imCfg.Type())
 	}

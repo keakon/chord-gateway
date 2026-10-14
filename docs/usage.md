@@ -156,7 +156,7 @@ If Chord cancels a pending handoff without a decision (for example because a new
 
 ## MCP authentication and availability
 
-`/status` and `/mcp status` show unavailable MCP servers and the host command needed to sign in. Authentication, connection, and tool catalog status are separate: saved credentials alone do not prove the connection works. Visible status changes are pushed once as MCP notifications; inspect intermediate operations with `/status`.
+`/status` and `/mcp status` show unavailable MCP servers and the host command needed to sign in. Authentication, connection, and tool catalog status are separate: saved credentials alone do not prove the connection works. Visible status changes are pushed once as MCP notifications; inspect intermediate operations with `/status`. The all-servers-available summary is only pushed to confirm a recovery: a new session that starts with everything available stays silent.
 
 Run `chord mcp login <server>` or `chord mcp logout <server>` in the session's working directory on the Chord host. Add `--agent <definition>` for an agent-private server. Use the local TUI to reconnect. IM commands `/mcp login`, `logout`, `reauth`, `reconnect`, and `cancel` return host instructions and are never sent to the model. Existing `/mcp enable` and `/mcp disable` remain available.
 

@@ -192,3 +192,7 @@ Defaults allow 64 pending records per chat, 1,024 / 16 MiB per account and 4,096
 `/status` shows waiting, isolation and send failures; runtime metrics count acceptance and receipt outcomes. Control replies share 15 seconds across queueing and sending; congestion may drop a reply without undoing the operation. There is no offline `ingress` database maintenance CLI. Reconcile pending input before stopping; after checking outcomes, restarting clears in-memory guards but cannot cancel or undo work already handed to Chord.
 
 Configuration, login credentials, session pins and transfer guards retain their own persistence. If a binding configuration write is uncertain, stop and compare YAML and Chord sessions before acting; do not delete transfer guards to force progress.
+
+## WeCom operation and reconnects
+
+The intelligent bot API long connection deduplicates business msgids within the process and opens intake after authentication. Network failures reconnect with backoff; authentication rejection or connection replacement stops reconnecting. Background results do not depend on the original callback lifetime. See [WeCom](./wecom.md).

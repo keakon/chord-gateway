@@ -39,6 +39,21 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 			t.Fatalf("adapter.Type() = %q", got)
 		}
 	})
+
+	t.Run("wecom", func(t *testing.T) {
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Wecom: &config.WecomConfig{BotID: "example-bot", Secret: "example-secret"}}}}
+		adapter, err := NewIMAdapter(cfg, paths, nil)
+		if err != nil {
+			t.Fatalf("NewIMAdapter() error = %v", err)
+		}
+		defer adapter.Disconnect()
+		if _, ok := adapter.(*WecomAdapter); !ok || adapter.Type() != "wecom" || adapter.SupportsLoginRenewal() {
+			t.Fatalf("unexpected wecom adapter: %T", adapter)
+		}
+		if _, err = adapter.StartLogin(); err != ErrLoginNotSupported {
+			t.Fatalf("StartLogin() error = %v", err)
+		}
+	})
 }
 
 func TestNewIMAdapter_WithSingleActiveIMUsesAdapterConfig(t *testing.T) {

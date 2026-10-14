@@ -339,6 +339,12 @@ func testTelegramIngressCursor(generation uint64, offset int64) *IngressCursor {
 	return &IngressCursor{Kind: "telegram", Version: 1, Generation: generation, Telegram: &TelegramIngressCursor{PendingOffset: &offset, ObservedAt: time.Now(), State: "pending"}}
 }
 
+type testIngressReceiverFunc func(context.Context, IngressEnvelope) ReceiveResult
+
+func (f testIngressReceiverFunc) Accept(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	return f(ctx, e)
+}
+
 // Discard is a test-only shortcut for releasing a pending fixture.
 func (s *IngressStore) Discard(ctx context.Context, id string) error {
 	return s.UpdateRecord(ctx, id, []string{"received", "dispatching", "unknown", "quarantined"}, func(r *IngressRecord) error { r.State = "consumed"; r.Reason = "local_discard"; return nil })

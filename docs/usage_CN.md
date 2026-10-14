@@ -147,7 +147,7 @@ IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题�
 
 ## MCP 登录与可用状态
 
-`/status` 和 `/mcp status` 展示不可用的 MCP 服务及宿主机登录命令。认证、连接和工具目录分别显示：凭证已保存不代表连接已成功。可见状态变化会以 MCP 通知推送一次，中间操作进度可通过 `/status` 查看。
+`/status` 和 `/mcp status` 展示不可用的 MCP 服务及宿主机登录命令。认证、连接和工具目录分别显示：凭证已保存不代表连接已成功。可见状态变化会以 MCP 通知推送一次，中间操作进度可通过 `/status` 查看。「全部可用」只作为故障恢复后的确认推送；新会话一开始就全部可用时不会推送。
 
 在运行 Chord 的宿主机上，先进入该会话的工作目录，再执行 `chord mcp login <server>` 或 `chord mcp logout <server>`；角色私有服务加上 `--agent <definition>`。重连操作在本地 TUI 完成。IM 中的 `/mcp login`、`logout`、`reauth`、`reconnect` 和 `cancel` 只返回宿主机操作指引，不会发送给模型。原有 `/mcp enable` 和 `/mcp disable` 仍可使用。
 
