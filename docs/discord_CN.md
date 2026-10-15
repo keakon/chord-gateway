@@ -6,9 +6,15 @@ Discord 真实账号部署验收仍未完成；自动协议测试通过不代表
 
 ## 创建并安装机器人
 
-1. 在 [Discord Developer Portal](https://discord.com/developers/applications) 创建应用与 Bot，取得机器人 token 和 application ID。
-2. 创建 scope 为 `bot` 的服务器安装链接，授予 **View Channel**、**Send Messages**、**Send Messages in Threads**。检查频道权限覆盖；使用私有 thread 时先邀请机器人加入。
-3. 保持 Message Content、Server Members、Presence privileged intents 关闭。Gateway 只使用 `GUILDS`、`GUILD_MESSAGES`、`DIRECT_MESSAGES`，首版通过 DM 和显式 mention 获取正文。详见 [Discord Gateway intents](https://docs.discord.com/developers/events/gateway#message-content-intent)。
+1. 在 [Discord Developer Portal](https://discord.com/developers/applications) 创建应用与 Bot，取得机器人 token（`Bot` 页面，仅显示一次）和 application ID（`General Information` 页面，即 client ID）。
+2. 打开 `OAuth2` -> `URL Generator`（新版为 `Installation` -> `Install Link`），scope 只选 `bot`，权限勾选 **View Channel**、**Send Messages**、**Send Messages in Threads**。页面下方会生成一条安装链接，权限数值直接写在其中，例如：
+   ```text
+   https://discord.com/oauth2/authorize?client_id=你的ApplicationID&permissions=274877910016&scope=bot
+   ```
+   这里没有保存按钮：`permissions=` 数字只存在于这条链接里，打开链接才是生效动作。增减权限时重新勾选、打开重新生成的链接即可。
+3. 用浏览器打开生成的链接，选择服务器（需要该服的 `Manage Server` 权限），点击 `Authorize`。成功后 Bot 会出现在服务器成员列表中。
+4. 在服务器内检查 Bot 身份组的频道权限覆盖，需要使用的私有 thread 要逐个邀请 Bot 加入。在 Discord 隐私设置中允许共享服务器的机器人私聊，否则配对 DM 无法送达。
+5. 保持 Message Content、Server Members、Presence privileged intents 关闭（`Bot` 页面，这是 intent 唯一有 `Save Changes` 的地方）。Gateway 只使用 `GUILDS`、`GUILD_MESSAGES`、`DIRECT_MESSAGES`，首版通过 DM 和显式 mention 获取正文。详见 [Discord Gateway intents](https://docs.discord.com/developers/events/gateway#message-content-intent)。
 
 网关不读取历史消息，无需 Read Message History、Administrator 或 Manage Threads。
 
@@ -23,6 +29,8 @@ ims:
 
 token 属于敏感凭据。application ID 标识应用；配对写入的 `owner.account_id` 则是认证后的 Bot user ID。更换机器人账号后必须本机重置，不能继承原有授权。
 
+直连 Discord 受阻时，可在全局或 `ims.discord` 下设置 `proxy_url`。`socks5://` 与 `socks5h://` 都可直接填写：Gateway WebSocket 会把 `socks5h` 自动降级为 `socks5`（两者都是远端 DNS，行为一致），无需手工改写。详见[配置](./configuration_CN.md#代理)。
+
 ## 配对与聊天绑定
 
 在前台终端运行 `chord-gateway -f config.yaml --pair`。在 Discord 隐私设置中允许共享服务器的机器人私聊，打开 Bot DM 并发送：
@@ -31,7 +39,7 @@ token 属于敏感凭据。application ID 标识应用；配对写入的 `owner.
 /bind "/path/to/project" <pairing_code>
 ```
 
-目录必须已存在于网关主机。私聊配对后，同一 owner 分别绑定服务器文字频道或可访问的 thread：
+目录必须已存在于网关主机。首次配对必须在 Bot DM 完成，在此之前服务器消息保持静默，因此不要一上来就在频道里发 `@Bot /bind`。私聊配对后，同一 owner 分别绑定服务器文字频道或可访问的 thread：
 
 ```text
 @Bot /bind "/path/to/project"
@@ -58,7 +66,8 @@ Resume 期间，`RESUMED` 前到达的候选消息会保留当时的正文与命
 | 现象 | 检查项 |
 | --- | --- |
 | 无法打开 Bot DM 或私聊投递失败 | 允许共享服务器私聊，检查 Discord 隐私设置。 |
-| 服务器消息被忽略 | 使用配对 owner 显式 @Bot；命令需在开头提及机器人，并先绑定频道/thread。 |
+| Bot 一直离线，DM 和频道都没有任何回复 | Gateway WebSocket 从未进入 `Ready`，所有输入都收不到。先检查 `proxy_url`（`socks5://` 与 `socks5h://` 均可，后者自动降级），再核对 token / application ID 是否配套，最后检查 privileged intents。 |
+| 服务器消息被忽略 | 使用配对 owner 显式 @Bot；命令需在开头提及机器人，并先绑定频道/thread。首次配对必须在 Bot DM 完成，在此之前服务器消息保持静默。 |
 | `401` 或认证失败 | 本机更新失效 token，确认 application ID 与机器人属于同一应用。 |
 | `403` 或缺少访问权限 | 检查频道权限覆盖、View Channel、Send Messages、Send Messages in Threads，以及私有 thread 访问权限。 |
 | Gateway close `4014` | 检查部署版本只请求上述 intents，不用开启 privileged intents 来绕过不匹配。 |

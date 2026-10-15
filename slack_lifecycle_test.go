@@ -136,7 +136,7 @@ func TestSlackLifecycleDisconnectCancelsStartupAndBackoff(t *testing.T) {
 					}
 				}))
 				t.Cleanup(func() { close(release); server.Close() })
-				client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client())))
+				client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client(), nil)))
 				a.verifyIdentity = func(ctx context.Context) (slackIdentity, error) {
 					return verifySlackIdentity(ctx, client, identity.TeamID, identity.AppID)
 				}

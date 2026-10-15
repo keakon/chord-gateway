@@ -53,8 +53,9 @@ func validSlackSocketURL(address string) bool {
 	host := strings.ToLower(u.Hostname())
 	return host == "wss.slack.com" || host == "wss-primary.slack.com" || host == "wss-backup.slack.com"
 }
-func dialSlackSocket(ctx context.Context, address string) (*websocket.Conn, error) {
+func dialSlackSocketWithProxy(ctx context.Context, address string, proxyFunc func(*http.Request) (*url.URL, error)) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, WriteBufferSize: 32 << 10}
+	dialer.Proxy = websocketProxyFunc(proxyFunc)
 	conn, response, err := dialer.DialContext(ctx, address, http.Header{"Origin": []string{"https://api.slack.com"}})
 	if response != nil && err != nil {
 		_ = response.Body.Close()

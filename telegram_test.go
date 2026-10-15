@@ -382,7 +382,7 @@ func TestTelegramAdapterWebhookConflictStopsBeforePolling(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	api := newTelegramAPI("webhook-test-token")
+	api := newTelegramAPI("webhook-test-token", nil)
 	api.baseURL = server.URL
 	api.client = server.Client()
 	a.api = api

@@ -29,13 +29,17 @@ type WecomAdapter struct {
 	accountInterval, targetInterval time.Duration
 }
 
-func NewWecomAdapter(_ *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*WecomAdapter, error) {
+func NewWecomAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*WecomAdapter, error) {
 	if imCfg.Wecom == nil || imCfg.Wecom.BotID == "" || imCfg.Wecom.Secret == "" {
 		return nil, errors.New("wecom: bot_id and secret are required")
 	}
+	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &WecomAdapter{imCfg: imCfg, router: router, ctx: ctx, cancel: cancel, done: make(chan struct{}), targetNext: make(map[string]time.Time), accountInterval: 500 * time.Millisecond, targetInterval: 4 * time.Second}
-	a.ws = newWecomWS(imCfg.Wecom.BotID, imCfg.Wecom.Secret, wecomWSCallbacks{OnAuthenticated: a.authenticated, OnReady: a.transportReady, CaptureFrame: a.captureFrame, OnFrame: a.receiveFrame, OnUnavailable: a.unavailable, OnDroppedBeforeAccept: a.droppedBeforeAccept})
+	a.ws = newWecomWSWithProxy(imCfg.Wecom.BotID, imCfg.Wecom.Secret, wecomWSCallbacks{OnAuthenticated: a.authenticated, OnReady: a.transportReady, CaptureFrame: a.captureFrame, OnFrame: a.receiveFrame, OnUnavailable: a.unavailable, OnDroppedBeforeAccept: a.droppedBeforeAccept}, proxyFunc)
 	sender, err := NewIMTextSender(IMTextSendOptions{Platform: "wecom", Budget: 1024, Render: renderWecomText, Measure: func(s string) int { return len(s) }, SendSegment: a.sendSegment})
 	if err != nil {
 		cancel()

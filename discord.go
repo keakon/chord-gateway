@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ type DiscordAdapter struct {
 	sends                    sync.WaitGroup
 	readinessNotifier        func()
 	fatal                    chan error
+	proxyFunc                func(*http.Request) (*url.URL, error)
 }
 
 // Discord rejects REST requests that carry no User-Agent, and the SDK default is
@@ -63,14 +65,17 @@ func newDiscordRESTClient(ctx context.Context, httpClient *http.Client, token st
 	}, opts...)...))
 }
 
-func NewDiscordAdapter(_ *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DiscordAdapter, error) {
+func NewDiscordAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DiscordAdapter, error) {
 	if imCfg.Discord == nil || strings.TrimSpace(imCfg.Discord.BotToken) == "" || strings.TrimSpace(imCfg.Discord.ApplicationID) == "" {
 		return nil, errors.New("discord requires bot_token and application_id")
 	}
+	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	httpClient := newDiscordHTTPClient()
-	a := &DiscordAdapter{imCfg: imCfg, router: router, rest: newDiscordRESTClient(ctx, httpClient, imCfg.Discord.BotToken), httpClient: httpClient, ctx: ctx, cancel: cancel, done: make(chan struct{}), fatal: make(chan error, 1)}
-	var err error
+	httpClient := newDiscordHTTPClient(proxyFunc)
+	a := &DiscordAdapter{imCfg: imCfg, router: router, rest: newDiscordRESTClient(ctx, httpClient, imCfg.Discord.BotToken), httpClient: httpClient, ctx: ctx, cancel: cancel, done: make(chan struct{}), fatal: make(chan error, 1), proxyFunc: proxyFunc}
 	a.sender, err = newDiscordTextSender(a.sendSegment)
 	if err != nil {
 		cancel()
@@ -123,9 +128,11 @@ func (a *DiscordAdapter) Connect() error {
 	}
 	a.inbound = newDiscordInbound(a.ctx, account, a.imCfg.Discord.ApplicationID, a.router.SubmitIngressNormalization, a.resolveChannel, a.currentGeneration, a.connectionLive, a.observeIngress)
 	limit := info.SessionStartLimit
+	dialer := discordProxyDialer(a.proxyFunc)
 	g := gateway.New(a.ctx, a.imCfg.Discord.BotToken, nil,
 		gateway.WithURL(info.URL), gateway.WithIntents(gateway.IntentGuilds, gateway.IntentGuildMessages, gateway.IntentDirectMessages),
 		gateway.WithLogger(slog.New(discordSafeLogHandler{})),
+		gateway.WithDialer(dialer),
 		gateway.WithSessionStartLimit(limit.Total, limit.Remaining, time.Duration(limit.ResetAfter)*time.Millisecond),
 		gateway.WithSessionStartLimitRefresh(a.refreshSessionStartLimit),
 		gateway.WithReadyValidator(func(e gateway.EventReady) error {

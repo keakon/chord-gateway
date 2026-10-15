@@ -73,11 +73,12 @@ type dingtalkStream struct {
 	stableAfter                             time.Duration
 }
 
-func newDingtalkStream(api *dingtalkAPI, callbacks dingtalkStreamCallbacks) *dingtalkStream {
+func newDingtalkStreamWithProxy(api *dingtalkAPI, callbacks dingtalkStreamCallbacks, proxyFunc func(*http.Request) (*url.URL, error)) *dingtalkStream {
+	proxy := websocketProxyFunc(proxyFunc)
 	return &dingtalkStream{
 		callbacks:      callbacks,
 		openConnection: api.openConnection,
-		dialer:         &websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 10 * time.Second},
+		dialer:         &websocket.Dialer{Proxy: proxy, HandshakeTimeout: 10 * time.Second},
 		pingInterval:   dingtalkStreamPingInterval,
 		pongTimeout:    dingtalkStreamPongTimeout,
 		writeTimeout:   5 * time.Second,

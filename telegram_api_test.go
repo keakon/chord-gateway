@@ -18,7 +18,7 @@ func testTelegramAPI(t *testing.T, handler http.HandlerFunc) *telegramHTTPAPI {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	api := newTelegramAPI("123:secret-token")
+	api := newTelegramAPI("123:secret-token", nil)
 	api.baseURL, api.client = server.URL, server.Client()
 	return api
 }

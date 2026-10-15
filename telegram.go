@@ -39,11 +39,15 @@ type TelegramAdapter struct {
 // poller is still running on the same adapter.
 var errTelegramAlreadyRunning = errors.New("telegram poller already running")
 
-func NewTelegramAdapter(_ *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*TelegramAdapter, error) {
+func NewTelegramAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*TelegramAdapter, error) {
 	if imCfg.Telegram == nil || imCfg.Telegram.BotToken == "" {
 		return nil, errors.New("telegram bot_token is required")
 	}
-	api := newTelegramAPI(imCfg.Telegram.BotToken)
+	proxyFunc, err := proxyFuncFor(cfg, imCfg)
+	if err != nil {
+		return nil, err
+	}
+	api := newTelegramAPI(imCfg.Telegram.BotToken, proxyFunc)
 	sender, err := newTelegramTextSender(api)
 	if err != nil {
 		return nil, err

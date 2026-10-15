@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -192,17 +193,15 @@ func (c *slackHTTPClient) closeIdleConnections() {
 	}
 }
 
-func newSlackHTTPClient(base *http.Client) *slackHTTPClient {
+func newSlackHTTPClient(base *http.Client, proxyFunc func(*http.Request) (*url.URL, error)) *slackHTTPClient {
 	client := messageHTTPClient(base)
 	client.Timeout = 15 * time.Second
-	transport := client.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
+	// A configured proxy always wins over an injected transport. Production
+	// passes a nil base, so proxyFunc also supplies the direct-connection default.
+	if proxyFunc != nil || client.Transport == nil {
+		client.Transport = proxiedTransport(proxyFunc)
 	}
-	// A non-nil base transport (tests pass server.Client() here; production
-	// always passes nil) already defines proxy behavior, so proxyFunc is
-	// intentionally not layered on top of it.
 	limits := &slackMethodLimits{blocked: make(map[string]time.Time)}
-	client.Transport = slackReceiptTransport{base: transport, limits: limits}
+	client.Transport = slackReceiptTransport{base: client.Transport, limits: limits}
 	return &slackHTTPClient{client: client, limits: limits}
 }

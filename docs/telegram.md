@@ -27,7 +27,7 @@ Telegram connects to the local Gateway through Bot API long polling, with no pub
 
    The directory must already exist on the Gateway host. Send `/status`, then a short text task. Gateway saves the owner and binding to YAML; later starts do not need `--pair`.
 
-The credential remains in the configuration file; do not commit it. The API address is fixed to `https://api.telegram.org`, with no configurable endpoint. Gateway must have network access to that address.
+The credential remains in the configuration file; do not commit it. The API address is fixed to `https://api.telegram.org`, with no configurable endpoint. Gateway must have network access to that address. When direct access is blocked, set `proxy_url` globally or under `ims.telegram`; empty means direct and environment proxy variables are ignored. See [configuration](./configuration.md#proxy).
 
 ## Groups and privacy
 

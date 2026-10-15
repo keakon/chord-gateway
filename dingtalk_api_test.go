@@ -22,7 +22,7 @@ func dingtalkTestAPI(t *testing.T, handler http.HandlerFunc) (*dingtalkAPI, cont
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	server := httptest.NewServer(handler)
-	a := newDingtalkAPI(ctx, &config.DingtalkConfig{ClientID: "test-client", ClientSecret: "test-secret", RobotCode: "test-robot", CorpID: "test-corp"})
+	a := newDingtalkAPI(ctx, &config.DingtalkConfig{ClientID: "test-client", ClientSecret: "test-secret", RobotCode: "test-robot", CorpID: "test-corp"}, nil)
 	a.baseURL = server.URL
 	a.accountInterval = 0
 	a.targetInterval = 0

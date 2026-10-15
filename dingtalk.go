@@ -37,7 +37,7 @@ type DingtalkAdapter struct {
 	fatal      error
 }
 
-func NewDingtalkAdapter(_ *config.Config, im config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DingtalkAdapter, error) {
+func NewDingtalkAdapter(globalCfg *config.Config, im config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DingtalkAdapter, error) {
 	if im.Dingtalk == nil || im.Dingtalk.ClientSecret == "" {
 		return nil, errors.New("dingtalk: incomplete configuration")
 	}
@@ -46,9 +46,13 @@ func NewDingtalkAdapter(_ *config.Config, im config.IMAdapterConfig, _ *config.P
 		return nil, err
 	}
 	cfg := *im.Dingtalk
+	proxyFunc, err := websocketProxyFuncFor(globalCfg, im)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &DingtalkAdapter{cfg: &cfg, router: router, account: account, ctx: ctx, cancel: cancel, done: make(chan struct{})}
-	a.api = newDingtalkAPI(ctx, &cfg)
+	a.api = newDingtalkAPI(ctx, &cfg, proxyFunc)
 	a.sender, err = NewIMTextSender(IMTextSendOptions{Platform: "dingtalk", Budget: 1024, Measure: func(s string) int { return len(s) }, SendSegment: func(ctx context.Context, target, text string) error {
 		kind, raw, err := dingtalkDecodeTarget(cfg.CorpID, target)
 		if err != nil {
@@ -61,7 +65,7 @@ func NewDingtalkAdapter(_ *config.Config, im config.IMAdapterConfig, _ *config.P
 		return nil, err
 	}
 	a.api.observeRateWait = a.sender.observeRateWait
-	a.stream = newDingtalkStream(a.api, dingtalkStreamCallbacks{OnConnected: a.onConnected, OnUnavailable: a.onUnavailable, OnCallback: a.onCallback, OnReceiveResult: func(result ReceiveResult) {
+	a.stream = newDingtalkStreamWithProxy(a.api, dingtalkStreamCallbacks{OnConnected: a.onConnected, OnUnavailable: a.onUnavailable, OnCallback: a.onCallback, OnReceiveResult: func(result ReceiveResult) {
 		if result.Disposition == ReceiveRetryable && result.Reason == "stream_capacity" {
 			a.observeReceiveResult(result)
 		}
@@ -76,7 +80,7 @@ func NewDingtalkAdapter(_ *config.Config, im config.IMAdapterConfig, _ *config.P
 		}
 	}, OnRetry: func(category string, attempt int, delay time.Duration) {
 		log.Warnf("dingtalk stream: retry category=%s attempt=%d delay=%v", category, attempt, delay)
-	}})
+	}}, proxyFunc)
 	return a, nil
 }
 

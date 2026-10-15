@@ -35,7 +35,7 @@ func dingtalkTestFrame(kind, topic, id, data string) dingtalkFrame {
 }
 
 func dingtalkTestStream(callbacks dingtalkStreamCallbacks, endpoint string) *dingtalkStream {
-	s := newDingtalkStream(&dingtalkAPI{}, callbacks)
+	s := newDingtalkStreamWithProxy(&dingtalkAPI{}, callbacks, nil)
 	s.allowInsecureEndpoint = true
 	s.openConnection = func(context.Context) (string, string, error) { return endpoint, "test-ticket", nil }
 	s.dialer.Proxy = nil

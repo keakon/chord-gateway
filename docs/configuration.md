@@ -168,6 +168,25 @@ All platforms accept only the paired owner's input. Start with `chord-gateway --
 
 Binding registers an existing directory and enables the route only after saving YAML. Directories are reused by filesystem identity, never created or cloned. Resolve pending inputs, background work, and interactions before switching directories. See [pairing](./pairing.md) for path and recovery rules. Stop the service before manual configuration edits, then restart.
 
+## Proxy
+
+Optional outbound proxy for IM API and long-connection traffic:
+
+```yaml
+proxy_url: "http://127.0.0.1:8080"
+ims:
+  telegram:
+    bot_token: your-bot-token
+    proxy_url: "socks5h://127.0.0.1:1080"
+```
+
+- Top-level `proxy_url` applies to all IMs; `ims.<platform>.proxy_url` overrides it for that platform.
+- Priority: per-IM > global. Empty means direct; environment proxy variables are ignored.
+- Supported schemes: `http`, `https`, `socks5`, `socks5h` (`socks5` and `socks5h` behave identically in Go).
+- WebSocket long-connections (Discord Gateway, Slack/Feishu/WeCom/DingTalk sockets) **do not support an `https` proxy**. Because those platforms also need a WebSocket connection, an `https` proxy is rejected at startup when any of them is configured. Use `http`, `socks5`, or `socks5h` if you need a proxy for those platforms.
+- WebSocket long-connections normalize `socks5h` to `socks5` automatically; either spelling works.
+- The scheme must be explicit; credentials in the URL are never logged.
+
 ## `workspaces`
 
 `workspaces` is a map keyed by workspace ID:

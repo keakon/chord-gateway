@@ -75,8 +75,8 @@ type dingtalkAPI struct {
 	observeRateWait func(time.Duration)
 }
 
-func newDingtalkAPI(lifecycle context.Context, cfg *config.DingtalkConfig) *dingtalkAPI {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+func newDingtalkAPI(lifecycle context.Context, cfg *config.DingtalkConfig, proxyFunc func(*http.Request) (*url.URL, error)) *dingtalkAPI {
+	transport := proxiedTransport(proxyFunc)
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 5 * time.Second
 	return &dingtalkAPI{

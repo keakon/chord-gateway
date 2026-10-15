@@ -7,8 +7,11 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // Preserve Discord's fractional retry delay for the owned REST rate limiter,
@@ -21,8 +24,16 @@ type discordRateLimitTransport struct{ base http.RoundTripper }
 // leave every control send reporting unknown_send.
 const discordRESTTimeout = 10 * time.Second
 
-func newDiscordHTTPClient() *http.Client {
-	return messageHTTPClient(&http.Client{Timeout: discordRESTTimeout, Transport: discordRateLimitTransport{base: http.DefaultTransport.(*http.Transport).Clone()}})
+func newDiscordHTTPClient(proxyFunc func(*http.Request) (*url.URL, error)) *http.Client {
+	return messageHTTPClient(&http.Client{Timeout: discordRESTTimeout, Transport: discordRateLimitTransport{base: proxiedTransport(proxyFunc)}})
+}
+
+func discordProxyDialer(proxyFunc func(*http.Request) (*url.URL, error)) *websocket.Dialer {
+	dialer := *websocket.DefaultDialer
+	// gorilla/websocket rejects socks5h; the shared wrapper rewrites it to
+	// socks5 (identical remote-DNS behavior) and keeps nil as direct.
+	dialer.Proxy = websocketProxyFunc(proxyFunc)
+	return &dialer
 }
 
 func (t discordRateLimitTransport) CloseIdleConnections() {

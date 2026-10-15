@@ -33,6 +33,7 @@ type Config struct {
 	IdleTimeout     string            `yaml:"idle_timeout,omitempty"`
 	EventVisibility EventVisibility   `yaml:"event_visibility,omitempty"`
 	SessionPinsFile string            `yaml:"session_pins_file,omitempty"`
+	ProxyURL        string            `yaml:"proxy_url,omitempty"`
 }
 
 // EventVisibility controls control-plane event visibility. Most flags are
@@ -99,6 +100,7 @@ type WechatConfig struct {
 
 	BaseURL   string `yaml:"base_url,omitempty"`
 	TokenPath string `yaml:"token_path,omitempty"`
+	ProxyURL  string `yaml:"proxy_url,omitempty"`
 }
 
 // FeishuConfig holds Feishu application configuration.
@@ -110,6 +112,7 @@ type FeishuConfig struct {
 	AppSecret string `yaml:"app_secret"`
 
 	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
+	ProxyURL     string            `yaml:"proxy_url,omitempty"`
 }
 
 type TelegramConfig struct {
@@ -117,6 +120,7 @@ type TelegramConfig struct {
 	ChatBindings map[string]string `yaml:"chat_bindings,omitempty"`
 	fields       accessFields
 	BotToken     string `yaml:"bot_token"`
+	ProxyURL     string `yaml:"proxy_url,omitempty"`
 }
 
 type DiscordConfig struct {
@@ -125,6 +129,7 @@ type DiscordConfig struct {
 	fields        accessFields
 	BotToken      string `yaml:"bot_token"`
 	ApplicationID string `yaml:"application_id"`
+	ProxyURL      string `yaml:"proxy_url,omitempty"`
 }
 
 type WecomConfig struct {
@@ -133,6 +138,7 @@ type WecomConfig struct {
 	fields       accessFields
 	BotID        string `yaml:"bot_id"`
 	Secret       string `yaml:"secret"`
+	ProxyURL     string `yaml:"proxy_url,omitempty"`
 }
 
 type DingtalkConfig struct {
@@ -143,6 +149,7 @@ type DingtalkConfig struct {
 	ClientSecret string `yaml:"client_secret"`
 	RobotCode    string `yaml:"robot_code"`
 	CorpID       string `yaml:"corp_id"`
+	ProxyURL     string `yaml:"proxy_url,omitempty"`
 }
 
 type SlackConfig struct {
@@ -153,6 +160,7 @@ type SlackConfig struct {
 	BotToken     string `yaml:"bot_token"`
 	AppID        string `yaml:"app_id"`
 	TeamID       string `yaml:"team_id"`
+	ProxyURL     string `yaml:"proxy_url,omitempty"`
 }
 
 // Workspace defines a project directory.
@@ -169,6 +177,7 @@ type rawConfig struct {
 	IdleTimeout     string          `yaml:"idle_timeout,omitempty"`
 	EventVisibility EventVisibility `yaml:"event_visibility,omitempty"`
 	SessionPinsFile string          `yaml:"session_pins_file,omitempty"`
+	ProxyURL        string          `yaml:"proxy_url,omitempty"`
 }
 
 type rawWorkspace struct {
@@ -200,6 +209,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 		IdleTimeout:     raw.IdleTimeout,
 		EventVisibility: raw.EventVisibility,
 		SessionPinsFile: raw.SessionPinsFile,
+		ProxyURL:        raw.ProxyURL,
 	}
 	return nil
 }
@@ -513,6 +523,17 @@ func (c *Config) Validate() error {
 		if err := c.validateAccess(im); err != nil {
 			return err
 		}
+		if err := ValidateProxyURL("ims."+typ+".proxy_url", im.ProxyURLValue()); err != nil {
+			return err
+		}
+		if websocketProxyPlatforms[typ] {
+			if err := ValidateProxyForWebsocket(c.EffectiveProxyURL(*im)); err != nil {
+				return fmt.Errorf("ims.%s: %w", typ, err)
+			}
+		}
+	}
+	if err := ValidateProxyURL("proxy_url", c.ProxyURL); err != nil {
+		return err
 	}
 
 	return nil

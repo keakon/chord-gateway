@@ -168,6 +168,25 @@ Discord 接收 Bot DM 和服务器频道/thread 中显式 @Bot 的消息，不�
 
 命令会注册已存在的目录，并在持久保存 YAML 后启用聊天绑定。目录按真实文件系统身份复用，不会创建或克隆目录；切换目录前必须处理完待执行输入、后台任务和交互。路径和恢复规则见[配对指南](./pairing_CN.md)。手工修改配置需先停服务，再修改并重启。
 
+## 代理
+
+可选的 IM API 与长连接出站代理：
+
+```yaml
+proxy_url: "http://127.0.0.1:8080"
+ims:
+  telegram:
+    bot_token: your-bot-token
+    proxy_url: "socks5h://127.0.0.1:1080"
+```
+
+- 顶层 `proxy_url` 作用于所有 IM；`ims.<platform>.proxy_url` 覆盖该平台。
+- 优先级：各 IM > 全局。为空表示直连；环境代理变量会被忽略。
+- 支持 `http`、`https`、`socks5`、`socks5h`（Go 内 `socks5` 与 `socks5h` 行为一致）。
+- WebSocket 长连接（Discord Gateway、Slack/飞书/企业微信/钉钉 socket）**不支持 `https` 代理**。由于这些平台同时需要 WebSocket 连接,只要配置了其中任一平台,`https` 代理会在启动时被拒绝。这些平台如需代理请使用 `http`、`socks5` 或 `socks5h`。
+- WebSocket 长连接会自动把 `socks5h` 降级为 `socks5`，两种写法都可直接使用。
+- 必须写明 scheme；URL 中的账号口令不会记入日志。
+
 ## `workspaces`
 
 `workspaces` 是一个以 workspace ID 为 key 的映射：

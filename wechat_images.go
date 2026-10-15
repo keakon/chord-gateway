@@ -47,7 +47,7 @@ type ilinkImageItem struct {
 // that request with a context deadline instead.
 func (a *WechatAdapter) mediaClient() *http.Client {
 	if a.httpClient == nil {
-		return &http.Client{}
+		return &http.Client{Transport: proxiedTransport(a.proxyFunc)}
 	}
 	client := *a.httpClient
 	client.Timeout = 0

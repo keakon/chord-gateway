@@ -151,6 +151,8 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			log.Infof("no platform requires pairing; existing owners are unchanged")
 		}
 
+		logEffectiveProxies(cfg)
+
 		activeIMs := cfg.ActiveIMs()
 		log.Infof("chord-gateway starting %s config=%v state_dir=%v ims=%v workspaces=%v idle_timeout=%v", buildinfo.Current().LogString(), *flagConfig,
 			paths.StateDir,

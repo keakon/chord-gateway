@@ -80,6 +80,7 @@ type FeishuAdapter struct {
 	// deadlines under the adapter's control. Inbound events use shared ingress;
 	// an unconfirmed outbound message is never replayed.
 	httpClient *http.Client
+	proxyFunc  func(*http.Request) (*url.URL, error)
 
 	accessToken   string
 	tokenExpireAt time.Time
@@ -122,15 +123,20 @@ func NewFeishuAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 	if imCfg.Feishu == nil {
 		return nil, fmt.Errorf("feishu: feishu config is required when im type is feishu")
 	}
+	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	if err != nil {
+		return nil, err
+	}
 
 	a := &FeishuAdapter{
 		imCfg:             imCfg,
 		msgRouter:         router, // NotificationRouter satisfies MessageRouter
 		notifier:          router, // ... and SessionLoginNotifier
-		httpClient:        &http.Client{Timeout: 10 * time.Second},
+		httpClient:        &http.Client{Timeout: 10 * time.Second, Transport: proxiedTransport(proxyFunc)},
 		fragments:         make(map[string]feishuFragmentBuffer),
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
+		proxyFunc:         proxyFunc,
 	}
 	a.runLongConn = a.runLongConnection
 
@@ -242,7 +248,9 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context) error {
 	}
 	serviceID, _ := strconv.ParseInt(u.Query().Get(larkws.ServiceID), 10, 32)
 
-	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, connURL, nil)
+	dialer := *websocket.DefaultDialer
+	dialer.Proxy = websocketProxyFunc(a.proxyFunc)
+	conn, resp, err := dialer.DialContext(ctx, connURL, nil)
 	if err != nil {
 		if resp != nil {
 			return parseFeishuWSError(resp)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -33,6 +35,7 @@ type SlackAdapter struct {
 	generation                                 uint64
 	readinessNotifier                          func()
 	sends                                      sync.WaitGroup
+	proxyFunc                                  func(*http.Request) (*url.URL, error)
 	inbound                                    *slackInbound
 	http                                       *slackHTTPClient
 	// Fixed production endpoints and budgets; hooks permit protocol fault tests.
@@ -42,19 +45,23 @@ type SlackAdapter struct {
 	helloTimeout, pingTimeout time.Duration
 }
 
-func NewSlackAdapter(_ *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router IMSocketHost) (*SlackAdapter, error) {
+func NewSlackAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router IMSocketHost) (*SlackAdapter, error) {
 	c := imCfg.Slack
 	if c == nil || c.AppToken == "" || c.BotToken == "" || c.AppID == "" || c.TeamID == "" {
 		return nil, errors.New("slack: app_token, bot_token, app_id and team_id are required")
 	}
-	httpClient := newSlackHTTPClient(nil)
+	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := newSlackHTTPClient(nil, proxyFunc)
 	client := slack.New(c.BotToken, slack.OptionHTTPClient(httpClient), slack.OptionAppLevelToken(c.AppToken), slack.OptionDebug(false))
 	sender, err := newSlackSender(client)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &SlackAdapter{imCfg: imCfg, router: router, client: client, sender: sender, ctx: ctx, cancel: cancel, done: make(chan struct{}), helloTimeout: 10 * time.Second, pingTimeout: 60 * time.Second, http: httpClient}
+	a := &SlackAdapter{imCfg: imCfg, router: router, client: client, sender: sender, ctx: ctx, cancel: cancel, done: make(chan struct{}), helloTimeout: 10 * time.Second, pingTimeout: 60 * time.Second, proxyFunc: proxyFunc, http: httpClient}
 	a.openSocket = func(ctx context.Context) (string, error) {
 		_, address, err := client.StartSocketModeContext(ctx)
 		if err != nil {
@@ -65,7 +72,9 @@ func NewSlackAdapter(_ *config.Config, imCfg config.IMAdapterConfig, _ *config.P
 		}
 		return address, nil
 	}
-	a.dialSocket = dialSlackSocket
+	a.dialSocket = func(ctx context.Context, address string) (*websocket.Conn, error) {
+		return dialSlackSocketWithProxy(ctx, address, proxyFunc)
+	}
 	a.verifyIdentity = func(ctx context.Context) (slackIdentity, error) {
 		return verifySlackIdentity(ctx, client, c.TeamID, c.AppID)
 	}

@@ -6,9 +6,15 @@ Deployment checks with a real Discord account remain pending. Automated protocol
 
 ## Create and install the bot
 
-1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), add a bot, and copy its bot token and application ID.
-2. Create a guild-install link with the `bot` scope. Grant **View Channel**, **Send Messages**, and **Send Messages in Threads**. Check channel permission overrides and invite the bot to private threads you intend to use.
-3. Keep Message Content, Server Members, and Presence privileged intents disabled. Gateway uses `GUILDS`, `GUILD_MESSAGES`, and `DIRECT_MESSAGES`; DM text and explicit bot mentions are sufficient for this release. See [Discord Gateway intents](https://docs.discord.com/developers/events/gateway#message-content-intent).
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), add a bot, and copy its bot token (`Bot` page, shown once) and application ID (`General Information` page, same as client ID).
+2. Open `OAuth2` -> `URL Generator` (newer portal: `Installation` -> `Install Link`). Select the `bot` scope, then tick **View Channel**, **Send Messages**, and **Send Messages in Threads**. The page generates an install link with the combined value embedded, for example:
+   ```text
+   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=274877910016&scope=bot
+   ```
+   There is no save button here: the `permissions=` number lives inside that URL and is applied when the link is opened. To change permissions, re-tick and open the regenerated link again.
+3. Open the generated link in a browser, select the server (you need `Manage Server` there), and click `Authorize`. The bot then appears in the server member list.
+4. In the server, verify channel permission overrides for the bot role, and invite the bot to each private thread you intend to use. In your Discord privacy settings, allow DMs from the bot's shared server, otherwise the pairing DM cannot be delivered.
+5. Keep Message Content, Server Members, and Presence privileged intents disabled (`Bot` page, the only place with a `Save Changes` button for intents). Gateway uses `GUILDS`, `GUILD_MESSAGES`, and `DIRECT_MESSAGES`; DM text and explicit bot mentions are sufficient for this release. See [Discord Gateway intents](https://docs.discord.com/developers/events/gateway#message-content-intent).
 
 The gateway does not read message history. You do not need Read Message History, Administrator, or Manage Threads.
 
@@ -23,6 +29,8 @@ ims:
 
 Treat the token as a secret. The application ID identifies the application; pairing records the authenticated bot user ID separately as `owner.account_id`. A different bot account requires a local reset rather than inheriting existing authorization.
 
+When direct access to Discord is blocked, set `proxy_url` globally or under `ims.discord`. Both `socks5://` and `socks5h://` are accepted: the Gateway WebSocket normalizes `socks5h` to `socks5` automatically (identical remote-DNS behavior), so a `socks5h` URL never has to be rewritten by hand. See [configuration](./configuration.md#proxy).
+
 ## Pair and bind chats
 
 Run `chord-gateway -f config.yaml --pair` in a foreground terminal. Allow DMs from the bot's shared server in your Discord privacy settings, open the bot DM, and send:
@@ -31,7 +39,7 @@ Run `chord-gateway -f config.yaml --pair` in a foreground terminal. Allow DMs fr
 /bind "/path/to/project" <pairing_code>
 ```
 
-The directory must already exist on the gateway host. After private pairing, the same owner can bind each server text channel or accessible thread separately:
+The directory must already exist on the gateway host. First pairing must happen in the Bot DM; server messages stay silent until an owner is paired, so starting with `@Bot /bind` in a channel gets no reply. After private pairing, the same owner can bind each server text channel or accessible thread separately:
 
 ```text
 @Bot /bind "/path/to/project"
@@ -58,7 +66,8 @@ During Resume, candidate message events arriving before `RESUMED` retain their o
 | Symptom | Check |
 | --- | --- |
 | Bot DM cannot be opened or delivered | Allow DMs for the shared server and check Discord privacy settings. |
-| A server message is ignored | Send from the paired owner and explicitly mention this bot; commands need the leading mention. Bind the channel/thread first. |
+| Bot stays offline and nothing (DM or channel) gets a reply | The Gateway WebSocket never reached `Ready`, so no input is received at all. Check `proxy_url` (both `socks5://` and `socks5h://` work; the latter is normalized automatically), then the bot token / application ID pairing, then privileged intents. |
+| A server message is ignored | Send from the paired owner and explicitly mention this bot; commands need the leading mention. Bind the channel/thread first. The first pairing must happen in a Bot DM: server messages stay silent until an owner is paired. |
 | `401` or authentication failure | Rotate an invalid bot token locally and ensure the application ID belongs to this bot. |
 | `403` or missing access | Check channel overrides, View Channel, Send Messages, Send Messages in Threads, and private-thread access. |
 | Gateway close `4014` | Confirm the deployed binary requests only the documented intents; do not enable privileged intents to work around a mismatch. |

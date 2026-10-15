@@ -26,7 +26,7 @@ const feishuMediaUploadTimeout = 2 * time.Minute
 // http.Client.Timeout cannot be extended by a longer context.
 func (a *FeishuAdapter) mediaClient() *http.Client {
 	if a.httpClient == nil {
-		return &http.Client{}
+		return &http.Client{Transport: proxiedTransport(a.proxyFunc)}
 	}
 	client := *a.httpClient
 	client.Timeout = 0

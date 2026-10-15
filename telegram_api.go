@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -171,8 +172,8 @@ type telegramHTTPAPI struct {
 	client  *http.Client
 }
 
-func newTelegramAPI(token string) *telegramHTTPAPI {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+func newTelegramAPI(token string, proxyFunc func(*http.Request) (*url.URL, error)) *telegramHTTPAPI {
+	transport := proxiedTransport(proxyFunc)
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 5 * time.Second
 	return &telegramHTTPAPI{token: token, baseURL: telegramAPIBaseURL, client: messageHTTPClient(&http.Client{Transport: transport})}

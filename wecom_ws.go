@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -143,8 +144,13 @@ type wecomWSSession struct {
 }
 
 func newWecomWS(botID, secret string, callbacks wecomWSCallbacks) *wecomWS {
+	return newWecomWSWithProxy(botID, secret, callbacks, nil)
+}
+
+func newWecomWSWithProxy(botID, secret string, callbacks wecomWSCallbacks, proxyFunc func(*http.Request) (*url.URL, error)) *wecomWS {
 	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = 10 * time.Second
+	dialer.Proxy = websocketProxyFunc(proxyFunc)
 	return &wecomWS{
 		botID: botID, secret: secret, callbacks: callbacks,
 		endpoint: wecomWSEndpoint, dialer: &dialer, done: make(chan struct{}),

@@ -27,7 +27,7 @@ Telegram 通过 Bot API 长轮询连接到本机 Gateway，不需要公网回调
 
    目录必须已存在于 Gateway 主机上。成功后发送 `/status`，再发送一条短文本任务。Gateway 将 owner 和绑定保存到 YAML；后续启动无需 `--pair`。
 
-凭据保留在配置文件中，不要提交到版本库。API 地址固定为 `https://api.telegram.org`，不提供自定义 endpoint 配置。网络环境须允许 Gateway 访问这个地址。
+凭据保留在配置文件中，不要提交到版本库。API 地址固定为 `https://api.telegram.org`，不提供自定义 endpoint 配置。网络环境须允许 Gateway 访问这个地址。直连被阻断时可在全局或 `ims.telegram` 下设置 `proxy_url`；为空表示直连，环境代理变量会被忽略。详见[配置](./configuration_CN.md#代理)。
 
 ## 群聊与 privacy
 

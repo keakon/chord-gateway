@@ -177,14 +177,19 @@ type WechatAdapter struct {
 	accountLockID string
 	tokenFile     string
 	httpClient    *http.Client
+	proxyFunc     func(*http.Request) (*url.URL, error)
 }
 
 // NewWechatAdapter creates a new WeChat iLink adapter.
-func NewWechatAdapter(_ *config.Config, imCfg config.IMAdapterConfig, paths *config.Paths, router *NotificationRouter) (*WechatAdapter, error) {
+func NewWechatAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *config.Paths, router *NotificationRouter) (*WechatAdapter, error) {
 	storageDir := filepath.Join(paths.StateDir, "wechat")
 	tokenFile := filepath.Join(storageDir, "token.json")
 	if imCfg.Wechat != nil && imCfg.Wechat.TokenPath != "" {
 		tokenFile = imCfg.Wechat.TokenPath
+	}
+	proxyFunc, err := proxyFuncFor(cfg, imCfg)
+	if err != nil {
+		return nil, err
 	}
 
 	a := &WechatAdapter{
@@ -193,7 +198,8 @@ func NewWechatAdapter(_ *config.Config, imCfg config.IMAdapterConfig, paths *con
 		notifier:   router,
 		storageDir: storageDir,
 		tokenFile:  tokenFile,
-		httpClient: &http.Client{Timeout: 40 * time.Second},
+		httpClient: &http.Client{Timeout: 40 * time.Second, Transport: proxiedTransport(proxyFunc)},
+		proxyFunc:  proxyFunc,
 	}
 
 	// Try to load existing token.

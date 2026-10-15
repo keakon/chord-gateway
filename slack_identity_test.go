@@ -48,7 +48,7 @@ func TestSlackIdentityEvidenceChain(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "bot": test.bot})
 			}))
 			defer server.Close()
-			client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client())))
+			client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client(), nil)))
 			identity, err := verifySlackIdentity(t.Context(), client, "T1", "A1")
 			if test.ok {
 				if err != nil {
@@ -87,7 +87,7 @@ func TestSlackIdentityRejectsUnconfirmedHTTP200Evidence(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(body)
 				}))
 				defer server.Close()
-				client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client())))
+				client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client(), nil)))
 				if _, err := verifySlackIdentity(t.Context(), client, "T1", "A1"); err == nil {
 					t.Fatal("accepted identity fields without confirmed API receipt")
 				}

@@ -25,7 +25,7 @@ func TestSlackAPIMethodCooldownSurvivesNewCallers(t *testing.T) {
 				client := newSlackHTTPClient(&http.Client{Transport: slackRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 					calls++
 					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
-				})})
+				})}, nil)
 				call := func() {
 					// Recreate the SDK caller while retaining installation-wide state.
 					sdk := slack.New("sample-token", slack.OptionAppLevelToken("sample-app-token"), slack.OptionHTTPClient(client))
@@ -100,7 +100,7 @@ func TestSlackCooldownCancellationDoesNotSend(t *testing.T) {
 			calls++
 			t.Error("request reached network during cooldown")
 			return nil, errors.New("unexpected send")
-		})})
+		})}, nil)
 		client.limits.block("chat.postMessage", time.Minute)
 		sdk := slack.New("sample-token", slack.OptionHTTPClient(client))
 		sender := testSlackSender(t, sdk)

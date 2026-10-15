@@ -37,7 +37,7 @@ func testSlackAPI(t *testing.T, handler http.HandlerFunc) *slack.Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return slack.New("sample-bot-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client())), slack.OptionDebug(false))
+	return slack.New("sample-bot-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client(), nil)), slack.OptionDebug(false))
 }
 
 func TestSlackSendSafeTextAndThread(t *testing.T) {
@@ -224,7 +224,7 @@ func TestSlackSendHonorsPublishedMethodCooldown(t *testing.T) {
 		httpClient := newSlackHTTPClient(&http.Client{Transport: slackRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 			calls.Add(1)
 			return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"60"}}, Body: http.NoBody, Request: r}, nil
-		})})
+		})}, nil)
 		sender := testSlackSender(t, slack.New("sample-bot-token", slack.OptionHTTPClient(httpClient)))
 		first, _ := slackTarget("CCHAN1", "1234567890.000001")
 		second, _ := slackTarget("CCHAN1", "1234567890.000002")

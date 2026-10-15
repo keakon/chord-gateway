@@ -204,7 +204,7 @@ func TestDiscordHTTPClientStopsPOSTRedirects(t *testing.T) {
 		fmt.Fprint(w, `{"id":"999"}`)
 	}))
 	defer server.Close()
-	client := newDiscordHTTPClient()
+	client := newDiscordHTTPClient(nil)
 	if client.Timeout != discordRESTTimeout {
 		t.Fatalf("HTTP timeout changed: %s", client.Timeout)
 	}
@@ -296,7 +296,7 @@ func TestDiscordDisconnectReleasesOwnedRESTPool(t *testing.T) {
 }
 
 func TestDiscordHTTPClientOwnsPoolAndDelegatesIdleClose(t *testing.T) {
-	client := newDiscordHTTPClient()
+	client := newDiscordHTTPClient(nil)
 	wrapped, ok := client.Transport.(discordRateLimitTransport)
 	if !ok {
 		t.Fatal("rate-limit transport missing")
