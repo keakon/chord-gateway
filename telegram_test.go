@@ -37,6 +37,7 @@ func TestTelegramNormalizeIdentityAndUnsupportedInputs(t *testing.T) {
 		{name: "missingchat", mutate: func(u *telegramUpdate) { u.Message.Chat.ID = 0 }, reason: "invalid_identity"},
 		{name: "missingmessage", mutate: func(u *telegramUpdate) { u.Message.MessageID = 0 }, reason: "invalid_identity"},
 		{name: "media", mutate: func(u *telegramUpdate) { u.Message.Text = "" }, reason: "unsupported_content"},
+		{name: "media_caption", mutate: func(u *telegramUpdate) { u.Message.Text = "summarize this"; u.Message.hasMedia = true }, reason: "unsupported_content"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -82,6 +83,9 @@ func TestTelegramCommandEntitySuffixAndUTF16(t *testing.T) {
 		{"surrogatehalf", "/😃@ThisBot", []telegramEntity{{Type: "bot_command", Length: 2}}, "", "invalid_command_entity"},
 		{"outofbounds", "/status", []telegramEntity{{Type: "bot_command", Length: 20}}, "", "invalid_command_entity"},
 		{"notcommand", "hello", []telegramEntity{{Type: "bot_command", Length: 5}}, "", "invalid_command_entity"},
+		{"legacy_hyphen_full_entity", "/handoff-deny@ThisBot", []telegramEntity{{Type: "bot_command", Length: 21}}, "", "invalid_command_entity"},
+		{"legacy_hyphen_prefix_entity", "/handoff-deny@ThisBot", []telegramEntity{{Type: "bot_command", Length: 8}}, "", "invalid_command_entity"},
+		{"alias_full_entity", "/handoff_deny@ThisBot", []telegramEntity{{Type: "bot_command", Length: 21}}, "/handoff-deny", ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

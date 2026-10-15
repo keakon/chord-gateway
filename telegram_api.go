@@ -19,8 +19,16 @@ const (
 	telegramAPIBaseURL       = "https://api.telegram.org"
 	telegramResponseMaxBytes = 4 << 20
 	telegramRequestTimeout   = 15 * time.Second
-	telegramPollTimeout      = 35 * time.Second
+	// Telegram holds a long poll open until its own server-side timeout, so the
+	// client read is bounded by the poll length plus a network allowance rather
+	// than by trusting the server to answer. Without it a stalled connection
+	// would hold the poll loop open indefinitely.
+	telegramLongPollAllowance = 10 * time.Second
 )
+
+// telegramPollTimeout is a var so a test can shrink the bound instead of
+// waiting out the real allowance.
+var telegramPollTimeout = telegramLongPollSeconds*time.Second + telegramLongPollAllowance
 
 type telegramUser struct {
 	ID        int64  `json:"id"`
@@ -49,6 +57,7 @@ type telegramMessage struct {
 	IsTopicMessage     bool             `json:"is_topic_message,omitempty"`
 	ReplyToMessage     *telegramMessage `json:"reply_to_message,omitempty"`
 	hasMessageThreadID bool
+	hasMedia           bool
 }
 type telegramUpdate struct {
 	UpdateID       int64            `json:"update_id"`
@@ -75,29 +84,45 @@ func (u *telegramUpdate) UnmarshalJSON(data []byte) error {
 	u.UpdateID = *wire.UpdateID
 	// This fingerprint stays in memory, including for controls and unsupported
 	// updates. It preserves a frozen capture on redelivery without persisting
-	// hashes of pairing codes or other sensitive parameters.
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var original any
-	if err := decoder.Decode(&original); err != nil {
+	// hashes of pairing codes or other sensitive parameters. Telegram serializes
+	// one update identically on every redelivery, so the received bytes are the
+	// identity; re-encoding them into canonical form would only add two more
+	// full passes over the update.
+	digest := sha256.Sum256(data)
+	u.receivedDigest = hex.EncodeToString(digest[:])
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err != nil {
 		return err
 	}
-	if object, ok := original.(map[string]any); ok && u.Message != nil {
+	if u.Message != nil {
 		if message, ok := object["message"].(map[string]any); ok {
 			_, u.Message.hasMessageThreadID = message["message_thread_id"]
+			u.Message.hasMedia = telegramHasMediaPayload(message)
 		}
 	}
-	canonical, err := json.Marshal(original)
-	if err != nil {
-		return err
-	}
-	digest := sha256.Sum256(canonical)
-	u.receivedDigest = hex.EncodeToString(digest[:])
 	return nil
 }
 
 type telegramWebhookInfo struct {
 	URL string `json:"url"`
+}
+
+// telegramMediaFields are the Update message shapes whose payload is not text.
+// Telegram also copies their caption into `text`, so presence alone decides:
+// any of these fields makes the update a media update and never a text task.
+var telegramMediaFields = []string{
+	"photo", "document", "video", "audio", "voice", "animation", "sticker",
+	"video_note", "contact", "location", "venue", "poll", "dice", "game",
+	"invoice", "successful_payment", "story", "passport_data", "web_app_data",
+}
+
+func telegramHasMediaPayload(message map[string]any) bool {
+	for _, field := range telegramMediaFields {
+		if _, present := message[field]; present {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *telegramWebhookInfo) UnmarshalJSON(data []byte) error {
@@ -120,6 +145,10 @@ type telegramAPI interface {
 	GetUpdates(context.Context, *int64, int) ([]telegramUpdate, error)
 	SendMessage(context.Context, int64, string) (telegramMessage, error)
 }
+
+// telegramIngressMethods are the read-only methods whose answer describes the
+// poll loop rather than a delivery, so their rejection is never transient.
+var telegramIngressMethods = map[string]bool{"getMe": true, "getWebhookInfo": true, "getUpdates": true}
 
 // No raw URL, token, API description, or transport error is retained here.
 // Cause only contains local context errors or the shared unknown-outcome sentinel.
@@ -169,8 +198,9 @@ func (a *telegramHTTPAPI) GetUpdates(ctx context.Context, offset *int64, timeout
 	payload := struct {
 		Offset         *int64   `json:"offset,omitempty"`
 		Timeout        int      `json:"timeout"`
+		Limit          int      `json:"limit"`
 		AllowedUpdates []string `json:"allowed_updates"`
-	}{offset, timeout, []string{"message"}}
+	}{offset, timeout, telegramPollLimit, []string{telegramAllowedUpdates}}
 	err := a.call(ctx, "getUpdates", payload, &result, timeout > 0)
 	return result, err
 }
@@ -281,6 +311,14 @@ func (a *telegramHTTPAPI) call(parent context.Context, method string, payload, r
 		// positive, representable delay. Bare HTTP 429 remains an unknown send.
 		if category == "rate_limited" && (envelope.Parameters.RetryAfter <= 0 || envelope.Parameters.RetryAfter > int64((1<<63-1)/int64(time.Second))) {
 			category = "api_rejected"
+		}
+		// getMe, getWebhookInfo and getUpdates only describe the poll loop
+		// itself. A non-429 ok:false from them is a method-level refusal that
+		// never self-heals -- a stale proxy answering 200 with an HTML or JSON
+		// error body looks exactly like this -- so it must be fatal rather than
+		// retried at the backoff cap forever.
+		if category == "api_rejected" && telegramIngressMethods[method] {
+			category = "method_rejected"
 		}
 		apiErr := &telegramAPIError{Method: method, Status: resp.StatusCode, Code: envelope.ErrorCode, Category: category}
 		if category == "rate_limited" {

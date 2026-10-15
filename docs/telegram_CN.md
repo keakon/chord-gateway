@@ -79,6 +79,7 @@ Telegram 服务器最多保留未接收 update **24 小时**，离线超过保�
 | 403 | 检查机器人是否被屏蔽、被移出群或目标不可访问 |
 | `chat_migrated` | 由 owner 到新 supergroup 显式重新绑定；不会复制旧群授权 |
 | `unknown_send` | 请求可能已经送达，先查看聊天；Gateway 不会自动重发或重新执行任务 |
+| Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
 | Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步。始终无法进入终态的 update 会按序阻塞后续 update（设计如此），首次告警一次、之后最多每分钟一次并带 `update_id`，同时记录 `acceptance_unconfirmed` 指标。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
 
 ## 部署验收

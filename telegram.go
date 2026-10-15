@@ -31,8 +31,13 @@ type TelegramAdapter struct {
 	reject    func(context.Context, IngressEnvelope, string) ReceiveResult
 	store     telegramCursorStore
 	retry     telegramBackoff // Owned by the single startup/poll worker.
+	retryWarn time.Time
 	captured  map[int64]telegramCapturedUpdate
 }
+
+// errTelegramAlreadyRunning is returned when Connect is called while another
+// poller is still running on the same adapter.
+var errTelegramAlreadyRunning = errors.New("telegram poller already running")
 
 func NewTelegramAdapter(_ *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*TelegramAdapter, error) {
 	if imCfg.Telegram == nil || imCfg.Telegram.BotToken == "" {
@@ -102,7 +107,7 @@ func (a *TelegramAdapter) Connect() (result error) {
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
-		return errors.New("telegram poller already running")
+		return errTelegramAlreadyRunning
 	}
 	a.running = true
 	a.mu.Unlock()
@@ -201,12 +206,14 @@ func (a *TelegramAdapter) startupRequest(request func() error) error {
 		err := request()
 		if err == nil {
 			a.retry.succeeded(time.Now())
+			a.retryWarn = time.Time{}
 			return nil
 		}
 		delay, retry := a.retry.failed(err)
 		if !retry {
 			return err
 		}
+		a.warnRetry(err, delay)
 		if !telegramWait(a.ctx, delay) {
 			return a.ctx.Err()
 		}

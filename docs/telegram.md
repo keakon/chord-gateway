@@ -79,6 +79,7 @@ Telegram retains unreceived updates for at most **24 hours**; longer outages can
 | 403 | Check whether the bot is blocked, removed from the group, or unable to access the target |
 | `chat_migrated` | Have the owner explicitly bind the new supergroup; old group authorization is not copied |
 | `unknown_send` | Delivery may have occurred; inspect the chat first. Gateway does not automatically resend or rerun the task |
+| Bot receives nothing | Run at debug log level. `telegram: received updates` proves Telegram delivered a batch; `telegram: captured update ... reason=` explains how each update was normalized; `telegram: dispatch update ... disposition=` shows where it stopped. No `received updates` line at all means polling never fetched, so compare `getWebhookInfo.pending_update_count` and `getUpdates` with offset `-1` against the running process |
 | Bot receives nothing | Run at debug log level. `telegram: received updates` proves Telegram delivered a batch; `telegram: captured update ... reason=` explains how each update was normalized; `telegram: dispatch update ... disposition=` shows where it stopped. An update that never reaches a terminal disposition blocks later updates in order by design and warns once, then at most once a minute with its `update_id`, plus an `acceptance_unconfirmed` metric. No `received updates` line at all means polling never fetched, so compare `getWebhookInfo.pending_update_count` and `getUpdates` with offset `-1` against the running process |
 
 ## Deployment acceptance

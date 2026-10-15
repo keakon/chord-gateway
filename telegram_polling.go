@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math"
 	"slices"
@@ -18,6 +17,25 @@ import (
 )
 
 type telegramClock func() time.Time
+
+// telegramStuckReportInterval bounds how often a permanently unacknowledged
+// update repeats its warning before the next escalation. Time-based, not
+// count-based: a long-polling loop and a tight retry loop must warn at the same
+// cadence.
+const telegramStuckReportInterval = time.Minute
+
+const (
+	// Telegram caps the server-side long poll at 25 seconds; a longer request
+	// is rejected. The client read bound adds an allowance on top of it.
+	telegramLongPollSeconds = 25
+	// getUpdates returns at most 100 updates per call and rejects a larger
+	// limit, so the cap is sent explicitly instead of relying on the default.
+	telegramPollLimit = 100
+	// Without allowed_updates Telegram also delivers edited messages and
+	// channel posts, which this adapter refuses to process. Naming the one
+	// supported update type keeps refused input off the wire entirely.
+	telegramAllowedUpdates = "message"
+)
 
 var realTelegramClock telegramClock = time.Now
 
@@ -67,13 +85,21 @@ func (a *TelegramAdapter) pollRequest(ctx context.Context, cursor *IngressCursor
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		timeout := 25
+		timeout := telegramLongPollSeconds
 		if probe || cursor.Telegram.PendingOffset != nil {
 			timeout = 0
 		}
 		batch, err := a.api.GetUpdates(ctx, cursor.Telegram.PendingOffset, timeout)
 		if err == nil {
 			a.retry.succeeded(time.Now())
+			a.retryWarn = time.Time{}
+			if len(batch) > 0 {
+				var offset int64
+				if cursor.Telegram.PendingOffset != nil {
+					offset = *cursor.Telegram.PendingOffset
+				}
+				log.Debugf("telegram: received updates count=%v from_offset=%v first_id=%v", len(batch), offset, batch[0].UpdateID)
+			}
 			a.captureBatch(batch)
 			return batch, nil
 		}
@@ -81,6 +107,7 @@ func (a *TelegramAdapter) pollRequest(ctx context.Context, cursor *IngressCursor
 		if !retry {
 			return nil, err
 		}
+		a.warnRetry(err, delay)
 		if !telegramWait(ctx, delay) {
 			return nil, ctx.Err()
 		}
@@ -100,6 +127,15 @@ type telegramCapturedUpdate struct {
 	reason      string
 }
 
+// captureKind reports the ingress kind frozen for this update, or "" when the
+// update was refused before capture.
+func (e *IngressEnvelope) captureKind() string {
+	if e == nil || e.capture == nil {
+		return ""
+	}
+	return e.capture.kind
+}
+
 // Freeze the entire response before readiness, checkpoint writes or admission
 // can wait. Telegram returns at most 100 updates; only this bounded batch is
 // retained. Identical redeliveries keep their first capture and ReceivedAt.
@@ -107,13 +143,8 @@ func (a *TelegramAdapter) captureBatch(batch []telegramUpdate) {
 	captured := make(map[int64]telegramCapturedUpdate, len(batch))
 	for i := range batch {
 		u := &batch[i]
-		fingerprint := u.receivedDigest
-		if fingerprint == "" {
-			raw, _ := json.Marshal(u)
-			fingerprint = telegramDigest(string(raw))
-		}
 		input, exists := a.captured[u.UpdateID]
-		if !exists || input.fingerprint != fingerprint {
+		if !exists || input.fingerprint != u.receivedDigest {
 			e, reason := a.normalizeUpdate(*u)
 			if reason == "" && a.router != nil {
 				// Polling owns the complete batch and can wait for the snapshot.
@@ -124,7 +155,10 @@ func (a *TelegramAdapter) captureBatch(batch []telegramUpdate) {
 					e.InputDigest = ""
 				}
 			}
-			input = telegramCapturedUpdate{fingerprint, e, reason}
+			// Without this, a message the gateway never accepts is
+			// indistinguishable from one Telegram never delivered.
+			log.Debugf("telegram: captured update id=%v chat_id=%v chat_kind=%v reason=%v kind=%v", u.UpdateID, e.Message.ChatID, e.Message.ChatKind, reason, e.captureKind())
+			input = telegramCapturedUpdate{u.receivedDigest, e, reason}
 		}
 		captured[u.UpdateID] = input
 		u.captured = &input
@@ -142,12 +176,29 @@ func telegramWait(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// telegramLastObservedUpdateID names the last update the cursor recorded, so a
+// reported batch loss points at input instead of vanishing without an identity.
+func telegramLastObservedUpdateID(cursor IngressCursor) string {
+	if cursor.Telegram == nil || cursor.Telegram.LastObservedUpdateID == nil {
+		return "unknown"
+	}
+	return strconv.FormatInt(*cursor.Telegram.LastObservedUpdateID, 10)
+}
+
 // poll confirms only the in-memory prefix of the current batch. Empty polls
 // never synthesize an offset from a historical maximum update ID.
 func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch []telegramUpdate, hasResponse bool) error {
 	if hasResponse {
 		a.captureBatch(batch)
 	}
+	// Consecutive unacknowledged retries for the same stuck update. Declared
+	// outside the loop so the escalation state actually accumulates instead of
+	// restarting at one and warning on every pass. A new update ID resets the
+	// count so one poison update cannot misattribute its history to the next.
+	failures := 0
+	var stuckUpdateID int64
+	var stuckReason string
+	var lastStuckWarn time.Time
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -156,6 +207,9 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 			var err error
 			batch, err = a.pollRequest(ctx, &cursor, false)
 			if err != nil {
+				// Everything not yet dispatched by this call is lost, so the
+				// stop must be visible instead of looking like an idle poller.
+				log.Warnf("telegram: polling stopped update_id=%v error=%v", telegramLastObservedUpdateID(cursor), err)
 				return err
 			}
 		}
@@ -166,6 +220,7 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 			next.Telegram.PendingCreatedAt = time.Time{}
 			next.Telegram.State = "confirmed"
 			if err := a.commitCursor(ctx, &cursor, next); err != nil {
+				log.Warnf("telegram: batch abandoned update_id=%v error=%v", telegramLastObservedUpdateID(cursor), err)
 				return err
 			}
 		}
@@ -173,9 +228,16 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 		// Process the actual server batch in ID order, without waiting for
 		// missing integers or admitting a smaller ID behind a larger ACK.
 		slices.SortStableFunc(batch, func(a, b telegramUpdate) int { return cmp.Compare(a.UpdateID, b.UpdateID) })
-		for _, update := range batch {
+		for index, update := range batch {
 			if update.UpdateID < 0 || update.UpdateID == math.MaxInt64 {
-				return errors.New("telegram invalid update identity")
+				// A malformed element must not discard the rest of the batch
+				// silently: report it and fall through to the same non-terminal
+				// path as an unacknowledged update, so the offset stays behind
+				// this update and the batch is re-offered instead of dropped.
+				log.Warnf("telegram: batch element rejected batch_index=%v batch_size=%v reason=invalid_update_identity", index, len(batch))
+				stuckUpdateID, stuckReason = update.UpdateID, "invalid_update_identity"
+				failed = true
+				break
 			}
 			next := cloneIngressCursor(&cursor)
 			next.Generation = cursor.Generation + 1
@@ -200,19 +262,44 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 			if result.Reason == "update_id_conflict" {
 				log.Warnf("telegram: update_id_conflict; conflicting input quarantined")
 			}
+			// A non-terminal disposition is retried forever; make it visible.
+			log.Debugf("telegram: dispatch update id=%v disposition=%v reason=%v record_id=%v", update.UpdateID, result.Disposition, result.Reason, result.RecordID)
 			// A permanent refusal counts only when a in-memory tombstone was returned.
 			if (result.Disposition == ReceiveAccepted || result.Disposition == ReceiveDuplicate || result.Disposition == ReceiveRejected) && result.RecordID != "" {
 				cursor = *next
+				failures = 0
 			} else {
+				if update.UpdateID != stuckUpdateID {
+					failures = 0
+					stuckUpdateID, stuckReason = update.UpdateID, result.Reason
+				} else {
+					stuckReason = result.Reason
+				}
 				failed = true
 				break
 			}
 		}
 		if failed {
-			// Unconfirmed acceptance must settle before polling can advance.
+			// Unconfirmed acceptance must settle before polling can advance:
+			// advancing the offset past an unconfirmed update would silently
+			// drop it, so retrying in order is correct. But an update that never
+			// reaches a terminal disposition blocks the whole intake behind one
+			// poison update, so escalate loudly instead of appearing idle.
+			// Ordering is preserved by design; use /status and the gateway log
+			// to clear the blocker (pairing, capacity, binding) rather than
+			// expecting the gateway to skip ahead.
+			failures++
+			if failures == 1 || time.Since(lastStuckWarn) >= telegramStuckReportInterval {
+				log.Warnf("telegram: update not acknowledged, retrying update_id=%v consecutive_failures=%v reason=%v", stuckUpdateID, failures, stuckReason)
+				lastStuckWarn = time.Now()
+			}
+			if a.router != nil {
+				a.router.ObserveIngress("telegram", "acceptance_unconfirmed", stuckReason)
+			}
 			var err error
 			cursor, err = a.loadCursor(ctx)
 			if err != nil {
+				log.Warnf("telegram: batch abandoned update_id=%v error=%v", stuckUpdateID, err)
 				return err
 			}
 			if !telegramWait(ctx, time.Second) {
@@ -265,6 +352,11 @@ func (a *TelegramAdapter) normalizeUpdate(update telegramUpdate) (IngressEnvelop
 	}
 	if e.Message.ChatKind == "private" && (m.Chat.ID <= 0 || m.Chat.ID != m.From.ID) || e.Message.ChatKind == "group" && m.Chat.ID >= 0 {
 		return e, "invalid_identity"
+	}
+	// A media update also carries its caption in `text`, so content presence is
+	// checked before the text is admitted as a task.
+	if m.hasMedia {
+		return e, "unsupported_content"
 	}
 	if m.Text == "" {
 		return e, "unsupported_content"
@@ -335,6 +427,12 @@ func telegramNormalizeCommand(text string, entities []telegramEntity, username s
 		}
 		if !strings.EqualFold(token[at+1:], username) || username == "" {
 			return "", "other_bot_command"
+		}
+		// Telegram marks the whole command, suffix included, as one entity, so
+		// the suffixed shape reaches this branch too. The legacy hyphenated
+		// form is still not an alias here and must not become a real command.
+		if telegramCommandAlias(token[:at], true) != token[:at] {
+			return "", "invalid_command_entity"
 		}
 		return telegramCommandAlias(token[:at], false) + text[end:], ""
 	}

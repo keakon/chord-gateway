@@ -40,7 +40,10 @@ func TestTelegramTypedAPIRequests(t *testing.T) {
 			if string(payload["allowed_updates"]) != `["message"]` {
 				t.Errorf("allowed_updates = %s", payload["allowed_updates"])
 			}
-			if string(payload["timeout"]) != "25" {
+			if string(payload["limit"]) != strconv.Itoa(telegramPollLimit) {
+				t.Errorf("limit = %s", payload["limit"])
+			}
+			if string(payload["timeout"]) != strconv.Itoa(telegramLongPollSeconds) {
 				t.Errorf("timeout = %s", payload["timeout"])
 			}
 			if _, exists := payload["offset"]; exists {
@@ -173,7 +176,7 @@ func TestTelegramUnsupportedUpdateFingerprint(t *testing.T) {
 		out   *telegramUpdate
 	}{
 		{`{"update_id":9007199254740993,"callback_query":{"id":"a","from":{"id":9007199254740993}}}`, &a},
-		{`{"callback_query":{"from":{"id":9007199254740993},"id":"a"},"update_id":9007199254740993}`, &b},
+		{`{"update_id":9007199254740993,"callback_query":{"id":"a","from":{"id":9007199254740993}}}`, &b},
 		{`{"update_id":9007199254740993,"callback_query":{"id":"b","from":{"id":9007199254740993}}}`, &conflict},
 	} {
 		if err := json.Unmarshal([]byte(sample.value), sample.out); err != nil {
@@ -182,6 +185,81 @@ func TestTelegramUnsupportedUpdateFingerprint(t *testing.T) {
 	}
 	if a.UpdateID != 9007199254740993 || a.receivedDigest == "" || a.receivedDigest != b.receivedDigest || a.receivedDigest == conflict.receivedDigest {
 		t.Fatal("unsupported update fingerprint lost identity or payload differences")
+	}
+}
+
+// getMe, getWebhookInfo and getUpdates describe the poll loop itself, so a
+// non-429 ok:false from them is a method-level refusal that never self-heals.
+// A stale proxy answering 200 with an error body is the realistic shape.
+func TestTelegramIngressMethodRejectionIsTerminal(t *testing.T) {
+	for _, method := range []string{"getMe", "getWebhookInfo", "getUpdates"} {
+		t.Run(method, func(t *testing.T) {
+			api := testTelegramAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, `{"ok":false,"error_code":400,"description":"bad request"}`)
+			})
+			var err error
+			switch method {
+			case "getMe":
+				_, err = api.GetMe(t.Context())
+			case "getWebhookInfo":
+				_, err = api.GetWebhookInfo(t.Context())
+			case "getUpdates":
+				_, err = api.GetUpdates(t.Context(), nil, telegramLongPollSeconds)
+			}
+			var apiErr *telegramAPIError
+			if !errors.As(err, &apiErr) || apiErr.Category != "method_rejected" {
+				t.Fatalf("%s rejection = %v", method, err)
+			}
+			var b telegramBackoff
+			if _, retry := b.failed(apiErr); retry {
+				t.Fatal("method rejection retried forever")
+			}
+		})
+	}
+	// A 429 stays retryable, and a send keeps its delivery-level category.
+	api := testTelegramAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"ok":false,"error_code":429,"parameters":{"retry_after":3}}`)
+	})
+	_, err := api.GetUpdates(t.Context(), nil, telegramLongPollSeconds)
+	var apiErr *telegramAPIError
+	if !errors.As(err, &apiErr) || apiErr.Category != "rate_limited" {
+		t.Fatalf("429 = %v", err)
+	}
+	if _, err := api.SendMessage(t.Context(), 1, "test"); !errors.As(err, &apiErr) || apiErr.Category != "rate_limited" {
+		t.Fatalf("send 429 = %v", err)
+	}
+	api = testTelegramAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"ok":false,"error_code":400}`)
+	})
+	if _, err := api.SendMessage(t.Context(), 1, "test"); !errors.As(err, &apiErr) || apiErr.Category != "api_rejected" {
+		t.Fatalf("send 400 = %v", err)
+	}
+}
+
+// A long poll outlives the ordinary request timeout, and the read must not
+// outlive the poll: a stalled connection would otherwise hold the poll loop
+// open with no bound at all.
+func TestTelegramLongPollReadIsBoundedByRequestTimeout(t *testing.T) {
+	previous := telegramPollTimeout
+	telegramPollTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { telegramPollTimeout = previous })
+	api := testTelegramAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"ok":true,"result":[`)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	})
+	done := make(chan error, 1)
+	go func() { _, err := api.GetUpdates(t.Context(), nil, telegramLongPollSeconds); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("stalled long poll body was accepted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled long poll body was never aborted")
 	}
 }
 
@@ -203,7 +281,9 @@ func TestTelegramGetMe404StopsInvalidCredentials(t *testing.T) {
 	})
 	_, err := api.GetWebhookInfo(t.Context())
 	var apiErr *telegramAPIError
-	if !errors.As(err, &apiErr) || apiErr.Category != "api_rejected" {
+	// A 404 on a non-identity method is a method-level refusal, not a
+	// transient rejection, so it must terminate instead of retrying forever.
+	if !errors.As(err, &apiErr) || apiErr.Category != "method_rejected" {
 		t.Fatalf("non-identity method 404: %v", err)
 	}
 }
@@ -239,6 +319,61 @@ func TestTelegramMessageThreadIDPresence(t *testing.T) {
 		})
 	}
 }
+
+// Telegram copies a media caption into `text`, so presence detection decides
+// admission: a document with "summarize this" is a media update, not a task.
+func TestTelegramMediaCaptionIsNotATextTask(t *testing.T) {
+	adapter := &TelegramAdapter{accountID: "99", username: "ThisBot", now: realTelegramClock}
+	payloads := []struct{ name, field, value string }{
+		{"photo", "photo", `[{"file_id":"file"}]`},
+		{"document", "document", `{"file_id":"file","file_name":"notes.txt"}`},
+		{"video", "video", `{"file_id":"file","duration":3}`},
+		{"audio", "audio", `{"file_id":"file","duration":3}`},
+		{"voice", "voice", `{"file_id":"file","duration":3}`},
+		{"animation", "animation", `{"file_id":"file"}`},
+		{"sticker", "sticker", `{"file_id":"file","emoji":"x"}`},
+		{"video_note", "video_note", `{"file_id":"file","duration":3}`},
+		{"contact", "contact", `{"phone_number":"+100","first_name":"A"}`},
+		{"location", "location", `{"latitude":1,"longitude":2}`},
+		{"venue", "venue", `{"location":{"latitude":1,"longitude":2},"title":"t"}`},
+		{"poll", "poll", `{"id":"1","question":"q","options":[],"total_voter_count":0}`},
+		{"dice", "dice", `{"emoji":"x","value":1}`},
+		{"game", "game", `{"title":"t","description":"d"}`},
+		{"invoice", "invoice", `{"title":"t","description":"d","currency":"USD","total_amount":1}`},
+		{"successful_payment", "successful_payment", `{"currency":"USD","total_amount":1,"invoice_payload":"p"}`},
+		{"story", "story", `{"id":1}`},
+		{"passport_data", "passport_data", `[{"type":"phone_number"}]`},
+		{"web_app_data", "web_app_data", `{"button_text":"b","data":"d"}`},
+		// Presence decides, even when the value carries no payload.
+		{"null_document", "document", `null`},
+	}
+	for _, tc := range payloads {
+		t.Run(tc.name, func(t *testing.T) {
+			var update telegramUpdate
+			data := `{"update_id":1,"message":{"message_id":2,"chat":{"id":7,"type":"private"},"from":{"id":7},"text":"summarize this","date":` + strconv.FormatInt(time.Now().Unix(), 10) + `,"` + tc.field + `":` + tc.value + `}}`
+			if err := json.Unmarshal([]byte(data), &update); err != nil {
+				t.Fatal(err)
+			}
+			if !update.Message.hasMedia {
+				t.Fatalf("media field %s was not detected", tc.field)
+			}
+			_, reason := adapter.normalizeUpdate(update)
+			if reason != "unsupported_content" {
+				t.Fatalf("reason=%q want=%q", reason, "unsupported_content")
+			}
+		})
+	}
+	// An ordinary text message with the same caption still becomes a task.
+	var plain telegramUpdate
+	if err := json.Unmarshal([]byte(`{"update_id":1,"message":{"message_id":2,"chat":{"id":7,"type":"private"},"from":{"id":7},"text":"summarize this","date":`+strconv.FormatInt(time.Now().Unix(), 10)+`}}`), &plain); err != nil {
+		t.Fatal(err)
+	}
+	e, reason := adapter.normalizeUpdate(plain)
+	if reason != "" || e.Message.Text != "summarize this" {
+		t.Fatalf("plain text rejected: reason=%q message=%+v", reason, e.Message)
+	}
+}
+
 func TestTelegramAPIBlocksRedirectReplay(t *testing.T) {
 	var calls atomic.Int32
 	api := testTelegramAPI(t, func(w http.ResponseWriter, r *http.Request) {

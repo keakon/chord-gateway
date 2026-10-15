@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/golog/log"
 )
 
 type telegramPollingAPI struct {
@@ -28,6 +34,19 @@ func (*telegramPollingAPI) SendMessage(context.Context, int64, string) (telegram
 
 func telegramTestUpdate(id int64) telegramUpdate {
 	return telegramUpdate{UpdateID: id, Message: &telegramMessage{MessageID: id + 1, From: &telegramUser{ID: 7}, Chat: telegramChat{ID: 7, Type: "private"}, Date: time.Now().Unix(), Text: "task " + strconv.FormatInt(id, 10)}}
+}
+
+// The fingerprint that freezes a capture is taken from the bytes Telegram sent,
+// so a test that redelivers an update with a different body has to build both
+// copies from wire payloads instead of mutating a decoded struct in place.
+func telegramWireUpdate(t *testing.T, id int64, text string) telegramUpdate {
+	t.Helper()
+	data := fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"chat":{"id":7,"type":"private"},"from":{"id":7},"date":%d,"text":%q}}`, id, id+1, time.Now().Unix(), text)
+	var update telegramUpdate
+	if err := json.Unmarshal([]byte(data), &update); err != nil {
+		t.Fatal(err)
+	}
+	return update
 }
 func telegramTestPoller(t *testing.T) (*TelegramAdapter, *IngressStore, context.Context, context.CancelFunc) {
 	t.Helper()
@@ -248,9 +267,8 @@ func TestTelegramPollingLostAcknowledgmentRetainsPendingAndNewResponse(t *testin
 
 func TestTelegramPollingUnsupportedAndConflictAreDurable(t *testing.T) {
 	a, store, ctx, cancel := telegramTestPoller(t)
-	first := telegramTestUpdate(10)
-	duplicate := telegramTestUpdate(10)
-	duplicate.Message.Text = "conflicting text"
+	first := telegramWireUpdate(t, 10, "task 10")
+	duplicate := telegramWireUpdate(t, 10, "conflicting text")
 	results := []ReceiveResult{}
 	receive := a.receive
 	a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult {
@@ -395,5 +413,171 @@ func TestTelegramUnorderedBatchSortsBeforePrefixAcknowledgment(t *testing.T) {
 	}
 	if !reflect.DeepEqual(order, []string{"update:10", "update:12"}) {
 		t.Fatalf("admission order=%v", order)
+	}
+}
+
+// A non-terminal disposition must retry the same update instead of advancing
+// the offset past unacknowledged input. Before the escalation warning this
+// loop was indistinguishable from an idle poller, which is how a stuck
+// Telegram platform stayed invisible.
+func TestTelegramUnacknowledgedUpdateRetriesWithoutAdvancingOffset(t *testing.T) {
+	a, _, ctx, cancel := telegramTestPoller(t)
+	var attempts []string
+	a.receive = func(_ context.Context, e IngressEnvelope) ReceiveResult {
+		attempts = append(attempts, e.Message.MessageID)
+		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_busy"}
+	}
+	var offsets []int64
+	a.api = &telegramPollingAPI{updates: func(_ context.Context, offset *int64, timeout int) ([]telegramUpdate, error) {
+		if offset != nil {
+			offsets = append(offsets, *offset)
+		}
+		if len(attempts) >= 3 {
+			cancel()
+			return nil, context.Canceled
+		}
+		return []telegramUpdate{telegramTestUpdate(10)}, nil
+	}}
+	cursor, err := a.loadCursor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.poll(ctx, cursor, []telegramUpdate{telegramTestUpdate(10)}, true); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	// The retry must re-offer the same update, never a later one.
+	if len(attempts) < 2 {
+		t.Fatalf("unacknowledged update was not retried: %v", attempts)
+	}
+	for _, id := range attempts {
+		if id != "update:10" {
+			t.Fatalf("retry advanced past unacknowledged update: %v", attempts)
+		}
+	}
+}
+
+// The retry warning is the only signal that distinguishes a wedged poller from
+// an idle one, so it must actually be emitted rather than silently retried.
+func TestTelegramUnacknowledgedUpdateWarnsOnce(t *testing.T) {
+	a, _, ctx, cancel := telegramTestPoller(t)
+	attempts := 0
+	a.receive = func(_ context.Context, _ IngressEnvelope) ReceiveResult {
+		attempts++
+		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_busy"}
+	}
+	a.api = &telegramPollingAPI{updates: func(_ context.Context, _ *int64, _ int) ([]telegramUpdate, error) {
+		if attempts >= 2 {
+			cancel()
+			return nil, context.Canceled
+		}
+		return []telegramUpdate{telegramTestUpdate(10)}, nil
+	}}
+	cursor, err := a.loadCursor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	restore := log.Warnf
+	log.Warnf = func(format string, args ...any) { warnings = append(warnings, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { log.Warnf = restore })
+	if err = a.poll(ctx, cursor, []telegramUpdate{telegramTestUpdate(10)}, true); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("retried an unacknowledged update without any warning")
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "not acknowledged") || !strings.Contains(joined, "update_id=10") {
+		t.Fatalf("warning lacks the stuck update identity: %q", joined)
+	}
+}
+
+// Stopping the poller discards everything the current batch had not dispatched
+// yet, so the stop must be reported with the update that was reached instead of
+// looking like an idle poller.
+func TestTelegramPollingStopAfterDispatchIsReported(t *testing.T) {
+	a, _, ctx, _ := telegramTestPoller(t)
+	a.api = &telegramPollingAPI{updates: func(_ context.Context, offset *int64, _ int) ([]telegramUpdate, error) {
+		telegramAssertOffset(t, offset, telegramOffset(11))
+		return nil, &telegramAPIError{Method: "getUpdates", Status: 400, Category: "method_rejected"}
+	}}
+	cursor, err := a.loadCursor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	restore := log.Warnf
+	log.Warnf = func(format string, args ...any) { warnings = append(warnings, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { log.Warnf = restore })
+	if err = a.poll(ctx, cursor, []telegramUpdate{telegramTestUpdate(10)}, true); err == nil {
+		t.Fatal("terminal method rejection was retried")
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "polling stopped") || !strings.Contains(joined, "update_id=10") {
+		t.Fatalf("batch loss was not reported with its update id: %q", joined)
+	}
+}
+
+// A poison batch element must not discard the rest of the batch silently. It is
+// reported and then treated like the other non-terminal outcomes, so the offset
+// stays behind it and the batch is re-offered instead of dropped.
+func TestTelegramPollingInvalidBatchElementIsReportedAndRetried(t *testing.T) {
+	a, _, ctx, cancel := telegramTestPoller(t)
+	var warnings []string
+	restore := log.Warnf
+	log.Warnf = func(format string, args ...any) {
+		warnings = append(warnings, fmt.Sprintf(format, args...))
+		// Reporting happens before the retry wait, so cancelling here makes the
+		// re-offer deterministic without a second request.
+		cancel()
+	}
+	t.Cleanup(func() { log.Warnf = restore })
+	cursor, err := a.loadCursor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poison := []telegramUpdate{{UpdateID: math.MaxInt64}}
+	if err = a.poll(ctx, cursor, poison, true); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "invalid_update_identity") || !strings.Contains(joined, "batch element rejected") {
+		t.Fatalf("invalid batch element was not reported: %q", joined)
+	}
+	if !strings.Contains(joined, "not acknowledged") {
+		t.Fatalf("invalid batch element was not treated as a non-terminal outcome: %q", joined)
+	}
+}
+
+// A poller that keeps failing without logging is indistinguishable from an idle
+// one, so the retry must be reported with the method and the error category.
+func TestTelegramPollRequestRetryWarningNamesMethodAndCategory(t *testing.T) {
+	a, _, ctx, cancel := telegramTestPoller(t)
+	var warnings []string
+	restore := log.Warnf
+	log.Warnf = func(format string, args ...any) {
+		warnings = append(warnings, fmt.Sprintf(format, args...))
+		// The warning is emitted before the retry wait, so cancelling here keeps
+		// the loop deterministic without a second request.
+		cancel()
+	}
+	t.Cleanup(func() { log.Warnf = restore })
+	a.api = &telegramPollingAPI{updates: func(_ context.Context, offset *int64, timeout int) ([]telegramUpdate, error) {
+		telegramAssertOffset(t, offset, nil)
+		if timeout != telegramLongPollSeconds {
+			t.Fatalf("timeout = %d", timeout)
+		}
+		return nil, &telegramAPIError{Method: "getUpdates", Status: 502, Category: "invalid_response"}
+	}}
+	cursor, err := a.loadCursor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.pollRequest(ctx, &cursor, false); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "getUpdates") || !strings.Contains(joined, "invalid_response") || !strings.Contains(joined, "retrying in") {
+		t.Fatalf("retry was not reported: %q", joined)
 	}
 }

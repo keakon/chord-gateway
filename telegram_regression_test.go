@@ -110,9 +110,24 @@ func TestTelegramCommandAliasesRoundTripAndRejectLegacySuffix(t *testing.T) {
 			}
 		}
 		legacy := canonical + "@GatewayBot argument"
-		u := telegramGatewayUpdate(1, 123456, legacy)
-		if _, reason := telegramNormalizeCommand(legacy, u.Message.Entities, "GatewayBot"); reason != "invalid_command_entity" {
-			t.Fatal("legacy suffix forwarded as model input", legacy, reason)
+		alias := strings.ReplaceAll(canonical, "-", "_")
+		// A prefix-only entity and the full command token are the two shapes
+		// Telegram can produce; both must reject the legacy hyphenated form.
+		for _, token := range []string{canonical[:strings.IndexByte(canonical, '-')], canonical + "@GatewayBot"} {
+			u := telegramGatewayUpdate(1, 123456, legacy)
+			u.Message.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: imUTF16Units(token)}}
+			if _, reason := telegramNormalizeCommand(legacy, u.Message.Entities, "GatewayBot"); reason != "invalid_command_entity" {
+				t.Fatalf("legacy suffix forwarded as model input: token=%q reason=%q", token, reason)
+			}
+		}
+		// Telegram marks the whole command, suffix included, as one entity. The
+		// supported alias must still reach the canonical command through it.
+		supported := alias + "@GatewayBot argument"
+		v := telegramGatewayUpdate(1, 123456, supported)
+		v.Message.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: imUTF16Units(alias + "@GatewayBot")}}
+		text, reason := telegramNormalizeCommand(supported, v.Message.Entities, "GatewayBot")
+		if reason != "" || text != canonical+" argument" || parseIMCommand(text).Type != parseIMCommand(canonical+" argument").Type {
+			t.Fatalf("supported alias rejected: text=%q reason=%q", text, reason)
 		}
 	}
 	input := "/question_interact@OtherBot q"
