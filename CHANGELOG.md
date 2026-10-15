@@ -63,6 +63,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Fixed
 
+- Session takeover no longer sends a full status dump for every internal event. A transfer previously produced a burst of near-identical messages whenever Chord's blocking set changed; it now reports that the transfer started, how long it has been waiting and on what, and that the session was saved. Unfinished progress repeats at most once a minute, an unchanged report is dropped, and failures still arrive in full with their recovery action. The reported wait is observed elapsed time, not a completion estimate.
 - WeCom answer hints preserve `@request` for copyable replies. Slack now honors per-method `Retry-After` across lookups, identity checks and socket reconnects.
 - Partial-send diagnostics retain unknown delivery outcomes, including cancellation after sending; DingTalk distinguishes token acquisition and pacing failures from uncertain message delivery.
 - Intake capacity checks use a per-chat pending index, avoiding scans of retained completed messages during admission.

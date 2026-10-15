@@ -45,7 +45,7 @@ If Chord uses a custom state directory, append `--state-dir /path/to/chord-state
 
 `<state_dir>/session-transfers.json` records blocked bindings before the source acknowledges preparation. It takes precedence over session pins after a restart. Ordinary messages, reminders, old cards, and crash recovery cannot silently reclaim the transferred session. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard. Guard deletion uses a private `session-transfers.json.pending` journal so a failed disk sync cannot reopen the binding after restart. If a storage failure leaves this journal, correct the storage problem and retry explicitly; do not delete either guard file to force an automatic restart while source ownership is uncertain.
 
-Session transfer notifications use the ordered outbound queue. Slow IM delivery does not hold process lifecycle locks; bounded queue backpressure may still delay protocol reading when the queue is full.
+Session transfer notifications use the ordered outbound queue. Slow IM delivery does not hold process lifecycle locks; bounded queue backpressure may still delay protocol reading when the queue is full. A transfer reports itself as a progression rather than one message per event: progress repeats at most once a minute, an unchanged report is dropped, and `saved` and `released` share one closing message because both report the same outcome.
 
 ## Idle timeout
 

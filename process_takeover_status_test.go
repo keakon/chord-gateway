@@ -23,6 +23,25 @@ func TestTransferProgressPersistsAndNotifiesWithoutClearingSource(t *testing.T) 
 	}
 	status := takeoverTestRecord("preparing").Status
 	p.processEnvelope(takeoverEnvelope(t, "session_transfer_preparing", status))
+	// Progress is reported as a progression, not as one message per event, so
+	// this asserts the report that carries each state rather than the last
+	// message received. save_failed must always arrive in full; the unfinished
+	// states between the reports are rate limited.
+	delivered := func(want ...string) bool {
+		for _, msg := range adapter.sentMessages() {
+			matched := true
+			for _, fragment := range want {
+				if !strings.Contains(msg.text, fragment) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+		return false
+	}
 	for _, state := range []string{"draining", "saving", "save_failed", "saving"} {
 		status.State = state
 		status.Blockers = []TransferBlocker{{OwnerTaskID: "task-1", Type: "tool", Description: "Waiting for active tool"}}
@@ -38,20 +57,27 @@ func TestTransferProgressPersistsAndNotifiesWithoutClearingSource(t *testing.T) 
 		if err != nil || !ok || record.Status.State != state || len(record.Status.Blockers) != 1 {
 			t.Fatalf("progress not persisted: %#v, %v", record, err)
 		}
-		deadline := time.Now().Add(time.Second)
-		for !strings.Contains(adapter.lastMessage().text, "State: "+state) && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		text := adapter.lastMessage().text
-		if !strings.Contains(text, "State: "+state) || !strings.Contains(text, "Waiting for active tool") {
-			t.Fatalf("progress not delivered: %s", text)
-		}
-		if state == "save_failed" && !strings.Contains(text, "retry-save") {
-			t.Fatalf("save recovery missing: %s", text)
+		if state == "save_failed" {
+			// A failure is never rate limited: recovery depends on it.
+			deadline := time.Now().Add(time.Second)
+			for !delivered("State: save_failed", "Waiting for active tool", "retry-save") && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if !delivered("State: save_failed", "Waiting for active tool") {
+				t.Fatalf("save failure not delivered: %v", adapter.sentMessages())
+			}
+			if !delivered("retry-save") {
+				t.Fatal("save recovery missing")
+			}
 		}
 		if m.pins.Get(p.key) != "session-1" || !m.transferBlocked(p.key) || len(p.pendingInputs) != 1 || p.autoRestart {
 			t.Fatal("progress changed source ownership or input receipts")
 		}
+	}
+	// Four progress events plus preparation must not become five full status
+	// dumps. Only the start, the rate-limited progress and the failure report.
+	if got := len(adapter.sentMessages()); got > 3 {
+		t.Fatalf("progress was not consolidated, sent %d messages: %v", got, adapter.sentMessages())
 	}
 	if len(takeoverCommands(t, w)) != 2 {
 		t.Fatal("progress sent a preparation ACK")

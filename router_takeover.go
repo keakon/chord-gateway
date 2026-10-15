@@ -408,6 +408,7 @@ func (r *NotificationRouter) clearTransferCards(key string) {
 	delete(r.expiredPending, key)
 	delete(r.shownQuestions, key)
 	delete(r.deliveredPrompts, key)
+	delete(r.transferNotices, key)
 	for operationKey := range r.questionOperations {
 		if strings.HasPrefix(operationKey, key+"|") {
 			delete(r.questionOperations, operationKey)

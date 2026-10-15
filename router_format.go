@@ -17,7 +17,7 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	switch eventType {
 	case "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released":
 		if state.Transfer != nil {
-			return formatTransferStatus(*state.Transfer)
+			return formatTransferNotice(*state.Transfer, time.Now(), hints...)
 		}
 		return ""
 	case mcpStatusChangedEvent:

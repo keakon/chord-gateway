@@ -44,6 +44,7 @@ type NotificationRouter struct {
 	deliveredPrompts      map[string]deliveredPrompt
 	questionOperations    map[string]pendingQuestionOperation
 	cardHandles           map[string]cardHandleEntry
+	transferNotices       map[string]transferNotice
 	outbound              *outboundDispatcher
 }
 
@@ -69,12 +70,13 @@ type expiredPendingState struct {
 // The router reads the active config from mgr (single source of truth).
 func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 	r := &NotificationRouter{
-		mgr:            mgr,
-		lastKeyChatID:  make(map[string]string),
-		reminders:      make(map[string]*time.Timer),
-		expiredPending: make(map[string]expiredPendingState),
-		cardHandles:    make(map[string]cardHandleEntry),
-		outbound:       newOutboundDispatcher(),
+		mgr:             mgr,
+		lastKeyChatID:   make(map[string]string),
+		reminders:       make(map[string]*time.Timer),
+		expiredPending:  make(map[string]expiredPendingState),
+		cardHandles:     make(map[string]cardHandleEntry),
+		transferNotices: make(map[string]transferNotice),
+		outbound:        newOutboundDispatcher(),
 	}
 	if mgr != nil {
 		mgr.SetOnEvent(r.HandleChordEvent)
@@ -577,6 +579,15 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	})
 	willSend := msg != ""
 	msgLen := len(msg)
+	// A transfer republishes its status on every blocker change. Report the
+	// progression instead of every event, so one transfer does not become a
+	// stream of near-identical messages.
+	if willSend && strings.HasPrefix(eventType, "session_transfer_") {
+		willSend = r.transferEventVisible(key, state.Transfer, msg, time.Now())
+		if !willSend {
+			log.Debugf("[%v] transfer notification suppressed as already reported event=%v", processLogContext(key, state), eventType)
+		}
+	}
 	log.Infof("[%v] gateway routing decision event=%v assistant_text_len=%v message_len=%v will_send=%v", processLogContext(key, state),
 		eventType,
 		len(state.LastAssistantText),
@@ -587,6 +598,9 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		if !state.Busy && (eventType == "idle" || eventType == "idle_timeout" || eventType == "exit") {
 			r.stopReminder(key)
 		}
+		return
+	}
+	if !willSend {
 		return
 	}
 
