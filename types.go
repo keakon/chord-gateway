@@ -167,7 +167,6 @@ type QuestionPayload struct {
 const (
 	QuestionResolvedDefaulted  = "defaulted"
 	QuestionResolvedAnswered   = "answered"
-	QuestionResolvedDeclined   = "declined"
 	QuestionResolvedNoResponse = "no_response"
 	QuestionResolvedSuperseded = "superseded"
 	QuestionResolvedCancelled  = "cancelled"

@@ -99,7 +99,7 @@ func TestTelegramBatchCaptureWaitsForBusySnapshot(t *testing.T) {
 }
 
 func TestTelegramCommandAliasesRoundTripAndRejectLegacySuffix(t *testing.T) {
-	for _, canonical := range []string{"/handoff-deny", "/question-interact", "/question-decline", "/question-withdraw", "/question-replace"} {
+	for _, canonical := range []string{"/handoff-deny", "/question-interact", "/question-withdraw", "/question-replace"} {
 		for _, kind := range []string{"private", "group"} {
 			command := canonical + " @request unchanged/path@value"
 			hint := FormatCommandHint(PlatformPresentation{Platform: "telegram", BotUsername: "GatewayBot"}, CommandTarget{ChatKind: kind}, command)

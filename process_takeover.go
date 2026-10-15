@@ -39,7 +39,7 @@ func (p *ChordProcess) commandAllowedLocked(cmd map[string]any) bool {
 	case "question":
 		// Only existing answer/presentation operations may close an in-flight wait.
 		q := p.state.Questions[fmt.Sprint(cmd["request_id"])]
-		return p.restoringTransferID == "" && q != nil && q.Outcome == "" && (cmd["action"] == "answer" || cmd["action"] == "interact" || cmd["action"] == "decline" || cmd["action"] == "presented")
+		return p.restoringTransferID == "" && q != nil && q.Outcome == "" && (cmd["action"] == "answer" || cmd["action"] == "interact" || cmd["action"] == "presented")
 	}
 	return false
 }

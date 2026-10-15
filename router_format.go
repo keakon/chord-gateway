@@ -578,8 +578,6 @@ func questionResolvedCardStatus(reason string) (title, message, template string)
 		return "Question defaulted", "⌛ Core adopted the default (system decision, not user consent).", "grey"
 	case QuestionResolvedAnswered:
 		return "Question answered", "✅ Answer accepted by chord.", "green"
-	case QuestionResolvedDeclined:
-		return "Question declined", "🚫 Declined; no answer was recorded.", "grey"
 	case QuestionResolvedNoResponse:
 		return "Question expired", "⌛ No answer before the deadline.", "grey"
 	case QuestionResolvedSuperseded:

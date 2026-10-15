@@ -149,7 +149,7 @@ func questionOperationCommand(msg IncomingMessage, q *QuestionPayload, cmd IMCom
 		}
 	} else {
 		switch cmd.Action {
-		case "interact", "decline", "withdraw_requirement", "replace_requirement":
+		case "interact", "withdraw_requirement", "replace_requirement":
 		default:
 			return nil, errors.New("invalid question action")
 		}

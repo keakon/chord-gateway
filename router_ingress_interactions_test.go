@@ -428,7 +428,6 @@ func TestIngressQuestionActionsPreserveOriginalRequests(t *testing.T) {
 	for _, tc := range []struct{ text, action string }{
 		{"/answer @q Answer", "answer"},
 		{"/question-interact q", "interact"},
-		{"/question-decline q", "decline"},
 		{"/question-withdraw q", "withdraw_requirement"},
 		{"/question-replace q replacement", "replace_requirement"},
 	} {

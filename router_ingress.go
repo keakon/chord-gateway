@@ -289,7 +289,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 	if cmd.Type == "status" || help || cmd.Type == "todos" {
 		text := "No active session."
 		if help {
-			commands := []string{"/status", "/todos", "/sessions", "/cancel", "/allow [request-id]", "/deny <reason>", "/answer @<question-id> <answer>", "/question-interact <id>", "/question-decline <id>", "/question-withdraw <id>", "/question-replace <old-id> <new-id>", "/role [name or number]", "/login [platform]", "/handoff [agent] [pool]", "/handoff-deny [reason]", "! <shell command>", "/summary", "/mcp", "/bind <directory>", "/new", "/resume <session-id>", "/takeover status"}
+			commands := []string{"/status", "/todos", "/sessions", "/cancel", "/allow [request-id]", "/deny <reason>", "/answer @<question-id> <answer>", "/question-interact <id>", "/question-withdraw <id>", "/question-replace <old-id> <new-id>", "/role [name or number]", "/login [platform]", "/handoff [agent] [pool]", "/handoff-deny [reason]", "! <shell command>", "/summary", "/mcp", "/bind <directory>", "/new", "/resume <session-id>", "/takeover status"}
 			for i, command := range commands {
 				commands[i] = r.ingressCommandHint(msg, command)
 			}

@@ -15,6 +15,7 @@
 - 飞书与微信统一使用单 owner 配对和显式聊天绑定，单工作区也不例外。删除 legacy 模式和 `access_mode`、`owner_open_id`、`allowed_open_ids`、微信 `workspace_id` 字段；包含这些字段的配置会明确报错。删除旧 `/bind <workspace_id> <path>`，改用 `/bind "<已有目录>"`；首次私聊配对需额外提供终端配对码。旧授权不会自动迁移。
 - 升级已有部署：先停止 gateway，完成或处理未结束的会话转移，备份 YAML 与状态目录；删除上述旧字段，未配对平台清空 `chat_bindings`，保留工作区与 Chord 会话。把旧的无身份作用域 `session-pins.json`（或自定义 `session_pins_file`）移到备份位置，避免自动恢复到旧身份；然后前台运行 `--pair`，私聊配对并重新绑定各聊天。旧 `workspaceID|imType|chatID` pin 不再读取；需要历史会话时先核对 `/sessions`，再显式 `/resume`。不要删除尚未处理的 transfer 状态文件。
 - 本地标准输入/输出改用显式 `--console`，要求配置恰好一个工作区，不能与 `--pair` 同用。缺少微信 token 会触发扫码登录，不再隐式切换 console。
+- 删除 `/question-decline`（Telegram 为 `/question_decline`），与 Chord 保持一致：问题只能回答或取消。取消问题请用 `/question-withdraw <id>`；不再显示 `declined` 结果。
 
 ### 新功能
 

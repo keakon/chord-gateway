@@ -187,7 +187,7 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		}
 		return
 	}
-	if cmd.Action == "interact" || cmd.Action == "decline" || cmd.Action == "withdraw_requirement" || cmd.Action == "replace_requirement" {
+	if cmd.Action == "interact" || cmd.Action == "withdraw_requirement" || cmd.Action == "replace_requirement" {
 		action, err := questionOperationCommand(msg, q, cmd, &IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
 		if err != nil {
 			r.sendTextForKey(procKey, chatID, "⚠️ Invalid question action.")

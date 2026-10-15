@@ -46,7 +46,7 @@ The command table below shows Gateway syntax. In a Slack root chat, use `/chord 
 
 ## IM commands
 
-Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/question_decline`, `/question_withdraw`, `/question_replace`. In groups, append `@YourBotUsername`; follow the generated hints. See the [Telegram guide](./telegram.md#groups-and-privacy).
+Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/question_withdraw`, `/question_replace`. In groups, append `@YourBotUsername`; follow the generated hints. See the [Telegram guide](./telegram.md#groups-and-privacy).
 
 | Command | Description |
 |---|---|
@@ -113,7 +113,7 @@ Questions remain available by ID. You can answer later and continue ordinary cha
 
 - `/answer @<id> 1` selects an option; use `1,3` for multiple choices or `/answer @<id> <text>` for a custom answer. Omit the ID only when exactly one question is pending.
 - Feishu option buttons and multi-select forms answer their associated question ID.
-- `/question-interact <id>` disables timing; `/question-decline <id>` declines without withdrawing a required decision.
+- `/question-interact <id>` disables timing.
 - `/question-withdraw <id>` withdraws a requirement; `/question-replace <old> <new>` associates a replacement. `/new-task <text>` starts an independent task; `/question cancel-task` cancels the current task.
 
 IM cannot reliably detect text entry, so the gateway asks Chord to disable timing before offering an answer entry and waits for the committed update. Required decisions already wait indefinitely. System defaults are labeled as adoption by the system and do not mean user consent.

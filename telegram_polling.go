@@ -343,7 +343,7 @@ func telegramNormalizeCommand(text string, entities []telegramEntity, username s
 
 // Explicit aliases avoid rewriting arbitrary paths, model commands or args.
 func telegramCommandAlias(command string, outbound bool) string {
-	for _, canonical := range []string{"/handoff-deny", "/question-interact", "/question-decline", "/question-withdraw", "/question-replace"} {
+	for _, canonical := range []string{"/handoff-deny", "/question-interact", "/question-withdraw", "/question-replace"} {
 		alias := strings.ReplaceAll(canonical, "-", "_")
 		if outbound && strings.EqualFold(command, canonical) {
 			return alias

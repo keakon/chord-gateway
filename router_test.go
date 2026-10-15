@@ -2925,20 +2925,20 @@ func TestProcessEnvelopeQuestionResolvedClearsPending(t *testing.T) {
 
 }
 
-func TestQuestionCommandRevisesDeclinedWhileNewQuestionPending(t *testing.T) {
+func TestQuestionCommandRevisesExpiredWhileNewQuestionPending(t *testing.T) {
 	ws := &config.Workspace{ID: "ws1", Path: t.TempDir()}
 	sender := &stubIMAdapter{typ: "wechat"}
 	r := &NotificationRouter{adapter: sender}
 	stdin := &captureWriteCloser{}
 	proc := &ChordProcess{stdin: stdin}
 	attachQuestionTestReceipts(proc)
-	proc.state.applyQuestionState(&QuestionPayload{RequestID: "old", Version: 2, Outcome: QuestionResolvedDeclined})
+	proc.state.applyQuestionState(&QuestionPayload{RequestID: "old", Version: 2, Outcome: QuestionResolvedNoResponse})
 	proc.state.applyQuestionState(&QuestionPayload{RequestID: "new", Version: 1})
 	r.handleQuestionCommand(ws, "chat-1", IMCommand{Type: "question", RequestID: "old", Answers: []string{"yes"}}, IncomingMessage{IMType: "wechat", MessageID: "input-1"}, "ws1|wechat|chat-1", proc)
 	if !strings.Contains(stdin.String(), `"action":"revise"`) || !strings.Contains(sender.lastMessage().text, "accepted") {
 		t.Fatal("historical answer failed with a new pending question")
 	}
-	if proc.State().Questions["old"].Outcome != QuestionResolvedDeclined || proc.State().pendingQuestionCount() != 1 {
+	if proc.State().Questions["old"].Outcome != QuestionResolvedNoResponse || proc.State().pendingQuestionCount() != 1 {
 		t.Fatal("revision rewrote original outcome or affected new question")
 	}
 }
@@ -2950,7 +2950,6 @@ func TestFormatQuestionResolvedNotification(t *testing.T) {
 		want   string
 	}{
 		{QuestionResolvedAnswered, "accepted"},
-		{QuestionResolvedDeclined, "declined"},
 		{QuestionResolvedNoResponse, "deadline"},
 		{QuestionResolvedSuperseded, "superseded"},
 		{QuestionResolvedCancelled, "cancelled"},

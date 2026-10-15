@@ -58,8 +58,8 @@ func parseIMCommand(text string) IMCommand {
 			id = strings.TrimPrefix(id, "@")
 		}
 		return IMCommand{Type: "question", RequestID: id, Answers: []string{rest}}
-	case "/question-interact", "/question-decline", "/question-withdraw":
-		action := map[string]string{"/question-interact": "interact", "/question-decline": "decline", "/question-withdraw": "withdraw_requirement"}[cmd]
+	case "/question-interact", "/question-withdraw":
+		action := map[string]string{"/question-interact": "interact", "/question-withdraw": "withdraw_requirement"}[cmd]
 		id, text, _ := strings.Cut(rest, " ")
 		if text == "" && action == "withdraw_requirement" {
 			text = "Withdraw the requirement for question " + id

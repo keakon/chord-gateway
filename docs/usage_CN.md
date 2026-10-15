@@ -46,7 +46,7 @@ Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `s
 
 ## IM 命令
 
-Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/question_decline`、`/question_withdraw`、`/question_replace`。群里再添加 `@YourBotUsername`，按自动生成的提示操作即可，详见 [Telegram 指南](./telegram_CN.md#群聊与-privacy)。
+Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/question_withdraw`、`/question_replace`。群里再添加 `@YourBotUsername`，按自动生成的提示操作即可，详见 [Telegram 指南](./telegram_CN.md#群聊与-privacy)。
 
 | 命令 | 说明 |
 |---|---|
@@ -106,7 +106,7 @@ chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
 
 - `/answer @<id> 1` 选择选项；多选用 `1,3`，自定义答案用 `/answer @<id> <text>`。只有唯一 pending 题时可省略 ID。
 - 飞书选项按钮或多选表单也可答题，卡片与题目 ID 关联。
-- `/question-interact <id>` 停用计时，`/question-decline <id>` 拒绝回答；拒绝不撤回必要要求。
+- `/question-interact <id>` 停用计时。
 - `/question-withdraw <id>` 撤回要求，`/question-replace <old> <new>` 关联替代决策。`/new-task <text>` 开始独立任务，`/question cancel-task` 取消当前任务。
 
 IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题计时，收到可靠状态更新后才提供回答入口。必要确认本来就无限等待。系统默认结果显示为系统采用，不表示用户同意。

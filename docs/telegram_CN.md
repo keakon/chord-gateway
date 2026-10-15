@@ -65,7 +65,6 @@ chord-gateway pairing reset --platform telegram --config /path/to/config.yaml
 只有普通文本任务保存用于冲突检测的正文摘要。控制命令和不支持的输入只保留身份去重证据，不保存配对码、回答等参数的摘要；重复控制不会再次执行。身份相同、仅参数不同的控制输入不做当前进程内参数比较。
 
 网络故障使用带抖动的指数退避，短暂成功不会重置等待时间，持续成功一分钟后才重置。Telegram 明确返回的 `retry_after` 优先，等待可以取消。本地重启后紧接着的 409 会短暂重试（上一次服务端长轮询在其 25s 超时前仍残留）；持续 409 说明真有第二个 poller，仍为致命错误。
-网络故障使用带抖动的指数退避，短暂成功不会重置等待时间，持续成功一分钟后才重置。Telegram 明确返回的 `retry_after` 优先，等待可以取消。
 
 Telegram 服务器最多保留未接收 update **24 小时**，离线超过保留期可能丢失消息。至少一周没有新 update 后，新的 update ID 可能随机重置，因此 Gateway 按当前批次确认，不依赖永久最大 ID。详见官方 [getUpdates](https://core.telegram.org/bots/api#getupdates) 和 [Update](https://core.telegram.org/bots/api#update) 文档。
 
@@ -76,7 +75,6 @@ Telegram 服务器最多保留未接收 update **24 小时**，离线超过保�
 | `getMe` 401 | 核对或重新生成 BotFather token，更新配置后重启 |
 | `webhook_conflict` | 当前 Bot 已配置 webhook。停用原服务，显式清除 webhook 后再启动；Gateway 不会自动删除 webhook，也不会丢弃待收消息 |
 | `poller_conflict` / 409 | 停止同一 Bot 的其他长轮询进程，包括其他主机上的实例。本地重启后紧接着的一次 409 是残留的服务端长轮询，会自行重试；只有持续 409 才需要处理 |
-| `poller_conflict` / 409 | 停止同一 Bot 的其他长轮询进程，包括其他主机上的实例 |
 | 群普通文本未送达、命令可达 | 检查 privacy；默认模式用回复 Bot 的方式发送任务 |
 | 403 | 检查机器人是否被屏蔽、被移出群或目标不可访问 |
 | `chat_migrated` | 由 owner 到新 supergroup 显式重新绑定；不会复制旧群授权 |
