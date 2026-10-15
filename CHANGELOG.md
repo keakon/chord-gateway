@@ -19,6 +19,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- `--pair` now prints a single pairing code immediately at startup instead of waiting for each platform to connect. The code works on every active platform and stays valid for the full 10-minute window, so multiple users and chats can be paired with it; a successful bind no longer consumes it. DingTalk still reveals its code only after the same-enterprise identity probe succeeds. See [pairing](./docs/pairing.md).
+
 - Added Telegram Bot API polling with private/group text, owner pairing, controls, output splitting and throttling. Existing webhooks block startup and are not deleted automatically. See [Telegram](./docs/telegram.md).
 
 - Added WeCom intelligent bot long connections with private/group text, binding probes, background replies and account exclusion. Network failures reconnect with backoff; connection replacement stops contention.

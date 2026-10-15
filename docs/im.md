@@ -86,9 +86,9 @@ Use Slack when you want separate DM, channel and thread sessions with Socket Mod
 
 ## Connection and routing
 
-Configure the platform you need: `ims.wechat: {}` for WeChat; Feishu `app_id` / `app_secret` with long connection and event subscriptions; WeCom `bot_id` / `secret` for the intelligent bot API long connection; or Discord `bot_token` / `application_id` after installing the bot. Run `chord-gateway --pair`. Complete WeChat QR login if prompted; WeChat, Feishu, WeCom, and Discord show a code after connecting. Send `/bind "~/workspace" <pairing_code>` in a private bot chat, then `/status` to verify. WeCom requires the fixed proactive binding probe to be accepted before saving.
+Configure the platform you need: `ims.wechat: {}` for WeChat; Feishu `app_id` / `app_secret` with long connection and event subscriptions; WeCom `bot_id` / `secret` for the intelligent bot API long connection; or Discord `bot_token` / `application_id` after installing the bot. Run `chord-gateway --pair`. The terminal displays one pairing code immediately at startup; WeChat still needs QR login and each platform must become ready before its `/bind` is authorized. Send `/bind "~/workspace" <pairing_code>` in a private bot chat, then `/status` to verify. WeCom requires the fixed proactive binding probe to be accepted before saving.
 
-DingTalk needs four application/enterprise identity fields. On first connection, privately send `hello` to verify identity before the pairing code appears; binding targets receive a proactive probe before saving.
+DingTalk needs four application/enterprise identity fields. On first connection, privately send `hello` to verify identity; this happens independently of the startup code, and binding targets receive a proactive probe before saving.
 
 The paired owner uses `/bind "~/another workspace"` to explicitly bind more chats. All supported platforms route through `chat_bindings`, with no single-workspace fallback. Directories must exist; routes become active only after configuration is saved. Stop the service before editing other configuration, then restart.
 

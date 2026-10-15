@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bytes"
+	"encoding/base32"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
@@ -13,20 +12,14 @@ import (
 func TestDiscordPairingAndResetPreserveCredentialsAndOtherPlatforms(t *testing.T) {
 	r, _ := pairedTestRouterWithConfig(t, "ims: {wechat: {}, discord: {bot_token: example-token, application_id: '123456789012345678'}}\n")
 	beforeWechat := r.getConfig().IMConfigByType("wechat")
-	var terminal bytes.Buffer
 	p := r.admission.pairing
-	p.terminal = &terminal
 	const botID = "234567890123456789"
 	if err := p.PlatformReadyWithPresentation("discord", botID, PlatformPresentation{BotMention: "<@" + botID + ">"}); err != nil {
 		t.Fatal(err)
 	}
-	var code string
-	fields := strings.Fields(terminal.String())
-	for i, field := range fields {
-		if field == "\"~/workspace\"" && i+1 < len(fields) {
-			code = fields[i+1]
-		}
-	}
+	p.mu.Lock()
+	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(p.codeNonce[:])
+	p.mu.Unlock()
 	if code == "" {
 		t.Fatal("Discord pairing instructions missing")
 	}

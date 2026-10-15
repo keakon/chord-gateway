@@ -763,7 +763,7 @@ func pairingHintReply(r *NotificationRouter, msg IncomingMessage, kind string) s
 	case "pairing_hint_code":
 		return "That pairing code is not valid. Check the code shown on the gateway terminal and resend " + bind + "."
 	default:
-		if pairing.codeLiveFor(msg.IMType) {
+		if pairing.codeLive() {
 			return "This gateway has no paired owner yet. Send " + bind + " using the code shown on the gateway terminal."
 		}
 		if pairing.enabled {

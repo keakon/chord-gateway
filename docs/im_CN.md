@@ -87,9 +87,9 @@ chord-gateway -f config.yaml --console
 
 ## 接入与路由
 
-选择需要的平台：微信配置 `ims.wechat: {}`；飞书填写 `app_id` / `app_secret` 并完成长连接和事件订阅；企业微信填写 `bot_id` / `secret` 并开通智能机器人 API 长连接；Discord 安装 Bot 后填写 `bot_token` / `application_id`。运行 `chord-gateway --pair`；微信先扫码登录，微信、飞书、企业微信和 Discord 连接就绪后终端显示配对码。在机器人私聊发送 `/bind "~/workspace" <pairing_code>`，再用 `/status` 验证。企业微信需固定主动绑定探测成功后才保存。
+选择需要的平台：微信配置 `ims.wechat: {}`；飞书填写 `app_id` / `app_secret` 并完成长连接和事件订阅；企业微信填写 `bot_id` / `secret` 并开通智能机器人 API 长连接；Discord 安装 Bot 后填写 `bot_token` / `application_id`。运行 `chord-gateway --pair`；终端在启动时立即显示一个通用配对码;微信仍需扫码登录,各平台也需就绪后其 `/bind` 才会被授权。在机器人私聊发送 `/bind "~/workspace" <pairing_code>`,再用 `/status` 验证。企业微信需固定主动绑定探测成功后才保存。
 
-钉钉配置四项应用/企业身份字段，首次私聊 `hello` 验证完成后才显示配对码；保存绑定前先主动探测目标。
+钉钉配置四项应用/企业身份字段,首次私聊 `hello` 验证身份;该验证与启动码无关,保存绑定前先主动探测目标。
 
 配对后的 owner 用 `/bind "~/another workspace"` 显式绑定其他聊天。所有已实现平台都通过 `chat_bindings` 路由，单工作区也不隐式绑定。目录必须已存在，配置保存成功后才启用路由。其他配置的手工改动需停服务后修改并重启。
 

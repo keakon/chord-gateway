@@ -28,7 +28,7 @@ Start in a foreground controlling terminal:
 chord-gateway --config /path/to/config.yaml --pair
 ```
 
-Complete WeChat QR login if prompted. After platform connection and any required identity verification, the terminal displays its own 10-minute pairing code. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
+Complete WeChat QR login if prompted. With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every active platform, and `/bind` stays valid for the whole window, so several users and chats can be paired before it expires. DingTalk is the exception: its code appears only after the same-enterprise identity probe succeeds. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
 
 ```text
 /bind "~/workspace" <pairing_code>

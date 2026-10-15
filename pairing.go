@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,15 +36,12 @@ type pairingPlatform struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	presentation             PlatformPresentation
-	account                  string
-	epoch                    uint64
-	ready, changed, consumed bool
-	nonce                    [16]byte
-	nonceID                  string
-	expires                  time.Time
-	tokens                   int
-	refilled                 time.Time
+	presentation   PlatformPresentation
+	account        string
+	epoch          uint64
+	ready, changed bool
+	tokens         int
+	refilled       time.Time
 
 	// Hint budgets are keyed by private chat, not shared across the platform:
 	// a spammer in one chat must not silence hints for unpaired users elsewhere.
@@ -58,6 +56,10 @@ type pairingHint struct {
 
 // PairingService keeps credentials in memory and writes them only to the
 // controlling terminal. The configuration remains the owner authority.
+//
+// A single pairing code is generated once (BeginPairing, or lazily by the first
+// unpaired PlatformReady) and is valid across every active platform for the
+// pairing window. It is never consumed early, so it can bind several platforms.
 type PairingService struct {
 	mu        sync.Mutex
 	store     *ConfigStore
@@ -66,6 +68,12 @@ type PairingService struct {
 	random    io.Reader
 	now       func() time.Time
 	platforms map[string]*pairingPlatform
+
+	// Universal pairing code, generated once and valid across all platforms
+	// until codeExpires. It is never consumed early.
+	codeNonce   [16]byte
+	codeID      string
+	codeExpires time.Time
 }
 
 func NewPairingService(store *ConfigStore, enabled bool, terminal io.Writer) *PairingService {
@@ -78,8 +86,8 @@ func (p *PairingService) PlatformReady(platform, accountID string) error {
 
 func (p *PairingService) PlatformReadyWithPresentation(platform, accountID string, presentation PlatformPresentation) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if accountID == "" {
+		p.mu.Unlock()
 		return errPairingDenied
 	}
 	state := p.platforms[platform]
@@ -95,54 +103,138 @@ func (p *PairingService) PlatformReadyWithPresentation(platform, accountID strin
 		state.ready = false
 		state.changed = true
 		state.account = accountID
-		state.nonce = [16]byte{}
+		p.mu.Unlock()
 		return errPairingDenied
 	}
 	presentation.Platform = platform
 	state.presentation = presentation
 	if state.changed {
+		p.mu.Unlock()
 		return errPairingDenied
 	}
 	cfg := p.store.Snapshot()
 	im := cfg.IMConfigByType(platform)
 	if im == nil {
+		p.mu.Unlock()
 		return errPairingDenied
 	}
 	if owner := im.OwnerIdentity(); owner != nil {
 		if owner.AccountID != accountID {
+			p.mu.Unlock()
 			return errPairingDenied
 		}
 		state.ready = true
+		p.mu.Unlock()
 		return nil
 	}
 	state.ready = true
-	if !p.enabled || !state.expires.IsZero() || state.consumed {
+	message, err := p.preparePairingCodeLocked()
+	state.tokens = 30
+	state.refilled = p.now()
+	p.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if message != "" {
+		if err := writePairingMessage(p.terminal, message); err != nil {
+			p.mu.Lock()
+			p.codeNonce = [16]byte{}
+			p.codeID = ""
+			p.codeExpires = time.Time{}
+			p.mu.Unlock()
+			return err
+		}
+	}
+	return nil
+}
+
+// BeginPairing generates and displays the universal pairing code immediately at
+// gateway startup, before any platform connects. It is a no-op when pairing is
+// disabled or the code is already live.
+func (p *PairingService) BeginPairing() error {
+	p.mu.Lock()
+	message, err := p.preparePairingCodeLocked()
+	p.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if message == "" {
 		return nil
 	}
-	// Mark the attempt before randomness/output: failure never opens a hidden code.
-	state.consumed = true
-	if p.terminal == nil {
-		return errors.New("pairing requires a controlling terminal")
+	if err := writePairingMessage(p.terminal, message); err != nil {
+		p.mu.Lock()
+		p.codeNonce = [16]byte{}
+		p.codeID = ""
+		p.codeExpires = time.Time{}
+		p.mu.Unlock()
+		return err
 	}
-	if _, err := io.ReadFull(p.random, state.nonce[:]); err != nil {
-		return errors.New("pairing random source failed")
+	return nil
+}
+
+// preparePairingCodeLocked creates the universal pairing code if one is not
+// already live and returns the terminal message. Callers hold p.mu; the
+// terminal write happens outside the lock so a slow terminal cannot block
+// admission. An empty message means no display is needed.
+func (p *PairingService) preparePairingCodeLocked() (string, error) {
+	if !p.enabled || !p.codeExpires.IsZero() {
+		return "", nil
+	}
+	if p.terminal == nil {
+		return "", errors.New("pairing requires a controlling terminal")
+	}
+	if _, err := io.ReadFull(p.random, p.codeNonce[:]); err != nil {
+		return "", errors.New("pairing random source failed")
 	}
 	var id [16]byte
 	if _, err := io.ReadFull(p.random, id[:]); err != nil {
-		return errors.New("pairing random source failed")
+		return "", errors.New("pairing random source failed")
 	}
-	state.nonceID = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:])
-	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(state.nonce[:])
-	prompt := fmt.Sprintf("%s: In a private chat, send %s\nValid for 10 minutes. Later bindings do not need a code.\n", platform, FormatCommandHint(presentation, CommandTarget{ChatKind: "private"}, fmt.Sprintf("/bind \"~/workspace\" %s", code)))
-	n, err := io.WriteString(p.terminal, prompt)
-	if err != nil || n != len(prompt) {
-		state.nonce = [16]byte{}
+	p.codeID = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:])
+	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(p.codeNonce[:])
+	names := make([]string, 0)
+	for _, im := range p.store.Snapshot().ActiveIMs() {
+		names = append(names, im.Type())
+	}
+	sort.Strings(names)
+	// One code serves every platform, and most platforms render the same
+	// private-chat command. Group them so each distinct command is printed once
+	// with its platforms instead of repeating an identical line per platform.
+	bind := fmt.Sprintf("/bind \"~/workspace\" %s", code)
+	order := make([]string, 0, len(names))
+	grouped := make(map[string][]string, len(names))
+	for _, plat := range names {
+		hint := FormatCommandHint(PlatformPresentation{Platform: plat}, CommandTarget{ChatKind: "private"}, bind)
+		if _, seen := grouped[hint]; !seen {
+			order = append(order, hint)
+		}
+		grouped[hint] = append(grouped[hint], plat)
+	}
+	width := 0
+	for _, hint := range order {
+		if n := len(strings.Join(grouped[hint], ", ")); n > width {
+			width = n
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Pairing code (Valid for 10 minutes, works on all platforms): %s\n", code)
+	b.WriteString("In a private chat with the bot, send on the matching platform:\n")
+	for _, hint := range order {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, strings.Join(grouped[hint], ", "), hint)
+	}
+	b.WriteString("Later bindings within the window do not need a new code.\n")
+	p.codeExpires = p.now().Add(pairingLifetime)
+	return b.String(), nil
+}
+
+func writePairingMessage(terminal io.Writer, message string) error {
+	if terminal == nil {
+		return errors.New("pairing requires a controlling terminal")
+	}
+	n, err := io.WriteString(terminal, message)
+	if err != nil || n != len(message) {
 		return errors.New("could not display pairing instructions on the controlling terminal")
 	}
-	state.expires = p.now().Add(pairingLifetime)
-	state.tokens = 30
-	state.refilled = p.now()
-	state.consumed = false
 	return nil
 }
 func (p *PairingService) PlatformUnavailable(platform string) {
@@ -153,8 +245,8 @@ func (p *PairingService) PlatformUnavailable(platform string) {
 	}
 }
 
-func (p *PairingService) codeValid(s *pairingPlatform, code string) bool {
-	if s == nil || !s.ready || s.changed || s.consumed || !p.now().Before(s.expires) {
+func (p *PairingService) codeValid(code string) bool {
+	if !p.enabled || p.codeExpires.IsZero() || !p.now().Before(p.codeExpires) {
 		return false
 	}
 	code = strings.Map(func(r rune) rune {
@@ -164,16 +256,7 @@ func (p *PairingService) codeValid(s *pairingPlatform, code string) bool {
 		return r
 	}, code)
 	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(code)
-	return err == nil && len(decoded) == 16 && subtle.ConstantTimeCompare(decoded, s.nonce[:]) == 1
-}
-
-func (p *PairingService) consume(platform string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if s := p.platforms[platform]; s != nil {
-		s.consumed = true
-		s.nonce = [16]byte{}
-	}
+	return err == nil && len(decoded) == 16 && subtle.ConstantTimeCompare(decoded, p.codeNonce[:]) == 1
 }
 
 // hintAllowed spends one bounded hint-reply token from the private chat's own
@@ -213,11 +296,10 @@ func (p *PairingService) hintAllowed(s *pairingPlatform, chatID string) bool {
 	return true
 }
 
-// codeLiveFor reports whether a pairing code is currently usable on the
-// platform. Pairing stays enabled only while a fresh code is on the terminal.
-func (p *PairingService) codeLiveFor(platform string) bool {
+// codeLive reports whether the universal pairing code is currently usable.
+// It is platform-independent: one code serves every platform.
+func (p *PairingService) codeLive() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	s := p.platforms[platform]
-	return p.enabled && s != nil && s.ready && !s.changed && !s.consumed && !s.expires.IsZero() && p.now().Before(s.expires)
+	return p.enabled && !p.codeExpires.IsZero() && p.now().Before(p.codeExpires)
 }

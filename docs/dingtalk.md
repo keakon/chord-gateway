@@ -32,9 +32,9 @@ Start in a foreground terminal:
 chord-gateway --config /path/to/config.yaml --pair
 ```
 
-The first connection waits for an employee private-chat identity probe. Send `hello` privately to the robot from the configured enterprise. This message verifies the sender's enterprise and staff identity and the robot's enterprise/code; it does not run a task or register an owner. A group message cannot complete this check. Configuration identity is never inferred from the first callback.
+The first connection waits for an employee private-chat identity probe. Send `hello` privately to the robot from the configured enterprise. This message verifies the sender's enterprise and staff identity and the robot's enterprise/code; it does not run a task or register an owner; it is independent of the startup pairing code. A group message cannot complete this check. Configuration identity is never inferred from the first callback.
 
-Only after identity verification does the terminal display the pairing code. In a private chat, send:
+The startup pairing code is valid for `/bind` on DingTalk too, but a DingTalk binding is authorized only after this identity check. In a private chat, send:
 
 ```text
 /bind "/path/to/project" <pairing_code>

@@ -202,7 +202,6 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 		}
 		return result, err
 	}
-	r.admission.pairing.consume(msg.IMType)
 	g.install(t.Identity, workspaceID, t.AccountEpoch)
 	return result, nil
 }

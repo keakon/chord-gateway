@@ -109,7 +109,7 @@ Run in a foreground terminal:
 chord-gateway -f config.yaml --pair
 ```
 
-Complete WeChat QR login if prompted. WeChat, Feishu, WeCom, Discord, and Slack show a pairing code after connecting. For the first DingTalk connection, an employee must first privately send `hello` to verify the enterprise identity; the terminal then shows the code. In a private bot chat on a platform other than Slack, send:
+Complete WeChat QR login if prompted. The terminal displays a single pairing code immediately at startup; each platform must still become ready before its `/bind` is authorized, and for the first DingTalk connection an employee must first privately send `hello` to verify the enterprise identity. In a private bot chat on a platform other than Slack, send:
 
 ```text
 /bind "~/workspace" <pairing_code>

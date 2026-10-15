@@ -47,7 +47,7 @@ ims:
   # See docs/slack.md for Socket Mode, Bot scopes, and /chord setup.
 
   # DingTalk enterprise robot: enable Stream and proactive API permissions, then publish.
-  # First --pair startup: privately send hello before the terminal shows a code.
+  # --pair shows the startup code immediately; privately send hello to verify identity before a binding authorizes.
   # See docs/dingtalk.md for pending deployment acceptance checks.
   # dingtalk:
   #   client_id: your-client-id

@@ -64,7 +64,6 @@ func (a *WechatAdapter) publishToken(token *TokenData) {
 			}
 			state.epoch++
 			state.changed = true
-			state.nonce = [16]byte{}
 		}
 	}
 	p.mu.Unlock()

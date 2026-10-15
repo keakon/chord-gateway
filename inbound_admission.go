@@ -128,7 +128,7 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 			p.mu.Unlock()
 			return ticket, false
 		}
-		if !p.codeValid(state, args[1]) {
+		if !p.codeValid(args[1]) {
 			if chargePairing && p.hintAllowed(state, msg.ChatID) {
 				ticket.Kind = "pairing_hint_code"
 			}
@@ -136,7 +136,7 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 			return ticket, false
 		}
 		ticket.Kind = "paired_bind"
-		ticket.PairingNonceID = state.nonceID
+		ticket.PairingNonceID = p.codeID
 	}
 	p.mu.Unlock()
 	ticket.gate = a.gate(ticket.Identity, im.Bindings()[msg.ChatID], ticket.AccountEpoch)
@@ -185,7 +185,7 @@ func (a *Admission) Valid(t AdmissionTicket) bool {
 	if owner == nil {
 		// Re-validate the binding ticket against the live pairing code: a code
 		// replaced while the probe is in flight must not authorize a bind.
-		return s.ready && t.Kind == "paired_bind" && t.PairingNonceID != "" && t.PairingNonceID == s.nonceID && !s.consumed && p.now().Before(s.expires)
+		return s.ready && t.Kind == "paired_bind" && t.PairingNonceID != "" && t.PairingNonceID == p.codeID && p.now().Before(p.codeExpires)
 	}
 	if owner.UserID != t.SenderID || owner.AccountID != t.Identity.AccountID {
 		return false

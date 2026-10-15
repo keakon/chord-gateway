@@ -132,7 +132,7 @@ workspaces:
 | `owner` | object | 配对后 | `account_id`、`user_id` |
 | `chat_bindings` | object | 绑定后 | Gateway 编码目标 ID → 工作区 ID，由 `/bind` 保存 |
 
-首次 Stream 连接后需员工私聊 `hello` 验证身份，终端才显示配对码；保存绑定前会主动探测候选目标。无可配置 webhook、API host 或 Stream endpoint。Access token 只保存在内存。
+首次 Stream 连接后需员工私聊 `hello` 验证身份，钉钉绑定才可被授权；保存绑定前会主动探测候选目标。无可配置 webhook、API host 或 Stream endpoint。Access token 只保存在内存。
 
 ### Discord 配置（`ims.discord`）
 

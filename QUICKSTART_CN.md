@@ -109,7 +109,7 @@ ims:
 chord-gateway -f config.yaml --pair
 ```
 
-微信按提示扫码登录。微信、飞书、企业微信、Discord 和 Slack 连接成功后显示配对码；钉钉首次连接需先由同企业员工私聊发送 `hello` 验证身份，随后终端才显示配对码。在 Slack 之外的平台机器人私聊中发送：
+微信按提示扫码登录。终端在启动时立即显示一个通用配对码;各平台仍需先就绪,其 `/bind` 才会被授权;钉钉首次连接还需先由同企业员工私聊发送 `hello` 验证身份。在 Slack 之外的平台机器人私聊中发送：
 
 ```text
 /bind "~/workspace" <pairing_code>

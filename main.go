@@ -167,6 +167,13 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		router := NewNotificationRouter(mgr)
 		router.admission = NewAdmission(NewPairingService(store, pair, terminal))
 		mgr.admission = router.admission
+		// Show the universal pairing code immediately at startup, before any
+		// platform connects, so it is valid across all platforms for the window.
+		if terminal != nil {
+			if err := router.admission.pairing.BeginPairing(); err != nil {
+				return fmt.Errorf("pairing requires a controlling terminal")
+			}
+		}
 		var ingress *IngressService
 		if ingressStore != nil {
 			ingress = NewIngressService(ingressStore, router)

@@ -51,7 +51,7 @@ func newSlackIntegrationHarness(t *testing.T) *slackIntegrationHarness {
 		t.Fatal("pairing instructions omitted installed slash entry point")
 	}
 	pairing.mu.Lock()
-	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(pairing.platforms["slack"].nonce[:])
+	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(pairing.codeNonce[:])
 	pairing.mu.Unlock()
 	ingressStore := NewIngressStore()
 	service := NewIngressService(ingressStore, router)

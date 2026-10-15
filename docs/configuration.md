@@ -132,7 +132,7 @@ Deployment guide: [DingTalk](./dingtalk.md). All four identity/credential fields
 | `owner` | object | after pairing | `account_id`, `user_id` |
 | `chat_bindings` | object | after binding | Gateway-encoded target ID → workspace ID, saved by `/bind` |
 
-The first Stream connection needs an employee private `hello` to verify identity before the terminal shows a pairing code. Candidate targets receive a proactive probe before binding. Webhook, API host, and Stream endpoint overrides are not configurable. Access tokens stay in memory.
+The first Stream connection needs an employee private `hello` to verify identity before a DingTalk binding is authorized. Candidate targets receive a proactive probe before binding. Webhook, API host, and Stream endpoint overrides are not configurable. Access tokens stay in memory.
 
 ### Discord Config (`ims.discord`)
 

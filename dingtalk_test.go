@@ -85,7 +85,7 @@ func dingtalkAdapterNonce(f dingtalkAdapterFixture) string {
 	p := f.r.admission.pairing
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(p.platforms["dingtalk"].nonce[:])
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(p.codeNonce[:])
 }
 
 func TestDingtalkAdapterProbeNeverExecutesOrAuthorizesOwner(t *testing.T) {
@@ -544,7 +544,7 @@ func TestDingtalkAdapterBindingProbeRechecksNonceAndRoute(t *testing.T) {
 				if scenario == "nonce" {
 					p := f.r.admission.pairing
 					p.mu.Lock()
-					p.platforms["dingtalk"].nonceID = "replaced-nonce"
+					p.codeID = "replaced-nonce"
 					p.mu.Unlock()
 				} else {
 					if _, err := f.s.store.BeginRouteChange(r.Context(), ticket.Identity); err != nil {
