@@ -109,7 +109,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		if pair && needsTerminal {
 			terminal, err = openPairingTerminal()
 			if err != nil {
-				return fmt.Errorf("pairing requires a controlling terminal")
+				return fmt.Errorf("pairing requires a controlling terminal: %w", err)
 			}
 			defer terminal.Close()
 		}
@@ -173,7 +173,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		// platform connects, so it is valid across all platforms for the window.
 		if terminal != nil {
 			if err := router.admission.pairing.BeginPairing(); err != nil {
-				return fmt.Errorf("pairing requires a controlling terminal")
+				return fmt.Errorf("pairing requires a controlling terminal: %w", err)
 			}
 		}
 		var ingress *IngressService
