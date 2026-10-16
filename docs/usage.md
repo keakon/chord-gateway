@@ -38,8 +38,8 @@ A pending or completed session transfer takes precedence over a pin. Ordinary me
 
 Before `/new` or `/resume` replaces an idle restored session, the gateway refreshes any previously nonempty input summary. Failed refreshes and unresolved input outcomes preserve the original session and pin. `/takeover` cannot bypass this protection when the old process has disconnected.
 
-
 `/new` and `/resume` are refused while the process is busy; send `/cancel` and wait for the turn to settle first.
+
 ## Slack command entry points
 
 The command table below shows Gateway syntax. In a Slack root chat, use `/chord status`, `/chord allow`, `/chord answer @<id> <text>`, and the same wrapper for other commands. Within a thread, use `@Bot /status`, `@Bot /allow`, or `@Bot /answer @<id> <text>` instead. Slash commands always target the channel root; every thread needs a separate binding. Channel/thread tasks require an explicit Bot mention. See the [Slack guide](./slack.md).
@@ -160,7 +160,7 @@ If Chord cancels a pending handoff without a decision (for example because a new
 
 ## MCP authentication and availability
 
-`/status` and `/mcp status` show unavailable MCP servers and the host command needed to sign in. Authentication, connection, and tool catalog status are separate: saved credentials alone do not prove the connection works. Visible status changes are pushed once as MCP notifications; inspect intermediate operations with `/status`. The all-servers-available summary is only pushed to confirm a recovery: a new session that starts with everything available stays silent.
+`/status` and `/mcp status` show unavailable MCP servers and the host command needed to sign in. Authentication, connection, and tool catalog status are separate: saved credentials alone do not prove the connection works. Visible status changes are pushed once as MCP notifications; inspect intermediate operations with `/status`.
 
 Run `chord mcp login <server>` or `chord mcp logout <server>` in the session's working directory on the Chord host. Add `--agent <definition>` for an agent-private server. Use the local TUI to reconnect. IM commands `/mcp login`, `logout`, `reauth`, `reconnect`, and `cancel` return host instructions and are never sent to the model. Existing `/mcp enable` and `/mcp disable` remain available.
 

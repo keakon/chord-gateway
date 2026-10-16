@@ -47,7 +47,7 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 
 - 自动恢复 pin 按工作区和路由记录，因此在同一路由上更换平台账号时会延续原会话。本机 `pairing reset` 会连同 owner 和绑定一起清除该平台的自动 pin,重置后的路由从新会话开始。按配对身份隔离 pin 的版本所写入的条目，以及当前解析器不再寻址的 `v2:` 前管道符旧布局条目，在加载时被丢弃，不会改写到其他身份，详见[升级说明](../CHANGELOG_CN.md)。换 owner 重新配对会按单用户部署设计继承原会话；如需隔离请用 `/new` 或删除 pin。
 - YAML 中未知字段会被忽略，但会在 gateway 日志中带行号报告，便于发现拼写错误或已移除的字段。已移除的 `event_visibility.activity` 字段不再生效，活动状态跟踪始终启用。
-- 重复的 YAML key 保留首次出现的值：后续重复项以 `duplicate key ignored` 告警带行号报告，不再阻止启动；下一次配置变更时会将文件重写为去重后的内容。
+- 重复的 YAML key 保留首次出现的值：后续重复项以 `duplicate key ignored` 告警带行号报告，不再阻止启动；下一次配置变更时会将文件重写为去重后的内容。该次重写还会把 YAML 格式规范化为两空格缩进,因此即使没有重复项,首次变更也可能重排文件。
 - 仍接受 Chord headless 对外发出的 `todos` 事件。虽然 Chord 内部也存在名为 `todos_updated` 的协议事件，但当前 headless 对外协议仍暴露 `todos`，gateway 会继续按该外部事件名处理。
 
 ## 已移除的兼容路径
@@ -57,6 +57,9 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 - `HandleMessage(imType, chatID, text)` —— 已移除。请使用带结构化 `IncomingMessage` 的 `HandleIncomingMessage`。
 - YAML `ims` 和 `workspaces` 的 sequence / list 形式 —— 已移除。请使用以适配器类型 / workspace ID 为 key 的 mapping 形式；`/bind` 也只支持这种 mapping 结构。
 - Chord headless `todos` 的裸数组 payload（`[...]`）—— 已移除。当前 Chord 发出的是包装对象 payload（`{"todos":[...]}`），gateway 也只接受这种形式。
+- 问题 `decline` 操作与 `declined` 结果 —— 已移除，与 Chord 一致，问题只能回答或取消。请用 `/question-withdraw <id>` 取消问题。
+- 基于文件的 intake 去重与 polling 游标 —— 已移除，不做迁移。Intake、去重与游标均为内存态，旧文件不再导入。
+- WebSocket 长连接（Discord、Slack、Feishu、WeCom、DingTalk）的 `https` 代理 —— 启动时拒绝。请用 `http`、`socks5` 或 `socks5h`。
 
 ## 清理规则
 
@@ -68,7 +71,7 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 
 ## 聊天绑定
 
-所有已支持平台统一要求 owner 配对与显式聊天绑定，单工作区也不例外。旧授权字段和旧 `/bind` 已移除，不自动迁移；详见[升级说明](../CHANGELOG_CN.md)。
+所有已支持平台统一要求 owner 配对与显式聊天绑定，单工作区也不例外。旧授权字段（`owner_open_id`、`allowed_open_ids`、`workspace_id`、`access_mode`）会被忽略并给出启动告警，不再阻止启动；详见[升级说明](../CHANGELOG_CN.md)。`chat_bindings` 在无 owner 时保持休眠直至配对完成（`--pair`），无 `--pair` 启动则给出配对指引后退出。
 
 ## 跨仓库契约测试
 

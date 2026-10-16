@@ -141,6 +141,16 @@ Then use `/new` to clear the current binding or `/resume <id>` to pin a known se
 
 On WeChat and Feishu, if a pinned session is missing, busy or cannot be restored, accepted input is isolated rather than resent in a fresh session. Check `/status` and the original Chord session, then inspect local ingress records if needed. Explicit `/new` or `/resume` selects a target for future work; it does not replay the isolated request. Send a new task only after checking whether the original request ran.
 
+### Session change is refused
+
+`/new` and `/resume` refuse a busy Chord process before replacing the route: send `/cancel` first, then retry. Distinct reasons name the cause:
+
+- `session_change_busy` — a turn is still running.
+- `session_transferred` — a transfer guard is active.
+- `undelivered_inputs` — restored or queued inputs are unresolved.
+
+A `control_target_expired` refusal right after startup or upgrade is a stale control snapshot: the gateway narrowed this guard so a process that is still starting (no runtime identity yet) no longer trips it. If it persists, check `/status`, restart, and inspect the gateway log for dropped readiness events.
+
 ## Runtime issues
 
 ### Chord does not respond
@@ -219,6 +229,8 @@ When reporting an issue, include:
 All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
 
 ## WeCom issues
+
+Rule out four setup blockers first. The admin console entry point is **Intelligent Zone → Smart Robot**; "Security and Management → Management Tools" is not the current entry point. A personal team has no Workbench and cannot sign in to the web admin console, so neither entry point is reachable — use an enterprise team or convert it with "Change to Enterprise Account". If the creation page shows no Bot ID or Secret, the API mode management scope does not include your account; enterprises above 1,000 contacts default to empty and need an administrator to enable it. If the bot is missing in the client or `Gateway binding check.` never arrives, verify that the available scope contains you. WeCom verification is not a prerequisite: long connections need no domain, ICP filing, or public IP, so unverified enterprises can connect. The "Available Permissions" panel on the creation page is the MCP/CLI capability channel, which Gateway does not use.
 
 For authentication failures, verify the intelligent bot API long-connection mode and bot ID/secret. For binding probe failures, check scope, target, send permission, and quota, then send `/bind` again. `duplicate_connection` means another deployment replaced the connection; stop it before restarting. `unknown_send` does not prove output was undelivered; inspect the chat and original session. After changing bot ID, stop the service and run `chord-gateway -f config.yaml pairing reset --platform wecom` in a local controlling terminal, type `wecom` to confirm, then pair again. An `endpoint` field is ignored with a warning and cannot select another connection URL. See the [WeCom guide](./wecom.md) for diagnostics and pending real-account acceptance.
 

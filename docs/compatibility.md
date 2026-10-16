@@ -48,7 +48,7 @@ Takeover workspace identity comes from the Chord `takeover preflight` response; 
 
 - Automatic session pins are keyed by workspace and route, so changing the platform account on an existing route keeps its session. Local `pairing reset` clears that platform's automatic pins together with the owner and bindings, so a reset route starts without the old session. Pins written by a release that scoped keys to the paired identity, and pins in the pre-`v2:` pipe-joined layout the current parser no longer addresses, are discarded on load rather than rewritten; see the [upgrade notes](../CHANGELOG.md). Re-pairing to a different owner inherits the previous session by design for single-user deployments; use `/new` or delete the pin for isolation.
 - Unknown YAML fields are ignored, but each one is reported in the gateway log with its line, so a typo or a removed option is noticed. The removed `event_visibility.activity` key therefore has no effect; activity tracking is always enabled.
-- Duplicate YAML keys keep the first occurrence: each later duplicate is reported as a `duplicate key ignored` warning with its line instead of failing startup, and the next configuration change rewrites the file without the duplicates.
+- Duplicate YAML keys keep the first occurrence: each later duplicate is reported as a `duplicate key ignored` warning with its line instead of failing startup, and the next configuration change rewrites the file without the duplicates. That rewrite also normalizes YAML formatting to two-space indentation, so the first change may reflow the file even when nothing is duplicated.
 - The Chord headless `todos` event is supported. Although Chord also emits an internal
   protocol event named `todos_updated`, the current headless command still surfaces
   `todos` externally — gateway accepts it as-is.
@@ -63,6 +63,12 @@ The following compatibility paths existed in earlier releases and have been remo
   adapter type / workspace id. `/bind` only operates on mapping form.
 - Raw-array Chord headless `todos` payloads (`[...]`) — removed. Current Chord emits
   wrapper payloads (`{"todos":[...]}`), and gateway only accepts that form.
+- Question `decline` action and `declined` outcome — removed to match Chord, where a
+  question can only be answered or cancelled. Cancel with `/question-withdraw <id>`.
+- File-based intake deduplication and polling cursors — removed without migration.
+  Intake, deduplication and cursors are memory-only; old files are no longer imported.
+- `https` proxy for WebSocket long-connections (Discord, Slack, Feishu, WeCom,
+  DingTalk sockets) — rejected at startup. Use `http`, `socks5` or `socks5h`.
 
 ## Cleanup rule
 
@@ -75,7 +81,7 @@ Session listing requires `chord sessions list --json --limit 10`, returning sche
 
 ## Chat bindings
 
-All supported platforms require owner pairing and explicit chat bindings, including single-workspace deployments. Old authorization fields and the old `/bind` syntax have been removed without automatic migration; see the [upgrade notes](../CHANGELOG.md).
+All supported platforms require owner pairing and explicit chat bindings, including single-workspace deployments. Old authorization fields (`owner_open_id`, `allowed_open_ids`, `workspace_id`, `access_mode`) are ignored with a startup warning instead of failing startup; see the [upgrade notes](../CHANGELOG.md). With `chat_bindings` but no owner, `chat_bindings` stay dormant until pairing completes (`--pair`), or startup exits with pairing guidance.
 
 ## Cross-repository contract tests
 
