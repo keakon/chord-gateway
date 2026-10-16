@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -117,6 +118,26 @@ func TestConfigStoreFailurePhases(t *testing.T) {
 				t.Fatal("pre-replacement failure classified incorrectly")
 			}
 		})
+	}
+}
+
+func TestConfigStoreSurfacesDuplicateKeyWarningsAndPersistsDeduped(t *testing.T) {
+	s := testConfigStore(t, "ims: {wechat: {}}\nworkspaces: {one: {path: /tmp/one}, one: {path: /tmp/two}}\n")
+	if len(s.duplicateKeyWarnings) != 1 || !strings.Contains(s.duplicateKeyWarnings[0], "duplicate key one in configuration.workspaces") {
+		t.Fatalf("expected duplicate key warning, got %v", s.duplicateKeyWarnings)
+	}
+	if ws := s.Snapshot().WorkspaceByID("one"); ws == nil || ws.Path != "/tmp/one" {
+		t.Fatalf("first occurrence must win, got %+v", s.Snapshot().Workspaces)
+	}
+	if _, err := s.Commit(context.Background(), testConfigMutation("chord_path", "/tmp/example")); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Workspaces) != 1 || reloaded.Workspaces[0].ID != "one" {
+		t.Fatalf("duplicate workspace persisted, got %+v", reloaded.Workspaces)
 	}
 }
 

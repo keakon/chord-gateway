@@ -44,7 +44,7 @@ func TestSlackConfigurationExplicitBindingAndOwner(t *testing.T) {
     chat_bindings: {channel-example: project}
 workspaces: {project: {path: /project}}
 `)
-	cfg, doc, err := ParseDocument(input)
+	cfg, doc, _, err := ParseDocument(input)
 	if err != nil {
 		t.Fatal(err)
 	}

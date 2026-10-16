@@ -12,8 +12,8 @@
 
 - Gateway 入站队列、去重和轮询游标改为仅存内存，重启不恢复，不保证跨重启不丢不重；旧去重与游标文件不再导入。配置、登录凭据、session pin 和移交保护仍保留，Chord 会话由 Chord 保存。停服前核查未决输入，详见[投递语义](./docs/operations_CN.md#消息投递与重启)。
 
-- 飞书与微信统一使用单 owner 配对和显式聊天绑定，单工作区也不例外。删除 legacy 模式和 `access_mode`、`owner_open_id`、`allowed_open_ids`、微信 `workspace_id` 字段；包含这些字段的配置会明确报错。删除旧 `/bind <workspace_id> <path>`，改用 `/bind "<已有目录>"`；首次私聊配对需额外提供终端配对码。旧授权不会自动迁移。
-- 升级已有部署：先停止 gateway，完成或处理未结束的会话转移，备份 YAML 与状态目录；删除上述旧字段，未配对平台清空 `chat_bindings`，保留工作区与 Chord 会话。把旧的无身份作用域 `session-pins.json`（或自定义 `session_pins_file`）移到备份位置，避免自动恢复到旧身份；然后前台运行 `--pair`，私聊配对并重新绑定各聊天。旧 `workspaceID|imType|chatID` pin 不再读取；需要历史会话时先核对 `/sessions`，再显式 `/resume`。不要删除尚未处理的 transfer 状态文件。
+- 飞书与微信统一使用单 owner 配对和显式聊天绑定，单工作区也不例外。删除 legacy 模式和 `access_mode`、`owner_open_id`、`allowed_open_ids`、微信 `workspace_id` 字段；包含这些字段的配置会忽略它们并在启动时告警。删除旧 `/bind <workspace_id> <path>`，改用 `/bind "<已有目录>"`；首次私聊配对需额外提供终端配对码。旧授权不会自动迁移：以 `--pair` 启动并完成私聊配对后，已有 `chat_bindings` 即生效；未配对且不带 `--pair` 启动时会报错并给出指引。
+- 升级已有部署：先停止 gateway，完成或处理未结束的会话转移，备份 YAML 与状态目录。配置文件可以保持原样——旧字段会忽略并告警，`chat_bindings` 在 owner 配对完成后自动生效。前台运行 `--pair`，在终端验证的私聊中完成配对，然后重新绑定各聊天。把旧的无身份作用域 `session-pins.json`（或自定义 `session_pins_file`）移到备份位置，避免自动恢复到旧身份。旧 `workspaceID|imType|chatID` pin 不再读取；需要历史会话时先核对 `/sessions`，再显式 `/resume`。不要删除尚未处理的 transfer 状态文件。
 - 本地标准输入/输出改用显式 `--console`，要求配置恰好一个工作区，不能与 `--pair` 同用。缺少微信 token 会触发扫码登录，不再隐式切换 console。
 - 删除 `/question-decline`（Telegram 为 `/question_decline`），与 Chord 保持一致：问题只能回答或取消。取消问题请用 `/question-withdraw <id>`；不再显示 `declined` 结果。
 
@@ -54,6 +54,8 @@
 - 完成通知现在附带刚结束 turn 的紧凑摘要（时长、工具调用数、重试次数），`⏳ Chord: Ready for input; background jobs still running: N` 变体同样适用。长时间提醒现在显示已运行的 turn 时长、`running tools` / `retrying` 等粗粒度阶段，以及当前工作周期内观察到的工具与重试次数。同一会话内的确认、交接和取消操作不会清零累计进度。本地 shell 工作单独跟踪，不会重置 agent 进度；完成通知会显示仍在运行的 shell 命令数量。`connecting` 这类传输层 phase 仍然不会暴露。
 
 - 配置中不支持或已移除的 YAML 字段现在会在 gateway 日志中带行号报告并被忽略，不再静默失效：拼写错误或 `event_visibility.activity` 这类已移除选项在启动时即可发现，文件其余部分仍正常加载。
+
+- 配置文件中的重复 YAML key 不再阻止启动。保留首次出现的值，后续重复项以 `duplicate key ignored` 告警带行号报告，下一次配置变更时会将文件重写为去重后的内容。
 
 ### 修复
 

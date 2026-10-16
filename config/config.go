@@ -545,9 +545,12 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	cfg, doc, err := ParseDocument(data)
+	cfg, doc, duplicateKeyWarnings, err := ParseDocument(data)
 	if err != nil {
 		return nil, err
+	}
+	for _, warning := range duplicateKeyWarnings {
+		log.Warnf("config %s: duplicate key ignored: %s", path, warning)
 	}
 	for _, issue := range UnsupportedConfigFields(doc) {
 		log.Warnf("config %s: unsupported field ignored: %s", path, issue)

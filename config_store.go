@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -20,15 +21,16 @@ var (
 
 // ConfigStore serializes mutations and publishes only durable snapshots.
 type ConfigStore struct {
-	txMu      sync.Mutex
-	path      string
-	lastBytes []byte
-	warnings  []string
-	snapshot  atomic.Pointer[config.Config]
-	faulted   atomic.Bool
-	closing   atomic.Bool
-	fatal     chan struct{}
-	writer    configWriteOps
+	txMu                 sync.Mutex
+	path                 string
+	lastBytes            []byte
+	warnings             []string
+	duplicateKeyWarnings []string
+	snapshot             atomic.Pointer[config.Config]
+	faulted              atomic.Bool
+	closing              atomic.Bool
+	fatal                chan struct{}
+	writer               configWriteOps
 }
 
 type ConfigMutation struct {
@@ -46,19 +48,33 @@ func NewConfigStore(path string) (*ConfigStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, doc, err := config.ParseDocument(data)
+	cfg, doc, duplicateKeyWarnings, err := config.ParseDocument(data)
 	if err != nil {
 		return nil, err
 	}
 	if err = cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &ConfigStore{path: path, lastBytes: data, warnings: config.UnsupportedConfigFields(doc), fatal: make(chan struct{}), writer: defaultConfigWriteOps()}
+	s := &ConfigStore{path: path, lastBytes: data, warnings: config.UnsupportedConfigFields(doc), duplicateKeyWarnings: duplicateKeyWarnings, fatal: make(chan struct{}), writer: defaultConfigWriteOps()}
 	s.snapshot.Store(cfg)
 	return s, nil
 }
 func (s *ConfigStore) Snapshot() *config.Config { return s.snapshot.Load() }
 func (s *ConfigStore) Fatal() <-chan struct{}   { return s.fatal }
+
+// storeWarningMessages renders the load-time configuration diagnostics a store
+// collected, so both the gateway logger and the pairing CLI can surface them
+// before a rewrite silently drops the offending lines.
+func storeWarningMessages(s *ConfigStore) []string {
+	messages := make([]string, 0, len(s.duplicateKeyWarnings)+len(s.warnings))
+	for _, warning := range s.duplicateKeyWarnings {
+		messages = append(messages, fmt.Sprintf("config %s: duplicate key ignored: %s", s.path, warning))
+	}
+	for _, warning := range s.warnings {
+		messages = append(messages, fmt.Sprintf("config %s: unsupported field ignored: %s", s.path, warning))
+	}
+	return messages
+}
 func (s *ConfigStore) checkDisk() error {
 	b, e := os.ReadFile(s.path)
 	if e != nil {
@@ -83,7 +99,7 @@ func (s *ConfigStore) Commit(ctx context.Context, mutation ConfigMutation) (Comm
 	if err := s.checkDisk(); err != nil {
 		return before, err
 	}
-	current, doc, err := config.ParseDocument(s.lastBytes)
+	current, doc, _, err := config.ParseDocument(s.lastBytes)
 	if err != nil {
 		return before, err
 	}
@@ -111,7 +127,7 @@ func (s *ConfigStore) Commit(ctx context.Context, mutation ConfigMutation) (Comm
 	if err = enc.Close(); err != nil {
 		return before, err
 	}
-	candidate, _, err := config.ParseDocument(buf.Bytes())
+	candidate, candidateDoc, candidateDuplicates, err := config.ParseDocument(buf.Bytes())
 	if err != nil {
 		return before, err
 	}
@@ -140,6 +156,8 @@ func (s *ConfigStore) Commit(ctx context.Context, mutation ConfigMutation) (Comm
 	}
 	s.lastBytes = bytes.Clone(buf.Bytes())
 	s.snapshot.Store(candidate)
+	s.warnings = config.UnsupportedConfigFields(candidateDoc)
+	s.duplicateKeyWarnings = candidateDuplicates
 	return outcome, nil
 }
 

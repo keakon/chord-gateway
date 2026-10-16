@@ -12,7 +12,7 @@ func TestNewPlatformConfiguration(t *testing.T) {
 	for platform, fields := range platforms {
 		t.Run(platform, func(t *testing.T) {
 			input := "ims: {" + platform + ": {" + fields + ", owner: {account_id: account, user_id: user}, chat_bindings: {chat: project}}}\nworkspaces: {project: {path: /project}}"
-			cfg, doc, err := ParseDocument([]byte(input))
+			cfg, doc, _, err := ParseDocument([]byte(input))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -33,8 +33,8 @@ func TestNewPlatformConfiguration(t *testing.T) {
 			if err = missing.Validate(); err == nil || strings.Contains(err.Error(), "placeholder") {
 				t.Fatalf("credential validation: %v", err)
 			}
-			for _, access := range []string{"owner: null", "owner: {account_id: account, user_id: user, extra: invalid}", "allowed_open_ids: [user]", "chat_bindings: {chat: project}"} {
-				candidate, _, e := ParseDocument([]byte("ims: {" + platform + ": {" + fields + ", " + access + "}}\nworkspaces: {project: {path: /project}}"))
+			for _, access := range []string{"owner: null", "owner: {account_id: account, user_id: user, extra: invalid}"} {
+				candidate, _, _, e := ParseDocument([]byte("ims: {" + platform + ": {" + fields + ", " + access + "}}\nworkspaces: {project: {path: /project}}"))
 				if e == nil {
 					e = candidate.Validate()
 				}
@@ -53,7 +53,7 @@ func TestDiscordRequiresBothCredentials(t *testing.T) {
 		"bot_token: ' ', application_id: '123456789012345678'",
 		"bot_token: example-token, application_id: ' '",
 	} {
-		cfg, _, err := ParseDocument([]byte("ims: {discord: {" + fields + "}}"))
+		cfg, _, _, err := ParseDocument([]byte("ims: {discord: {" + fields + "}}"))
 		if err != nil {
 			t.Fatal(err)
 		}

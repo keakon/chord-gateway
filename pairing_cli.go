@@ -28,6 +28,11 @@ func newPairingCommand(paths *config.Paths, configFile *string) *cobra.Command {
 			return err
 		}
 		defer locks.Close()
+		// Surface load-time diagnostics before the commit may rewrite the file
+		// and drop duplicate or unsupported lines without any other trace.
+		for _, message := range storeWarningMessages(store) {
+			fmt.Fprintln(os.Stderr, message)
+		}
 		cfg := store.Snapshot()
 		if cfg.IMConfigByType(platform) == nil {
 			return errors.New("platform is not configured")

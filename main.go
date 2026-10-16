@@ -56,6 +56,27 @@ func newRootCmd(paths *config.Paths, flagConfig *string) *cobra.Command {
 	return rootCmd
 }
 
+// checkPairedOwnerRequirement enforces the pairing prerequisite for platforms
+// that declare chat bindings. Bindings stay dormant while a platform has no
+// paired owner (admission only accepts code-verified private /bind), so with
+// --pair the gateway can start and complete pairing; without --pair those
+// bindings could never activate and the user gets actionable guidance instead.
+func checkPairedOwnerRequirement(cfg *config.Config, pair bool) error {
+	for _, im := range cfg.ActiveIMs() {
+		switch {
+		case im.OwnerIdentity() != nil:
+			// Paired; bindings are live.
+		case len(im.Bindings()) > 0 && pair:
+			log.Warnf("ims.%s: chat_bindings stay inactive until an owner is paired", im.Type())
+		case len(im.Bindings()) > 0:
+			return fmt.Errorf("ims.%s: chat_bindings requires a paired owner; restart with --pair and send /bind \"<directory>\" in a private chat (the pairing code is shown on the terminal), or set owner: {account_id: <bot account id>, user_id: <your user id>} in the config", im.Type())
+		case !pair:
+			log.Warnf("ims.%s: no paired owner; start with --pair to pair this platform", im.Type())
+		}
+	}
+	return nil
+}
+
 func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error {
 
@@ -114,8 +135,16 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		logger.AddHandler(handler)
 		defer logger.Close()
 		log.SetDefaultLogger(logger)
-		for _, warning := range store.warnings {
-			log.Warnf("config %s: unsupported field ignored: %s", store.path, warning)
+		for _, message := range storeWarningMessages(store) {
+			log.Warnf("%s", message)
+		}
+		// Console mode never connects IM platforms, so the chat-binding pairing
+		// prerequisite (and its --pair guidance, which is mutually exclusive with
+		// --console) does not apply.
+		if !console {
+			if err := checkPairedOwnerRequirement(cfg, pair); err != nil {
+				return err
+			}
 		}
 
 		if pair && !needsTerminal {

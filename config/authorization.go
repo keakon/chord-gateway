@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,7 +20,6 @@ type accessFields struct{ owner bool }
 func parseAccessFields(node *yaml.Node) (accessFields, error) {
 	var f accessFields
 	var invalid bool
-	var removed string
 	walkYAMLMapping(node, map[string]bool{}, map[*yaml.Node]bool{}, func(k, v *yaml.Node) {
 		switch k.Value {
 		case "owner":
@@ -39,8 +37,6 @@ func parseAccessFields(node *yaml.Node) (accessFields, error) {
 					invalid = true
 				}
 			})
-		case "owner_open_id", "allowed_open_ids", "workspace_id", "access_mode":
-			removed = k.Value
 		case "chat_bindings":
 			if v.Tag == "!!null" {
 				return
@@ -60,9 +56,6 @@ func parseAccessFields(node *yaml.Node) (accessFields, error) {
 			})
 		}
 	})
-	if removed != "" {
-		return f, fmt.Errorf("authorization field %q was removed; use --pair and explicit /bind (see CHANGELOG)", removed)
-	}
 	if invalid {
 		return f, errors.New("invalid authorization field structure")
 	}
@@ -153,9 +146,6 @@ func (c *Config) validateAccess(im *IMAdapterConfig) error {
 		if owner == nil || strings.TrimSpace(owner.AccountID) == "" || strings.TrimSpace(owner.UserID) == "" {
 			return errors.New("owner requires account_id and user_id")
 		}
-	}
-	if owner == nil && len(im.Bindings()) > 0 {
-		return errors.New("chat_bindings requires a paired owner")
 	}
 	for chat, id := range im.Bindings() {
 		if strings.TrimSpace(chat) == "" || c.WorkspaceByID(id) == nil {
