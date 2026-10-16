@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -94,7 +95,16 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 			ticket.Kind = "paired_task"
 		}
 	} else {
-		if msg.ChatKind != "private" || msg.InternalAction != nil || msg.ForceText || !isBindCommand(msg.Text) {
+		if msg.ChatKind != "private" || msg.InternalAction != nil || msg.ForceText {
+			p.mu.Unlock()
+			return ticket, false
+		}
+		if !isBindCommand(msg.Text) {
+			// An unpaired private sender learns why the bot is silent instead
+			// of being dropped without a trace. Group chats stay silent.
+			if chargePairing && p.hintAllowed(state, msg.ChatID) {
+				ticket.Kind = "pairing_hint_text"
+			}
 			p.mu.Unlock()
 			return ticket, false
 		}
@@ -111,7 +121,17 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 			state.tokens--
 		}
 		args, err := parsePairedBindArgs(msg.Text)
-		if err != nil || len(args) != 2 || !p.codeValid(state, args[1]) {
+		if err != nil || len(args) != 2 {
+			if chargePairing && p.hintAllowed(state, msg.ChatID) {
+				ticket.Kind = "pairing_hint_usage"
+			}
+			p.mu.Unlock()
+			return ticket, false
+		}
+		if !p.codeValid(state, args[1]) {
+			if chargePairing && p.hintAllowed(state, msg.ChatID) {
+				ticket.Kind = "pairing_hint_code"
+			}
 			p.mu.Unlock()
 			return ticket, false
 		}
@@ -151,8 +171,20 @@ func (a *Admission) Valid(t AdmissionTicket) bool {
 	if im == nil {
 		return false
 	}
+	if strings.HasPrefix(t.Kind, "pairing_hint") {
+		// A hint carries no authority beyond one bounded reply text and has no
+		// gate, so it is valid only while the platform is still unpaired. Once
+		// an owner appears the ticket must expire rather than be upgraded to
+		// owner authority or reach the nil gate below.
+		if im.OwnerIdentity() != nil {
+			return false
+		}
+		return s.ready
+	}
 	owner := im.OwnerIdentity()
 	if owner == nil {
+		// Re-validate the binding ticket against the live pairing code: a code
+		// replaced while the probe is in flight must not authorize a bind.
 		return s.ready && t.Kind == "paired_bind" && t.PairingNonceID != "" && t.PairingNonceID == s.nonceID && !s.consumed && p.now().Before(s.expires)
 	}
 	if owner.UserID != t.SenderID || owner.AccountID != t.Identity.AccountID {

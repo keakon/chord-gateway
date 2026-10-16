@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -159,6 +160,9 @@ func (a *Admission) authorizeClassified(msg IncomingMessage, chargePairing bool)
 			return AdmissionResult{t, AdmissionRejected, "chat_unbound"}
 		}
 		return AdmissionResult{t, AdmissionAllowed, ""}
+	}
+	if strings.HasPrefix(t.Kind, "pairing_hint") {
+		return AdmissionResult{t, AdmissionRejected, t.Kind}
 	}
 	a.mu.Lock()
 	closed := a.closed

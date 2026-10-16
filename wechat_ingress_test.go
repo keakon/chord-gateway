@@ -164,6 +164,33 @@ func TestWechatIngressCredentialsNeverPersist(t *testing.T) {
 	}
 }
 
+// An unpaired private sender is guided with a hint, but the transport still
+// has to prepare the inbound reply context or the hint can never be sent.
+func TestWechatUnpairedHintPreparesReplyContext(t *testing.T) {
+	r, _ := unpairedTestRouter(t)
+	store := NewIngressStore()
+	service := NewIngressService(store, r)
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { service.Close(); store.Close() })
+	a := newTestWechatAdapter(t)
+	a.msgRouter = r
+	a.imCfg = *r.getConfig().IMConfigByType("wechat")
+	a.token.Store(&TokenData{AccountID: "bot", Token: "sample-token"})
+	r.SetAdapter(a)
+	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("1", "owner", "hello", "sample-context"), a.token.Load())
+	if result.Reason != "pairing_hint_text" {
+		t.Fatal(result)
+	}
+	a.mu.Lock()
+	reply, ok := a.replyContexts[compositeKey("bot", "owner")]
+	a.mu.Unlock()
+	if !ok || reply.token != "sample-context" {
+		t.Fatal("hint cannot be sent: verified inbound reply context was not prepared")
+	}
+}
+
 func TestWechatIngressOldTokenAndMalformedTransport(t *testing.T) {
 	a, s, _, _ := newWechatIngressTest(t)
 	old := a.token.Load()
@@ -263,6 +290,12 @@ func TestWechatIngressDuplicatePairingRefusalDoesNotSpendAttempts(t *testing.T) 
 	p.mu.Lock()
 	tokens := p.platforms["wechat"].tokens
 	p.mu.Unlock()
+	a.mu.Lock()
+	contexts := len(a.replyContexts)
+	a.mu.Unlock()
+	if contexts == 0 {
+		t.Fatal("fresh refusal must prepare a reply context for its hint")
+	}
 	for range 35 {
 		if duplicate := a.receiveIncomingMessage(t.Context(), bad, a.token.Load()); duplicate.Disposition != ReceiveDuplicate || duplicate.State != "rejected" {
 			t.Fatal(duplicate)
@@ -271,7 +304,10 @@ func TestWechatIngressDuplicatePairingRefusalDoesNotSpendAttempts(t *testing.T) 
 	p.mu.Lock()
 	remaining := p.platforms["wechat"].tokens
 	p.mu.Unlock()
-	if remaining != tokens || len(a.replyContexts) != 0 {
+	a.mu.Lock()
+	after := len(a.replyContexts)
+	a.mu.Unlock()
+	if remaining != tokens || after != contexts {
 		t.Fatal("replayed refusal spent pairing attempts or prepared a context")
 	}
 	good := a.receiveIncomingMessage(t.Context(), wechatTextMessage("52", "owner", fmt.Sprintf("/bind %q %s", t.TempDir(), code), "pair-context"), a.token.Load())

@@ -13,7 +13,21 @@ import (
 	"time"
 )
 
-const pairingLifetime = 10 * time.Minute
+const (
+	pairingLifetime = 10 * time.Minute
+
+	// Hint replies answer unpaired private senders. The bucket is separate
+	// from the pairing budget so hint chatter cannot drain pairing attempts.
+	// The reverse is not symmetric: an attempt is charged before its args are
+	// parsed, so while the pairing budget is exhausted a private sender gets
+	// no hint until the budget replenishes.
+	hintBucketSize     = 10
+	hintRefillInterval = 10 * time.Second
+
+	// Bound the per-chat hint buckets so one platform cannot accumulate
+	// unbounded state from many unpaired private chats.
+	hintChatBucketMax = 256
+)
 
 var errPairingDenied = errors.New("pairing authorization is no longer valid")
 
@@ -30,6 +44,16 @@ type pairingPlatform struct {
 	expires                  time.Time
 	tokens                   int
 	refilled                 time.Time
+
+	// Hint budgets are keyed by private chat, not shared across the platform:
+	// a spammer in one chat must not silence hints for unpaired users elsewhere.
+	hints map[string]*pairingHint
+}
+
+// pairingHint is the bounded hint-reply budget for one unpaired private chat.
+type pairingHint struct {
+	tokens   int
+	refilled time.Time
 }
 
 // PairingService keeps credentials in memory and writes them only to the
@@ -150,4 +174,50 @@ func (p *PairingService) consume(platform string) {
 		s.consumed = true
 		s.nonce = [16]byte{}
 	}
+}
+
+// hintAllowed spends one bounded hint-reply token from the private chat's own
+// bucket. Callers hold p.mu.
+func (p *PairingService) hintAllowed(s *pairingPlatform, chatID string) bool {
+	if s == nil || chatID == "" {
+		return false
+	}
+	if s.hints == nil {
+		s.hints = make(map[string]*pairingHint)
+	}
+	h := s.hints[chatID]
+	if h == nil {
+		if len(s.hints) >= hintChatBucketMax {
+			// Drop buckets that have fully refilled: idle chats cost nothing and
+			// a burst of distinct chats cannot evict active ones.
+			for id, idle := range s.hints {
+				if p.now().Sub(idle.refilled) >= time.Duration(hintBucketSize)*hintRefillInterval {
+					delete(s.hints, id)
+				}
+			}
+			if len(s.hints) >= hintChatBucketMax {
+				return false
+			}
+		}
+		h = &pairingHint{tokens: hintBucketSize, refilled: p.now()}
+		s.hints[chatID] = h
+	}
+	if replenished := int(p.now().Sub(h.refilled) / hintRefillInterval); replenished > 0 {
+		h.tokens = min(hintBucketSize, h.tokens+replenished)
+		h.refilled = h.refilled.Add(time.Duration(replenished) * hintRefillInterval)
+	}
+	if h.tokens == 0 {
+		return false
+	}
+	h.tokens--
+	return true
+}
+
+// codeLiveFor reports whether a pairing code is currently usable on the
+// platform. Pairing stays enabled only while a fresh code is on the terminal.
+func (p *PairingService) codeLiveFor(platform string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.platforms[platform]
+	return p.enabled && s != nil && s.ready && !s.changed && !s.consumed && !s.expires.IsZero() && p.now().Before(s.expires)
 }

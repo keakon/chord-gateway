@@ -57,6 +57,8 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Duplicate YAML keys in the configuration file no longer prevent startup. The first occurrence wins, every later duplicate is reported as a `duplicate key ignored` warning with its line, and the next configuration change rewrites the file without the duplicates.
 
+- Private senders to an unpaired gateway now receive a bounded hint instead of being dropped silently: how to pair, what a malformed `/bind` is missing, or that a pairing code was wrong. When pairing is inactive the hint says to restart with `--pair`. Group chats, internal actions, and duplicate redeliveries stay silent, and hints draw on a separate rate-limit budget from pairing attempts.
+
 ### Fixed
 
 - WeCom answer hints preserve `@request` for copyable replies. Slack now honors per-method `Retry-After` across lookups, identity checks and socket reconnects.

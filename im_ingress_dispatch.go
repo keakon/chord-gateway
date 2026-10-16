@@ -177,7 +177,7 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		}
 	}
 	msg.ticket = &a.Ticket
-	if e.preparation != nil && (a.Disposition == AdmissionAllowed || a.Ticket.Kind == "owner_unbound") {
+	if e.preparation != nil && (a.Disposition == AdmissionAllowed || a.Ticket.Kind == "owner_unbound" || strings.HasPrefix(a.Ticket.Kind, "pairing_hint")) {
 		transportTicket = &a.Ticket
 	}
 	prepare := func() bool {
@@ -201,7 +201,9 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		return s.store.acceptRecord(ctx, rec, e.Cursor, valid)
 	}
 	if a.Disposition == AdmissionRejected {
-		if a.Ticket.Kind == "owner_unbound" && !prepare() {
+		if (a.Ticket.Kind == "owner_unbound" || strings.HasPrefix(a.Ticket.Kind, "pairing_hint")) && !prepare() {
+			// The bounded refusal reply still needs the transport's inbound
+			// reply context; if the snapshot expired, retry instead of dropping.
 			return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
 		}
 		rec.State = "rejected"
@@ -209,6 +211,10 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		result := s.store.acceptRecord(ctx, rec, e.Cursor, valid)
 		if a.Ticket.Kind == "owner_unbound" && (result.Disposition == ReceiveRejected || result.Disposition == ReceiveDuplicate) {
 			s.router.enqueueIngressReply(msg, "This chat is not bound. Send "+s.router.ingressCommandHint(msg, "/bind <directory>")+".")
+		}
+		if strings.HasPrefix(a.Ticket.Kind, "pairing_hint") && result.Disposition == ReceiveRejected {
+			// Only fresh messages reach here: duplicates never re-hint.
+			s.router.enqueueIngressReply(msg, pairingHintReply(s.router, msg, a.Ticket.Kind))
 		}
 		return result
 	}
@@ -744,4 +750,25 @@ func (s *IngressService) Available() bool {
 	ready := s.started && s.ctx != nil && s.ctx.Err() == nil
 	s.mu.Unlock()
 	return ready && !s.store.closing.Load()
+}
+
+// pairingHintReply explains an unpaired refusal to a private sender. Hints
+// never dispatch work; they only tell the sender how pairing is meant to start.
+func pairingHintReply(r *NotificationRouter, msg IncomingMessage, kind string) string {
+	bind := r.ingressCommandHint(msg, `/bind "<directory>" <code>`)
+	pairing := r.admission.pairing
+	switch kind {
+	case "pairing_hint_usage":
+		return "Invalid bind command. Send " + bind + " using the code shown on the gateway terminal."
+	case "pairing_hint_code":
+		return "That pairing code is not valid. Check the code shown on the gateway terminal and resend " + bind + "."
+	default:
+		if pairing.codeLiveFor(msg.IMType) {
+			return "This gateway has no paired owner yet. Send " + bind + " using the code shown on the gateway terminal."
+		}
+		if pairing.enabled {
+			return "This gateway has no paired owner yet and its pairing code is no longer valid. Restart the gateway with --pair to display a new code, then send " + bind + "."
+		}
+		return "This gateway has no paired owner yet. Restart the gateway with --pair to display a pairing code, then send " + bind + "."
+	}
 }
