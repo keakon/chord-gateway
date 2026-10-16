@@ -6,10 +6,21 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
 )
+
+// swapTestValue temporarily replaces a package-level knob for one test and
+// restores it at cleanup. It lets timing tests exercise retry and backoff state
+// transitions without waiting out the production windows.
+func swapTestValue[T any](t *testing.T, target *T, value T) {
+	t.Helper()
+	old := *target
+	*target = value
+	t.Cleanup(func() { *target = old })
+}
 
 // newTestChordManager creates a ChordManager with cfg pre-loaded for tests.
 // Avoids inline struct literals that would conflict with cfg's atomic.Pointer type.

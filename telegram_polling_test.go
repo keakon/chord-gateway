@@ -50,6 +50,10 @@ func telegramWireUpdate(t *testing.T, id int64, text string) telegramUpdate {
 }
 func telegramTestPoller(t *testing.T) (*TelegramAdapter, *IngressStore, context.Context, context.CancelFunc) {
 	t.Helper()
+	// These tests assert retry ordering, not pacing; keep the same transitions
+	// without one real second per stuck or failed request.
+	swapTestValue(t, &telegramStuckRetryDelay, time.Millisecond)
+	swapTestValue(t, &telegramRetryBaseDelay, time.Millisecond)
 	store := testIngressStore(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)

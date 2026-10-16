@@ -16,6 +16,10 @@ import (
 )
 
 func TestWechatPairedReadinessRequiresSuccess(t *testing.T) {
+	// The failing cases need one backoff round to reach the next poll; shrink
+	// the pacing so readiness is not gated on real timers.
+	swapTestValue(t, &ilinkPollInterval, time.Millisecond)
+	swapTestValue(t, &ilinkRetryDelay, time.Millisecond)
 	for _, tc := range []struct {
 		name  string
 		body  string

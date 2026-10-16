@@ -24,6 +24,11 @@ type telegramClock func() time.Time
 // cadence.
 const telegramStuckReportInterval = time.Minute
 
+// telegramStuckRetryDelay paces retries of an unacknowledged update. It is a
+// variable so tests can exercise the escalation without one real second per
+// retry; production keeps one second.
+var telegramStuckRetryDelay = time.Second
+
 const (
 	// Telegram caps the server-side long poll at 25 seconds; a longer request
 	// is rejected. The client read bound adds an allowance on top of it.
@@ -302,7 +307,7 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 				log.Warnf("telegram: batch abandoned update_id=%v error=%v", stuckUpdateID, err)
 				return err
 			}
-			if !telegramWait(ctx, time.Second) {
+			if !telegramWait(ctx, telegramStuckRetryDelay) {
 				return ctx.Err()
 			}
 		}

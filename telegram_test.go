@@ -328,6 +328,10 @@ func TestTelegramAdapterAccountLockAcrossStateDirectories(t *testing.T) {
 }
 
 func TestTelegramAdapterPollerConflictTerminatesAndRevokesReadiness(t *testing.T) {
+	// The bound, not its duration, is under test: a persistent conflict must
+	// stay fatal and revoke readiness without waiting out the production window.
+	swapTestValue(t, &telegramConflictRetryDelay, time.Millisecond)
+	swapTestValue(t, &telegramConflictRetryLimit, 3)
 	f := newTelegramGatewayFixture(t, 840003)
 	a, base := f.adapter(t, f.botID)
 	api := &telegramLifecycleAPI{telegramAPI: base}

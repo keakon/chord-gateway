@@ -506,6 +506,8 @@ func TestWechatSendAcceptsExplicitSuccessStatus(t *testing.T) {
 // The CDN upload is keyed by filekey, so a transient failure may be retried; a
 // 4xx rejection may not, because repeating an invalid request cannot succeed.
 func TestWechatMediaUploadRetryPolicy(t *testing.T) {
+	// Attempts, not the spacing, are under test.
+	swapTestValue(t, &ilinkCDNUploadBackoff, time.Millisecond)
 	for _, tc := range []struct {
 		name         string
 		failStatus   int

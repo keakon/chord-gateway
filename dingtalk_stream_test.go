@@ -782,7 +782,9 @@ func TestDingtalkStreamStableConnectionResetsBackoff(t *testing.T) {
 				if waits.Add(1) == 3 {
 					return time.Hour
 				}
-				return 0
+				// A zero delay is floored to one second by sleepCtx; use a real
+				// minimum so the retry chain runs without that floor.
+				return time.Millisecond
 			}
 			done := make(chan error, 1)
 			go func() { done <- s.Run(ctx) }()

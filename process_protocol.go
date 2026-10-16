@@ -14,6 +14,11 @@ import (
 
 const headlessMaxEnvelopeBytes = 16 * 1024 * 1024
 
+// transportFailureStopGrace is how long a failed headless stdout stream waits
+// for the child to exit after SIGTERM before force-killing it. It is variable
+// so tests can exercise the stop ordering without the full production grace.
+var transportFailureStopGrace = 2 * time.Second
+
 // readLoop reads stdout from the chord process, parses JSON envelopes,
 // updates state, and calls onEvent for notable events.
 func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
@@ -58,7 +63,7 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 		if !stopped {
 			// Stop before notifying: IM delivery may block, but a failed stdout
 			// stream must not leave the child blocked on its remaining output.
-			p.TerminateGroup(2 * time.Second)
+			p.TerminateGroup(transportFailureStopGrace)
 			p.mu.RLock()
 			cmd := p.cmd
 			p.mu.RUnlock()

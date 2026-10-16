@@ -26,9 +26,12 @@ const ilinkCDNBaseURL = "https://novac2c.cdn.weixin.qq.com/c2c"
 // already serializes them, so a fixed backoff is enough.
 const (
 	ilinkCDNUploadAttempts  = 3
-	ilinkCDNUploadBackoff   = 500 * time.Millisecond
 	ilinkMediaUploadTimeout = 3 * time.Minute
 )
+
+// ilinkCDNUploadBackoff is variable so the upload retry test does not wait out
+// real backoff windows. Production keeps the value below.
+var ilinkCDNUploadBackoff = 500 * time.Millisecond
 
 type ilinkCDNMedia struct {
 	EncryptQueryParam string `json:"encrypt_query_param"`

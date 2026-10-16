@@ -33,6 +33,9 @@ func TestHeadlessTransportHelperProcess(t *testing.T) {
 }
 
 func TestReadLoopStopsRealProcessBeforeBlockedNotification(t *testing.T) {
+	// The stop ordering, not the production grace, is under test; a short grace
+	// still forces the SIGTERM-ignoring helper to SIGKILL before notifying.
+	swapTestValue(t, &transportFailureStopGrace, 100*time.Millisecond)
 	for _, mode := range []string{"oversized", "read failure"} {
 		t.Run(mode, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestHeadlessTransportHelperProcess$")

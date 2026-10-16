@@ -22,7 +22,11 @@ var errIngressClosed = errors.New("ingress is closed")
 var errIngressCapacity = errors.New("ingress capacity reached")
 var errIngressTransportChanged = errors.New("transport identity changed before admission")
 
-const ingressAcceptBudget = 2 * time.Second
+// ingressAcceptBudget bounds how long a dispatch waits for an acceptance before
+// reporting an uncertain outcome. It is variable so the acceptance-budget test
+// does not wait out the full window; production keeps two seconds.
+var ingressAcceptBudget = 2 * time.Second
+
 const ingressHistoryLimit = 100000
 const ingressHistoryTTL = 24 * time.Hour
 

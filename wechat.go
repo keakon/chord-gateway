@@ -28,17 +28,22 @@ const (
 	ilinkMessageStateFinish = 2
 	ilinkItemTypeText       = 1
 
-	ilinkPollInterval   = 1500 * time.Millisecond
 	ilinkLoginTimeout   = 5 * time.Minute
 	ilinkMaxRetries     = 3
 	ilinkBackoffDelay   = 30 * time.Second
-	ilinkRetryDelay     = 2 * time.Second
 	ilinkSessionExpired = -14
 
 	ilinkMaxMessageLen  = 2048
 	ilinkDefaultBaseURL = "https://ilinkai.weixin.qq.com"
 	ilinkDefaultBotType = "3"
 	ilinkChannelVersion = "1.0.2"
+)
+
+// Poll pacing is variable so tests can exercise the loops without real-time
+// waits. Production keeps these values.
+var (
+	ilinkPollInterval = 1500 * time.Millisecond
+	ilinkRetryDelay   = 2 * time.Second
 )
 
 // --- iLink JSON protocol types ---

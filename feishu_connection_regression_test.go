@@ -202,6 +202,9 @@ func TestFeishuOldSocketCannotSubmitBusinessToNewGeneration(t *testing.T) {
 }
 
 func TestFeishuAcceptanceBudgetReturnsUncertainBeforeLateCommit(t *testing.T) {
+	// The elapsed-time assertion is relative to the budget; shrink the budget so
+	// the test does not wait out the full production window.
+	swapTestValue(t, &ingressAcceptBudget, 200*time.Millisecond)
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
 	release, accepted := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once

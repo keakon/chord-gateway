@@ -7,6 +7,19 @@ import (
 	"github.com/keakon/golog/log"
 )
 
+// Retry pacing is variable so tests can exercise the state transitions without
+// waiting out real-time windows. Production keeps the defaults below.
+var (
+	// telegramConflictRetryDelay and telegramConflictRetryLimit bound how long a
+	// restart tolerates an overlapping server-side long poll before a persistent
+	// conflict is treated as a second poller.
+	telegramConflictRetryDelay = 2 * time.Second
+	telegramConflictRetryLimit = 30
+	// telegramRetryBaseDelay is the first delay after an unclassified transport
+	// failure; it doubles up to the cap in failed.
+	telegramRetryBaseDelay = time.Second
+)
+
 // One backoff spans startup and polling requests. A single successful probe
 // must not reset a flapping connection's retry delay.
 type telegramBackoff struct {
@@ -39,11 +52,11 @@ func (b *telegramBackoff) failed(err error) (time.Duration, bool) {
 			// A stale server-side long poll survives a local restart for up to
 			// its 25s timeout. Retry briefly so a restart does not exit; a true
 			// second poller keeps conflicting past the window and stays fatal.
-			if b.conflictRetries >= 30 {
+			if b.conflictRetries >= telegramConflictRetryLimit {
 				return 0, false
 			}
 			b.conflictRetries++
-			return jitterBackoff(2 * time.Second), true
+			return jitterBackoff(telegramConflictRetryDelay), true
 		case "rate_limited":
 			if apiErr.RetryAfter > 0 {
 				return apiErr.RetryAfter, true
@@ -51,7 +64,7 @@ func (b *telegramBackoff) failed(err error) (time.Duration, bool) {
 		}
 	}
 	if b.next == 0 {
-		b.next = time.Second
+		b.next = telegramRetryBaseDelay
 	}
 	delay := jitterBackoff(b.next)
 	b.next = min(b.next*2, 30*time.Second)

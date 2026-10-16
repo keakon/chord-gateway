@@ -12,6 +12,9 @@ import (
 func TestTelegramBatchFreezesControlsAcrossAdmissionAndRedelivery(t *testing.T) {
 	for _, retry := range []bool{false, true} {
 		t.Run(fmt.Sprint(retry), func(t *testing.T) {
+			// The retry subtest only needs the redelivery path to run, not one real
+			// second between attempts.
+			swapTestValue(t, &telegramStuckRetryDelay, time.Millisecond)
 			f := newTelegramGatewayFixture(t, 917001)
 			p, writer := f.installProcess(t, 123456)
 			p.mu.Lock()
