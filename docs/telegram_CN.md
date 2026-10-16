@@ -43,7 +43,7 @@ Telegram 通过 Bot API 长轮询连接到本机 Gateway，不需要公网回调
 
 群里的 `/status@YourBotUsername`、`/cancel@YourBotUsername`、`/allow@YourBotUsername`、`/answer@YourBotUsername @<id> <text>` 与私聊命令含义相同。自动生成的操作提示会添加当前机器人 suffix。发给其他机器人的命令会被忽略；普通任务里的路径、`@` 和斜杠原样保留。完整命令和会话恢复见[使用指南](./usage_CN.md)。
 
-Telegram 将公共命令中带连字符的名称写为 `/handoff_deny`、`/question_interact`、`/question_withdraw`、`/question_replace`。群里再加 `@YourBotUsername`，例如 `/handoff_deny@YourBotUsername <reason>`。私聊和群聊中的自动提示都会使用这些名称；带机器人后缀的旧连字符写法会被拒绝。
+Telegram 将公共命令中带连字符的名称写为 `/handoff_deny`、`/question_interact`、`/question_withdraw`、`/question_replace`。群里再加 `@YourBotUsername`，例如 `/handoff_deny@YourBotUsername <reason>`。私聊和群聊中的自动提示都会使用这些名称；带机器人后缀的旧连字符写法（如 `/handoff-deny@YourBotUsername`）会被拒绝，无论 Telegram 只把前缀还是把整条命令标记为 command entity。
 
 确认、回答和取消都以 Gateway 收到整批消息时的目标为准，接纳重试不会改指向新请求。执行前目标已变化时，旧操作会被拒绝；请查看 `/status` 后再发送新命令。`/status` 也会显示最近一次输出部分失败及已接受段数。输出不完整时请查看原 Chord 会话，不要为了补输出重新执行任务。
 
@@ -63,7 +63,7 @@ chord-gateway pairing reset --platform telegram --config /path/to/config.yaml
 
 只有普通文本任务保存用于冲突检测的正文摘要。控制命令和不支持的输入只保留身份去重证据，不保存配对码、回答等参数的摘要；重复控制不会再次执行。身份相同、仅参数不同的控制输入不做当前进程内参数比较。
 
-网络故障使用带抖动的指数退避，短暂成功不会重置等待时间，持续成功一分钟后才重置。Telegram 明确返回的 `retry_after` 优先，等待可以取消。本地重启后紧接着的 409 会短暂重试（上一次服务端长轮询在其 25s 超时前仍残留）；持续 409 说明真有第二个 poller，仍为致命错误。
+网络故障使用带抖动的指数退避，短暂成功不会重置等待时间，持续成功一分钟后才重置。Telegram 明确返回的 `retry_after` 优先，等待可以取消。每次重试都会按退避步骤记录一次日志，包含方法名、错误分类、冲突次数和等待时间；token 和请求 URL 不会出现在日志里。本地重启后紧接着的 409 会短暂重试（上一次服务端长轮询在其 25s 超时前仍残留）；持续 409 说明真有第二个 poller，仍为致命错误。网络失败和 409 分开计数，上游抖动不会耗尽冲突窗口。`getMe`、`getWebhookInfo` 或 `getUpdates` 返回的方法级拒绝——既不是 429，也不是凭据、冲突或迁移类的 `ok:false`——会被判为致命错误而不是重试，因为这种结果不会自行恢复；返回 HTTP 200 却带自己的错误体的代理正好长这样。
 
 Telegram 服务器最多保留未接收 update **24 小时**，离线超过保留期可能丢失消息。至少一周没有新 update 后，新的 update ID 可能随机重置，因此 Gateway 按当前批次确认，不依赖永久最大 ID。详见官方 [getUpdates](https://core.telegram.org/bots/api#getupdates) 和 [Update](https://core.telegram.org/bots/api#update) 文档。
 
@@ -78,10 +78,17 @@ Telegram 服务器最多保留未接收 update **24 小时**，离线超过保�
 | 403 | 检查机器人是否被屏蔽、被移出群或目标不可访问 |
 | `chat_migrated` | 由 owner 到新 supergroup 显式重新绑定；不会复制旧群授权 |
 | `unknown_send` | 请求可能已经送达，先查看聊天；Gateway 不会自动重发或重新执行任务 |
-| Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步。始终无法进入终态的 update 会按序阻塞后续 update（设计如此），首次告警一次、之后最多每分钟一次并带 `update_id`，同时记录 `acceptance_unconfirmed` 指标。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
+| Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步；`telegram: <方法> request failed ... retrying in ...` 记录每一次退避重试。始终无法进入终态的 update 会按序阻塞后续 update（设计如此），首次告警一次、之后最多每分钟一次并带 `update_id`，同时记录 `acceptance_unconfirmed` 指标。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
+| `method_rejected` | `getMe`、`getWebhookInfo` 或 `getUpdates` 返回了既不是 429，也不是凭据、冲突或迁移类的 `ok:false`。请检查代理和固定的 `https://api.telegram.org` 地址：返回 HTTP 200 却带自己的错误体的陈旧代理正好产生这个结果，且会被判为致命错误而不会一直重试 |
+
+## 官方参考
+
+- [Bots FAQ —— 面向用户的广播](https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this) —— 同一聊天避免超过**每秒 1 条**，同一群不超过**每分钟 20 条**，批量投递约**每秒 30 条**；超过会返回 `429`。这些是平台限制，不是 Gateway 的预算。
+- [sendMessage](https://core.telegram.org/bots/api#sendmessage) —— 单条文本上限为实体解析后 4096 个字符，Gateway 的自动分段即受此约束。
+- [getWebhookInfo](https://core.telegram.org/bots/api#getwebhookinfo) —— 排障表中用于比对 `pending_update_count`。
 
 ## 部署验收
 
 真实账号验收尚未完成。部署后依次记录：私聊配对、`/status`、短文本任务、群带 suffix 绑定、回复 Bot 的任务、确认/Question/取消、超过 5 分钟的任务，以及重启后在原绑定查询状态。群 privacy 测试分别记录普通消息、显式命令和回复 Bot 三种送达情况；默认模式通过不要求关闭 privacy。
 
-本轮不支持 forum topic、inline keyboard、媒体输入/输出和编辑预览。Topic 输入不会落到群根绑定；媒体 caption 不会变成文本任务；channel post、编辑消息、机器人、匿名管理员和 `sender_chat` 代发均不作为任务接纳。这些能力需要单独功能实现。
+本轮不支持 forum topic、inline keyboard、媒体输入/输出和编辑预览。Topic 输入不会落到群根绑定。媒体 caption 不会变成文本任务：photo、document、video、audio、voice、animation、sticker、video note、contact、location、venue、poll、dice、game、invoice、successful payment、story、passport data、web app data 这类 update 一律按 unsupported content 拒绝，即使 caption 看起来像任务。channel post、编辑消息、机器人、匿名管理员和 `sender_chat` 代发均不作为任务接纳。这些能力需要单独功能实现。

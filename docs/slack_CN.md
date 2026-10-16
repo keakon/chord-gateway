@@ -39,7 +39,7 @@ ims:
     team_id: your-team-id
 ```
 
-四项均必填，token 和 ID 必须来自同一安装范围。妥善保管两个 token 与网关状态目录。启动时核验 Bot 的 team、user、App 身份和 Socket Mode hello，身份不一致不会进入 ready。同一操作系统用户下，一个账号/App 只能有一个本机接收实例；跨主机也应保持单个活跃实例。
+四项均必填，token 和 ID 必须来自同一安装范围。妥善保管两个 token 与网关状态目录。启动时核验 Bot 的 team、user、App 身份和 Socket Mode hello，身份不一致不会进入 ready。同一操作系统用户下，一个账号/App 只能有一个本机接收实例；跨主机也应保持单个活跃实例。Socket Mode 官方允许一个 App 最多保持 10 条并发 WebSocket 连接；Gateway 每个实例只开一条，因此仍应保持单实例。
 
 在前台终端启动：
 
@@ -86,7 +86,7 @@ slash command 始终操作**频道根目标**，即使在查看 thread 时发送
 
 ## 4. 输出与恢复
 
-回复使用纯文本，模型输出中的 mention 和链接控制语法会转义，关闭自动链接预览，长回复按序分段。同一频道的根消息和全部 thread 共享每秒一条的预算；遇到 `429`，当前安装实例对应 API 方法按 Slack `Retry-After` 暂停，覆盖会话查询、身份核验与连接建立。其他方法不受影响；冷却状态跨 Socket 重连保留，等待遵守取消信号与请求期限。Socket 重连重新核验身份；内存接纳短暂繁忙时退避重试。同进程重连保留已接纳输入，进程重启清空；结果未确认的发送不自动重发。
+回复使用纯文本，模型输出中的 mention 和链接控制语法会转义，关闭自动链接预览，长回复按序分段。同一频道的根消息和全部 thread 共享每秒一条的预算；遇到 `429`，当前安装实例对应 API 方法按 Slack `Retry-After` 暂停，覆盖会话查询、身份核验与连接建立。其他方法不受影响；冷却状态跨 Socket 重连保留，等待遵守取消信号与请求期限。Socket 重连重新核验身份；内存接纳短暂饱和时该信封不发送 ACK,由 Slack 重投,网关不会因快照锁被占用而阻塞 socket reader。同进程重连保留已接纳输入，进程重启清空；结果未确认的发送不自动重发。
 
 首版支持文本命令和文本输出。文件、生成图片转发、按钮、modal、编辑预览、Agent View、Enterprise 多团队安装和 Marketplace 分发延期。长时间任务使用 Bot API 回传，不依赖会过期的 slash `response_url`。
 
@@ -99,6 +99,13 @@ chord-gateway pairing reset --platform slack -f config.yaml
 在终端输入 `slack` 确认，再以 `--pair` 启动。处理未知操作或更换账号前，阅读[配对说明](./pairing_CN.md)与[投递语义](./operations_CN.md#消息投递与重启)。ACK 或 `Accepted`（已接收）仅确认收件，不表示 Chord 执行成功。同一 slash 命令重投时，已经过期、隔离、丢弃或结果未知的收件会返回相应状态；结果未知时先核查会话和 `/chord status`，不要直接重复操作。
 
 Socket 收件最多等待 2 秒确认接纳，为 Slack 的 3 秒 ACK 截止时间预留发送时间。聊天查询与排队另有 30 秒总期限，断线时取消。未收到 ACK 不会取消接纳，也不证明命令失败：命令仍可能执行，同一消息重投会在当前进程内去重。手动重试前先查看 `/chord status` 和原会话。ACK 提示统一使用英文，与其他命令回复一致。
+
+## 官方参考
+
+- [Socket Mode](https://api.slack.com/apis/socket-mode) —— 无需公开 Request URL、使用 app-level token（`xapp-` 前缀）、每个 App 最多 10 条并发 WebSocket 连接、必须用 `envelope_id` 逐条确认事件，以及 Socket Mode 应用不能上架 Marketplace 的原因。
+- [限流](https://api.slack.com/apis/rate-limits) —— Web API 分层（Tier 1 `1+`/分钟、Tier 2 `20+`/分钟、Tier 3 `50+`/分钟、Tier 4 `100+`/分钟）、`chat.postMessage` 所在 special 层约为每频道每秒 1 条，以及 `429` + `Retry-After` 约定；同一 workspace 的其他方法在冷却期间仍可用。
+- [Events API](https://api.slack.com/apis/events-api) —— 3 秒确认窗口、最多 3 次重试（立即、1 分钟后、5 分钟后），以及 60 分钟内失败率超过 95% 会临时停用事件订阅。Gateway 的 2 秒收件预算正是为了在该窗口内应答。
+- [Bot token 权限范围](https://api.slack.com/scopes) —— 第 1 步所列 scope 的官方说明。
 
 ## 安装检查与排障
 

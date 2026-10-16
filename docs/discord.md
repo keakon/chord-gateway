@@ -61,6 +61,12 @@ Connection loss marks the platform unavailable while reconnecting. Already accep
 
 During Resume, candidate message events arriving before `RESUMED` retain their original text and command target, then enter the common ingress after the same session is ready. The temporary replay buffer holds at most 128 useful events. Overflow stops the connection with `replay_capacity_exceeded` instead of silently skipping messages or continuing automatic reconnects. Inspect the original Chord session and current intake state on the host before restarting; do not blindly resend earlier messages. Process restart clears both the replay buffer and intake queue.
 
+## Official references
+
+- [Rate limits](https://docs.discord.com/developers/topics/rate-limits) — every bot may make up to **50 requests per second** globally, on top of per-route buckets identified by `X-RateLimit-Bucket`. Discord explicitly asks apps **not to hard-code** limits, but to read `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset-After` and the `429` `Retry-After` header. Repeated invalid requests (401/403/429) can additionally trip an IP-level limit of **10,000 per 10 minutes**.
+- [Gateway intents](https://docs.discord.com/developers/events/gateway#message-content-intent) — intent reference behind step 5.
+- [Threads](https://docs.discord.com/developers/topics/threads) — archive, lock and unarchive behavior referenced in the output section.
+
 ## Troubleshooting and deployment checks
 
 | Symptom | Check |
@@ -68,6 +74,7 @@ During Resume, candidate message events arriving before `RESUMED` retain their o
 | Bot DM cannot be opened or delivered | Allow DMs for the shared server and check Discord privacy settings. |
 | Bot stays offline and nothing (DM or channel) gets a reply | The Gateway WebSocket never reached `Ready`, so no input is received at all. Check `proxy_url` (both `socks5://` and `socks5h://` work; the latter is normalized automatically), then the bot token / application ID pairing, then privileged intents. |
 | A server message is ignored | Send from the paired owner and explicitly mention this bot; commands need the leading mention. Bind the channel/thread first. The first pairing must happen in a Bot DM: server messages stay silent until an owner is paired. |
+| A reply to one of the bot's messages is ignored | A guild reply counts only when it pings this bot: Discord adds that mention while the replier's "ping on reply" setting is on, and the mention alone is still not enough because the Message Content intent is not requested, so the reply must also carry text. A dropped mention is reported at most once per minute in the log as `discord event=message_dropped category=contentless`. |
 | `401` or authentication failure | Rotate an invalid bot token locally and ensure the application ID belongs to this bot. |
 | `403` or missing access | Check channel overrides, View Channel, Send Messages, Send Messages in Threads, and private-thread access. |
 | Gateway close `4014` | Confirm the deployed binary requests only the documented intents; do not enable privileged intents to work around a mismatch. |

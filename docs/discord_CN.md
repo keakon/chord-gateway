@@ -61,6 +61,12 @@ token 属于敏感凭据。application ID 标识应用；配对写入的 `owner.
 
 Resume 期间，`RESUMED` 前到达的候选消息会保留当时的正文与命令目标，待同一会话恢复就绪后进入公共收件。临时重放缓冲最多保留 128 个有效事件；容量溢出时连接以 `replay_capacity_exceeded` 明确停止，不静默跳过消息，也不继续自动重连。管理员应先在本机核查原 Chord 会话与当前收件状态，再决定重启，不要盲目重发历史消息。进程重启不恢复这个缓冲或已接纳队列。
 
+## 官方参考
+
+- [限流](https://docs.discord.com/developers/topics/rate-limits) —— 每个机器人全局限 **每秒 50 个请求**，另有按路由划分、以 `X-RateLimit-Bucket` 标识的独立桶。官方明确要求**不要硬编码**限值，而应读取 `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset-After` 以及 `429` 的 `Retry-After`。无效请求（401/403/429）过多还会触发按 IP 的 **每 10 分钟 10,000 次**上限。
+- [Gateway intents](https://docs.discord.com/developers/events/gateway#message-content-intent) —— 第 5 步所用 intent 的官方说明。
+- [Threads](https://docs.discord.com/developers/topics/threads) —— 输出小节引用的归档、锁定与取消归档行为。
+
 ## 故障排查与部署验证
 
 | 现象 | 检查项 |
@@ -68,6 +74,7 @@ Resume 期间，`RESUMED` 前到达的候选消息会保留当时的正文与命
 | 无法打开 Bot DM 或私聊投递失败 | 允许共享服务器私聊，检查 Discord 隐私设置。 |
 | Bot 一直离线，DM 和频道都没有任何回复 | Gateway WebSocket 从未进入 `Ready`，所有输入都收不到。先检查 `proxy_url`（`socks5://` 与 `socks5h://` 均可，后者自动降级），再核对 token / application ID 是否配套，最后检查 privileged intents。 |
 | 服务器消息被忽略 | 使用配对 owner 显式 @Bot；命令需在开头提及机器人，并先绑定频道/thread。首次配对必须在 Bot DM 完成，在此之前服务器消息保持静默。 |
+| 回复 Bot 某条消息被忽略 | 服务器里的回复只有 @ 到本机器人才算输入：只有对方开启 "ping on reply" 时 Discord 才会带上这个 mention；又因为未申请 Message Content intent，仅有 mention 仍不够，回复还必须带有正文。被丢弃的 mention 每分钟最多记录一次 `discord event=message_dropped category=contentless`。 |
 | `401` 或认证失败 | 本机更新失效 token，确认 application ID 与机器人属于同一应用。 |
 | `403` 或缺少访问权限 | 检查频道权限覆盖、View Channel、Send Messages、Send Messages in Threads，以及私有 thread 访问权限。 |
 | Gateway close `4014` | 检查部署版本只请求上述 intents，不用开启 privileged intents 来绕过不匹配。 |

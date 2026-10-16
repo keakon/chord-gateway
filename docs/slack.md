@@ -39,7 +39,7 @@ ims:
     team_id: your-team-id
 ```
 
-All four fields are required. Tokens and IDs must belong to the same installation. Keep both tokens and gateway state private. Startup verifies the Bot's team, user and App identities and the Socket Mode hello; mismatched credentials never become ready. Only one local receiver for an account/App may run under the same OS user; use a single active instance across hosts as well.
+All four fields are required. Tokens and IDs must belong to the same installation. Keep both tokens and gateway state private. Startup verifies the Bot's team, user and App identities and the Socket Mode hello; mismatched credentials never become ready. Only one local receiver for an account/App may run under the same OS user; use a single active instance across hosts as well. Socket Mode allows an app up to ten concurrent WebSocket connections; Gateway opens one per instance, so keep a single receiver per account/App.
 
 Start in a foreground terminal:
 
@@ -86,7 +86,7 @@ The characters `&`, `<` and `>` in normal messages and thread text commands are 
 
 ## 4. Output and recovery
 
-Replies are plain text. Mentions and links in model output are escaped, automatic unfurling is disabled, and long replies are split into ordered messages. Root and thread output in the same channel share a one-message-per-second budget. A `429` pauses the installation's affected API method for Slack's `Retry-After`, including conversation lookups, identity checks and connection opening. Other methods remain available; cooldowns survive socket reconnects and waits honor cancellation and request deadlines. Socket reconnects reverify identity. Temporary intake contention triggers backoff and retry. Accepted input survives socket reconnects within this process, but is lost on process restart. Uncertain sends are not replayed.
+Replies are plain text. Mentions and links in model output are escaped, automatic unfurling is disabled, and long replies are split into ordered messages. Root and thread output in the same channel share a one-message-per-second budget. A `429` pauses the installation's affected API method for Slack's `Retry-After`, including conversation lookups, identity checks and connection opening. Other methods remain available; cooldowns survive socket reconnects and waits honor cancellation and request deadlines. Socket reconnects reverify identity. When intake is momentarily saturated an envelope is left unacknowledged and Slack redelivers it; the gateway never blocks the socket reader on a held snapshot. Accepted input survives socket reconnects within this process, but is lost on process restart. Uncertain sends are not replayed.
 
 The first version supports text commands and text output. Files, generated-image forwarding, buttons, modals, editing previews, Agent View, Enterprise multi-team installs and Marketplace distribution are deferred. Long-running results use the Bot API rather than an expiring slash `response_url`.
 
@@ -99,6 +99,13 @@ chord-gateway pairing reset --platform slack -f config.yaml
 Confirm `slack` in the terminal, then restart with `--pair`. See [pairing](./pairing.md) and [delivery semantics](./operations.md#message-delivery-and-restarts) before resolving unknown operations or changing account identity. An ACK or “accepted” response confirms receipt, not successful Chord execution. Redelivery of the same slash command reports expired, quarantined, discarded or unknown outcomes as appropriate. For unknown outcomes, inspect the session and `/chord status` before repeating an operation.
 
 Socket intake waits up to two seconds for acceptance, reserving the remainder of Slack’s three-second ACK deadline for writing. Conversation lookup and queue wait have a separate 30-second limit, cancelled on disconnect. Missing an ACK does not cancel admission or prove the command failed: it may still execute, and redelivery is deduplicated within this process. Check `/chord status` and the original session before manually retrying. ACK hints use English, consistent with other command replies.
+
+## Official references
+
+- [Socket Mode](https://api.slack.com/apis/socket-mode) — no public Request URL, the app-level token (`xapp-`), up to ten concurrent WebSocket connections per app, per-event acknowledgement through `envelope_id`, and why Socket Mode apps are not eligible for Marketplace listing.
+- [Rate limits](https://api.slack.com/apis/rate-limits) — Web API tiers (Tier 1 `1+`/min, Tier 2 `20+`/min, Tier 3 `50+`/min, Tier 4 `100+`/min), the special tier where `chat.postMessage` allows roughly one message per second per channel, and the `429` + `Retry-After` contract. Other methods for the same workspace remain available during a cooldown.
+- [Events API](https://api.slack.com/apis/events-api) — the three-second acknowledgement window, the three retries (immediately, after 1 minute, after 5 minutes), and the rule that more than 95% failed deliveries within 60 minutes temporarily disables event subscriptions. Gateway's two-second intake budget exists to answer inside that window.
+- [Bot token scopes](https://api.slack.com/scopes) — official reference for the scopes listed in step 1.
 
 ## Installation checks and troubleshooting
 

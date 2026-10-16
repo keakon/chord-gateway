@@ -69,6 +69,8 @@ Each chat requires explicit binding; see [pairing](./pairing.md).
 3. Open that link and scan the QR code with WeChat.
 4. After login, pair in a private bot chat with `/bind "<directory>" <pairing_code>`, using the terminal code and an existing directory. Then send `/status`.
 
+The QR-login window lasts 5 minutes. If the printed code expires before you scan it, the gateway requests a new one automatically (up to three refreshes) and prints a replacement URL. The endpoint returned by login must match `ims.wechat.base_url`; a different scheme or host is rejected.
+
 Treat `/status` as the first success checkpoint. A good first-run outcome is:
 
 - the gateway starts without config errors
@@ -82,6 +84,14 @@ If QR login does not appear, check:
 3. Is an old broken token file present at `<state_dir>/wechat/token.json` or your custom `token_path`?
 
 The gateway deduplicates inbound messages by the server-assigned `message_id` (or an item’s `msg_id` when the top-level ID is absent), scoped to the bot account and sender. Numeric and string-encoded uint64 IDs retain their full precision. An outbound `client_id` is not used as an inbound message ID.
+
+## Inbound and outbound messages
+
+- **Inbound**: only **text items** become commands or tasks. The iLink protocol also defines image, voice, file and video items; the gateway ignores them and never uploads them to Chord.
+- **Outbound text**: replies longer than 2048 characters (Unicode code points) are split into several messages, preferring line boundaries.
+- **Outbound images**: generated images are uploaded to the WeChat CDN (AES-128-ECB encrypted) and delivered as image messages. See [Generated images](./event-visibility.md#generated-images).
+- Every WeChat chat is handled as a **private chat with its sender**; group routing is not part of this integration.
+- Text and image delivery both need a live reply context for that chat; see [Waiting for reply context](#waiting-for-reply-context).
 
 ## Runtime state and upgrades
 
@@ -103,6 +113,8 @@ When the gateway detects the WeChat session is expired, it:
 
 - clears the saved token
 - starts a QR-login flow automatically
+
+The iLink API signals an invalidated session as `ret` or `errcode` `-14`. The gateway treats that value as expiry, discards the saved token, and returns to QR login.
 
 ### Manual renewal from another IM
 
@@ -126,6 +138,15 @@ The gateway returns a QR-login link. Scan it to refresh the token without restar
 - Each WeChat chat routes to one workspace at a time. The owner can switch its directory with `/bind`.
 - WeChat iLink integration depends on an external iLink API and may be less stable than pure bot platforms.
   - Avoid using your main WeChat account for testing if stability/risk is a concern.
+
+## Official protocol references
+
+The gateway implements the WeChat iLink Bot API used by WeChat's ClawBot plugin:
+
+- [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) — official plugin repository; its [`docs/protocol.md`](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md) documents the backend protocol (endpoints, headers, message and media models).
+- [clawbot 相关接口](https://developers.weixin.qq.com/doc/aispeech/knowledge/openapi/Clawbotrelated.html) — official WeChat developer documentation for the clawbot-related interfaces.
+
+These documents describe the platform contract. Guarantees in this guide — one instance per account, in-process deduplication, reply-context waiting and its 24-hour window — are gateway behavior, not platform promises.
 
 ## Troubleshooting
 
