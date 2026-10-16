@@ -22,11 +22,12 @@ type WecomAdapter struct {
 	mu                              sync.Mutex
 	running, stopping, ready        bool
 	done                            chan struct{}
-	wake                            func()
 	rateMu                          sync.Mutex
 	accountNext                     time.Time
 	targetNext                      map[string]time.Time
 	accountInterval, targetInterval time.Duration
+
+	ingressReadinessNotifier
 }
 
 func NewWecomAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*WecomAdapter, error) {
@@ -118,25 +119,19 @@ func (a *WecomAdapter) transportReady(ctx context.Context) error {
 		return context.Canceled
 	}
 	a.ready = true
-	wake := a.wake
 	a.mu.Unlock()
-	if wake != nil {
-		wake()
-	}
+	a.wakeIngressReadiness()
 	return nil
 }
 
 func (a *WecomAdapter) unavailable(_ error) {
 	a.mu.Lock()
 	a.ready = false
-	wake := a.wake
 	a.mu.Unlock()
 	if a.router != nil && a.router.admission != nil {
 		a.router.admission.pairing.PlatformUnavailable("wecom")
 	}
-	if wake != nil {
-		wake()
-	}
+	a.wakeIngressReadiness()
 }
 
 func (a *WecomAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
@@ -148,12 +143,6 @@ func (a *WecomAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDelivery
 	}
 	return IngressDeliveryReadiness{Ready: ready, Reason: IngressWaitingPlatform}
 }
-func (a *WecomAdapter) SetIngressReadinessNotifier(wake func()) {
-	a.mu.Lock()
-	a.wake = wake
-	a.mu.Unlock()
-}
-
 func (a *WecomAdapter) captureFrame(ctx context.Context, raw []byte) context.Context {
 	receivedAt := time.Now()
 	if first, ok := ctx.Value(wecomReceivedAtContextKey{}).(time.Time); ok {
@@ -200,11 +189,7 @@ func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
 		return envelope, nil
 	}, func(result ReceiveResult) { a.observeReceive(msg, result) })
 	if err != nil {
-		reason := "ingress_unavailable"
-		if errors.Is(err, errIngressCapacity) {
-			reason = "capacity"
-		}
-		a.observeReceive(e.Message, ReceiveResult{Disposition: ReceiveRetryable, Reason: reason})
+		a.observeReceive(e.Message, ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
 	}
 	return nil
 }

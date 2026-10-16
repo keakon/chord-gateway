@@ -41,9 +41,10 @@ type DiscordAdapter struct {
 	finishOnce               sync.Once
 	accountLock              *instanceLocks
 	sends                    sync.WaitGroup
-	readinessNotifier        func()
 	fatal                    chan error
 	proxyFunc                func(*http.Request) (*url.URL, error)
+
+	ingressReadinessNotifier
 }
 
 // Discord rejects REST requests that carry no User-Agent, and the SDK default is
@@ -264,13 +265,8 @@ func (a *DiscordAdapter) onStateChange(state gateway.Status, generation uint64) 
 		}
 		a.router.admission.pairing.PlatformUnavailable("discord")
 	}
-	a.mu.Lock()
-	notify := a.readinessNotifier
-	a.mu.Unlock()
 	a.stateMu.Unlock()
-	if notify != nil {
-		notify()
-	}
+	a.wakeIngressReadiness()
 }
 
 func (a *DiscordAdapter) currentGeneration(generation uint64) bool {
@@ -389,15 +385,12 @@ func (a *DiscordAdapter) stop() {
 	a.stopping = true
 	a.ready = false
 	a.cancel()
-	notify := a.readinessNotifier
 	a.mu.Unlock()
 	if a.router != nil && a.router.admission != nil {
 		a.router.admission.pairing.PlatformUnavailable("discord")
 	}
 	a.stateMu.Unlock()
-	if notify != nil {
-		notify()
-	}
+	a.wakeIngressReadiness()
 }
 func (a *DiscordAdapter) finish() {
 	a.finishOnce.Do(func() {
@@ -443,11 +436,6 @@ func (a *DiscordAdapter) Disconnect() {
 		g.Close(context.Background())
 	}
 	<-a.done
-}
-func (a *DiscordAdapter) SetIngressReadinessNotifier(notify func()) {
-	a.mu.Lock()
-	a.readinessNotifier = notify
-	a.mu.Unlock()
 }
 func (a *DiscordAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
 	a.mu.Lock()

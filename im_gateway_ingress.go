@@ -113,15 +113,23 @@ func (r *NotificationRouter) ReceiveIngress(ctx context.Context, envelope Ingres
 	defer cancel()
 	future, err := r.SubmitIngress(ctx, envelope)
 	if err != nil {
-		reason := "ingress_unavailable"
-		if errors.Is(err, errIngressCaptureBusy) {
-			reason = "target_busy"
-		} else if err == errIngressCapacity {
-			reason = "capacity"
-		}
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: reason}
+		return ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)}
 	}
 	return WaitIngressNormalization(ctx, future)
+}
+
+// ingressSubmitRefusalReason maps a submission failure to its bounded metric
+// reason. Capture-busy is a retry against one target, capacity is global
+// backpressure, and anything else leaves the ingress unavailable.
+func ingressSubmitRefusalReason(err error) string {
+	switch {
+	case errors.Is(err, errIngressCaptureBusy):
+		return "target_busy"
+	case errors.Is(err, errIngressCapacity):
+		return "capacity"
+	default:
+		return "ingress_unavailable"
+	}
 }
 
 // PrepareIngressAccount is called after transport identity verification, before

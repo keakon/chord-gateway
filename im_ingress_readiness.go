@@ -1,6 +1,33 @@
 package main
 
-import "time"
+import (
+	"sync"
+	"time"
+)
+
+// ingressReadinessNotifier owns the dispatcher wake callback shared by every
+// transport. A dedicated lock keeps it independent of platform state, and the
+// callback always runs outside the lock so a transport cannot deadlock the
+// dispatcher or its own state.
+type ingressReadinessNotifier struct {
+	mu     sync.Mutex
+	notify func()
+}
+
+func (n *ingressReadinessNotifier) SetIngressReadinessNotifier(notify func()) {
+	n.mu.Lock()
+	n.notify = notify
+	n.mu.Unlock()
+}
+
+func (n *ingressReadinessNotifier) wakeIngressReadiness() {
+	n.mu.Lock()
+	notify := n.notify
+	n.mu.Unlock()
+	if notify != nil {
+		notify()
+	}
+}
 
 // IngressDeliveryReadiness describes a transport prerequisite, never permission
 // to execute. Providers must only inspect local state: no network or waiting.

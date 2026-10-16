@@ -160,9 +160,10 @@ type TokenData struct {
 
 // WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
-	replyContexts        map[string]wechatReplyContext
-	ingressReadinessWake func()
-	ingressPending       map[string]*wechatIngressPending
+	replyContexts  map[string]wechatReplyContext
+	ingressPending map[string]*wechatIngressPending
+
+	ingressReadinessNotifier
 
 	imCfg         config.IMAdapterConfig
 	msgRouter     MessageRouter

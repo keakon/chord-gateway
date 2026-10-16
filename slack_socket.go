@@ -306,14 +306,11 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 		a.ready = true
 		a.readySince = time.Now()
 	}
-	notify := a.readinessNotifier
 	a.mu.Unlock()
 	if ctx.Err() != nil {
 		a.setUnavailable()
 	}
-	if notify != nil {
-		notify()
-	}
+	a.wakeIngressReadiness()
 	<-ctx.Done()
 	return slackSocketResult(parent, failures)
 }

@@ -33,11 +33,11 @@ type SlackAdapter struct {
 	connectionStable                           bool
 	conn                                       *websocket.Conn
 	generation                                 uint64
-	readinessNotifier                          func()
 	sends                                      sync.WaitGroup
 	proxyFunc                                  func(*http.Request) (*url.URL, error)
 	inbound                                    *slackInbound
-	http                                       *slackHTTPClient
+	ingressReadinessNotifier
+	http *slackHTTPClient
 	// Fixed production endpoints and budgets; hooks permit protocol fault tests.
 	openSocket                func(context.Context) (string, error)
 	dialSocket                func(context.Context, string) (*websocket.Conn, error)
@@ -233,19 +233,11 @@ func (a *SlackAdapter) setUnavailable() {
 		a.connectionStable = true
 	}
 	a.ready = false
-	notify := a.readinessNotifier
 	a.mu.Unlock()
 	if a.router != nil {
 		a.router.PlatformUnavailable("slack")
 	}
-	if notify != nil {
-		notify()
-	}
-}
-func (a *SlackAdapter) SetIngressReadinessNotifier(notify func()) {
-	a.mu.Lock()
-	a.readinessNotifier = notify
-	a.mu.Unlock()
+	a.wakeIngressReadiness()
 }
 func (a *SlackAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
 	a.mu.Lock()

@@ -31,10 +31,11 @@ type DingtalkAdapter struct {
 	activated  bool
 	generation uint64
 	done       chan struct{}
-	wake       func()
 	acceptWG   sync.WaitGroup
 	sendWG     sync.WaitGroup
 	fatal      error
+
+	ingressReadinessNotifier
 }
 
 func NewDingtalkAdapter(globalCfg *config.Config, im config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DingtalkAdapter, error) {
@@ -193,11 +194,8 @@ func (a *DingtalkAdapter) activate(ctx context.Context, generation uint64) error
 	}
 	a.ready = true
 	a.activated = true
-	wake := a.wake
 	a.mu.Unlock()
-	if wake != nil {
-		wake()
-	}
+	a.wakeIngressReadiness()
 	return nil
 }
 
@@ -208,11 +206,8 @@ func (a *DingtalkAdapter) onUnavailable() {
 	if a.router != nil && a.router.admission != nil {
 		a.router.admission.pairing.PlatformUnavailable("dingtalk")
 	}
-	wake := a.wake
 	a.mu.Unlock()
-	if wake != nil {
-		wake()
-	}
+	a.wakeIngressReadiness()
 }
 
 func dingtalkResult(result ReceiveResult) <-chan ReceiveResult {
@@ -457,11 +452,6 @@ func (a *DingtalkAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliv
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return IngressDeliveryReadiness{Ready: a.activated && !a.stopping && a.ctx.Err() == nil && id.Platform == "dingtalk" && id.AccountID == a.account, Reason: IngressWaitingAccount}
-}
-func (a *DingtalkAdapter) SetIngressReadinessNotifier(wake func()) {
-	a.mu.Lock()
-	a.wake = wake
-	a.mu.Unlock()
 }
 func (a *DingtalkAdapter) TextSendMetrics() IMTextMetricsSnapshot { return a.sender.TextSendMetrics() }
 func (a *DingtalkAdapter) TextSendTargetSnapshot(target string) IMTextTargetSnapshot {

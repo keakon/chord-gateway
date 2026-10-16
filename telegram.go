@@ -25,7 +25,6 @@ type TelegramAdapter struct {
 	accountID string
 	username  string
 	ready     bool
-	notify    func()
 	now       telegramClock
 	receive   func(context.Context, IngressEnvelope) ReceiveResult
 	reject    func(context.Context, IngressEnvelope, string) ReceiveResult
@@ -33,6 +32,8 @@ type TelegramAdapter struct {
 	retry     telegramBackoff // Owned by the single startup/poll worker.
 	retryWarn time.Time
 	captured  map[int64]telegramCapturedUpdate
+
+	ingressReadinessNotifier
 }
 
 // errTelegramAlreadyRunning is returned when Connect is called while another
@@ -188,18 +189,9 @@ func (a *TelegramAdapter) Connect() (result error) {
 	}
 	a.mu.Lock()
 	a.ready = true
-	notify := a.notify
 	a.mu.Unlock()
-	if notify != nil {
-		notify()
-	}
+	a.wakeIngressReadiness()
 	return a.poll(a.ctx, cursor, batch, true)
-}
-
-func (a *TelegramAdapter) SetIngressReadinessNotifier(notify func()) {
-	a.mu.Lock()
-	a.notify = notify
-	a.mu.Unlock()
 }
 
 func (a *TelegramAdapter) startupRequest(request func() error) error {

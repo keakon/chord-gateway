@@ -211,17 +211,8 @@ func (a *WechatAdapter) confirmIncomingContext(msg ilinkMessage, token *TokenDat
 	reply = a.replyContexts[key]
 	reply.accountEpoch = epoch
 	a.replyContexts[key] = reply
-	wake := a.ingressReadinessWake
 	a.mu.Unlock()
-	if wake != nil {
-		wake()
-	}
-}
-
-func (a *WechatAdapter) SetIngressReadinessNotifier(wake func()) {
-	a.mu.Lock()
-	a.ingressReadinessWake = wake
-	a.mu.Unlock()
+	a.wakeIngressReadiness()
 }
 
 // Each Connect creates a new context even when it reuses the same credentials.
