@@ -64,7 +64,7 @@ chord-gateway pairing reset --platform dingtalk --config /path/to/config.yaml
 
 所有回复，包括后台结果，均通过主动 `sampleText` 发送；Gateway 不保存或使用 `sessionWebhook`。群会话 ID 直接来自已认证的回调。Access token 只保存在内存，提前刷新并合并并发请求；HTTP 重定向不会转发凭据或 token。
 
-文本按 Unicode 边界拆分，每段最多 1024 UTF-8 字节，同一目标至少间隔 3 秒，账号每秒最多 2 次。这是项目预算，不是钉钉官方硬限额。明确的 HTTP 429 可在原发送期限内最多重试 3 次；网络错误与 5xx 结果未知，不重发。部分发送成功后，不会从第一段重新发送整个结果。
+文本按 Unicode 边界拆分，每段最多 1024 UTF-8 字节，同一目标至少间隔 3 秒，账号每秒最多 2 次。这是项目预算，不是钉钉官方硬限额。明确的 HTTP 429 可在原发送期限内最多重试 3 次；网络错误与 5xx 结果未知，不重发。部分发送成功后，不会从第一段重新发送整个结果。直连受阻时，可在全局或 `ims.dingtalk` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；Stream 长连接不支持 `https`）。见[配置参考](./configuration_CN.md#proxy)。
 
 机器人回调是 fire-and-forget：500 或未 ACK **不保证平台重投**。协议成功响应表示 Gateway 接纳或拒绝，不表示 Chord 已执行。不要自动重发结果不确定的命令；先查看 `/status` 与[本机收件状态](./operations_CN.md#消息投递与重启)。详见[官方 Stream 协议](https://open-dingtalk.github.io/developerpedia/docs/learn/stream/protocol/)。
 

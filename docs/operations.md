@@ -131,7 +131,7 @@ Useful fields include:
 
 ## Discord connection and delivery
 
-The application and bot identities are verified before connecting; a local account lock excludes competing receivers. Temporary disconnections may Resume; process restarts do not restore Gateway's queue. Each WebSocket message has a 16 MiB client resource limit; exceeding it interrupts the connection with a diagnostic. Resume buffers at most 128 useful events; inspect the original session after overflow.
+The application and bot identities are verified before connecting; a local account lock excludes competing receivers. Temporary disconnections may Resume; process restarts do not restore Gateway's queue. Each WebSocket message has a 16 MiB client resource limit; exceeding it interrupts the connection with a diagnostic. Resume buffers at most 1024 useful events; inspect the original session after overflow.
 
 Only bot DMs and explicit @Bot channel/thread text are accepted, without the privileged Message Content intent. Each thread binds independently and keeps its replies; sending may reactivate an unlocked archived thread. See [Discord](./discord.md).
 
@@ -187,7 +187,7 @@ Generated image delivery to WeChat or Feishu requires a Chord configuration with
 
 ## Slack operations
 
-Reconnect rechecks Bot/App identity. Invalid credentials, identity mismatch or disabled Socket Mode stop the connection until corrected locally. Intake waits up to two seconds, leaving time to send an ACK. Confirmed acceptance, duplicates and definite refusals receive one ACK; unconfirmed intake records a diagnostic. Temporary disconnection preserves the current process queue; restart clears it. See [Slack](./slack.md).
+Reconnect rechecks Bot/App identity. Invalid credentials, identity mismatch or disabled Socket Mode stop the connection until corrected locally. Event messages are ACKed immediately; only `/chord` slash commands carrying a response payload wait up to two seconds for an acceptance hint, and a plain acceptance stays a bare ACK. Confirmed acceptance, duplicates and definite refusals receive one ACK; unconfirmed intake records a diagnostic. Temporary disconnection preserves the current process queue; restart clears it. See [Slack](./slack.md).
 
 ## Message delivery and restarts
 

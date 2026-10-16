@@ -47,6 +47,8 @@ Start in a foreground terminal:
 chord-gateway -f config.yaml --pair
 ```
 
+When direct access to Slack is blocked, set `proxy_url` globally or under `ims.slack` (`http`, `socks5`/`socks5h`; no `https` for Socket Mode). See [configuration](./configuration.md#proxy).
+
 Open the App's existing DM through the Messages tab. After the terminal shows the code, send:
 
 ```text

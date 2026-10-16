@@ -39,20 +39,6 @@
 
 从这里开始：[飞书接入指南](./feishu_CN.md)
 
-## 本地 console 模式
-
-不接任何 IM 平台、只在本机使用 Chord 时，可用 `--console` 启动：
-
-```bash
-chord-gateway -f config.yaml --console
-```
-
-- `--console` 不能与 `--pair` 同时使用，且要求**恰好一个** workspace；`ims` 配置会被忽略，也不使用任何平台凭据。
-- 不需要配对或聊天绑定：直接使用唯一的 workspace，`/bind` 不可用（会打印用法说明）。
-- stdin 上每一行非空输入都作为一条命令或任务处理（例如 `/status`）；回复以 `[console] <文本>` 打印到 stdout。
-- console 输入属于本机控制面，不经过 owner 校验；请只在可信主机上使用。
-
-另见[配对](./pairing_CN.md)与[配置参考](./configuration_CN.md)。
 ### 适合选 Telegram 的场景
 
 - 你需要 Telegram 私聊或群聊入口，使用文本命令处理确认和提问。
@@ -84,6 +70,21 @@ chord-gateway -f config.yaml --console
 
 如果需要通过 Socket Mode 接入，并在私聊、频道和 thread 保持独立会话，可选择 Slack。根命令入口统一为 `/chord`；频道/thread 任务需 owner 显式 @Bot。先阅读 [Slack 接入指南](./slack_CN.md)。
 
+
+## 本地 console 模式
+
+不接任何 IM 平台、只在本机使用 Chord 时，可用 `--console` 启动：
+
+```bash
+chord-gateway -f config.yaml --console
+```
+
+- `--console` 不能与 `--pair` 同时使用，且要求**恰好一个** workspace；`ims` 配置不会被连接，也不使用任何平台凭据。
+- 不需要配对或聊天绑定：直接使用唯一的 workspace，`/bind` 不可用（会打印用法说明）。
+- stdin 上每一行非空输入都作为一条命令或任务处理（例如 `/status`）；回复以 `[console] <文本>` 打印到 stdout。
+- console 输入属于本机控制面，不经过 owner 校验；请只在可信主机上使用。
+
+另见[配对](./pairing_CN.md)与[配置参考](./configuration_CN.md)。
 
 ## 接入与路由
 

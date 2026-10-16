@@ -101,6 +101,8 @@ ims:
 
 启用 Socket Mode、安装 Bot scopes、订阅 `message.im` / `app_mention` 并注册 `/chord`。配对前先按 [Slack 指南](./docs/slack_CN.md)完成安装。
 
+不想接 IM 平台？本机使用可运行 `chord-gateway -f config.yaml --console`，它只使用唯一一个 workspace，无需配对与绑定。见 [IM 接入总览](./docs/im_CN.md#本地-console-模式)。
+
 ## 3. 在私聊中配对
 
 在前台终端运行：

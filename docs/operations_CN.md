@@ -131,7 +131,7 @@ gateway 会记录关键路由阶段：
 
 ## Discord 连接与投递
 
-连接前核验应用与 Bot 身份；同账号本机互斥。临时断线尝试 Resume，进程重启不恢复 Gateway 队列。每个 WebSocket 消息上限为 16 MiB，这是客户端资源限制；超限会中断连接并记录错误。Resume 最多暂存 128 个有效事件，溢出后须核查原会话。
+连接前核验应用与 Bot 身份；同账号本机互斥。临时断线尝试 Resume，进程重启不恢复 Gateway 队列。每个 WebSocket 消息上限为 16 MiB，这是客户端资源限制；超限会中断连接并记录错误。Resume 最多暂存 1024 个有效事件，溢出后须核查原会话。
 
 只接收 Bot DM 和显式 @Bot 的频道/thread 文本，不申请 Message Content 特权 intent。每个 thread 独立绑定，回复保留在原 thread；未锁定的归档 thread 可能因发送恢复活跃。见 [Discord 指南](./discord_CN.md)。
 
@@ -187,7 +187,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 
 ## Slack 运维
 
-重连时重新核验 Bot/App 身份。无效凭据、身份不匹配或停用 Socket Mode 会停止连接，需本机修正。接纳等待预算为 2 秒，为 ACK 发送留出时间；只有确定接纳、重复或明确拒绝时回复一次 ACK，超时记录诊断。临时断线保留当前进程内队列，进程重启清空。见 [Slack 指南](./slack_CN.md)。
+重连时重新核验 Bot/App 身份。无效凭据、身份不匹配或停用 Socket Mode 会停止连接，需本机修正。事件消息立即 ACK；仅携带响应载荷的 `/chord` slash 命令最多等待 2 秒以附带接纳提示，普通接纳保持裸 ACK。确定接纳、重复或明确拒绝回复一次 ACK，未确认的接纳记录诊断。临时断线保留当前进程内队列，进程重启清空。见 [Slack 指南](./slack_CN.md)。
 
 ## 消息投递与重启
 

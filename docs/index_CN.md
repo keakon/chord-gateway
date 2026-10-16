@@ -19,7 +19,7 @@
 
 ## IM 接入
 
-- [IM 接入总览](./im_CN.md) – 选择 IM 平台、最小配置路径与路由模型
+- [IM 接入总览](./im_CN.md) – 选择 IM 平台、最小配置路径、本地 console 模式与路由模型
 - [微信 iLink](./wechat_CN.md) – 扫码登录、token/同步游标、续期与限制
 - [Telegram](./telegram_CN.md) – Bot API 长轮询、群 privacy、保留期与恢复
 - [飞书](./feishu_CN.md) – 应用配置、长连接事件、交互卡片与多工作区路由

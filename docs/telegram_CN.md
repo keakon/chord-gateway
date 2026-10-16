@@ -44,7 +44,6 @@ Telegram 通过 Bot API 长轮询连接到本机 Gateway，不需要公网回调
 群里的 `/status@YourBotUsername`、`/cancel@YourBotUsername`、`/allow@YourBotUsername`、`/answer@YourBotUsername @<id> <text>` 与私聊命令含义相同。自动生成的操作提示会添加当前机器人 suffix。发给其他机器人的命令会被忽略；普通任务里的路径、`@` 和斜杠原样保留。完整命令和会话恢复见[使用指南](./usage_CN.md)。
 
 Telegram 将公共命令中带连字符的名称写为 `/handoff_deny`、`/question_interact`、`/question_withdraw`、`/question_replace`。群里再加 `@YourBotUsername`，例如 `/handoff_deny@YourBotUsername <reason>`。私聊和群聊中的自动提示都会使用这些名称；带机器人后缀的旧连字符写法会被拒绝。
-Telegram 将公共命令中带连字符的名称写为 `/handoff_deny`、`/question_interact`、`/question_decline`、`/question_withdraw`、`/question_replace`。群里再加 `@YourBotUsername`，例如 `/handoff_deny@YourBotUsername <reason>`。私聊和群聊中的自动提示都会使用这些名称；带机器人后缀的旧连字符写法会被拒绝。
 
 确认、回答和取消都以 Gateway 收到整批消息时的目标为准，接纳重试不会改指向新请求。执行前目标已变化时，旧操作会被拒绝；请查看 `/status` 后再发送新命令。`/status` 也会显示最近一次输出部分失败及已接受段数。输出不完整时请查看原 Chord 会话，不要为了补输出重新执行任务。
 
@@ -79,7 +78,6 @@ Telegram 服务器最多保留未接收 update **24 小时**，离线超过保�
 | 403 | 检查机器人是否被屏蔽、被移出群或目标不可访问 |
 | `chat_migrated` | 由 owner 到新 supergroup 显式重新绑定；不会复制旧群授权 |
 | `unknown_send` | 请求可能已经送达，先查看聊天；Gateway 不会自动重发或重新执行任务 |
-| Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
 | Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步。始终无法进入终态的 update 会按序阻塞后续 update（设计如此），首次告警一次、之后最多每分钟一次并带 `update_id`，同时记录 `acceptance_unconfirmed` 指标。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
 
 ## 部署验收

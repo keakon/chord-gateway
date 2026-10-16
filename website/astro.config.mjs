@@ -60,6 +60,7 @@ export default defineConfig({
             { slug: 'configuration', translations: { 'zh-CN': '配置参考' } },
             { slug: 'operations', translations: { 'zh-CN': '运维说明' } },
             { slug: 'compatibility', translations: { 'zh-CN': '兼容策略' } },
+            { slug: 'adapter-development', translations: { 'zh-CN': 'Adapter 开发' } },
             { slug: 'changelog', translations: { 'zh-CN': '更新日志' } },
           ],
         },

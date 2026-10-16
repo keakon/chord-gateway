@@ -28,7 +28,7 @@ Start in a foreground controlling terminal:
 chord-gateway --config /path/to/config.yaml --pair
 ```
 
-Complete WeChat QR login if prompted. With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every active platform, and `/bind` stays valid for the whole window, so several users and chats can be paired before it expires. DingTalk is the exception: its code appears only after the same-enterprise identity probe succeeds. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
+Complete WeChat QR login if prompted. With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every active platform, and `/bind` stays valid for the whole window, so several users and chats can be paired before it expires. DingTalk shows the same startup code, but its bindings still require the same-enterprise identity probe before they authorize. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
 
 ```text
 /bind "~/workspace" <pairing_code>
@@ -42,7 +42,7 @@ Restart normally afterward, including as a background service. Ordinary startup 
 
 A temporary connection loss does not revoke already accepted owner inputs or replies for the same account and directory binding. Delivery still depends on the platform transport; unknown outcomes are not automatically retried. Replacing a Chord process rejects its queued output and cancels sends still in progress. Messages already accepted by the IM platform cannot be recalled. Account changes and directory switches invalidate the old authorization.
 
-DingTalk first waits for a same-enterprise employee private `hello` before showing the pairing code. The probe never runs tasks or registers an owner. An authorized `/bind` sends a fixed proactive probe before saving; rejection or an unknown outcome leaves the binding unsaved. See [DingTalk](./dingtalk.md).
+DingTalk first waits for a same-enterprise employee private `hello` before authorizing bindings. The probe never runs tasks or registers an owner. An authorized `/bind` sends a fixed proactive probe before saving; rejection or an unknown outcome leaves the binding unsaved. See [DingTalk](./dingtalk.md).
 
 ## Later bindings
 

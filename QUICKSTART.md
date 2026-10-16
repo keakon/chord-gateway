@@ -101,6 +101,8 @@ ims:
 
 Enable Socket Mode, install the Bot scopes, subscribe to `message.im` / `app_mention`, and register `/chord`. Follow the [Slack guide](./docs/slack.md) before pairing.
 
+No IM platform needed? For local use, `chord-gateway -f config.yaml --console` runs against exactly one workspace with no pairing or binding. See the [IM integration overview](./docs/im.md#local-console-mode).
+
 ## 3. Pair in a private chat
 
 Run in a foreground terminal:

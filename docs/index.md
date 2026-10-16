@@ -19,7 +19,7 @@ This documentation is for users who want to run `chord-gateway`, connect IM plat
 
 ## IM integration
 
-- [IM integration overview](./im.md) – choose an IM platform, minimal setup paths, and routing model
+- [IM integration overview](./im.md) – choose an IM platform, minimal setup paths, the local console mode, and routing model
 - [WeChat iLink](./wechat.md) – QR login, token/sync state, renewal, and limitations
 - [Telegram](./telegram.md) – Bot API polling, group privacy, retention, and recovery
 - [Feishu](./feishu.md) – app setup, long connection events, interactive cards, and multi-workspace routing

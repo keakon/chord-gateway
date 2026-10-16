@@ -39,20 +39,6 @@ Start here: [WeChat iLink guide](./wechat.md)
 
 Start here: [Feishu guide](./feishu.md)
 
-## Local console mode
-
-To use Chord locally without connecting any IM platform, start with `--console`:
-
-```bash
-chord-gateway -f config.yaml --console
-```
-
-- `--console` cannot be combined with `--pair` and requires **exactly one** workspace. The `ims` section is ignored and no platform credentials are used.
-- No pairing or chat binding is needed: the single workspace is used directly, and `/bind` is not available (it prints usage instead).
-- Each non-empty line on stdin is handled as one command or task, for example `/status`; replies are printed to stdout as `[console] <text>`.
-- Console input is a local control plane and bypasses the paired-owner check; run it only on a trusted host.
-
-See [pairing](./pairing.md) and the [configuration reference](./configuration.md).
 ### Choose Telegram when
 
 - You need private or group Telegram chats and text commands for confirmations and questions.
@@ -83,6 +69,21 @@ Start here: [Discord guide](./discord.md)
 ### Choose Slack
 
 Use Slack when you want separate DM, channel and thread sessions with Socket Mode and a single `/chord` entry point. Channel/thread input requires an owner mention. Start with the [Slack guide](./slack.md).
+
+## Local console mode
+
+To use Chord locally without connecting any IM platform, start with `--console`:
+
+```bash
+chord-gateway -f config.yaml --console
+```
+
+- `--console` cannot be combined with `--pair` and requires **exactly one** workspace. The `ims` section is not connected and no platform credentials are used.
+- No pairing or chat binding is needed: the single workspace is used directly, and `/bind` is not available (it prints usage instead).
+- Each non-empty line on stdin is handled as one command or task, for example `/status`; replies are printed to stdout as `[console] <text>`.
+- Console input is a local control plane and bypasses the paired-owner check; run it only on a trusted host.
+
+See [pairing](./pairing.md) and the [configuration reference](./configuration.md).
 
 ## Connection and routing
 
