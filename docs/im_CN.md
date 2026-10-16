@@ -1,6 +1,6 @@
 # IM 接入总览
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档是 `chord-gateway` 的“任务型入口页”，用于指导你把 IM 平台接入 gateway。
 
@@ -88,7 +88,7 @@ chord-gateway -f config.yaml --console
 
 ## 接入与路由
 
-选择需要的平台：微信配置 `ims.wechat: {}`；飞书填写 `app_id` / `app_secret` 并完成长连接和事件订阅；企业微信填写 `bot_id` / `secret` 并开通智能机器人 API 长连接；Discord 安装 Bot 后填写 `bot_token` / `application_id`。运行 `chord-gateway --pair`；终端在启动时立即显示一个通用配对码;微信仍需扫码登录,各平台也需就绪后其 `/bind` 才会被授权。在机器人私聊发送 `/bind "~/workspace" <pairing_code>`,再用 `/status` 验证。企业微信需固定主动绑定探测成功后才保存。
+选择需要的平台：微信配置 `ims.wechat: {}`；飞书填写 `app_id` / `app_secret` 并完成长连接和事件订阅；企业微信填写 `bot_id` / `secret` 并开通智能机器人 API 长连接；Discord 安装 Bot 后填写 `bot_token` / `application_id`。运行 `chord-gateway --pair`；终端在启动时立即显示一个通用配对码;微信仍需扫码登录,各平台也需就绪后其 `/bind` 才会被授权。在机器人私聊发送 `/bind "<directory>" <pairing_code>`,再用 `/status` 验证。企业微信需固定主动绑定探测成功后才保存。
 
 钉钉配置四项应用/企业身份字段,首次私聊 `hello` 验证身份;该验证与启动码无关,保存绑定前先主动探测目标。
 

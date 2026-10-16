@@ -1,6 +1,6 @@
 # Permissions & Safety
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 `chord-gateway` is a remote control plane for a local `chord headless` process. Anyone who can send accepted IM messages to the gateway may influence what Chord does in the configured workspace.
 
@@ -24,7 +24,7 @@ Session takeover uses the same accepted IM sender and workspace routing rules. T
 
 ## IM access control
 
-WeChat, Feishu, WeCom, DingTalk, Discord, and Slack accept only the paired owner's input, and each chat requires an explicit binding. Register the owner through foreground `--pair` and a private bot chat. Ordinary startup never opens pairing. Running locally does not prevent external users from messaging the bot.
+WeChat, Feishu, WeCom, DingTalk, Discord, and Slack accept only the paired owner's input, and each chat requires an explicit binding. Register the owner through foreground `--pair` and a private bot chat. Ordinary startup never opens pairing. Running locally does not prevent external users from messaging the bot. The pairing code stays valid for the whole 10-minute window and is not consumed by a single bind, so it can pair several chats and platforms; keep the terminal and the code private.
 
 The owner has local control equivalent to the gateway process, including existing shell commands; pairing is not a directory sandbox. Bind only trusted groups because replies are visible to members. Account changes block the old identity; stop the service and reset locally before reauthorization. See [pairing and reset](./pairing.md).
 

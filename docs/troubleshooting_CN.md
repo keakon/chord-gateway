@@ -1,6 +1,6 @@
 # 故障排查
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档覆盖 `chord-gateway` 启动、IM 集成、路由和运行时常见问题。
 
@@ -42,9 +42,20 @@ chord_path: ~/go/bin/chord
 常见原因：
 
 - `workspaces.<id>.path` 不存在。
-- 所有已支持平台都通过显式 `chat_bindings` 选择工作区；配对后的 owner 在每个聊天使用 `/bind "~/workspace"`。
+- 所有已支持平台都通过显式 `chat_bindings` 选择工作区；配对后的 owner 在每个聊天使用 `/bind "<directory>"`。
 - 飞书聊天没有对应的 `ims.feishu.chat_bindings` 条目，单 workspace 时也须先绑定。
 - 飞书 `chat_bindings` 中的某个映射指向了错误的 workspace ID。
+
+## 代理问题
+
+### 平台通过代理仍离线或无法连接
+
+检查:
+
+- 全局或出错的平台 `ims.<platform>` 下是否设置了 `proxy_url`;单独值优先于全局值,为空表示直连。
+- WebSocket 平台(Discord、Slack、飞书、企业微信、钉钉)会在启动时拒绝 `https` 代理;这些平台请使用 `http`、`socks5` 或 `socks5h`。
+- 启动日志会以 `outbound proxy ...` 记录每个已配置代理(已去除凭据),可在其中确认实际解析到的值。
+- `socks5h` 在所有位置都被接受,WebSocket 拨号时会规范化为 `socks5`。
 
 ## 微信问题
 

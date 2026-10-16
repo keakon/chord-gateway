@@ -1,6 +1,6 @@
 # 微信 iLink 接入指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档用于指导你在 `chord-gateway` 中配置并跑通 **微信 iLink**（`ims.wechat`）。
 
@@ -67,7 +67,7 @@ idle_timeout: 30m
 
 2. 首次运行（或 token 缺失/过期）时，gateway 会打印 **二维码登录 URL**。
 3. 打开该链接并用微信扫码。
-4. 登录后，在机器人私聊发送 `/bind "~/workspace" <pairing_code>`，使用终端显示的配对码和已存在的目录；再发送 `/status` 验证。
+4. 登录后，在机器人私聊发送 `/bind "<directory>" <pairing_code>`，使用终端显示的配对码和已存在的目录；再发送 `/status` 验证。
 
 可以把 `/status` 视为第一阶段成功标志。理想的首轮结果是：
 

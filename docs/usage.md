@@ -1,6 +1,6 @@
 # Usage
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page covers day-to-day interaction with `chord-gateway` from IM chats.
 
@@ -99,7 +99,7 @@ Chord provides the canonical workspace identity, so a linked worktree can transf
 
 The source stops admitting new execution and waits for requests, tools, and background work that already started to finish and save their results. It does not cancel those operations or start the next model request. Accepted queued input, including attachments submitted through TUI, stays with the session. The gateway accepts text from IM; takeover does not add inbound image or file uploads. Generated-image forwarding to WeChat and Feishu remains available; WeCom and Discord media output is unsupported. A service or tool waiting for input can keep the transfer pending; status reports the blockers.
 
-Transfer notifications prioritize errors, timeouts, and recovery actions. They show the total blocker count and at most three short previews, with the omitted count when needed. For full details, use the [host status command](./operations.md#session-transfer-recovery).
+Transfer notifications prioritize errors, timeouts, and recovery actions. They show the total blocker count and at most two short previews, with the omitted count when needed. For full details, use the [host status command](./operations.md#session-transfer-recovery).
 
 `--timeout` limits observation only. `0` returns the transfer ID and current state immediately; omitting it keeps observing. Expiry or disconnection leaves the source draining with its session lock. Query the existing transfer with `/takeover status`; `/status` also shows transfer status while the binding is blocked. A repeated start returns `transfer_busy`. There is no cancel-transfer command.
 
@@ -213,7 +213,7 @@ Resume a session:
 
 ```text
 You: /resume 2026-04-14-abc123
-Gateway: 🔄 Resuming session 2026-04-14-abc123
+Gateway: Session resumed: 2026-04-14-abc123
 
 # If the session no longer exists or is busy:
 Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may be busy.

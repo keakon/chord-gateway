@@ -1,6 +1,6 @@
 # Troubleshooting
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page covers common `chord-gateway` startup, IM integration, routing, and runtime issues.
 
@@ -45,6 +45,17 @@ Common causes:
 - All platforms select workspaces through explicit `chat_bindings`; use the platform command entry point to bind each target.
 - The Feishu chat is not listed in `ims.feishu.chat_bindings`; this also applies with one workspace.
 - A Feishu `chat_bindings` entry points to the wrong workspace ID.
+
+## Proxy issues
+
+### A platform stays offline or fails to connect through a proxy
+
+Check:
+
+- `proxy_url` is set globally or under the failing platform's `ims.<platform>` key; a per-IM value overrides the global one, and empty means a direct connection.
+- WebSocket platforms (Discord, Slack, Feishu, WeCom, DingTalk) reject an `https` proxy at startup; use `http`, `socks5`, or `socks5h` for them.
+- The startup log records each configured proxy as `outbound proxy ...` with credentials stripped, so verify the value the gateway resolved there.
+- `socks5h` is accepted everywhere and normalized to `socks5` for WebSocket dialers.
 
 ## WeChat issues
 

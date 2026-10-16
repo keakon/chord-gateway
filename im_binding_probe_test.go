@@ -41,7 +41,7 @@ func TestBindingProbeRevalidatesAuthority(t *testing.T) {
 			fields := strings.Fields(terminal.String())
 			code := ""
 			for i, field := range fields {
-				if field == `"~/workspace"` {
+				if field == `"<directory>"` {
 					code = fields[i+1]
 				}
 			}

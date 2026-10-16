@@ -1,6 +1,6 @@
 # 配置说明
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档提供 `chord-gateway` 的字段级配置说明。
 
@@ -15,6 +15,7 @@
 | `idle_timeout` | string | 否 | `30m` | 空闲超时（Go duration 格式）。 |
 | `event_visibility` | object | 否 | 除 `background_result`（`true`）外全部 `false` | 控制面事件可见性。 |
 | `session_pins_file` | string | 否 | `<state_dir>/session-pins.json` | 自定义会话 pin 文件路径。 |
+| `proxy_url` | string | 否 | - | 可选的全局出站代理,作用于所有 IM 流量。为空表示直连。见[代理](#代理)。 |
 
 推荐配置结构：
 
@@ -67,6 +68,7 @@ workspaces:
 | `owner` | object | 配对后 | - | `account_id`, `user_id` |
 | `chat_bindings` | object | 绑定后 | - | chat ID → workspace ID |
 | `token_path` | string | 否 | `<state_dir>/wechat/token.json` | 自定义微信扫码登录 session token 的持久化路径。支持 `~` 展开。 |
+| `proxy_url` | string | 否 | - | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 说明：
 
@@ -85,6 +87,7 @@ workspaces:
 | `app_secret` | string | 是 | - | 飞书应用密钥 |
 | `owner` | object | 配对后 | - | `account_id`, `user_id` |
 | `chat_bindings` | object | 条件必填 | - | 从飞书 chat ID 到 workspace ID 的映射。存在多个 workspace 时必须设置。 |
+| `proxy_url` | string | 否 | - | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 飞书使用长连接模式接收事件：
 
@@ -103,6 +106,7 @@ workspaces:
 | `bot_token` | string | 是 | BotFather 签发的 Bot token；配置中不支持自定义 API endpoint |
 | `owner` | object | 配对后 | `account_id` 为数字 Bot ID，`user_id` 为 owner 的数字 user ID，均保存为字符串 |
 | `chat_bindings` | object | 绑定后 | 数字 chat ID 字符串 → workspace ID；群 ID 保留负号 |
+| `proxy_url` | string | 否 | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 使用 Bot API 长轮询；已有 webhook 会阻止启动，Gateway 不会自动删除。首次只需 `bot_token`，通过前台 `--pair` 和私聊 `/bind` 写回授权。
 
@@ -116,6 +120,7 @@ workspaces:
 | `secret` | string | 是 | 智能机器人 secret |
 | `owner` | object | 配对后 | `account_id` 和 `user_id`，由配对写入 |
 | `chat_bindings` | object | 绑定后 | 编码后的聊天 ID → workspace ID，由 `/bind` 写入 |
+| `proxy_url` | string | 否 | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 首次配对和后续绑定均先发送固定探测消息，成功 ACK 后才保存。bot ID 不变时轮换 secret 保留原 owner。换 bot ID 需停服，在本机控制终端执行 `chord-gateway -f config.yaml pairing reset --platform wecom`，输入 `wecom` 确认后重新配对。
 
@@ -131,6 +136,7 @@ workspaces:
 | `corp_id` | string | 是 | 企业 ID |
 | `owner` | object | 配对后 | `account_id`、`user_id` |
 | `chat_bindings` | object | 绑定后 | Gateway 编码目标 ID → 工作区 ID，由 `/bind` 保存 |
+| `proxy_url` | string | 否 | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 首次 Stream 连接后需员工私聊 `hello` 验证身份，钉钉绑定才可被授权；保存绑定前会主动探测候选目标。无可配置 webhook、API host 或 Stream endpoint。Access token 只保存在内存。
 
@@ -144,6 +150,7 @@ workspaces:
 | `application_id` | string | 是 | - | 与认证 Bot 关联的应用 ID |
 | `owner` | object | 配对后 | - | `account_id` 为认证后的 Bot user ID，`user_id` 为配对 owner |
 | `chat_bindings` | object | 绑定后 | - | DM、文字频道或 thread ID → 工作区 ID |
+| `proxy_url` | string | 否 | - | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 Discord 接收 Bot DM 和服务器频道/thread 中显式 @Bot 的消息，不提供 `message_content` 开关，也不申请 privileged intent。每个 thread 都需独立绑定并具备访问权限，不使用父频道路由。安装权限为 View Channel、Send Messages、Send Messages in Threads。
 
@@ -159,12 +166,13 @@ Discord 接收 Bot DM 和服务器频道/thread 中显式 @Bot 的消息，不�
 | `team_id` | string | 是 | 通过 `auth.test` 核验的 workspace/team ID |
 | `owner` | object | 配对后 | 核验后的账号身份与 owner 用户 ID |
 | `chat_bindings` | object | 绑定后 | 根频道 ID 或编码的 thread 目标 → workspace ID |
+| `proxy_url` | string | 否 | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 根聊天使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`；各根目标与 thread 需独立绑定。四项凭据均必填，API 地址固定，不支持 YAML 覆盖。权限、安装和目标范围见 Slack 指南。
 
 ### 授权与绑定
 
-所有平台都只接受配对 owner 的输入。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉私聊使用 `/bind "~/workspace" <pairing_code>`，Slack App 私聊使用 `/chord bind "~/workspace" <pairing_code>`。后续绑定省略配对码；Slack 根目标使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`。所有聊天都必须显式绑定，单工作区也不例外。
+所有平台都只接受配对 owner 的输入。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉私聊使用 `/bind "<directory>" <pairing_code>`，Slack App 私聊使用 `/chord bind "<directory>" <pairing_code>`。后续绑定省略配对码；Slack 根目标使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`。所有聊天都必须显式绑定，单工作区也不例外。
 
 命令会注册已存在的目录，并在持久保存 YAML 后启用聊天绑定。目录按真实文件系统身份复用，不会创建或克隆目录；切换目录前必须处理完待执行输入、后台任务和交互。路径和恢复规则见[配对指南](./pairing_CN.md)。手工修改配置需先停服务，再修改并重启。
 
@@ -183,7 +191,7 @@ ims:
 - 顶层 `proxy_url` 作用于所有 IM；`ims.<platform>.proxy_url` 覆盖该平台。
 - 优先级：各 IM > 全局。为空表示直连；环境代理变量会被忽略。
 - 支持 `http`、`https`、`socks5`、`socks5h`（Go 内 `socks5` 与 `socks5h` 行为一致）。
-- WebSocket 长连接（Discord Gateway、Slack/飞书/企业微信/钉钉 socket）**不支持 `https` 代理**。由于这些平台同时需要 WebSocket 连接,只要配置了其中任一平台,`https` 代理会在启动时被拒绝。这些平台如需代理请使用 `http`、`socks5` 或 `socks5h`。
+- WebSocket 长连接（Discord Gateway、Slack/飞书/企业微信/钉钉 socket）**不支持 `https` 代理**。某平台的有效代理在设置单独 `proxy_url` 时取该值,否则取全局值;当 WebSocket 平台解析到 `https` 有效代理时会在启动时被拒绝。这些平台如需代理请使用 `http`、`socks5` 或 `socks5h`。
 - WebSocket 长连接会自动把 `socks5h` 降级为 `socks5`，两种写法都可直接使用。
 - 必须写明 scheme；URL 中的账号口令不会记入日志。
 

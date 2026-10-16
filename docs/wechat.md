@@ -1,6 +1,6 @@
 # WeChat iLink Guide
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This guide walks you through setting up **WeChat iLink** (`ims.wechat`) for `chord-gateway`.
 
@@ -67,7 +67,7 @@ Each chat requires explicit binding; see [pairing](./pairing.md).
 
 2. On first run (or when token is missing/expired), the gateway prints a **QR-login URL**.
 3. Open that link and scan the QR code with WeChat.
-4. After login, pair in a private bot chat with `/bind "~/workspace" <pairing_code>`, using the terminal code and an existing directory. Then send `/status`.
+4. After login, pair in a private bot chat with `/bind "<directory>" <pairing_code>`, using the terminal code and an existing directory. Then send `/status`.
 
 Treat `/status` as the first success checkpoint. A good first-run outcome is:
 

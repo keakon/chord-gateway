@@ -76,7 +76,7 @@ func wecomCommandPairingCode(t *testing.T, fixture wecomCommandFixture) string {
 	defer pairing.mu.Unlock()
 	fields := strings.Fields(fixture.terminal.String())
 	for i, field := range fields {
-		if field == "\"~/workspace\"" && i+1 < len(fields) {
+		if field == "\"<directory>\"" && i+1 < len(fields) {
 			return fields[i+1]
 		}
 	}

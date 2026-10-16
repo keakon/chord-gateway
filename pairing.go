@@ -200,7 +200,7 @@ func (p *PairingService) preparePairingCodeLocked() (string, error) {
 	// One code serves every platform, and most platforms render the same
 	// private-chat command. Group them so each distinct command is printed once
 	// with its platforms instead of repeating an identical line per platform.
-	bind := fmt.Sprintf("/bind \"~/workspace\" %s", code)
+	bind := fmt.Sprintf("/bind \"<directory>\" %s", code)
 	order := make([]string, 0, len(names))
 	grouped := make(map[string][]string, len(names))
 	for _, plat := range names {

@@ -1,6 +1,6 @@
 # 权限与安全边界
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 `chord-gateway` 是本地 `chord headless` 进程的远程控制面。任何能向 gateway 发送并被接受的 IM 消息的用户，都可能影响 Chord 在配置工作区中的行为。
 
@@ -24,7 +24,7 @@
 
 ## IM 访问控制
 
-微信、飞书、企业微信、钉钉、Discord 和 Slack 都只接受已配对 owner 的输入，且聊天必须显式绑定。首次通过前台 `--pair` 和机器人私聊登记 owner；普通启动不会开放配对。运行在本机并不意味着外部用户无法向机器人发消息。
+微信、飞书、企业微信、钉钉、Discord 和 Slack 都只接受已配对 owner 的输入，且聊天必须显式绑定。首次通过前台 `--pair` 和机器人私聊登记 owner；普通启动不会开放配对。运行在本机并不意味着外部用户无法向机器人发消息。配对码在整个 10 分钟窗口内始终可用,不会被单次绑定消耗,可绑定多个聊天和平台;请妥善保管终端与配对码。
 
 owner 拥有与 gateway 进程相当的本机控制能力，包括已有 shell 命令；配对并不是目录沙箱。仅在可信群聊中绑定机器人，因为回复对群成员可见。账号变化会阻断旧身份，重新授权需停服务后在本机 reset。详见[配对与重置](./pairing_CN.md)。
 

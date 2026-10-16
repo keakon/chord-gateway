@@ -1,6 +1,6 @@
 # Configuration Reference
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This document is the field-by-field reference for `chord-gateway` configuration.
 
@@ -15,6 +15,7 @@ This document is the field-by-field reference for `chord-gateway` configuration.
 | `idle_timeout` | string | no | `30m` | Idle process timeout (Go duration format). |
 | `event_visibility` | object | no | all `false` except `background_result` (`true`) | Control-plane event visibility flags. |
 | `session_pins_file` | string | no | `<state_dir>/session-pins.json` | Custom session pin storage path. |
+| `proxy_url` | string | no | - | Optional outbound proxy applied to all IM traffic. Empty means direct. See [Proxy](#proxy). |
 
 Preferred config shape:
 
@@ -67,6 +68,7 @@ Task guide: [WeChat iLink guide](./wechat.md)
 | `owner` | object | after pairing | - | `account_id`, `user_id` |
 | `chat_bindings` | object | after binding | - | chat ID → workspace ID |
 | `token_path` | string | no | `<state_dir>/wechat/token.json` | Custom path for the persisted WeChat QR-login session token. Supports `~` expansion. |
+| `proxy_url` | string | no | - | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Notes:
 
@@ -85,6 +87,7 @@ Task guide: [Feishu guide](./feishu.md)
 | `app_secret` | string | yes | - | Feishu app secret |
 | `owner` | object | after pairing | - | `account_id`, `user_id` |
 | `chat_bindings` | object | conditional | - | Mapping from Feishu chat ID to workspace ID. Required for each chat before use. |
+| `proxy_url` | string | no | - | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Feishu uses long connection mode to receive events:
 
@@ -103,6 +106,7 @@ Task guide: [Telegram integration](./telegram.md)
 | `bot_token` | string | yes | BotFather-issued token; custom API endpoints are not configurable |
 | `owner` | object | after pairing | Numeric Bot ID as `account_id` and numeric owner user ID as `user_id`, both stored as strings |
 | `chat_bindings` | object | after binding | Numeric chat ID string → workspace ID; retain the minus sign for groups |
+| `proxy_url` | string | no | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Uses Bot API long polling. An existing webhook blocks startup and is never automatically deleted. Start with only `bot_token`; foreground `--pair` and private `/bind` save authorization.
 
@@ -116,6 +120,7 @@ See the [WeCom guide](./wecom.md). Requires the intelligent bot API long connect
 | `secret` | string | yes | Intelligent bot secret |
 | `owner` | object | after pairing | `account_id` and `user_id`, written by pairing |
 | `chat_bindings` | object | after binding | Encoded chat ID → workspace ID, written by `/bind` |
+| `proxy_url` | string | no | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Initial pairing and later binds require a successful fixed-message probe ACK before saving. Secret rotation preserves the owner when the bot ID stays the same. A changed bot ID requires stopping the service and running `chord-gateway -f config.yaml pairing reset --platform wecom` in a local controlling terminal; type `wecom` to confirm, then pair again.
 
@@ -131,6 +136,7 @@ Deployment guide: [DingTalk](./dingtalk.md). All four identity/credential fields
 | `corp_id` | string | yes | Enterprise ID |
 | `owner` | object | after pairing | `account_id`, `user_id` |
 | `chat_bindings` | object | after binding | Gateway-encoded target ID → workspace ID, saved by `/bind` |
+| `proxy_url` | string | no | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 The first Stream connection needs an employee private `hello` to verify identity before a DingTalk binding is authorized. Candidate targets receive a proactive probe before binding. Webhook, API host, and Stream endpoint overrides are not configurable. Access tokens stay in memory.
 
@@ -144,6 +150,7 @@ Task guide: [Discord bot guide](./discord.md)
 | `application_id` | string | yes | - | Application ID belonging to the authenticated bot |
 | `owner` | object | after pairing | - | `account_id` is the authenticated bot user ID; `user_id` is the paired owner |
 | `chat_bindings` | object | after binding | - | DM, text channel, or thread ID → workspace ID |
+| `proxy_url` | string | no | - | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Discord uses bot DMs and explicit @Bot messages in server channels/threads. There is no `message_content` switch and no privileged intent requirement. Each thread needs its own binding and access permission; no parent-channel fallback is used. Install with View Channel, Send Messages, and Send Messages in Threads.
 
@@ -159,12 +166,13 @@ Task guide: [Slack guide](./slack.md)
 | `team_id` | string | yes | Workspace/team ID verified by `auth.test` |
 | `owner` | object | after pairing | Verified account identity and owner user ID |
 | `chat_bindings` | object | after binding | Root channel ID or encoded thread target → workspace ID |
+| `proxy_url` | string | no | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Use `/chord bind ...` in root chats and `@Bot /bind ...` inside a thread. Each root and thread requires its own binding. All four credentials are required; endpoints are fixed and cannot be overridden in YAML. See the Slack guide for scopes, installation and supported targets.
 
 ### Authorization and binding
 
-All platforms accept only the paired owner's input. Start with `chord-gateway --pair`: WeChat/Feishu/WeCom/DingTalk private pairing uses `/bind "~/workspace" <pairing_code>`; Slack App DM pairing uses `/chord bind "~/workspace" <pairing_code>`. Later bindings omit the code. Slack roots use `/chord bind ...` and threads use `@Bot /bind ...` inside that thread. All chats require explicit binding, including single-workspace deployments.
+All platforms accept only the paired owner's input. Start with `chord-gateway --pair`: WeChat/Feishu/WeCom/DingTalk private pairing uses `/bind "<directory>" <pairing_code>`; Slack App DM pairing uses `/chord bind "<directory>" <pairing_code>`. Later bindings omit the code. Slack roots use `/chord bind ...` and threads use `@Bot /bind ...` inside that thread. All chats require explicit binding, including single-workspace deployments.
 
 Binding registers an existing directory and enables the route only after saving YAML. Directories are reused by filesystem identity, never created or cloned. Resolve pending inputs, background work, and interactions before switching directories. See [pairing](./pairing.md) for path and recovery rules. Stop the service before manual configuration edits, then restart.
 
@@ -183,7 +191,7 @@ ims:
 - Top-level `proxy_url` applies to all IMs; `ims.<platform>.proxy_url` overrides it for that platform.
 - Priority: per-IM > global. Empty means direct; environment proxy variables are ignored.
 - Supported schemes: `http`, `https`, `socks5`, `socks5h` (`socks5` and `socks5h` behave identically in Go).
-- WebSocket long-connections (Discord Gateway, Slack/Feishu/WeCom/DingTalk sockets) **do not support an `https` proxy**. Because those platforms also need a WebSocket connection, an `https` proxy is rejected at startup when any of them is configured. Use `http`, `socks5`, or `socks5h` if you need a proxy for those platforms.
+- WebSocket long-connections (Discord Gateway, Slack/Feishu/WeCom/DingTalk sockets) **do not support an `https` proxy**. A platform's *effective* proxy is its per-IM `proxy_url` when set, otherwise the global one; an `https` effective proxy is rejected at startup when a WebSocket platform resolves to it. Use `http`, `socks5`, or `socks5h` for those platforms.
 - WebSocket long-connections normalize `socks5h` to `socks5` automatically; either spelling works.
 - The scheme must be explicit; credentials in the URL are never logged.
 

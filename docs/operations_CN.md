@@ -1,6 +1,6 @@
 # 运维说明
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档说明运行和运维 `chord-gateway` 时需要关注的行为。
 
@@ -100,6 +100,12 @@ gateway 按以下优先级加载配置：
 2. `$CHORD_GATEWAY_CONFIG`
 3. `$XDG_CONFIG_HOME/chord-gateway/config.yaml`
 4. `~/.config/chord-gateway/config.yaml`
+
+## 代理
+
+可在全局或各 IM(`ims.<platform>.proxy_url`)设置 `proxy_url`;单独值优先,为空表示直连。环境代理变量会被忽略,未设置即不使用代理。
+
+HTTP 客户端接受 `http`、`https`、`socks5` 和 `socks5h`。WebSocket 长连接(Discord、Slack、飞书、企业微信、钉钉)会在启动时拒绝 `https`,并把 `socks5h` 规范化为 `socks5`。启动时 gateway 会以 `outbound proxy ...` 记录每个已配置代理(已去除凭据)。
 
 ## 日志
 

@@ -1,6 +1,6 @@
 # chord-gateway
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
 
 [![CI](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/keakon/chord-gateway?display_name=release)](https://github.com/keakon/chord-gateway/releases)
@@ -90,7 +90,7 @@ See the [Telegram guide](./docs/telegram.md) for token setup, group privacy, and
 
 - Source builds require Go 1.27.0+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
 - CI currently builds these targets: `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, and `windows/amd64`.
-- All platforms select workspaces through explicit `chat_bindings`; the owner binds WeChat/Feishu/WeCom/DingTalk chats with `/bind "~/workspace"`, Slack roots with `/chord bind "~/workspace"`, and Slack threads with `@Bot /bind "~/workspace"`.
+- All platforms select workspaces through explicit `chat_bindings`; the owner binds WeChat/Feishu/WeCom/DingTalk chats with `/bind "<directory>"`, Slack roots with `/chord bind "<directory>"`, and Slack threads with `@Bot /bind "<directory>"`.
 - Feishu multi-workspace routing uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.
 - WeCom supports text only in this release; media, cards, and streaming replies are unsupported. Real enterprise-account acceptance  remain pending.
 - Slack currently supports text only. Channel/thread tasks require an explicit owner mention; slash commands address the chat root, while thread controls use `@Bot /command`. See the [Slack guide](./docs/slack.md).

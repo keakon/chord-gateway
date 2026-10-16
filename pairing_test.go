@@ -26,7 +26,7 @@ func TestPairingExpiryAndAdmission(t *testing.T) {
 	fields := strings.Fields(terminal.String())
 	var code string
 	for i, v := range fields {
-		if v == "\"~/workspace\"" {
+		if v == "\"<directory>\"" {
 			code = fields[i+1]
 		}
 	}
@@ -109,7 +109,7 @@ func TestUniversalPairingCodeIsImmediateAndCrossPlatform(t *testing.T) {
 	fields := strings.Fields(terminal.String())
 	var code string
 	for i, v := range fields {
-		if v == "\"~/workspace\"" {
+		if v == "\"<directory>\"" {
 			code = fields[i+1]
 		}
 	}
@@ -122,7 +122,7 @@ func TestUniversalPairingCodeIsImmediateAndCrossPlatform(t *testing.T) {
 	// Every active platform must be named exactly once, and platforms that
 	// render the same private-chat command must share a single line.
 	prompt := terminal.String()
-	if n := strings.Count(prompt, "/bind \"~/workspace\""); n != 1 {
+	if n := strings.Count(prompt, "/bind \"<directory>\""); n != 1 {
 		t.Fatalf("expected one grouped bind line, got %d: %q", n, prompt)
 	}
 	for _, plat := range []string{"discord", "telegram", "wechat"} {

@@ -1,6 +1,6 @@
 # Quick Start
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
 
 Use this guide to connect one project to WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, or Slack. You can register directories from the chat after pairing.
 
@@ -114,12 +114,12 @@ chord-gateway -f config.yaml --pair
 Complete WeChat QR login if prompted. The terminal displays a single pairing code immediately at startup; each platform must still become ready before its `/bind` is authorized, and for the first DingTalk connection an employee must first privately send `hello` to verify the enterprise identity. In a private bot chat on a platform other than Slack, send:
 
 ```text
-/bind "~/workspace" <pairing_code>
+/bind "<directory>" <pairing_code>
 ```
 
 Use an existing directory on the gateway host. The code expires after 10 minutes. WeCom first requires a successful proactive binding probe. The gateway saves the owner and binding; send a task to start Chord there. Other senders are ignored. After pairing, restart normally with `chord-gateway -f config.yaml`, including as a background service.
 
-Slack App DM pairing uses `/chord bind "~/workspace" <pairing_code>` and verification uses `/chord status`. Each channel and thread needs a separate binding; use `@Bot /bind ...` inside a thread, because slash commands always address the channel root.
+Slack App DM pairing uses `/chord bind "<directory>" <pairing_code>` and verification uses `/chord status`. Each channel and thread needs a separate binding; use `@Bot /bind ...` inside a thread, because slash commands always address the channel root.
 
 ## 4. Bind another chat or directory
 

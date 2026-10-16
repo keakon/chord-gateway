@@ -2,7 +2,7 @@
 
 Register one trusted owner per platform and explicitly bind each chat to an existing local directory. Existing deployments should read the [breaking changes](../CHANGELOG.md) before upgrading.
 
-Slack initial pairing uses `/chord bind "~/workspace" <pairing_code>` in a verified App DM. Later root bindings use `/chord bind ...`; a thread requires `@Bot /bind ...` inside that thread and never inherits its root binding. See the [Slack guide](./slack.md).
+Slack initial pairing uses `/chord bind "<directory>" <pairing_code>` in a verified App DM. Later root bindings use `/chord bind ...`; a thread requires `@Bot /bind ...` inside that thread and never inherits its root binding. See the [Slack guide](./slack.md).
 
 ## First connection
 
@@ -28,10 +28,10 @@ Start in a foreground controlling terminal:
 chord-gateway --config /path/to/config.yaml --pair
 ```
 
-Complete WeChat QR login if prompted. With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every active platform, and `/bind` stays valid for the whole window, so several users and chats can be paired before it expires. DingTalk shows the same startup code, but its bindings still require the same-enterprise identity probe before they authorize. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
+Complete WeChat QR login if prompted. With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every active platform, and `/bind` stays valid for the whole window, so several chats and platforms can be paired before it expires. DingTalk shows the same startup code, but its bindings still require the same-enterprise identity probe before they authorize. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
 
 ```text
-/bind "~/workspace" <pairing_code>
+/bind "<directory>" <pairing_code>
 ```
 
 For WeCom, a fixed proactive binding probe must receive a successful platform ACK first. The gateway then saves the owner, registers the directory, and binds this chat in YAML. The next task starts Chord in that directory. The code is not written to YAML or logs. Keep the terminal and IM history private; they can contain the code.

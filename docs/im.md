@@ -1,6 +1,6 @@
 # IM Integration Overview
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page is a task-oriented entry point for connecting IM platforms to `chord-gateway`.
 
@@ -87,7 +87,7 @@ See [pairing](./pairing.md) and the [configuration reference](./configuration.md
 
 ## Connection and routing
 
-Configure the platform you need: `ims.wechat: {}` for WeChat; Feishu `app_id` / `app_secret` with long connection and event subscriptions; WeCom `bot_id` / `secret` for the intelligent bot API long connection; or Discord `bot_token` / `application_id` after installing the bot. Run `chord-gateway --pair`. The terminal displays one pairing code immediately at startup; WeChat still needs QR login and each platform must become ready before its `/bind` is authorized. Send `/bind "~/workspace" <pairing_code>` in a private bot chat, then `/status` to verify. WeCom requires the fixed proactive binding probe to be accepted before saving.
+Configure the platform you need: `ims.wechat: {}` for WeChat; Feishu `app_id` / `app_secret` with long connection and event subscriptions; WeCom `bot_id` / `secret` for the intelligent bot API long connection; or Discord `bot_token` / `application_id` after installing the bot. Run `chord-gateway --pair`. The terminal displays one pairing code immediately at startup; WeChat still needs QR login and each platform must become ready before its `/bind` is authorized. Send `/bind "<directory>" <pairing_code>` in a private bot chat, then `/status` to verify. WeCom requires the fixed proactive binding probe to be accepted before saving.
 
 DingTalk needs four application/enterprise identity fields. On first connection, privately send `hello` to verify identity; this happens independently of the startup code, and binding targets receive a proactive probe before saving.
 

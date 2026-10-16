@@ -350,7 +350,7 @@ func TestTelegramGatewayFirstPrivatePairingWritesOwnerAndBinding(t *testing.T) {
 	fields := strings.Fields(f.terminal.String())
 	var code string
 	for index, field := range fields {
-		if field == "\"~/workspace\"" && index+1 < len(fields) {
+		if field == "\"<directory>\"" && index+1 < len(fields) {
 			code = fields[index+1]
 			break
 		}

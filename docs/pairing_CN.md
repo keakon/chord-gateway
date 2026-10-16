@@ -2,7 +2,7 @@
 
 每个平台登记一个可信 owner，每个聊天显式绑定到已有本地目录。已有部署升级前请阅读[不兼容变更](../CHANGELOG_CN.md)。
 
-Slack 首次配对在已核验的 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；后续根目标使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`，不继承根绑定。详见 [Slack 指南](./slack_CN.md)。
+Slack 首次配对在已核验的 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；后续根目标使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`，不继承根绑定。详见 [Slack 指南](./slack_CN.md)。
 
 ## 首次连接
 
@@ -28,10 +28,10 @@ ims:
 chord-gateway --config /path/to/config.yaml --pair
 ```
 
-微信按提示扫码登录。使用 `--pair` 时，终端会立即显示一个 10 分钟有效的通用配对码，对所有已连接平台都有效，且在整个窗口内 `/bind` 始终可用，因此可以在过期前绑定多个用户和聊天。钉钉显示同样的启动码，但其绑定仍需通过同企业身份探测后才会放行。在与机器人的**私聊**中发送终端给出的命令，将目录替换为 gateway 主机上已有的目录：
+微信按提示扫码登录。使用 `--pair` 时，终端会立即显示一个 10 分钟有效的通用配对码，对所有已连接平台都有效，且在整个窗口内 `/bind` 始终可用，因此可以在过期前绑定多个聊天和平台。钉钉显示同样的启动码，但其绑定仍需通过同企业身份探测后才会放行。在与机器人的**私聊**中发送终端给出的命令，将目录替换为 gateway 主机上已有的目录：
 
 ```text
-/bind "~/workspace" <pairing_code>
+/bind "<directory>" <pairing_code>
 ```
 
 企业微信需先通过固定主动绑定探测，收到平台成功 ACK 后才能保存。Gateway 将 owner、工作区和当前聊天绑定保存到 YAML。下一条任务才会在该目录启动 Chord。配对码不会写入配置或日志，但终端录制和 IM 历史可能保留它，请妥善保护。

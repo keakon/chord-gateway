@@ -1,6 +1,6 @@
 # 使用指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档说明如何在 IM 聊天中日常使用 `chord-gateway`。
 
@@ -92,7 +92,7 @@ chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
 
 源端停止接纳新的执行，等待已经开始的请求、工具和后台工作结束并保存结果，不会取消这些操作，也不会派发下一次模型请求。已经接纳的排队输入，包括通过 TUI 提交的附件，随会话保留。gateway 从 IM 接收文本；接管不增加入站图片或文件上传能力，生成图片仍可转发到微信或飞书，企业微信和 Discord 暂不支持媒体输出。服务进程或等待输入的工具可能让移交持续等待；状态查询会显示具体阻塞项。
 
-接管通知优先保留错误、超时和恢复操作提示，显示阻塞项总数和最多三条简短预览，并在省略时标明数量。完整详情请使用[宿主机状态查询命令](./operations_CN.md#会话移交恢复)。
+接管通知优先保留错误、超时和恢复操作提示，显示阻塞项总数和最多两条简短预览，并在省略时标明数量。完整详情请使用[宿主机状态查询命令](./operations_CN.md#会话移交恢复)。
 
 `--timeout` 只限制观察时间。`0` 表示立即返回移交 ID 和当前状态，不指定时持续观察。超时或断线后，源端继续自然收口并持有会话锁。用 `/takeover status` 查询原移交；绑定被阻断时，`/status` 也会显示移交状态。再次发起接管会返回 `transfer_busy`，没有撤销移交命令。
 
@@ -204,7 +204,7 @@ Gateway: 📋 Recent sessions:
 
 ```text
 You: /resume 2026-04-14-abc123
-Gateway: 🔄 Resuming session 2026-04-14-abc123
+Gateway: Session resumed: 2026-04-14-abc123
 
 # 如果 session 不存在或被占用：
 Gateway: ❌ Failed to resume session 2026-04-14-abc123. It may not exist or may be busy.

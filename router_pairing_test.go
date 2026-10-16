@@ -56,7 +56,7 @@ func pairedTestRouterWithConfig(t *testing.T, data string) (*NotificationRouter,
 	}
 	fields := strings.Fields(terminal.String())
 	for i, field := range fields {
-		if field == "\"~/workspace\"" {
+		if field == "\"<directory>\"" {
 			return r, fields[i+1]
 		}
 	}

@@ -1,6 +1,6 @@
 # Operations
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "~/workspace" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "~/workspace" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page describes runtime behavior that matters when operating `chord-gateway`.
 
@@ -100,6 +100,12 @@ The gateway loads config in this priority order:
 2. `$CHORD_GATEWAY_CONFIG`
 3. `$XDG_CONFIG_HOME/chord-gateway/config.yaml`
 4. `~/.config/chord-gateway/config.yaml`
+
+## Proxy
+
+Set `proxy_url` globally or per IM (`ims.<platform>.proxy_url`); a per-IM value wins, and an empty value means a direct connection. Environment proxy variables are ignored, so unset means no proxy.
+
+HTTP clients accept `http`, `https`, `socks5`, and `socks5h`. WebSocket long-connections (Discord, Slack, Feishu, WeCom, DingTalk) reject `https` at startup and normalize `socks5h` to `socks5`. At startup the gateway logs each configured proxy as `outbound proxy ...` with credentials stripped.
 
 ## Logs
 

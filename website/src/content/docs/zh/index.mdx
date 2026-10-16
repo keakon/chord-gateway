@@ -51,7 +51,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     ```bash
     chord-gateway -f config.yaml --pair
     ```
-    在 Slack 之外的平台，用终端配对码在私聊发送 `/bind "~/workspace" <pairing_code>`，再用 `/status` 验证绑定。钉钉需先私聊 `hello` 完成身份验证。第一条任务才启动 Chord；之后普通启动无需 `--pair`。 Discord 服务器频道和 thread 中的命令需在开头 `@Bot`。Slack 使用 `/chord bind ...` 和 `/chord status`，thread 命令见接入指南。
+    在 Slack 之外的平台，用终端配对码在私聊发送 `/bind "<directory>" <pairing_code>`，再用 `/status` 验证绑定。钉钉需先私聊 `hello` 完成身份验证。第一条任务才启动 Chord；之后普通启动无需 `--pair`。 Discord 服务器频道和 thread 中的命令需在开头 `@Bot`。Slack 使用 `/chord bind ...` 和 `/chord status`，thread 命令见接入指南。
   </Card>
 </CardGrid>
 

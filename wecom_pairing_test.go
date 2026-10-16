@@ -47,7 +47,7 @@ func TestWecomPairingAccountChangeRevokesPendingCode(t *testing.T) {
 	var code string
 	fields := strings.Fields(terminal.String())
 	for i, field := range fields {
-		if field == `"~/workspace"` {
+		if field == `"<directory>"` {
 			code = fields[i+1]
 		}
 	}

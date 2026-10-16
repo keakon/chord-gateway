@@ -1,6 +1,6 @@
 # 快速开始
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "~/workspace" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "~/workspace" <pairing_code>`；参见 [Slack 接入指南](./docs/slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./docs/slack_CN.md)。
 
 本指南帮助你把一个项目连接到微信、飞书、Telegram、企业微信、钉钉、Discord 或 Slack。配对后即可在聊天中登记目录。
 
@@ -114,12 +114,12 @@ chord-gateway -f config.yaml --pair
 微信按提示扫码登录。终端在启动时立即显示一个通用配对码;各平台仍需先就绪,其 `/bind` 才会被授权;钉钉首次连接还需先由同企业员工私聊发送 `hello` 验证身份。在 Slack 之外的平台机器人私聊中发送：
 
 ```text
-/bind "~/workspace" <pairing_code>
+/bind "<directory>" <pairing_code>
 ```
 
 使用 gateway 主机上已有的目录，配对码有效期为 10 分钟。企业微信还需先通过主动绑定探测。Gateway 保存 owner 和聊天绑定，下一条任务才启动 Chord；其他发送者的消息会被忽略。配对后可使用 `chord-gateway -f config.yaml` 普通启动，也可作为后台服务运行。
 
-Slack App 私聊配对使用 `/chord bind "~/workspace" <pairing_code>`，验证使用 `/chord status`。频道和 thread 需分别绑定；thread 内使用 `@Bot /bind ...`，slash 命令始终作用于频道根目标。
+Slack App 私聊配对使用 `/chord bind "<directory>" <pairing_code>`，验证使用 `/chord status`。频道和 thread 需分别绑定；thread 内使用 `@Bot /bind ...`，slash 命令始终作用于频道根目标。
 
 ## 4. 绑定新聊天或切换目录
 
