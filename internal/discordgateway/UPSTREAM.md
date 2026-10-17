@@ -3,7 +3,11 @@
 Source: [`github.com/disgoorg/disgo/gateway`, tag `v0.19.6`](https://github.com/disgoorg/disgo/tree/v0.19.6/gateway) (pinned in `go.mod` as `github.com/disgoorg/disgo v0.19.6`; wire types in `protocol.go` are aliases to that pinned module).
 The local fork retains the connection supervisor and command limiter. Wire types
 and constants are aliases to the same pinned upstream module in `protocol.go`.
-The Apache-2.0 license is retained in `LICENSE`; that upstream release has no NOTICE.
+The Apache-2.0 license is retained verbatim in `LICENSE`, including the unfilled
+appendix placeholder; that upstream release has no NOTICE. Provenance for this
+fork lives in this file rather than in the license text, because Apache-2.0
+section 4(a) asks a modified copy to carry change notices in the source files
+while the license itself stays unmodified.
 Discord REST and public discord types remain dependencies on the original pinned module.
 
 Local changes:
@@ -104,3 +108,15 @@ fatal to prevent a busy loop. Standalone users without a refresh provider may
 refill once at the initial reset, then must provide fresh quota rather than
 silently repeating the initial countdown. All Identify attempts remain at least
 five seconds apart.
+
+## File provenance
+
+| File | Relationship to `disgo/gateway@v0.19.6` |
+|---|---|
+| `gateway.go` | Rewritten: one lifecycle supervisor owns dialing, generations, heartbeat, listener and close. |
+| `gateway_config.go` | Modified: compression and Identify-limiter configuration removed, generation-aware options added. |
+| `gateway_rate_limiter.go` | Rewritten: synchronized `Reset` and cancellable command serialization. |
+| `gateway_rate_limiter_config.go` | Unmodified body; only the provenance header at the top is local. Retained for the `RateLimiterConfig` options the adapter still sets. |
+| `gateway_transports.go` | Reduced: zlib/zstd transports removed, JSON only, plus a 16 MiB read limit. |
+| `protocol.go` | Local addition: type aliases to the pinned upstream module. |
+| `doc.go` | Unmodified body; only the provenance header at the top is local. |
