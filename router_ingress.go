@@ -467,9 +467,17 @@ func (r *NotificationRouter) dispatchIngressSession(ctx context.Context, msg Inc
 	if err != nil {
 		return DispatchResult{"rejected", "route_change_unavailable"}
 	}
+	// A route left in "changing" refuses every later task with route_changing
+	// and never recovers, so settle it on every exit from here.
+	settle := newRouteChangeSettle(finish)
+	defer func() {
+		if settle.call() != nil {
+			log.Warnf("session change left the route changing key=%s cmd=%s", key, cmd.Type)
+		}
+	}()
 	p, err = r.mgr.replaceOrdinarySession(key, cmd.SessionID)
 	if err != nil || p == nil {
-		if finish() != nil {
+		if settle.call() != nil {
 			return DispatchResult{"unknown", "route_change_incomplete"}
 		}
 		if err != nil {
@@ -484,7 +492,7 @@ func (r *NotificationRouter) dispatchIngressSession(ctx context.Context, msg Inc
 	if err != nil {
 		return DispatchResult{"unknown", "session_change_unconfirmed"}
 	}
-	if err = finish(); err != nil {
+	if err = settle.call(); err != nil {
 		return DispatchResult{"unknown", "route_change_incomplete"}
 	}
 	verb := "Session resumed"

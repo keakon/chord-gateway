@@ -449,11 +449,19 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 				return true
 			}
 		}
-		if err := r.mgr.replaceBlockedBinding(ctx, key, cmd.SessionID); err != nil {
+		// Settle the route on every exit: a route left in "changing" refuses
+		// every later task for this chat with route_changing and never
+		// recovers on its own.
+		replaceErr := r.mgr.replaceBlockedBinding(ctx, key, cmd.SessionID)
+		settleErr := finish()
+		switch {
+		case replaceErr != nil && settleErr != nil:
+			r.sendTextForKey(key, chat, "❌ Session change was not confirmed and the route commit is unconfirmed; inspect the local inbox.")
+		case replaceErr != nil:
 			r.sendTextForKey(key, chat, "❌ Session change was not confirmed. The transfer guard remains in place.")
-		} else if finish() != nil {
+		case settleErr != nil:
 			r.sendTextForKey(key, chat, "⚠️ Session changed but the route commit is unconfirmed; inspect the local inbox.")
-		} else {
+		default:
 			r.clearTransferCards(key)
 			r.sendTextForKey(key, chat, "✅ Session loaded; binding reopened.")
 		}

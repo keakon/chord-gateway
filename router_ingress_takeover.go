@@ -4,10 +4,80 @@ import (
 	"context"
 	"crypto/rand"
 	"runtime"
+	"sync"
 	"time"
+
+	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
 )
+
+// routeChangeSettle makes the finish closure from beginIngressRouteChange
+// idempotent and guarantees it runs exactly once. A route left in the
+// "changing" phase refuses every later task with route_changing and never
+// recovers on its own, so an abandoned takeover must always settle it.
+//
+// settle re-derives the route identity from live configuration, so settling
+// after a failure republishes whatever session and binding are actually
+// current rather than the state the abandoned change was heading towards.
+type routeChangeSettle struct {
+	mu     sync.Mutex
+	finish func() error
+	done   bool
+	err    error
+}
+
+func newRouteChangeSettle(finish func() error) *routeChangeSettle {
+	if finish == nil {
+		return nil
+	}
+	return &routeChangeSettle{finish: finish}
+}
+
+// call settles the change once and replays the same result afterwards, so an
+// explicit finish followed by the deferred safety net is not reported twice.
+func (s *routeChangeSettle) call() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.done {
+		s.done = true
+		s.err = s.finish()
+	}
+	return s.err
+}
+
+// keep raises the barrier on purpose without running the settle, for a transfer
+// that is genuinely still in flight. The next explicit status observes the
+// outcome; an abandoned change has no such observer, so it must settle instead.
+func (s *routeChangeSettle) keep() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.done = true
+	s.finish = nil
+}
+
+// transfer moves the settle to the next step instead of running it, so a
+// transfer that reached restoration keeps the barrier raised across the handoff.
+func (s *routeChangeSettle) transfer() *routeChangeSettle {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done {
+		return nil
+	}
+	s.done = true
+	next := &routeChangeSettle{finish: s.finish}
+	s.finish = nil
+	return next
+}
 
 // dispatchIngressTakeover is called with the admission gate held. Unlike the
 // legacy observer, it returns evidence from this exact transfer operation.
@@ -82,6 +152,16 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 		if e != nil {
 			return reject("undelivered_inputs")
 		}
+		settle := newRouteChangeSettle(finish)
+		// The barrier is raised from here on, and every later return must settle
+		// it: a route left in "changing" refuses every task for this chat with
+		// route_changing and never recovers on its own. A transfer that is still
+		// in flight keeps the barrier through keep/transfer instead.
+		defer func() {
+			if settle.call() != nil {
+				log.Warnf("takeover left the route changing key=%s transfer=%s", key, record.Status.TransferID)
+			}
+		}()
 		// Capture and persist the exact source identity before the mutating request.
 		status.State = "waiting_source"
 		record = sessionTransfer{Status: status, Direction: "incoming"}
@@ -91,7 +171,7 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 		if m.shuttingDown.Load() || m.transferBlocked(key) || current != p {
 			release()
 			m.lifecycleGate.RUnlock()
-			if finish() != nil {
+			if settle.call() != nil {
 				return unknown("route_change_incomplete")
 			}
 			return reject("control_target_expired")
@@ -103,7 +183,7 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 			return unknown("transfer_guard_commit_unknown")
 		}
 		r.stopReminder(key)
-		return r.runIngressTakeoverStep(ctx, msg, key, ws, record, false, true, finish)
+		return r.runIngressTakeoverStep(ctx, msg, key, ws, record, false, true, settle)
 	}
 	// Status is a query unless it must finish a previously released restoration.
 	if record.Direction == "incoming" && (record.Status.State == "released" || record.Status.State == "restoring") {
@@ -111,12 +191,19 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 		if e != nil {
 			return reject("undelivered_inputs")
 		}
-		return r.restoreIngressTakeover(ctx, msg, key, record, finish)
+		return r.restoreIngressTakeover(ctx, msg, key, record, newRouteChangeSettle(finish))
 	}
 	return r.runIngressTakeoverStep(ctx, msg, key, ws, record, localPreparation, false, nil)
 }
 
-func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg IncomingMessage, key string, ws *config.Workspace, record sessionTransfer, localPreparation, start bool, finish func() error) DispatchResult {
+func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg IncomingMessage, key string, ws *config.Workspace, record sessionTransfer, localPreparation, start bool, settle *routeChangeSettle) (result DispatchResult) {
+	// An abandoned change must never leave the route in "changing": the chat
+	// would refuse every later task with route_changing and never recover.
+	defer func() {
+		if settle.call() != nil && result.Reason != "route_change_incomplete" {
+			result = DispatchResult{"unknown", "route_change_incomplete"}
+		}
+	}()
 	action := "status"
 	if start {
 		action = "start"
@@ -141,7 +228,7 @@ func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg Inc
 		} else if e := r.mgr.reopenUnfrozenSource(key, status); e != nil {
 			return DispatchResult{"unknown", "source_reopen_unconfirmed"}
 		}
-		if finish != nil && finish() != nil {
+		if settle.call() != nil {
 			return DispatchResult{"unknown", "route_change_incomplete"}
 		}
 		return DispatchResult{"rejected", "takeover_not_accepted"}
@@ -150,24 +237,33 @@ func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg Inc
 		return DispatchResult{"unknown", "takeover_outcome_unknown"}
 	}
 	if record.Direction == "incoming" && status.State == "released" {
-		if finish == nil {
-			var e error
-			finish, e = r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+		next := settle.transfer()
+		if next == nil {
+			finish, e := r.beginIngressRouteChange(ctx, msg.ticket.Identity)
 			if e != nil {
 				return DispatchResult{"rejected", "undelivered_inputs"}
 			}
+			next = newRouteChangeSettle(finish)
 		}
-		return r.restoreIngressTakeover(ctx, msg, key, record, finish)
+		return r.restoreIngressTakeover(ctx, msg, key, record, next)
 	}
 	// A nonterminal transfer keeps the route changing until an explicit status
 	// observes restoration, preventing input from entering the previous pin.
 	if start {
+		settle.keep()
 		return DispatchResult{"submitted", "transfer_pending"}
 	}
 	return DispatchResult{"completed", ""}
 }
 
-func (r *NotificationRouter) restoreIngressTakeover(ctx context.Context, msg IncomingMessage, key string, record sessionTransfer, finish func() error) DispatchResult {
+func (r *NotificationRouter) restoreIngressTakeover(ctx context.Context, msg IncomingMessage, key string, record sessionTransfer, settle *routeChangeSettle) (result DispatchResult) {
+	// Restoration failing must still settle the route, or the chat keeps
+	// refusing every later task with route_changing.
+	defer func() {
+		if settle.call() != nil && result.Reason != "route_change_incomplete" {
+			result = DispatchResult{"unknown", "route_change_incomplete"}
+		}
+	}()
 	wait, cancel := context.WithTimeout(ctx, transferReadyTimeout)
 	defer cancel()
 	p, err := r.mgr.restoreTransferredSession(wait, key, record)
@@ -177,7 +273,7 @@ func (r *NotificationRouter) restoreIngressTakeover(ctx context.Context, msg Inc
 	if _, err = r.waitIngressReadyPin(wait, key, p, record.Status.SessionID); err != nil {
 		return DispatchResult{"unknown", "target_pin_unconfirmed"}
 	}
-	if err = finish(); err != nil {
+	if err = settle.call(); err != nil {
 		return DispatchResult{"unknown", "route_change_incomplete"}
 	}
 	r.clearTransferCards(key)
