@@ -51,12 +51,14 @@ func (e *WecomTransportError) Error() string {
 // IMTextSendFailureCategory is consumed by the common output executor.
 func (e *WecomTransportError) IMTextSendFailureCategory() string {
 	switch e.Category {
-	case "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "lost_before_accept", "ingress_prepare_failed", "invalid_message", "local_error":
+	case "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "local_error":
 		return e.Category
 	default:
 		return "transport_error"
 	}
 }
+
+var errWecomStopped = errors.New("wecom: adapter already stopped")
 
 func wecomWSError(category string) error { return &WecomTransportError{Category: category} }
 

@@ -65,11 +65,26 @@ func DecodeScopedID(value, prefix string, count int) ([]string, error) {
 
 // AcquireIMAccountLock excludes other local gateways regardless of state directory.
 func AcquireIMAccountLock(platform, accountID string) (*instanceLocks, error) {
-	key, err := EncodeScopedID("im-account-v1:", platform, accountID)
-	if err != nil {
-		return nil, err
+	return AcquireIMAccountLocks(platform, accountID)
+}
+
+// AcquireIMAccountLocks excludes every receiver for the given platform scopes.
+// Adapters that must exclude more than one scope per platform (Slack excludes
+// both the bot account and the app) go through here so the key format stays in
+// one place.
+func AcquireIMAccountLocks(platform string, accountIDs ...string) (*instanceLocks, error) {
+	keys := make([]string, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		key, err := EncodeScopedID("im-account-v1:", platform, accountID)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
 	}
-	return acquireInstanceLocks([]string{key})
+	if len(keys) == 0 {
+		return &instanceLocks{}, nil
+	}
+	return acquireInstanceLocks(keys)
 }
 
 func supportedIMPlatform(platform string) bool {

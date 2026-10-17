@@ -88,7 +88,7 @@ slash command 始终操作**频道根目标**，即使在查看 thread 时发送
 
 回复使用纯文本，模型输出中的 mention 和链接控制语法会转义，关闭自动链接预览，长回复按序分段。同一频道的根消息和全部 thread 共享每秒一条的预算；遇到 `429`，当前安装实例对应 API 方法按 Slack `Retry-After` 暂停，覆盖会话查询、身份核验与连接建立。其他方法不受影响；冷却状态跨 Socket 重连保留，等待遵守取消信号与请求期限。Socket 重连重新核验身份；内存接纳短暂饱和时该信封不发送 ACK,由 Slack 重投,网关不会因快照锁被占用而阻塞 socket reader。同进程重连保留已接纳输入，进程重启清空；结果未确认的发送不自动重发。
 
-首版支持文本命令和文本输出。文件、生成图片转发、按钮、modal、编辑预览、Agent View、Enterprise 多团队安装和 Marketplace 分发延期。长时间任务使用 Bot API 回传，不依赖会过期的 slash `response_url`。
+由于尚未注册任何交互界面，Socket Mode 的 `interactive` 载荷（block action、dialog 提交、消息菜单）会被 ACK 后丢弃，Slack 因此不会重投它们。首版支持文本命令和文本输出。文件、生成图片转发、按钮、modal、编辑预览、Agent View、Enterprise 多团队安装和 Marketplace 分发延期。长时间任务使用 Bot API 回传，不依赖会过期的 slash `response_url`。
 
 需要本机重置时，先停止网关：
 

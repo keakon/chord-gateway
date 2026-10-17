@@ -234,7 +234,7 @@ func TestSlackSocketURLAndFatalAuthentication(t *testing.T) {
 		t.Fatal("fatal classification")
 	}
 	for i := 0; i < 10; i++ {
-		d := slackReconnectDelay(i)
+		d := reconnectBackoff(i)
 		if d < 800*time.Millisecond || d > 36*time.Second {
 			t.Fatal(d)
 		}

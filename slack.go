@@ -101,6 +101,9 @@ func (a *SlackAdapter) Connect() error {
 		a.cancel()
 		a.setUnavailable()
 		a.sends.Wait()
+		if a.http != nil {
+			a.http.closeIdleConnections()
+		}
 		if locks != nil {
 			locks.Close()
 		}
@@ -125,17 +128,10 @@ func (a *SlackAdapter) Connect() error {
 				return slackConnectionError{"identity_changed", true}
 			}
 			if locks == nil {
-				account, e := EncodeScopedID("im-account-v1:", "slack", identity.AccountID)
-				if e != nil {
-					return e
-				}
-				app, e := EncodeScopedID("im-account-v1:", "slack-app", identity.AppID)
-				if e != nil {
-					return e
-				}
-				locks, e = acquireInstanceLocks([]string{account, app})
-				if e != nil {
-					return fmt.Errorf("slack: account/app receive lock: %w", e)
+				// Exclude other receivers for both the bot account and the app.
+				locks, err = AcquireIMAccountLocks("slack", identity.AccountID, identity.AppID)
+				if err != nil {
+					return fmt.Errorf("slack: account/app receive lock: %w", err)
 				}
 			}
 			err = a.runSlackSocket(a.ctx, identity)
@@ -160,7 +156,7 @@ func (a *SlackAdapter) Connect() error {
 			}
 			continue
 		}
-		delay := slackReconnectDelay(attempt)
+		delay := reconnectBackoff(attempt)
 		var limited *slack.RateLimitedError
 		if errors.As(err, &limited) {
 			delay = max(delay, limited.RetryAfter)
@@ -304,7 +300,6 @@ func slackConnectionCategory(err error) string {
 	}
 	return "connection_failed"
 }
-func slackReconnectDelay(attempt int) time.Duration { return reconnectBackoff(attempt) }
 
 // slackReconnectImmediately reports a Slack-requested refresh/warning, which
 // should reconnect at once instead of consuming the backoff budget.

@@ -58,7 +58,9 @@ func (a *WecomAdapter) Connect() error {
 	a.mu.Lock()
 	if a.stopping {
 		a.mu.Unlock()
-		return nil
+		// Disconnect is permanent for this adapter. Reporting success here
+		// would leave a supervisor believing a dead adapter is healthy.
+		return errWecomStopped
 	}
 	if a.running {
 		a.mu.Unlock()
@@ -158,6 +160,9 @@ func (a *WecomAdapter) captureFrame(ctx context.Context, raw []byte) context.Con
 }
 
 func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
+	if a.router == nil {
+		return nil
+	}
 	e, captured := ctx.Value(wecomCapturedEnvelopeContextKey{}).(IngressEnvelope)
 	var err error
 	if !captured {
@@ -216,12 +221,6 @@ func (a *WecomAdapter) observeReceive(msg IncomingMessage, result ReceiveResult)
 		if result.Reason == "control_target_unavailable" && msg.ticket != nil {
 			a.router.enqueueIngressReply(msg, "Request was not applied: control_target_unavailable. Check /status before trying again.")
 		}
-	case ReceiveUncertain:
-		// The common store records the authoritative uncertain outcome. Do not
-		// label it lost or encourage resending an operation that may have committed.
-		if msg.ticket != nil {
-			a.router.enqueueIngressReply(msg, "Gateway could not confirm receipt of this message. Check the original Chord session before sending it again.")
-		}
 	}
 }
 
@@ -229,7 +228,7 @@ func (a *WecomAdapter) droppedBeforeAccept(count int) {
 	if a.router == nil || a.router.ingressStore == nil {
 		return
 	}
-	for range count {
+	if count > 0 {
 		a.router.ingressStore.metrics.record("wecom", "callback_dropped", "")
 	}
 }

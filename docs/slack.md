@@ -88,7 +88,7 @@ The characters `&`, `<` and `>` in normal messages and thread text commands are 
 
 Replies are plain text. Mentions and links in model output are escaped, automatic unfurling is disabled, and long replies are split into ordered messages. Root and thread output in the same channel share a one-message-per-second budget. A `429` pauses the installation's affected API method for Slack's `Retry-After`, including conversation lookups, identity checks and connection opening. Other methods remain available; cooldowns survive socket reconnects and waits honor cancellation and request deadlines. Socket reconnects reverify identity. When intake is momentarily saturated an envelope is left unacknowledged and Slack redelivers it; the gateway never blocks the socket reader on a held snapshot. Accepted input survives socket reconnects within this process, but is lost on process restart. Uncertain sends are not replayed.
 
-The first version supports text commands and text output. Files, generated-image forwarding, buttons, modals, editing previews, Agent View, Enterprise multi-team installs and Marketplace distribution are deferred. Long-running results use the Bot API rather than an expiring slash `response_url`.
+Socket Mode `interactive` payloads (block actions, dialog submissions, message menus) are acknowledged and then discarded, because no interaction surface is registered yet; Slack therefore never redelivers them. The first version supports text commands and text output. Files, generated-image forwarding, buttons, modals, editing previews, Agent View, Enterprise multi-team installs and Marketplace distribution are deferred. Long-running results use the Bot API rather than an expiring slash `response_url`.
 
 For local reset, stop the gateway first:
 

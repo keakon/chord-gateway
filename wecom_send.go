@@ -51,9 +51,6 @@ func (a *WecomAdapter) SendTextContext(ctx context.Context, chatID, text string)
 	if ctx == nil || a.router == nil || a.router.admission == nil {
 		return errPairingDenied
 	}
-	if !a.IngressDeliveryReadiness(ChatIdentity{"wecom", a.imCfg.Wecom.BotID, chatID}).Ready {
-		return errors.New("wecom: connection unavailable")
-	}
 	control := false
 	switch {
 	case ctx.Value(outboundDeliveryContextKey{}) != nil:
@@ -107,8 +104,11 @@ func (a *WecomAdapter) ValidateBindingTarget(ctx context.Context, target Binding
 }
 
 func (a *WecomAdapter) sendSegment(ctx context.Context, target, rendered string) error {
+	// Refuse here rather than inside SendMarkdown so the reason is a definite
+	// non-delivery, and use the shared category vocabulary so the common
+	// executor records it instead of falling back to delivery_failed.
 	if !a.IngressDeliveryReadiness(ChatIdentity{"wecom", a.imCfg.Wecom.BotID, target}).Ready {
-		return errors.New("wecom: connection unavailable")
+		return wecomWSError("connection_unavailable")
 	}
 	raw, err := DecodeWecomTarget(target)
 	if err != nil {
@@ -149,7 +149,7 @@ func (a *WecomAdapter) waitSendSlot(ctx context.Context, target string) error {
 		if !next.After(now) {
 			if len(a.targetNext) >= 128 {
 				a.rateMu.Unlock()
-				return errors.New("wecom: local send backpressure")
+				return wecomWSError("backpressure")
 			}
 			a.accountNext = now.Add(a.accountInterval)
 			a.targetNext[target] = now.Add(a.targetInterval)

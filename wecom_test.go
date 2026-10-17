@@ -87,8 +87,10 @@ func TestWecomAdapterLifecycleAndAccountLockBeforeDial(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("idempotent stop blocked")
 	}
-	if err := a.Connect(); err != nil {
-		t.Fatal(err)
+	// Disconnect is permanent: reconnecting must report that the adapter is
+	// stopped rather than succeed as if a dead adapter were healthy.
+	if err := a.Connect(); !errors.Is(err, errWecomStopped) {
+		t.Fatalf("connect after disconnect = %v, want errWecomStopped", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

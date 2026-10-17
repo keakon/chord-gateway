@@ -20,6 +20,12 @@ const (
 	// Slack sends a "warning" or "refresh_requested" disconnect when it wants
 	// the client to reconnect promptly; a full backoff would waste that window.
 	slackImmediateReconnectDelay = 250 * time.Millisecond
+	// Slack drops an envelope that is not acknowledged within three seconds of
+	// receiving it, so the ACK write is clamped to that deadline.
+	slackEnvelopeACKDeadline = 3 * time.Second
+	// Only a slash command that accepts a response payload waits this long for
+	// an admission hint before sending a bare ACK.
+	slackAcceptanceBudget = 2 * time.Second
 )
 
 type slackSocketFrame struct {
@@ -127,7 +133,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 	workers.Go(func() { <-ctx.Done(); _ = conn.Close() })
 	workers.Go(func() { a.slackACKWriter(ctx, conn, generation, acks, fail) })
 	workers.Go(func() {
-		interval := min(time.Second, a.pingTimeout/4)
+		interval := max(time.Millisecond, min(time.Second, a.pingTimeout/4))
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -261,6 +267,11 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 				case receipts <- pending:
 				default:
 					cleanup()
+					// Same observability as the reader-side capacity discard:
+					// an unacknowledged envelope is a lost intake.
+					if a.router != nil {
+						a.router.ObserveIngress("slack", "lost_before_accept", "capacity")
+					}
 				}
 			}
 		}
@@ -335,7 +346,7 @@ func slackDisconnectCategory(reason string) string {
 }
 
 func (a *SlackAdapter) slackReceiptACK(ctx context.Context, generation uint64, receipt slackReceipt, acks chan<- slackACK) {
-	budget := 2 * time.Second
+	budget := slackAcceptanceBudget
 	waitCtx, cancel := context.WithDeadline(ctx, receipt.ReceivedAt.Add(budget))
 	defer cancel()
 	result := WaitIngressNormalization(waitCtx, receipt.Future)
@@ -409,7 +420,7 @@ func (a *SlackAdapter) queueSlackACK(ctx context.Context, generation uint64, fra
 	if len(data) >= 2048 {
 		return nil
 	}
-	request := slackACK{generation, receivedAt.Add(3 * time.Second), data, make(chan error, 1)}
+	request := slackACK{generation, receivedAt.Add(slackEnvelopeACKDeadline), data, make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return nil
