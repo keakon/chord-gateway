@@ -275,7 +275,10 @@ func (s *IngressStore) listPending() ([]IngressRecord, error) { return s.list(ni
 func (s *IngressStore) listRoutePending(id ChatIdentity) ([]IngressRecord, error) {
 	return s.list(&id, true, false), nil
 }
-func (s *IngressStore) ListPendingMetadata() []IngressRecord {
+
+// listPendingMetadata is test-only: the scheduler walks PendingRoutes and
+// clones bodies per route instead of scanning every pending record.
+func (s *IngressStore) listPendingMetadata() []IngressRecord {
 	return s.list(nil, true, true)
 }
 

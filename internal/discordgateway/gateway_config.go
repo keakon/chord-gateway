@@ -91,11 +91,6 @@ func (c *config) apply(opts []ConfigOpt) {
 	}
 }
 
-// WithDefault returns a ConfigOpt that sets the default values for the Gateway.
-func WithDefault() ConfigOpt {
-	return func(config *config) {}
-}
-
 // WithLogger sets the Logger for the Gateway.
 func WithLogger(logger *slog.Logger) ConfigOpt {
 	return func(config *config) {

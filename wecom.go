@@ -183,16 +183,16 @@ func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
 	// the socket reader. It cannot change the reader's frozen control target:
 	// the admitted ticket only addresses this attempt's diagnostic reply, while
 	// the pipeline authorizes the submitted envelope independently.
+	// The envelope is already normalized; only the diagnostic reply needs the
+	// admitted identity, so submit without a normalize hook and observe instead.
 	msg := e.Message
-	_, err = a.router.submitIngressNormalization(ctx, msg.ChatID, e, func(_ context.Context, envelope IngressEnvelope) (IngressEnvelope, error) {
-		if a.router.admission != nil {
-			im := a.router.getConfig().IMConfigByType("wecom")
-			if im != nil && im.OwnerIdentity() != nil && im.OwnerIdentity().AccountID == msg.AccountID && im.OwnerIdentity().UserID == msg.SenderID && msg.ChatKind == "private" {
-				msg, _ = admittedMessage(a.router, msg)
-			}
+	if a.router.admission != nil {
+		im := a.router.getConfig().IMConfigByType("wecom")
+		if im != nil && im.OwnerIdentity() != nil && im.OwnerIdentity().AccountID == msg.AccountID && im.OwnerIdentity().UserID == msg.SenderID && msg.ChatKind == "private" {
+			msg, _ = admittedMessage(a.router, msg)
 		}
-		return envelope, nil
-	}, func(result ReceiveResult) { a.observeReceive(msg, result) })
+	}
+	_, err = a.router.SubmitIngressObserved(ctx, e, func(result ReceiveResult) { a.observeReceive(msg, result) })
 	if err != nil {
 		a.observeReceive(e.Message, ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
 	}

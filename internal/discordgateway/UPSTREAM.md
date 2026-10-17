@@ -120,3 +120,8 @@ five seconds apart.
 | `gateway_transports.go` | Reduced: zlib/zstd transports removed, JSON only, plus a 16 MiB read limit. |
 | `protocol.go` | Local addition: type aliases to the pinned upstream module. |
 | `doc.go` | Unmodified body; only the provenance header at the top is local. |
+
+Dead surface removed from the fork: the no-op `WithDefault` option (its body was
+`return func(config *config) {}`), the write-only `heartbeatInterval` field, and
+the never-invoked `RateLimiter.Close` — `Close` now releases command-limiter
+waiters, so a shutting-down gateway cannot leave a sender parked on the limiter.

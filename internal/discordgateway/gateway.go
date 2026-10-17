@@ -197,7 +197,6 @@ type gatewayImpl struct {
 	stopping              bool
 	terminalErr           error
 	sessionValidated      bool
-	heartbeatInterval     time.Duration
 	lastHeartbeatSent     time.Time
 	lastHeartbeatReceived time.Time
 	lastIdentify          time.Time
@@ -313,6 +312,10 @@ func (g *gatewayImpl) Close(_ context.Context) {
 	// Closing the underlying socket is concurrency safe and interrupts blocked I/O.
 	if socket != nil {
 		_ = socket.Close()
+	}
+	// Release any command-limiter waiter; nothing can send after this.
+	if g.config.RateLimiter != nil {
+		g.config.RateLimiter.Close(g.ctx)
 	}
 	g.wg.Wait()
 }
@@ -660,7 +663,6 @@ func (g *gatewayImpl) listen(ctx context.Context, conn transport, generation uin
 				return
 			}
 			g.mu.Lock()
-			g.heartbeatInterval = interval
 			session, seq := copyPtr(g.config.SessionID), copyPtr(g.config.LastSequenceReceived)
 			g.mu.Unlock()
 			hello <- interval

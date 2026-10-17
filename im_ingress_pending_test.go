@@ -17,7 +17,7 @@ func TestIngressPendingMetadataTracksAtomicTransitions(t *testing.T) {
 	record := mustAcceptIngress(t, s, task)
 	assertMetadata := func(state string) {
 		t.Helper()
-		records := s.ListPendingMetadata()
+		records := s.listPendingMetadata()
 		route := s.ListRoutePendingMetadata(record.Identity())
 		if !reflect.DeepEqual(records, route) {
 			t.Fatal("global and route metadata disagree")
@@ -79,7 +79,7 @@ func BenchmarkIngressPendingScan(b *testing.B) {
 		b.Run(mode, func(b *testing.B) {
 			read := s.listPending
 			if mode == "metadata" {
-				read = func() ([]IngressRecord, error) { return s.ListPendingMetadata(), nil }
+				read = func() ([]IngressRecord, error) { return s.listPendingMetadata(), nil }
 			}
 			b.ReportAllocs()
 			for b.Loop() {
