@@ -59,7 +59,7 @@ Sending a result to an unlocked archived thread may automatically reactivate it.
 
 Connection loss marks the platform unavailable while reconnecting. Already accepted inputs use the shared in-memory ingress and message-ID deduplication; Gateway Resume alone is not a cross-restart delivery guarantee. API rate-limit waits can be cancelled. Network timeouts and server errors leave send outcomes unconfirmed and are not automatically resent.
 
-During Resume, candidate message events arriving before `RESUMED` retain their original text and command target, then enter the common ingress after the same session is ready. The temporary replay buffer holds at most 128 useful events. Overflow stops the connection with `replay_capacity_exceeded` instead of silently skipping messages or continuing automatic reconnects. Inspect the original Chord session and current intake state on the host before restarting; do not blindly resend earlier messages. Process restart clears both the replay buffer and intake queue.
+During Resume, candidate message events arriving before `RESUMED` retain their original text and command target, then enter the common ingress after the same session is ready. The temporary replay buffer holds at most 1024 useful events. Overflow stops the connection with `replay_capacity_exceeded` instead of silently skipping messages or continuing automatic reconnects. Inspect the original Chord session and current intake state on the host before restarting; do not blindly resend earlier messages. Process restart clears both the replay buffer and intake queue.
 
 ## Official references
 
@@ -81,7 +81,7 @@ During Resume, candidate message events arriving before `RESUMED` retain their o
 | Archived thread becomes active | Expected when sending to an unlocked archived thread. |
 | Locked thread cannot receive results | Ask a Discord administrator to unlock it; the gateway never requests Manage Threads or redirects replies. |
 | `sharding_not_supported` | This release supports one shard only; choose a bot deployment that does not require multiple shards. |
-| `replay_capacity_exceeded` | More than 128 useful events arrived before Resume completed. The connection stops; inspect the original Chord session, its input queue, and local ingress records before restarting. Do not blindly replay earlier commands or tasks. |
+| `replay_capacity_exceeded` | More than 1024 useful events arrived before Resume completed. The connection stops; inspect the original Chord session, its input queue, and local ingress records before restarting. Do not blindly replay earlier commands or tasks. |
 
 Before relying on a deployment, verify private pairing, channel binding, separate public/private thread binding, `/status`, `/allow`, `/answer`, `/cancel`, a task lasting more than 15 minutes, a background result in an unlocked archived thread, and a clear failure in a locked thread. Automated protocol tests do not replace this real-account check.
 
