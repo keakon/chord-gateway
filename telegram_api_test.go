@@ -19,7 +19,9 @@ func testTelegramAPI(t *testing.T, handler http.HandlerFunc) *telegramHTTPAPI {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	api := newTelegramAPI("123:secret-token", nil)
-	api.baseURL, api.client = server.URL, server.Client()
+	// Swapping in the test server's client must keep the redirect policy that
+	// newTelegramAPI applies, so redirect-replay tests stay meaningful.
+	api.baseURL, api.client = server.URL, messageHTTPClient(server.Client())
 	return api
 }
 func TestTelegramTypedAPIRequests(t *testing.T) {

@@ -265,7 +265,7 @@ func (a *telegramHTTPAPI) call(parent context.Context, method string, payload, r
 		return fail(0, 0, "invalid_request", nil)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := messageHTTPClient(a.client).Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return fail(0, 0, "network", ctx.Err())
 	}

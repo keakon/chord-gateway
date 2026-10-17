@@ -333,7 +333,13 @@ func (a *TelegramAdapter) normalizeUpdate(update telegramUpdate) (IngressEnvelop
 		e.SourceTime = time.Unix(m.Date, 0)
 	}
 	if m.Chat.ID != 0 && m.MessageID > 0 {
-		e.SemanticID, _ = EncodeScopedID("message:", e.Message.ChatID, strconv.FormatInt(m.MessageID, 10))
+		// A dropped SemanticID would silently degrade semantic dedup to
+		// business-ID dedup, so refuse the message instead.
+		semanticID, err := EncodeScopedID("message:", e.Message.ChatID, strconv.FormatInt(m.MessageID, 10))
+		if err != nil {
+			return e, "invalid_target"
+		}
+		e.SemanticID = semanticID
 	}
 	if m.From != nil {
 		e.Message.SenderID = strconv.FormatInt(m.From.ID, 10)
