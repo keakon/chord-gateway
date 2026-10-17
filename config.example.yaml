@@ -7,7 +7,7 @@
 #   3. $XDG_CONFIG_HOME/chord-gateway/config.yaml
 #   4. ~/.config/chord-gateway/config.yaml
 #
-# Runtime state (logs, WeChat QR-login tokens, dedupe, session pins, transfer guards) goes to:
+# Runtime state (logs, WeChat QR-login tokens, session pins, transfer guards) goes to:
 #   1. $CHORD_GATEWAY_STATE_DIR
 #   2. $XDG_STATE_HOME/chord-gateway
 #   3. ~/.local/state/chord-gateway

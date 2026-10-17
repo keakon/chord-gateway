@@ -223,7 +223,7 @@ Chord 已关闭的问题（无论终态，包括 `no_response`）仍可在所属
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
-日志、token、去重数据和 session pin 都存储在这里。微信 token 默认位于 `<state_dir>/wechat/token.json`。
+日志、token、session pin 和移交保护都存储在这里。入站队列、去重记录和轮询游标只存内存，不写入这里。微信 token 默认位于 `<state_dir>/wechat/token.json`。
 
 ## 仍然无法解决
 

@@ -223,7 +223,7 @@ State directory priority:
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
-Logs, tokens, dedupe data, and session pins are stored there. WeChat token state defaults to `<state_dir>/wechat/token.json`.
+Logs, tokens, session pins and transfer guards are stored there. Intake, deduplication and polling cursors are memory-only and are not written here. WeChat token state defaults to `<state_dir>/wechat/token.json`.
 
 ## Still stuck
 
