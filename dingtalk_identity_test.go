@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/keakon/chord-gateway/config"
 )
@@ -66,7 +65,7 @@ func TestDingtalkTargetsRoundTripAndScope(t *testing.T) {
 func TestDingtalkNormalizeIdentityAndText(t *testing.T) {
 	cfg := dingtalkIdentityTestConfig()
 	callback := dingtalkIdentityTestCallback()
-	msg, err := normalizeDingtalkCallback(cfg, dingtalkIdentityTestPayload(t, callback), time.Now())
+	msg, err := normalizeDingtalkCallback(cfg, dingtalkIdentityTestPayload(t, callback))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +76,7 @@ func TestDingtalkNormalizeIdentityAndText(t *testing.T) {
 	}
 	callback.ConversationType, callback.IsInAtList = "2", true
 	callback.ConversationID = "original/group:id?opaque=1"
-	msg, err = normalizeDingtalkCallback(cfg, dingtalkIdentityTestPayload(t, callback), time.Now())
+	msg, err = normalizeDingtalkCallback(cfg, dingtalkIdentityTestPayload(t, callback))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +108,7 @@ func TestDingtalkNormalizeRejectionsAreSanitized(t *testing.T) {
 			callback := dingtalkIdentityTestCallback()
 			callback.Text.Content = "sensitive callback body"
 			test.mutate(&callback)
-			msg, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), dingtalkIdentityTestPayload(t, callback), time.Now())
+			msg, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), dingtalkIdentityTestPayload(t, callback))
 			assertDingtalkIdentityCategory(t, err, test.category, test.terminal)
 			if msg.Text != "" {
 				t.Fatalf("rejection retained body: %+v", msg)
@@ -126,10 +125,10 @@ func TestDingtalkNormalizeRejectionsAreSanitized(t *testing.T) {
 	callback := dingtalkIdentityTestCallback()
 	callback.SenderStaffID = ""
 	payload := strings.TrimSuffix(dingtalkIdentityTestPayload(t, callback), "}") + `,"senderId":"fallback","isAdmin":true}`
-	_, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), payload, time.Now())
+	_, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), payload)
 	assertDingtalkIdentityCategory(t, err, "sender_identity_unsupported", false)
 	for _, payload := range []string{"{bad-json-with-sensitive-content", string([]byte{0xff}), "null", "[]"} {
-		_, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), payload, time.Now())
+		_, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), payload)
 		assertDingtalkIdentityCategory(t, err, "invalid_callback", false)
 	}
 }
@@ -193,7 +192,7 @@ func TestDingtalkLiteralGroupCallback(t *testing.T) {
 		"isInAtList":true, "atUsers":[{"dingtalkId":"test-bot-user"}],
 		"msgtype":"text", "text":{"content":" /bind /project/path"}
 	}`
-	msg, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), payload, time.Now())
+	msg, err := normalizeDingtalkCallback(dingtalkIdentityTestConfig(), payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +200,7 @@ func TestDingtalkLiteralGroupCallback(t *testing.T) {
 		t.Fatalf("group command did not normalize: %+v", msg)
 	}
 	// Literal mentions in the user's task must not be stripped speculatively.
-	msg, err = normalizeDingtalkCallback(dingtalkIdentityTestConfig(), strings.Replace(payload, "/bind /project/path", "@someone review this", 1), time.Now())
+	msg, err = normalizeDingtalkCallback(dingtalkIdentityTestConfig(), strings.Replace(payload, "/bind /project/path", "@someone review this", 1))
 	if err != nil || msg.Text != "@someone review this" {
 		t.Fatal(msg.Text, err)
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -15,8 +14,16 @@ import (
 // data must never appear in diagnostics, including rejected input.
 type dingtalkIdentityError struct{ Category string }
 
-func (e *dingtalkIdentityError) Error() string  { return e.Category }
-func (e *dingtalkIdentityError) Terminal() bool { return e.Category == "tenant_mismatch" }
+func (e *dingtalkIdentityError) Error() string { return e.Category }
+
+// Identity refusal categories compared across files; keep them as constants so
+// the agreement between the producer and the reason mapping stays checkable.
+const (
+	dingtalkCategoryTenantMismatch = "tenant_mismatch"
+	dingtalkCategorySourceTime     = "source_time_out_of_range"
+)
+
+func (e *dingtalkIdentityError) Terminal() bool { return e.Category == dingtalkCategoryTenantMismatch }
 
 func dingtalkIdentityFailure(category string) error {
 	return &dingtalkIdentityError{Category: category}
@@ -126,7 +133,7 @@ func validateDingtalkCallbackIdentity(cfg *config.DingtalkConfig, callback *ding
 		return dingtalkIdentityFailure("invalid_callback")
 	}
 	if callback.ChatbotCorpID != cfg.CorpID || callback.RobotCode != cfg.RobotCode {
-		return dingtalkIdentityFailure("tenant_mismatch")
+		return dingtalkIdentityFailure(dingtalkCategoryTenantMismatch)
 	}
 	if callback.SenderStaffID == "" || callback.SenderCorpID != cfg.CorpID {
 		return dingtalkIdentityFailure("sender_identity_unsupported")
@@ -144,7 +151,7 @@ func validateDingtalkIdentityProbe(cfg *config.DingtalkConfig, callback *dingtal
 	return nil
 }
 
-func normalizeDingtalkCallback(cfg *config.DingtalkConfig, payload string, _ time.Time) (IncomingMessage, error) {
+func normalizeDingtalkCallback(cfg *config.DingtalkConfig, payload string) (IncomingMessage, error) {
 	callback, err := parseDingtalkCallback(payload)
 	if err != nil {
 		return IncomingMessage{}, err

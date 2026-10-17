@@ -210,7 +210,7 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 	defer server.Close()
 	f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
 	f.a.api.targetInterval, f.a.api.accountInterval = 0, 0
-	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()), time.Now())
+	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +526,7 @@ func TestDingtalkAdapterBindingProbeRechecksNonceAndRoute(t *testing.T) {
 			f := newDingtalkAdapterFixture(t)
 			dingtalkAdapterVerify(t, f)
 			callback := dingtalkIdentityTestCallback()
-			msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, callback), time.Now())
+			msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, callback))
 			if err != nil {
 				t.Fatal(err)
 			}

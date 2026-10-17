@@ -136,6 +136,7 @@ func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 		"session_restore_failed", "session_pin_persistence_failed", "session_ready_pin_unconfirmed",
 		"new_done_confirmation", "transfer_guard", "authorization_changed", "received_expired", "route_identity_changed",
 		"connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "local_error",
+		"invalid_callback",
 	}
 	for _, reason := range produced {
 		if got := imMetricReason(reason); got != reason {

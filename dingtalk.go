@@ -185,7 +185,7 @@ func (a *DingtalkAdapter) activate(ctx context.Context, generation uint64) error
 	}
 	if err := a.router.admission.pairing.PlatformReadyWithPresentation("dingtalk", a.account, PlatformPresentation{Platform: "dingtalk", BotMention: "@robot"}); err != nil {
 		if errors.Is(err, errPairingDenied) {
-			a.fatal = &dingtalkIdentityError{Category: "tenant_mismatch"}
+			a.fatal = &dingtalkIdentityError{Category: dingtalkCategoryTenantMismatch}
 			a.cancel()
 			err = a.fatal
 		}
@@ -230,7 +230,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 	if errors.As(identityErr, &identity) && identity.Terminal() {
 		return nil, identityErr
 	}
-	msg, contentErr := normalizeDingtalkCallback(a.cfg, frame.Data, received)
+	msg, contentErr := normalizeDingtalkCallback(a.cfg, frame.Data)
 	if contentErr != nil && msg.MessageID == "" {
 		reason := "invalid_input"
 		var refusal *dingtalkIdentityError
@@ -245,13 +245,11 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		timestamp := frame.headerString("time")
 		ms, err := strconv.ParseInt(timestamp, 10, 64)
 		if err != nil {
-			contentErr = &dingtalkIdentityError{Category: "source_time_out_of_range"}
-			msg.Text = ""
+			contentErr = &dingtalkIdentityError{Category: dingtalkCategorySourceTime}
 		} else {
 			e.SourceTime = time.UnixMilli(ms)
 			if e.SourceTime.Before(received.Add(-24*time.Hour)) || e.SourceTime.After(received.Add(5*time.Minute)) {
-				contentErr = &dingtalkIdentityError{Category: "source_time_out_of_range"}
-				msg.Text = ""
+				contentErr = &dingtalkIdentityError{Category: dingtalkCategorySourceTime}
 				// Invalid milliseconds can exceed time.Time's JSON year range.
 				// Keep a serializable receipt time in the refusal tombstone.
 				e.SourceTime = received
@@ -279,7 +277,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		}
 		future, err := a.router.SubmitIngress(ctx, e)
 		if err != nil {
-			a.observeReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: "capacity"})
+			a.observeReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
 			a.notifyLostInput(msg)
 		}
 		return a.trackAcceptance(future, msg), err
@@ -328,7 +326,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		return result
 	})
 	if submitErr != nil {
-		a.observeReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: "capacity"})
+		a.observeReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(submitErr)})
 	}
 	return a.trackAcceptance(future, IncomingMessage{}), submitErr
 }

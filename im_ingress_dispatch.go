@@ -441,7 +441,9 @@ func (s *IngressService) dispatchRoute(id ChatIdentity) {
 				continue
 			}
 			cmd := commandForIncomingMessage(control.message)
-			query := cmd.Type == "status" || cmd.Type == "todos" || cmd.Type == "sessions" || cmd.Type == "role" && strings.TrimSpace(cmd.Content) == "" || !control.message.ForceText && strings.TrimSpace(control.message.Text) == "/help" && control.message.InternalAction == nil
+			query := cmd.Type == "status" || cmd.Type == "todos" || cmd.Type == "sessions" ||
+				(cmd.Type == "role" && strings.TrimSpace(cmd.Content) == "") ||
+				(!control.message.ForceText && strings.TrimSpace(control.message.Text) == "/help" && control.message.InternalAction == nil)
 			if unknown && !query && cmd.Type != "cancel" && cmd.Type != "bind" && !s.canRetryIngressQuestion(control, records) {
 				s.finish(rec, "rejected", "route_outcome_unknown")
 				s.router.enqueueIngressDispatchDiagnostic(control.message, DispatchResult{"rejected", "route_outcome_unknown"})
@@ -451,9 +453,6 @@ func (s *IngressService) dispatchRoute(id ChatIdentity) {
 			s.router.enqueueIngressDispatchDiagnostic(control.message, result)
 			if result.State != "awaiting_receipt" {
 				s.finish(rec, result.State, result.Reason)
-			}
-			if result.State == "awaiting_receipt" {
-				blocked = true
 			}
 			blocked, unknown = s.currentIngressBlockers(id)
 			continue
@@ -706,7 +705,9 @@ func (s *IngressService) prioritizeControls(records []IngressRecord) []IngressRe
 			case "status", "cancel", "confirm", "question", "handoff", "sessions", "todos":
 				urgent = true
 			}
-			urgent = urgent || !control.message.ForceText && control.message.InternalAction == nil && strings.TrimSpace(control.message.Text) == "/help" || cmd.Type == "takeover" && cmd.Action == "status"
+			urgent = urgent ||
+				(!control.message.ForceText && control.message.InternalAction == nil && strings.TrimSpace(control.message.Text) == "/help") ||
+				(cmd.Type == "takeover" && cmd.Action == "status")
 		}
 		if urgent {
 			if len(priority) < 4 {

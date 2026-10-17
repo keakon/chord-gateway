@@ -33,7 +33,10 @@ func imMetricReason(reason string) string {
 	switch reason {
 	case "control_target_unavailable", "binding_unavailable", "binding_outcome_unknown", "authorization_changed", "outbound_full", "outbound_closed", "reply_expired":
 		return reason
-	case "update_id_conflict", "semantic_duplicate", "unsupported_update", "unsupported_topic", "unsupported_sender_chat", "unsupported_chat", "unsupported_content", "other_bot_command", "invalid_command_entity", "chat_migrated", "credentials", "forbidden", "poller_conflict", "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "local_error":
+	case "invalid_identity", "identity_probe", "identity_unverified", "identity_probe_requires_private",
+		"sender_identity_unsupported", "unsupported_conversation", "unsupported_message",
+		"group_mention_required", "message_too_large", "invalid_message_id",
+		"update_id_conflict", "semantic_duplicate", "unsupported_update", "unsupported_topic", "unsupported_sender_chat", "unsupported_chat", "unsupported_content", "other_bot_command", "invalid_command_entity", "chat_migrated", "credentials", "forbidden", "poller_conflict", "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "invalid_callback", "local_error":
 		return reason
 	case "":
 		return "none"

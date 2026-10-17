@@ -128,7 +128,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 		sends.Add(1)
 		return nil
 	}
-	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()), time.Now())
+	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()))
 	if err != nil {
 		t.Fatal(err)
 	}

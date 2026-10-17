@@ -71,7 +71,7 @@ func (s *IngressStore) checkCursor(platform, account string, expected uint64, ne
 	if err := validateIngressCursor(platform, &next); err != nil {
 		return err
 	}
-	if next.Generation != expected+1 || expected == ^uint64(0) || s.cursors[compositeKey(platform, account)].Generation != expected {
+	if next.Generation != expected+1 || s.cursors[compositeKey(platform, account)].Generation != expected {
 		return errIngressCursorConflict
 	}
 	if next.Wechat != nil && next.Wechat.AccountID != account || next.Telegram != nil && next.Telegram.BotID != "" && next.Telegram.BotID != account {
@@ -87,13 +87,15 @@ func (s *IngressStore) CommitCursor(ctx context.Context, platform, account strin
 	return s.commitCursorGuarded(ctx, platform, account, expected, next, nil)
 }
 func (s *IngressStore) commitCursorGuarded(ctx context.Context, platform, account string, expected uint64, next IngressCursor, valid func() bool) error {
+	// Check the adapter callback before taking the store mutex: it reads an
+	// adapter lock, and one cursor commit must not serialize behind it.
+	if valid != nil && !valid() {
+		return errIngressTransportChanged
+	}
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
-	if valid != nil && !valid() {
-		return errIngressTransportChanged
-	}
 	if err := s.checkCursor(platform, account, expected, next); err != nil {
 		return err
 	}
