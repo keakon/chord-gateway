@@ -96,7 +96,7 @@ For local reset, stop the gateway first:
 chord-gateway pairing reset --platform slack -f config.yaml
 ```
 
-Confirm `slack` in the terminal, then restart with `--pair`. See [pairing](./pairing.md) and [delivery semantics](./operations.md#message-delivery-and-restarts) before resolving unknown operations or changing account identity. An ACK or “accepted” response confirms receipt, not successful Chord execution. Redelivery of the same slash command reports expired, quarantined, discarded or unknown outcomes as appropriate. For unknown outcomes, inspect the session and `/chord status` before repeating an operation.
+Confirm `slack` in the terminal, then restart with `--pair`. See [pairing](./pairing.md) and [delivery semantics](./operations.md#message-delivery-and-restarts) before resolving unknown operations or changing account identity. An ACK or “accepted” response confirms receipt, not successful Chord execution. Redelivery of the same slash command reports expired, quarantined or unknown outcomes as appropriate. For unknown outcomes, inspect the session and `/chord status` before repeating an operation.
 
 Socket intake waits up to two seconds for acceptance, reserving the remainder of Slack’s three-second ACK deadline for writing. Conversation lookup and queue wait have a separate 30-second limit, cancelled on disconnect. Missing an ACK does not cancel admission or prove the command failed: it may still execute, and redelivery is deduplicated within this process. Check `/chord status` and the original session before manually retrying. ACK hints use English, consistent with other command replies.
 

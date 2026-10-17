@@ -146,7 +146,6 @@ func TestSlackDuplicateACKReportsOriginalTerminalState(t *testing.T) {
 		{"expired", "execution_outcome_unknown", "Outcome unknown"},
 		{"unknown", "", "Outcome unconfirmed"},
 		{"quarantined", "", "Quarantined"},
-		{"discarded", "", "Discarded locally"},
 	} {
 		t.Run(tc.state+tc.reason, func(t *testing.T) {
 			future := make(chan ReceiveResult, 1)

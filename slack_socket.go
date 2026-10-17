@@ -387,8 +387,6 @@ func slackAcceptanceHint(result ReceiveResult) string {
 		return "Expired without execution. Send a new command if still needed."
 	case "unknown", "dispatching":
 		return "Outcome unconfirmed. Check /chord status before retrying."
-	case "discarded":
-		return "Discarded locally; it will not execute again."
 	case "quarantined":
 		return "Quarantined; execution is paused. Check /chord status."
 	default:

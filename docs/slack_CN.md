@@ -96,7 +96,7 @@ slash command 始终操作**频道根目标**，即使在查看 thread 时发送
 chord-gateway pairing reset --platform slack -f config.yaml
 ```
 
-在终端输入 `slack` 确认，再以 `--pair` 启动。处理未知操作或更换账号前，阅读[配对说明](./pairing_CN.md)与[投递语义](./operations_CN.md#消息投递与重启)。ACK 或 `Accepted`（已接收）仅确认收件，不表示 Chord 执行成功。同一 slash 命令重投时，已经过期、隔离、丢弃或结果未知的收件会返回相应状态；结果未知时先核查会话和 `/chord status`，不要直接重复操作。
+在终端输入 `slack` 确认，再以 `--pair` 启动。处理未知操作或更换账号前，阅读[配对说明](./pairing_CN.md)与[投递语义](./operations_CN.md#消息投递与重启)。ACK 或 `Accepted`（已接收）仅确认收件，不表示 Chord 执行成功。同一 slash 命令重投时，已经过期、隔离或结果未知的收件会返回相应状态；结果未知时先核查会话和 `/chord status`，不要直接重复操作。
 
 Socket 收件最多等待 2 秒确认接纳，为 Slack 的 3 秒 ACK 截止时间预留发送时间。聊天查询与排队另有 30 秒总期限，断线时取消。未收到 ACK 不会取消接纳，也不证明命令失败：命令仍可能执行，同一消息重投会在当前进程内去重。手动重试前先查看 `/chord status` 和原会话。ACK 提示统一使用英文，与其他命令回复一致。
 
