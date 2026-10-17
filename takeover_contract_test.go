@@ -60,8 +60,15 @@ func TestChordTakeoverContract_LinkedWorktreeAndPreparationRejection(t *testing.
 		t.Run(map[bool]string{false: "released", true: "preparation rejected"}[reject], func(t *testing.T) {
 			root := t.TempDir()
 			repo, worktree := filepath.Join(root, "repository"), filepath.Join(root, "worktree")
+			// Isolate the fixture from machine-wide git configuration: a global
+			// core.hooksPath (for example a code-review hook) or commit.gpgsign
+			// would otherwise abort this commit and leave the worktree without a
+			// HEAD. Identity is supplied inline.
+			gitEnv := append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 			for _, args := range [][]string{{"init", repo}, {"-C", repo, "-c", "user.name=Sample", "-c", "user.email=sample@example.invalid", "commit", "--allow-empty", "-m", "sample"}, {"-C", repo, "worktree", "add", "--detach", worktree}} {
-				if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+				cmd := exec.Command("git", args...)
+				cmd.Env = gitEnv
+				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("git fixture: %v: %s", err, out)
 				}
 			}
