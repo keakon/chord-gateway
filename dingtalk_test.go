@@ -62,11 +62,21 @@ func dingtalkAdapterFrame(t *testing.T, callback dingtalkCallback, delivery stri
 
 func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkCallback, delivery string) ReceiveResult {
 	t.Helper()
-	future, err := a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, delivery))
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		future, err := a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, delivery))
+		if err == nil {
+			return receiveNormalization(t, future)
+		}
+		// Capture reads the target's process state without waiting, so a delivery
+		// that arrives while that state is being written is refused as retryable
+		// and the platform redelivers it. Model the redelivery here instead of
+		// failing on a scheduling race between two deliveries to one chat.
+		if !errors.Is(err, errIngressCaptureBusy) || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	return receiveNormalization(t, future)
 }
 
 func dingtalkAdapterVerify(t *testing.T, f dingtalkAdapterFixture) {
