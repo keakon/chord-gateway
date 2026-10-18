@@ -48,7 +48,10 @@ func (s *IngressStore) BeginRouteChange(ctx context.Context, id ChatIdentity) (I
 	}
 	defer s.mu.Unlock()
 	for _, r := range s.routePending(id) {
-		if r.Kind == "task" && r.State == "received" || r.State == "dispatching" || r.State == "unknown" {
+		// A queued task owns the route; a queued control can be re-targeted or
+		// dropped by the change itself. Anything already in flight blocks
+		// regardless of kind.
+		if r.State == "dispatching" || r.State == "unknown" || (r.Kind == "task" && r.State == "received") {
 			return IngressRoute{}, errIngressBlocked
 		}
 	}

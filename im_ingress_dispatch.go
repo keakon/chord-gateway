@@ -307,30 +307,7 @@ func (s *IngressService) run() {
 			if !eligible {
 				continue
 			}
-			records := s.store.ListRoutePendingMetadata(id)
-			s.settleStalledRecords(records)
-			blocked := false
-			quarantined := make(map[ingressRevision]bool)
-			for _, rec := range records {
-				if rec.State == "dispatching" || rec.State == "unknown" {
-					blocked = true
-				}
-				if rec.State == "quarantined" {
-					quarantined[ingressRevision{id, rec.RouteRevision}] = true
-				}
-			}
-			ready := false
-			for _, rec := range records {
-				if rec.State != "received" {
-					continue
-				}
-				if rec.Kind == "task" && (blocked || routeBlocked || quarantined[ingressRevision{id, rec.RouteRevision}]) {
-					continue
-				}
-				ready = true
-				break
-			}
-			if !ready {
+			if !s.visitRoute(id, routeBlocked) {
 				continue
 			}
 			s.mu.Lock()
@@ -376,6 +353,38 @@ func (s *IngressService) sweepControls() {
 		delete(s.controls, id)
 		s.mu.Unlock()
 	}
+}
+
+// visitRoute settles the deliveries of one route that can no longer be
+// confirmed and reports whether the route holds a record ready to dispatch.
+// The dispatcher loop calls it per eligible route, so the stall settlement is
+// part of the route-visit contract rather than a side effect reachable only
+// through the ticker. routeBlocked is evaluated by the caller for every route
+// with pending records, eligible or not, because reading it also expires the
+// block window.
+func (s *IngressService) visitRoute(id ChatIdentity, routeBlocked bool) bool {
+	records := s.store.ListRoutePendingMetadata(id)
+	s.settleStalledRecords(records)
+	blocked := false
+	quarantined := make(map[ingressRevision]bool)
+	for _, rec := range records {
+		if rec.State == "dispatching" || rec.State == "unknown" {
+			blocked = true
+		}
+		if rec.State == "quarantined" {
+			quarantined[ingressRevision{id, rec.RouteRevision}] = true
+		}
+	}
+	for _, rec := range records {
+		if rec.State != "received" {
+			continue
+		}
+		if rec.Kind == "task" && (blocked || routeBlocked || quarantined[ingressRevision{id, rec.RouteRevision}]) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // settleStalledRecords settles deliveries that can no longer be confirmed.

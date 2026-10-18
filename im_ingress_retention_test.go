@@ -77,3 +77,59 @@ func TestIngressFreshDeliverySurvivesTheStallSweep(t *testing.T) {
 		t.Fatalf("in-flight delivery was settled early: %+v", got)
 	}
 }
+
+// The sweep only helps if the dispatcher's route visit runs it, so exercise the
+// path run() takes rather than the helper in isolation: dropping the call from
+// the route visit must fail here, not just in a direct unit of the helper.
+func TestIngressRouteVisitSettlesStalledDelivery(t *testing.T) {
+	s, _, _, msg := ingressTestService(t)
+	id := pauseIngressTestRoute(t, s, msg)
+	msg.MessageID, msg.Text = "stalled", "task body"
+	stalled := s.Accept(context.Background(), IngressEnvelope{Message: msg})
+	if stalled.Disposition != ReceiveAccepted {
+		t.Fatal(stalled)
+	}
+	if err := s.store.UpdateRecord(context.Background(), stalled.RecordID, []string{"received"}, func(r *IngressRecord) error {
+		r.State = "dispatching"
+		r.Reason = "receipt_timeout"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	real := s.store.now
+	s.store.now = func() time.Time { return real().Add(ingressStallDeadline + time.Minute) }
+	defer func() { s.store.now = real }()
+
+	// A route whose only record is stalled has nothing to dispatch.
+	if s.visitRoute(id, false) {
+		t.Fatal("a route whose only record is stalled was reported ready")
+	}
+	got, err := s.store.Get(stalled.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "expired" || got.Reason != "receipt_timeout" || !got.Terminal() {
+		t.Fatalf("route visit did not settle the stalled delivery: %+v", got)
+	}
+	if got.Text != "" {
+		t.Fatal("settled record retained the body", got)
+	}
+
+	// Settling a stalled delivery must not hold back work that arrived later.
+	msg.MessageID, msg.Text = "fresh", "new task"
+	fresh := s.Accept(context.Background(), IngressEnvelope{Message: msg})
+	if fresh.Disposition != ReceiveAccepted {
+		t.Fatal(fresh)
+	}
+	if !s.visitRoute(id, false) {
+		t.Fatal("a fresh delivery was blocked by a stalled one")
+	}
+	freshRecord, err := s.store.Get(fresh.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freshRecord.State != "received" {
+		t.Fatalf("fresh delivery was disturbed by the route visit: %+v", freshRecord)
+	}
+}
