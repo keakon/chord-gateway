@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,17 @@ type IMTextSendError struct {
 // unknown outcome in partial-send diagnostics without exposing platform data.
 type imTextFailureClassifier interface {
 	IMTextSendFailureCategory() string
+}
+
+// imTextFailureCategories is the bounded set of transport evidence a classifier
+// may report. These values are also metric labels, so imMetricReason must accept
+// every entry: a value the metrics vocabulary rejects becomes "other" and hides
+// which transport actually failed.
+var imTextFailureCategories = []string{
+	"unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable",
+	"auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "local_error",
+	"credentials", "poller_conflict", "chat_migrated", "forbidden", "api_rejected", "invalid_target",
+	"invalid_request",
 }
 
 func (e *IMTextSendError) Error() string {
@@ -166,8 +178,7 @@ func (s *IMTextSender) Send(ctx, lifecycle, permit context.Context, target, text
 			}
 			var classified imTextFailureClassifier
 			if errors.As(err, &classified) {
-				switch category := classified.IMTextSendFailureCategory(); category {
-				case "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "local_error", "credentials", "poller_conflict", "chat_migrated", "forbidden", "api_rejected", "invalid_target", "invalid_request":
+				if category := classified.IMTextSendFailureCategory(); slices.Contains(imTextFailureCategories, category) {
 					return fail(i, category, err)
 				}
 			}

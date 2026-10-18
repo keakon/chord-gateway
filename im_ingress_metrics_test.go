@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -123,24 +125,62 @@ func TestIngressStoreControlSharesRouteCapacity(t *testing.T) {
 	}
 }
 
+// ingressReasonLiteral matches the reason fields the ingress core fills in on
+// ReceiveResult, AdmissionResult and IngressRecord.
+var ingressReasonLiteral = regexp.MustCompile(`Reason:\s*"([a-z0-9_]+)"`)
+
+// producedIngressReasons reads the reasons out of the ingress sources instead of
+// restating them here. A hand-maintained copy drifts, which is how the
+// normalization and transport reasons were lost to "other" while this guard
+// still passed.
+func producedIngressReasons(t *testing.T) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := make(map[string]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if !strings.HasPrefix(name, "im_") && name != "wechat_ingress.go" && name != "inbound_admission.go" {
+			continue
+		}
+		if name == "im_ingress_metrics.go" {
+			// The allowlist itself: scanning it would assert nothing.
+			continue
+		}
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range ingressReasonLiteral.FindAllSubmatch(source, -1) {
+			reasons[string(match[1])] = name
+		}
+	}
+	if len(reasons) < 10 {
+		t.Fatalf("the reason scan found only %d literals, so it is broken", len(reasons))
+	}
+	return reasons
+}
+
 // TestIngressMetricVocabularyRoundTripsProducedLabels keeps the bounded metric
 // vocabulary in step with what the ingress code actually emits. A produced
 // reason or terminal event that is missing from the allowlist is dropped to
 // "other" or discarded entirely, hiding the outcome operators need to see.
 func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
-	produced := []string{
-		"control_parameters_unavailable", "route_outcome_unknown", "route_changing", "route_unavailable",
-		"route_change_unavailable", "invalid_input_digest", "invalid_cursor", "received_time_out_of_range",
-		"cursor_generation_conflict", "cursor_platform_invalid", "invalid_interaction", "target_busy",
-		"capture_busy", "rejection_not_committed", "observer_registration_failed", "stdin_outcome_unknown",
-		"session_restore_failed", "session_pin_persistence_failed", "session_ready_pin_unconfirmed",
-		"new_done_confirmation", "transfer_guard", "authorization_changed", "received_expired", "route_identity_changed",
-		"connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "local_error",
-		"invalid_callback",
-	}
-	for _, reason := range produced {
+	for reason, file := range producedIngressReasons(t) {
 		if got := imMetricReason(reason); got != reason {
-			t.Fatalf("produced reason collapsed to %q: %q", got, reason)
+			t.Errorf("%s emits reason %q, which the snapshot collapses to %q", file, reason, got)
+		}
+	}
+	// Transport failure categories are metric labels too, so the bounded set a
+	// classifier may report and the metrics vocabulary must agree.
+	for _, category := range imTextFailureCategories {
+		if got := imMetricReason(category); got != category {
+			t.Errorf("failure category %q collapses to %q in send diagnostics", category, got)
 		}
 	}
 	// Dead labels from the removed identity-scoped paths must not reserve space.

@@ -441,16 +441,12 @@ func TestIngressLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
 		t.Fatal("delivery was not dispatched, so no receipt can arrive")
 	}
 
+	identity := ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}
+	real := s.store.now
+	s.store.now = func() time.Time { return real().Add(ingressStallDeadline + time.Minute) }
+	s.settleStalledRecords(s.store.ListRoutePendingMetadata(identity))
+	s.store.now = real
 	stalled, err := s.store.Get(accepted.RecordID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Settle the delivery the way settleStalledRecords does once the receipt
-	// deadline passes. Swapping store.now here would race with the dispatcher
-	// goroutine that also reads it, and the deadline itself is covered by the
-	// retention tests.
-	s.finish(stalled, "expired", "receipt_timeout")
-	stalled, err = s.store.Get(accepted.RecordID)
 	if err != nil {
 		t.Fatal(err)
 	}

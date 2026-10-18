@@ -36,11 +36,18 @@ func imMetricReason(reason string) string {
 	case "invalid_identity", "identity_probe", "identity_unverified", "identity_probe_requires_private",
 		"sender_identity_unsupported", "unsupported_conversation", "unsupported_message",
 		"group_mention_required", "message_too_large", "invalid_message_id",
-		"update_id_conflict", "semantic_duplicate", "unsupported_update", "unsupported_topic", "unsupported_sender_chat", "unsupported_chat", "unsupported_content", "other_bot_command", "invalid_command_entity", "chat_migrated", "credentials", "forbidden", "poller_conflict", "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "invalid_callback", "local_error":
+		"update_id_conflict", "semantic_duplicate", "unsupported_update", "unsupported_topic", "unsupported_sender_chat", "unsupported_chat", "unsupported_content", "other_bot_command", "invalid_command_entity", "chat_migrated", "credentials", "forbidden", "poller_conflict", "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "invalid_callback", "local_error", "api_rejected", "invalid_request":
 		return reason
 	case "":
 		return "none"
 	case "invalid_input", "invalid_kind", "invalid_state", "ingress_unavailable", "source_time_out_of_range", "capacity", "route_changed", "route_changing", "route_busy", "route_unavailable", "route_outcome_unknown", "route_change_unavailable", "stream_capacity", "authorization_denied", "admission_unavailable", "platform_unavailable", "chat_unbound", "pairing_hint_text", "pairing_hint_usage", "pairing_hint_code", "received_expired", "route_identity_changed", "execution_outcome_unknown", "receipt_timeout", "process_exited", "delivery_failed", "cancelled", "invalid_target", "invalid_text", "invalid_rate_limit", "invalid_input_digest", "invalid_cursor", "received_time_out_of_range", "cursor_generation_conflict", "cursor_platform_invalid", "invalid_interaction", "target_busy", "capture_busy", "rejection_not_committed", "observer_registration_failed", "stdin_outcome_unknown", "session_restore_failed", "session_pin_persistence_failed", "session_ready_pin_unconfirmed", "control_parameters_unavailable", "new_done_confirmation", "transfer_guard":
+		return reason
+	case "normalization_cancelled", "normalization_failed", "normalization_result_unavailable",
+		"normalization_unavailable", "normalization_wait_cancelled",
+		"transport_identity_changed", "transport_ignored", "transport_stopped":
+		// Raised by the shared normalizer and by transport liveness checks, and
+		// reported as acceptance reasons. An unlisted value would collapse into
+		// "other" and make a normalization failure look like an unknown refusal.
 		return reason
 	}
 	return "other"
