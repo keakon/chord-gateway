@@ -308,7 +308,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		if probe {
 			reason = "identity_probe"
 		}
-		record := IngressRecord{Platform: "dingtalk", AccountID: a.account, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, DeliveryID: e.DeliveryID, SourceTime: e.SourceTime, ReceivedAt: received, Kind: "control", State: "rejected", Reason: reason}
+		record := IngressRecord{Platform: "dingtalk", AccountID: a.account, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, DeliveryID: e.DeliveryID, SourceTime: e.SourceTime, ReceivedAt: received, Kind: "control", State: ingressRejected, Reason: reason}
 		result := a.router.ingressStore.AcceptRecord(ctx, record, nil)
 		if !probe || result.RecordID == "" || result.Reason != "identity_probe" || (result.Disposition != ReceiveRejected && result.Disposition != ReceiveDuplicate) {
 			return result

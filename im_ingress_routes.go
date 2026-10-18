@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -91,7 +90,7 @@ func (r *NotificationRouter) enqueueIngressReply(msg IncomingMessage, text strin
 	msg.ticket = &ticketSnapshot
 	deadline := time.Now().Add(IMControlSendTimeout)
 	var send func(context.Context) error
-	if msg.ticket.Kind == "owner_unbound" || msg.ticket.Kind == "paired_bind" || strings.HasPrefix(msg.ticket.Kind, "pairing_hint") {
+	if msg.ticket.Kind == "owner_unbound" || msg.ticket.Kind == "paired_bind" || msg.ticket.IsPairingHint() {
 		ticket := *msg.ticket
 		expires := ticket.ReceivedAt.Add(30 * time.Second)
 		if expires.Before(deadline) {

@@ -184,7 +184,7 @@ func (a *WechatAdapter) resolveIncomingMessage(ctx context.Context, msg ilinkMes
 }
 
 func (a *WechatAdapter) confirmIncomingContext(msg ilinkMessage, token *TokenData, result ReceiveResult, pending *wechatIngressPending) {
-	if token == nil || pending == nil || msg.ContextToken == "" || (result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate) || result.State == "rejected" || result.State == "expired" {
+	if token == nil || pending == nil || msg.ContextToken == "" || (result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate) || result.State == ingressRejected || result.State == ingressExpired {
 		return
 	}
 	r := a.pairingRouter()

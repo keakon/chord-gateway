@@ -85,7 +85,7 @@ func (s *IngressService) canRetryIngressQuestion(control ingressControl, records
 	}
 	found := false
 	for _, rec := range records {
-		if rec.State == "unknown" || rec.State == "dispatching" {
+		if rec.State == ingressUnknown || rec.State == ingressDispatching {
 			if rec.Kind != "control" || !matched[rec.RecordID] {
 				return false
 			}
@@ -104,10 +104,10 @@ func (s *IngressService) currentIngressBlockers(id ChatIdentity) (blocked, unkno
 	unknown = blocked
 	records := s.store.ListRoutePendingMetadata(id)
 	for _, rec := range records {
-		if rec.State == "unknown" {
+		if rec.State == ingressUnknown {
 			unknown = true
 		}
-		if rec.State == "unknown" || rec.State == "dispatching" {
+		if rec.State == ingressUnknown || rec.State == ingressDispatching {
 			blocked = true
 		}
 	}

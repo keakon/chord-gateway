@@ -373,7 +373,7 @@ func (a *SlackAdapter) slackReceiptACK(ctx context.Context, generation uint64, r
 // Only non-accepted outcomes carry an ephemeral hint; a plain acceptance stays
 // a bare ACK so every /chord invocation does not push visible chatter.
 func slackAcceptanceHint(result ReceiveResult) string {
-	if result.Disposition == ReceiveRejected || result.State == "rejected" {
+	if result.Disposition == ReceiveRejected || result.State == ingressRejected {
 		return ""
 	}
 	if result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate {

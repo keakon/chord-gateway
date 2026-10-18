@@ -141,13 +141,16 @@ func TestSlackSocketBusyCapturePreservesPingAndShutdown(t *testing.T) {
 }
 
 func TestSlackDuplicateACKReportsOriginalTerminalState(t *testing.T) {
-	for _, tc := range []struct{ state, reason, want string }{
+	for _, tc := range []struct {
+		state        ingressState
+		reason, want string
+	}{
 		{"expired", "acceptance_outcome_uncertain", "Expired"},
 		{"expired", "execution_outcome_unknown", "Outcome unknown"},
 		{"unknown", "", "Outcome unconfirmed"},
 		{"quarantined", "", "Quarantined"},
 	} {
-		t.Run(tc.state+tc.reason, func(t *testing.T) {
+		t.Run(string(tc.state)+tc.reason, func(t *testing.T) {
 			future := make(chan ReceiveResult, 1)
 			future <- ReceiveResult{Disposition: ReceiveDuplicate, State: tc.state, Reason: tc.reason}
 			queue := make(chan slackACK, 1)

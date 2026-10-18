@@ -123,7 +123,7 @@ func TestIngressQuestionReceiptUpdateFailureKeepsControlUnresolved(t *testing.T)
 	record := testIngressTask(t, s.store, "receipt-storage-failure")
 	record.Kind, record.Text, record.ControlTarget = "control", "", target
 	accepted := mustAcceptIngress(t, s.store, record)
-	if err := s.store.UpdateRecord(t.Context(), accepted.RecordID, []string{"received"}, func(record *IngressRecord) error { record.State = "unknown"; return nil }); err != nil {
+	if err := s.store.UpdateRecord(t.Context(), accepted.RecordID, []ingressState{"received"}, func(record *IngressRecord) error { record.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	s.router.mu.Lock()

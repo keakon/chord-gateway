@@ -16,6 +16,14 @@ type AdmissionTicket struct {
 	gate                            *ChatGate
 }
 
+// IsPairingHint reports whether the ticket authorizes only a bounded pairing
+// hint reply. Every hint kind shares the "pairing_hint" prefix, and callers that
+// decide authority, reply permits and dispatch all have to agree on that set, so
+// the distinction lives with the ticket instead of at each call site.
+func (t AdmissionTicket) IsPairingHint() bool {
+	return strings.HasPrefix(t.Kind, "pairing_hint")
+}
+
 type Admission struct {
 	pairing *PairingService
 	mu      sync.Mutex
@@ -171,7 +179,7 @@ func (a *Admission) Valid(t AdmissionTicket) bool {
 	if im == nil {
 		return false
 	}
-	if strings.HasPrefix(t.Kind, "pairing_hint") {
+	if t.IsPairingHint() {
 		// A hint carries no authority beyond one bounded reply text and has no
 		// gate, so it is valid only while the platform is still unpaired. Once
 		// an owner appears the ticket must expire rather than be upgraded to

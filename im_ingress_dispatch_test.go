@@ -412,7 +412,7 @@ func TestIngressSweepControlsDropsStaleEntries(t *testing.T) {
 	if _, ok := service.controls["missing"]; ok {
 		t.Fatal("retained parameters for a pruned record")
 	}
-	if err := store.UpdateRecord(t.Context(), pending.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
+	if err := store.UpdateRecord(t.Context(), pending.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	service.sweepControls()

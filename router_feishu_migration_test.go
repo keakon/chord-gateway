@@ -77,8 +77,8 @@ func flushIngressPresentation(t *testing.T, r *NotificationRouter, msg IncomingM
 }
 
 func TestFeishuIngressDiagnosticsResolveOriginalCardWithoutDuplicateText(t *testing.T) {
-	for _, state := range []string{"rejected", "unknown"} {
-		t.Run(state, func(t *testing.T) {
+	for _, state := range []ingressState{"rejected", "unknown"} {
+		t.Run(string(state), func(t *testing.T) {
 			var mu sync.Mutex
 			var patches, texts int
 			var content string
@@ -99,7 +99,7 @@ func TestFeishuIngressDiagnosticsResolveOriginalCardWithoutDuplicateText(t *test
 			r.enqueueIngressDispatchDiagnostic(msg, DispatchResult{state, "question_outcome_unknown"})
 			flushIngressPresentation(t, r, msg)
 			mu.Lock()
-			if patches != 1 || texts != 0 || strings.Contains(content, "Processing") || !strings.Contains(content, map[string]string{"rejected": "Request not applied", "unknown": "Outcome unconfirmed"}[state]) {
+			if patches != 1 || texts != 0 || strings.Contains(content, "Processing") || !strings.Contains(content, map[string]string{"rejected": "Request not applied", "unknown": "Outcome unconfirmed"}[string(state)]) {
 				t.Fatal(patches, texts, content)
 			}
 			mu.Unlock()
@@ -366,7 +366,7 @@ func TestFeishuRealIngressRejectsAcceptedCardBehindUnknownOutcome(t *testing.T) 
 	if previous.Disposition != ReceiveAccepted {
 		t.Fatal(previous)
 	}
-	if err := service.store.UpdateRecord(t.Context(), previous.RecordID, []string{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+	if err := service.store.UpdateRecord(t.Context(), previous.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"time"
 )
 
@@ -16,9 +15,30 @@ const (
 	ReceiveUncertain ReceiveDisposition = "uncertain"
 )
 
+// ingressState is the lifecycle state of an in-memory ingress record; it is
+// never persisted. The constants document the bounded vocabulary and keep the
+// switch arms and allowed-state sets in agreement, but an untyped string
+// literal is still assignable, so new states must be added here rather than
+// written inline.
+type ingressState string
+
+const (
+	ingressReceived    ingressState = "received"
+	ingressDispatching ingressState = "dispatching"
+	ingressUnknown     ingressState = "unknown"
+	ingressConsumed    ingressState = "consumed"
+	ingressRejected    ingressState = "rejected"
+	ingressQuarantined ingressState = "quarantined"
+	ingressExpired     ingressState = "expired"
+	ingressSubmitted   ingressState = "submitted"
+	ingressCompleted   ingressState = "completed"
+)
+
 type ReceiveResult struct {
-	Disposition             ReceiveDisposition
-	RecordID, State, Reason string
+	Disposition ReceiveDisposition
+	RecordID    string
+	State       ingressState
+	Reason      string
 }
 type IngressEnvelope struct {
 	Cursor                 *IngressCursor
@@ -68,7 +88,7 @@ type IngressRecord struct {
 	ReceivedAt           time.Time             `json:"received_at"`
 	Sequence             uint64                `json:"sequence"`
 	Kind                 string                `json:"kind"`
-	State                string                `json:"state"`
+	State                ingressState          `json:"state"`
 	Reason               string                `json:"reason,omitempty"`
 	Text                 string                `json:"text,omitempty"`
 	AuthorizationDigest  string                `json:"authorization_digest"`
@@ -89,7 +109,7 @@ func (r IngressRecord) Identity() ChatIdentity {
 }
 func (r IngressRecord) Terminal() bool {
 	switch r.State {
-	case "consumed", "rejected", "completed", "submitted", "expired", "quarantined":
+	case ingressConsumed, ingressRejected, ingressCompleted, ingressSubmitted, ingressExpired, ingressQuarantined:
 		return true
 	}
 	return false
@@ -161,7 +181,7 @@ func (a *Admission) authorizeClassified(msg IncomingMessage, chargePairing bool)
 		}
 		return AdmissionResult{t, AdmissionAllowed, ""}
 	}
-	if strings.HasPrefix(t.Kind, "pairing_hint") {
+	if t.IsPairingHint() {
 		return AdmissionResult{t, AdmissionRejected, t.Kind}
 	}
 	a.mu.Lock()

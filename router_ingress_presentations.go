@@ -110,7 +110,7 @@ func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg IncomingMessa
 // diagnostic, so callbacks update their original card without duplicate chat
 // messages. Unknown is a checkable interim state, never an invented success.
 func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg IncomingMessage, result DispatchResult) {
-	if result.State != "rejected" && result.State != "unknown" {
+	if result.State != ingressRejected && result.State != ingressUnknown {
 		return
 	}
 	switch result.Reason {
@@ -132,11 +132,11 @@ func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg IncomingMessag
 	if result.Reason == "undelivered_inputs" {
 		text = "Request was not applied: undelivered inputs. Check " + r.ingressCommandHint(msg, "/status") + " and resolve pending input before changing the session; do not resend blindly."
 	}
-	if result.State == "unknown" {
+	if result.State == ingressUnknown {
 		title, text = "Outcome unconfirmed", "Execution outcome unknown. Check "+r.ingressCommandHint(msg, "/status")+" and the original session before sending another request."
 	}
 	if msg.InternalAction != nil {
-		r.enqueueIngressInteractionFeedback(msg, msg.InternalAction.Type, msg.InternalAction.RequestID, title, text, template, result.State == "rejected", true)
+		r.enqueueIngressInteractionFeedback(msg, msg.InternalAction.Type, msg.InternalAction.RequestID, title, text, template, result.State == ingressRejected, true)
 		return
 	}
 	r.enqueueIngressReply(msg, text)

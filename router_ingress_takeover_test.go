@@ -43,9 +43,9 @@ func TestIngressTakeoverStartUsesAuthoritativeResult(t *testing.T) {
 			}
 			msg := IncomingMessage{IMType: "wechat", ChatID: "chat", ticket: &AdmissionTicket{Identity: ChatIdentity{"wechat", "bot", "chat"}}}
 			result := r.dispatchIngressTakeover(context.Background(), msg, key, IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
-			want := "submitted"
+			want := ingressSubmitted
 			if unknown {
-				want = "unknown"
+				want = ingressUnknown
 			}
 			after, err := r.ingressStore.GetRoute(identity)
 			if err != nil {

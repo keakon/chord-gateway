@@ -15,7 +15,7 @@ func TestIngressPendingMetadataTracksAtomicTransitions(t *testing.T) {
 	task := testIngressTask(t, s, "metadata")
 	task.Text = strings.Repeat("private input ", 1000)
 	record := mustAcceptIngress(t, s, task)
-	assertMetadata := func(state string) {
+	assertMetadata := func(state ingressState) {
 		t.Helper()
 		records := s.listPendingMetadata()
 		route := s.ListRoutePendingMetadata(record.Identity())
@@ -42,12 +42,12 @@ func TestIngressPendingMetadataTracksAtomicTransitions(t *testing.T) {
 	}
 	assertMetadata("received")
 	failure := errors.New("rollback")
-	if err := s.UpdateRecord(t.Context(), record.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return failure }); !errors.Is(err, failure) {
+	if err := s.UpdateRecord(t.Context(), record.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return failure }); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	assertMetadata("received")
-	for _, state := range []string{"dispatching", "unknown", "consumed"} {
-		if err := s.UpdateRecord(context.Background(), record.RecordID, []string{"received", "dispatching", "unknown"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
+	for _, state := range []ingressState{"dispatching", "unknown", "consumed"} {
+		if err := s.UpdateRecord(context.Background(), record.RecordID, []ingressState{"received", "dispatching", "unknown"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
 			t.Fatal(err)
 		}
 		assertMetadata(state)
@@ -139,7 +139,7 @@ func TestIngressRoutePendingCapacityAndCleanup(t *testing.T) {
 		}
 	}
 	check(64)
-	if err := s.UpdateRecord(t.Context(), first.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
+	if err := s.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	// Isolation is settled input: it keeps its evidence until the history TTL
@@ -155,7 +155,7 @@ func TestIngressRoutePendingCapacityAndCleanup(t *testing.T) {
 	}
 	check(64)
 	// Terminal metadata updates must not recreate a pending entry.
-	if err := s.UpdateRecord(t.Context(), first.RecordID, []string{"consumed"}, func(r *IngressRecord) error { r.Reason = "settled"; return nil }); err != nil {
+	if err := s.UpdateRecord(t.Context(), first.RecordID, []ingressState{"consumed"}, func(r *IngressRecord) error { r.Reason = "settled"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	check(64)

@@ -185,7 +185,7 @@ func TestIngressStoreIsolationIsSettledAndReclaimed(t *testing.T) {
 			first = got
 		}
 	}
-	if err := s.UpdateRecord(context.Background(), first.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
+	if err := s.UpdateRecord(context.Background(), first.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(s.pendingByRoute[first.Identity()]); got != 63 {
@@ -213,11 +213,11 @@ func TestIngressStoreIsolationIsSettledAndReclaimed(t *testing.T) {
 }
 
 func TestIngressStoreTerminalClearsBodyAndControlNeverRetainsSecrets(t *testing.T) {
-	for _, state := range []string{"consumed", "rejected"} {
-		t.Run(state, func(t *testing.T) {
+	for _, state := range []ingressState{"consumed", "rejected"} {
+		t.Run(string(state), func(t *testing.T) {
 			s := testIngressStore(t)
 			r := mustAcceptIngress(t, s, testIngressTask(t, s, "body"))
-			if err := s.UpdateRecord(context.Background(), r.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
+			if err := s.UpdateRecord(context.Background(), r.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
 				t.Fatal(err)
 			}
 			got, err := s.Get(r.RecordID)
@@ -311,7 +311,7 @@ func TestIngressPendingIndexesTrackTransitions(t *testing.T) {
 	if err != nil || len(route) != 1 {
 		t.Fatalf("%v %v", route, err)
 	}
-	if err = s.UpdateRecord(context.Background(), r.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "unknown"; return nil }); err != nil {
+	if err = s.UpdateRecord(context.Background(), r.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	all, err = s.listPending()
@@ -347,5 +347,5 @@ func (f testIngressReceiverFunc) Accept(ctx context.Context, e IngressEnvelope) 
 
 // Discard is a test-only shortcut for releasing a pending fixture.
 func (s *IngressStore) Discard(ctx context.Context, id string) error {
-	return s.UpdateRecord(ctx, id, []string{"received", "dispatching", "unknown", "quarantined"}, func(r *IngressRecord) error { r.State = "consumed"; r.Reason = "local_discard"; return nil })
+	return s.UpdateRecord(ctx, id, []ingressState{"received", "dispatching", "unknown", "quarantined"}, func(r *IngressRecord) error { r.State = "consumed"; r.Reason = "local_discard"; return nil })
 }

@@ -215,7 +215,7 @@ func TestFeishuUnauthorizedDuplicateCallbackDoesNotExposeStoredOutcome(t *testin
 	if original.Disposition != ReceiveAccepted {
 		t.Fatal(original)
 	}
-	if err := store.UpdateRecord(t.Context(), original.RecordID, []string{"received"}, func(record *IngressRecord) error { record.State = "consumed"; return nil }); err != nil {
+	if err := store.UpdateRecord(t.Context(), original.RecordID, []ingressState{"received"}, func(record *IngressRecord) error { record.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	// The common duplicate lookup precedes the rejected admission transaction.

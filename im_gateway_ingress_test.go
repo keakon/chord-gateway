@@ -230,7 +230,7 @@ func TestGatewayIngressUnknownStillAllowsReadOnlyQueries(t *testing.T) {
 	if first.Disposition != ReceiveAccepted {
 		t.Fatal(first)
 	}
-	if err := s.store.UpdateRecord(t.Context(), first.RecordID, []string{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+	if err := s.store.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	queryWriter := &ingressInteractionWriter{proc: p, snapshot: StatusResponse{SessionID: "session"}}

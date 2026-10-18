@@ -32,7 +32,7 @@ func TestIngressQuarantineOldRevisionDoesNotBlockNewTask(t *testing.T) {
 	if old.Disposition != ReceiveAccepted {
 		t.Fatal(old)
 	}
-	err := s.store.UpdateRecord(context.Background(), old.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil })
+	err := s.store.UpdateRecord(context.Background(), old.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

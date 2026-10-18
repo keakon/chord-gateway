@@ -84,7 +84,7 @@ func TestDiscordForcedHelpDoesNotBecomeUrgentOrBypassUnknownOutcome(t *testing.T
 	if unknown.Disposition != ReceiveAccepted {
 		t.Fatal(unknown)
 	}
-	if err := s.store.UpdateRecord(t.Context(), unknown.RecordID, []string{"received"}, func(r *IngressRecord) error {
+	if err := s.store.UpdateRecord(t.Context(), unknown.RecordID, []ingressState{"received"}, func(r *IngressRecord) error {
 		r.State = "unknown"
 		return nil
 	}); err != nil {

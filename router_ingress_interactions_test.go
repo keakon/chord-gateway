@@ -147,7 +147,7 @@ func TestIngressQuestionExplicitRetryAndLateReceiptResolveOnlyRelatedRecords(t *
 	if _, err := r.waitQuestionOperationTarget(ctx, p.key, "owner", p, command, target, []string{first.RecordID}); err == nil {
 		t.Fatal("expected unknown result")
 	}
-	if err := store.UpdateRecord(t.Context(), first.RecordID, []string{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+	if err := store.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
@@ -514,7 +514,7 @@ func TestIngressDispatcherAllowsOnlyRelatedExplicitQuestionRetry(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected unknown")
 			}
-			if err := s.store.UpdateRecord(t.Context(), first.RecordID, []string{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+			if err := s.store.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 				t.Fatal(err)
 			}
 			msg.MessageID = "explicit-retry"
@@ -546,7 +546,7 @@ func TestIngressDispatcherAllowsOnlyRelatedExplicitQuestionRetry(t *testing.T) {
 				if task.Disposition != ReceiveAccepted {
 					t.Fatal(task)
 				}
-				if err := s.store.UpdateRecord(t.Context(), task.RecordID, []string{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+				if err := s.store.UpdateRecord(t.Context(), task.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 					t.Fatal(err)
 				}
 				records = s.store.ListRoutePendingMetadata(id)

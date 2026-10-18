@@ -10,8 +10,8 @@ import (
 // again. A delivery left in dispatching or unknown otherwise keeps its route
 // barrier raised and its pending slot reserved until the process restarts.
 func TestIngressStalledDeliveryIsSettled(t *testing.T) {
-	for _, state := range []string{"unknown", "dispatching"} {
-		t.Run(state, func(t *testing.T) {
+	for _, state := range []ingressState{"unknown", "dispatching"} {
+		t.Run(string(state), func(t *testing.T) {
 			s, _, _, msg := ingressTestService(t)
 			id := pauseIngressTestRoute(t, s, msg)
 			msg.MessageID, msg.Text = "stalled", "task body"
@@ -20,7 +20,7 @@ func TestIngressStalledDeliveryIsSettled(t *testing.T) {
 				t.Fatal(result)
 			}
 			// Simulate a delivery whose receipt never arrived.
-			if err := s.store.UpdateRecord(context.Background(), result.RecordID, []string{"received"}, func(r *IngressRecord) error {
+			if err := s.store.UpdateRecord(context.Background(), result.RecordID, []ingressState{"received"}, func(r *IngressRecord) error {
 				r.State = state
 				r.Reason = "receipt_timeout"
 				return nil
@@ -62,7 +62,7 @@ func TestIngressFreshDeliverySurvivesTheStallSweep(t *testing.T) {
 	if result.Disposition != ReceiveAccepted {
 		t.Fatal(result)
 	}
-	if err := s.store.UpdateRecord(context.Background(), result.RecordID, []string{"received"}, func(r *IngressRecord) error {
+	if err := s.store.UpdateRecord(context.Background(), result.RecordID, []ingressState{"received"}, func(r *IngressRecord) error {
 		r.State = "dispatching"
 		return nil
 	}); err != nil {
@@ -89,7 +89,7 @@ func TestIngressRouteVisitSettlesStalledDelivery(t *testing.T) {
 	if stalled.Disposition != ReceiveAccepted {
 		t.Fatal(stalled)
 	}
-	if err := s.store.UpdateRecord(context.Background(), stalled.RecordID, []string{"received"}, func(r *IngressRecord) error {
+	if err := s.store.UpdateRecord(context.Background(), stalled.RecordID, []ingressState{"received"}, func(r *IngressRecord) error {
 		r.State = "dispatching"
 		r.Reason = "receipt_timeout"
 		return nil

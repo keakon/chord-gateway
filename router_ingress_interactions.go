@@ -182,7 +182,7 @@ func (r *NotificationRouter) dispatchIngressQuestion(ctx context.Context, msg In
 		if r.ingressStore == nil {
 			return DispatchResult{"unknown", "storage_unavailable"}
 		}
-		if err := r.ingressStore.UpdateRecord(ctx, recordID, []string{"received"}, func(rec *IngressRecord) error {
+		if err := r.ingressStore.UpdateRecord(ctx, recordID, []ingressState{ingressReceived}, func(rec *IngressRecord) error {
 			if rec.ControlTarget == nil || rec.ControlTarget.RequestID != t.RequestID || rec.ControlTarget.SessionID != "" && rec.ControlTarget.SessionID != t.SessionID || rec.ControlTarget.RuntimeID != "" && rec.ControlTarget.RuntimeID != t.RuntimeID {
 				return errIngressTargetExpired
 			}
@@ -330,7 +330,7 @@ func (r *NotificationRouter) ObserveIngressQuestionReceipt(p *ChordProcess, rece
 	if key == "" {
 		return nil
 	}
-	state := "completed"
+	state := ingressCompleted
 	reason := ""
 	if !receipt.Accepted {
 		state, reason = "rejected", "question_rejected"
@@ -355,7 +355,7 @@ func (r *NotificationRouter) ObserveIngressQuestionReceipt(p *ChordProcess, rece
 		if rec.Kind != "control" || rec.ControlTarget == nil || rec.ControlTarget.RuntimeID != runtime || rec.ControlTarget.RequestID != receipt.RequestID {
 			return fmt.Errorf("question control identity mismatch")
 		}
-		if err = r.ingressStore.UpdateRecord(context.Background(), id, []string{"received", "dispatching", "unknown"}, func(rec *IngressRecord) error { rec.State, rec.Reason = state, reason; return nil }); err != nil {
+		if err = r.ingressStore.UpdateRecord(context.Background(), id, []ingressState{ingressReceived, ingressDispatching, ingressUnknown}, func(rec *IngressRecord) error { rec.State, rec.Reason = state, reason; return nil }); err != nil {
 			return fmt.Errorf("persist question receipt: %w", err)
 		}
 	}

@@ -21,13 +21,13 @@ func (s *IngressStore) EnsureRoute(ctx context.Context, id ChatIdentity, digest,
 	}
 	records := s.routePending(id)
 	for _, r := range records {
-		if r.State == "dispatching" || r.State == "unknown" {
+		if r.State == ingressDispatching || r.State == ingressUnknown {
 			return IngressRoute{}, errIngressBlocked
 		}
 	}
 	for _, r := range records {
-		if r.State == "received" {
-			r.State = "quarantined"
+		if r.State == ingressReceived {
+			r.State = ingressQuarantined
 			r.Reason = "route_identity_changed"
 			r.UpdatedAt = s.now()
 			s.save(r)
@@ -51,7 +51,7 @@ func (s *IngressStore) BeginRouteChange(ctx context.Context, id ChatIdentity) (I
 		// A queued task owns the route; a queued control can be re-targeted or
 		// dropped by the change itself. Anything already in flight blocks
 		// regardless of kind.
-		if r.State == "dispatching" || r.State == "unknown" || (r.Kind == "task" && r.State == "received") {
+		if r.State == ingressDispatching || r.State == ingressUnknown || (r.Kind == "task" && r.State == ingressReceived) {
 			return IngressRoute{}, errIngressBlocked
 		}
 	}
@@ -94,7 +94,7 @@ func (s *IngressStore) BindRouteSession(ctx context.Context, id ChatIdentity, re
 		return errIngressBlocked
 	}
 	for _, r := range s.routePending(id) {
-		if r.State == "received" && r.RouteRevision == revision && r.SessionID == "" {
+		if r.State == ingressReceived && r.RouteRevision == revision && r.SessionID == "" {
 			r.SessionID = session
 			r.UpdatedAt = s.now()
 			s.save(r)

@@ -32,7 +32,7 @@ func TestTelegramDuplicateDeliveryTracksFingerprintAndCleanupKeepsOriginalIndex(
 	}
 	// The duplicate/conflict tombstones expire before the original record.
 	now = now.Add(24 * time.Hour)
-	if err := s.UpdateRecord(context.Background(), original.RecordID, []string{"received"}, func(r *IngressRecord) error {
+	if err := s.UpdateRecord(context.Background(), original.RecordID, []ingressState{"received"}, func(r *IngressRecord) error {
 		r.State = "consumed"
 		return nil
 	}); err != nil {

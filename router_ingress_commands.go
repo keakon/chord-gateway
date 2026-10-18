@@ -20,8 +20,8 @@ func (r *NotificationRouter) ingressStatus(msg IncomingMessage) string {
 	reason := ""
 	var lastReasonAt time.Time
 	for _, rec := range records {
-		counts[rec.State]++
-		if rec.State == "received" && (oldest.IsZero() || rec.ReceivedAt.Before(oldest)) {
+		counts[string(rec.State)]++
+		if rec.State == ingressReceived && (oldest.IsZero() || rec.ReceivedAt.Before(oldest)) {
 			oldest = rec.ReceivedAt
 		}
 		if rec.Reason != "" && (lastReasonAt.IsZero() || rec.UpdatedAt.After(lastReasonAt)) {
@@ -75,8 +75,8 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 		return DispatchResult{"rejected", "control_target_expired"}
 	}
 	request := "im-" + id
-	err := r.ingressStore.UpdateRecord(ctx, id, []string{"received"}, func(rec *IngressRecord) error {
-		rec.State = "dispatching"
+	err := r.ingressStore.UpdateRecord(ctx, id, []ingressState{ingressReceived}, func(rec *IngressRecord) error {
+		rec.State = ingressDispatching
 		rec.RequestID = request
 		rec.SessionID = identity.SessionID
 		rec.DispatchRuntimeID = identity.RuntimeID
@@ -90,14 +90,14 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 		if receipt.RuntimeID != identity.RuntimeID || receipt.SessionID != identity.SessionID || receipt.SessionEpoch != identity.SessionEpoch {
 			return errIngressRouteChanged
 		}
-		state := "unknown"
+		state := ingressUnknown
 		switch receipt.Status {
 		case "handled", "queued", "started":
 			state = "submitted"
 		case "rejected":
 			state = "rejected"
 		}
-		return r.ingressStore.UpdateRecord(context.Background(), id, []string{"dispatching", "unknown"}, func(rec *IngressRecord) error { rec.State = state; rec.ReceiptStatus = receipt.Status; return nil })
+		return r.ingressStore.UpdateRecord(context.Background(), id, []ingressState{ingressDispatching, ingressUnknown}, func(rec *IngressRecord) error { rec.State = state; rec.ReceiptStatus = receipt.Status; return nil })
 	}, identity)
 	if err != nil {
 		return DispatchResult{"unknown", "observer_unavailable"}

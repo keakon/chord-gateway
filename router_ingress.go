@@ -12,7 +12,10 @@ import (
 )
 
 // DispatchResult describes evidence observed by the gateway, never IM delivery.
-type DispatchResult struct{ State, Reason string }
+type DispatchResult struct {
+	State  ingressState
+	Reason string
+}
 
 var errIngressTargetExpired = errors.New("control target expired")
 var errIngressCaptureBusy = errors.New("ingress target snapshot busy")

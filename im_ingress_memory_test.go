@@ -115,7 +115,7 @@ func TestIngressTerminalUpdatesDoNotExtendDeduplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(ingressHistoryTTL - time.Second)
-	if err := s.UpdateRecord(t.Context(), old.RecordID, []string{"consumed"}, func(r *IngressRecord) error { r.Reason = "updated"; return nil }); err != nil {
+	if err := s.UpdateRecord(t.Context(), old.RecordID, []ingressState{"consumed"}, func(r *IngressRecord) error { r.Reason = "updated"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Second)

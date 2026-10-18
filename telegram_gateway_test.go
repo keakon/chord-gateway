@@ -191,7 +191,7 @@ func startTelegramGateway(t *testing.T, a *TelegramAdapter) chan error {
 	})
 	return done
 }
-func telegramGatewayRecord(t *testing.T, f *telegramGatewayFixture, chat, id int64, state string) IngressRecord {
+func telegramGatewayRecord(t *testing.T, f *telegramGatewayFixture, chat, id int64, state ingressState) IngressRecord {
 	t.Helper()
 	var result IngressRecord
 	waitIngressCondition(t, func() bool {

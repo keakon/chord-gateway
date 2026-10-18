@@ -29,10 +29,10 @@ func TestIngressMetricsObserveCommittedTransitionsAndAdmission(t *testing.T) {
 	if duplicate.Disposition != ReceiveDuplicate {
 		t.Fatal(duplicate)
 	}
-	if err := s.UpdateRecord(context.Background(), got.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
+	if err := s.UpdateRecord(context.Background(), got.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateRecord(context.Background(), got.RecordID, []string{"consumed"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
+	if err := s.UpdateRecord(context.Background(), got.RecordID, []ingressState{"consumed"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := s.MetricsSnapshot()

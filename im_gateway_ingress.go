@@ -101,7 +101,7 @@ func (r *NotificationRouter) RejectIngressEnvelope(ctx context.Context, e Ingres
 		Platform: m.IMType, AccountID: m.AccountID, ChatID: m.ChatID,
 		SenderID: m.SenderID, BusinessID: m.MessageID, SemanticID: e.SemanticID,
 		DeliveryID: e.DeliveryID, InputDigest: e.InputDigest, SourceTime: e.SourceTime,
-		ReceivedAt: e.ReceivedAt, Kind: "task", State: "rejected", Reason: reason,
+		ReceivedAt: e.ReceivedAt, Kind: "task", State: ingressRejected, Reason: reason,
 	}, e.Cursor)
 }
 

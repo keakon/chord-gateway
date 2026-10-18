@@ -337,7 +337,7 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	defer func() { s.observeAcceptance(r.Platform, outcome) }()
 	reject := func(reason string) ReceiveResult { return ReceiveResult{Disposition: ReceiveRejected, Reason: reason} }
 	retry := func(reason string) ReceiveResult { return ReceiveResult{Disposition: ReceiveRetryable, Reason: reason} }
-	if r.Platform == "" || r.AccountID == "" || r.ChatID == "" || (r.SenderID == "" && r.State != "rejected") || r.BusinessID == "" || !utf8.ValidString(r.Text) || len(r.Text) > 64<<10 {
+	if r.Platform == "" || r.AccountID == "" || r.ChatID == "" || (r.SenderID == "" && r.State != ingressRejected) || r.BusinessID == "" || !utf8.ValidString(r.Text) || len(r.Text) > 64<<10 {
 		return reject("invalid_input")
 	}
 	for _, v := range []string{r.Platform, r.AccountID, r.ChatID, r.SenderID, r.BusinessID, r.SemanticID, r.DeliveryID} {
@@ -377,20 +377,20 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	}
 	r.UpdatedAt = now
 	if r.State == "" {
-		r.State = "received"
+		r.State = ingressReceived
 	}
-	if r.State != "received" && r.State != "rejected" {
+	if r.State != ingressReceived && r.State != ingressRejected {
 		return reject("invalid_state")
 	}
 	if !r.SourceTime.IsZero() && (r.SourceTime.Before(now.Add(-24*time.Hour)) || r.SourceTime.After(now.Add(5*time.Minute))) {
-		r.State = "rejected"
+		r.State = ingressRejected
 		r.Reason = "source_time_out_of_range"
 	}
 	if r.Kind == "control" {
 		r.Text = ""
 		r.InputDigest = ""
 	}
-	if r.State == "rejected" {
+	if r.State == ingressRejected {
 		r.Text = ""
 	}
 	if cursor != nil {
@@ -409,7 +409,7 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 			if old.ChatID != r.ChatID || old.SemanticID != r.SemanticID || old.InputDigest != r.InputDigest {
 				d := sha256.Sum256(ingressKey("", r.BusinessID, r.ChatID, r.SemanticID, r.InputDigest))
 				r.BusinessID = "update-conflict:" + hex.EncodeToString(d[:])
-				r.State = "rejected"
+				r.State = ingressRejected
 				r.Reason = "update_id_conflict"
 				r.Text = ""
 			}
@@ -427,7 +427,7 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 		if id := index.values[index.key]; id != "" {
 			old := s.records[id]
 			if index.semantic && r.Platform == "telegram" {
-				r.State = "rejected"
+				r.State = ingressRejected
 				r.Reason = "semantic_duplicate"
 				r.Text = ""
 				disposition = ReceiveDuplicate
@@ -441,11 +441,11 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	if !exists {
 		route = IngressRoute{Identity: r.Identity(), Revision: newIngressID(), Phase: "unbound"}
 	}
-	if r.State != "rejected" && r.Kind == "task" && (route.Phase != "active" || route.Revision != r.RouteRevision || route.AuthorizationDigest != r.AuthorizationDigest) {
+	if r.State != ingressRejected && r.Kind == "task" && (route.Phase != "active" || route.Revision != r.RouteRevision || route.AuthorizationDigest != r.AuthorizationDigest) {
 		return retry("route_changed")
 	}
 	reserve := 0
-	if r.statusQuery && r.Kind == "control" && r.State == "received" {
+	if r.statusQuery && r.Kind == "control" && r.State == ingressReceived {
 		reserve = 1
 	}
 	pending := len(s.pendingByRoute[r.Identity()])
@@ -464,12 +464,12 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	}
 	commitCursor()
 	s.signal()
-	if r.State == "rejected" && disposition != ReceiveDuplicate {
+	if r.State == ingressRejected && disposition != ReceiveDuplicate {
 		disposition = ReceiveRejected
 	}
 	return ReceiveResult{Disposition: disposition, RecordID: r.RecordID, State: r.State, Reason: r.Reason}
 }
-func (s *IngressStore) UpdateRecord(ctx context.Context, id string, allowed []string, mutate func(*IngressRecord) error) error {
+func (s *IngressStore) UpdateRecord(ctx context.Context, id string, allowed []ingressState, mutate func(*IngressRecord) error) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func (s *IngressStore) UpdateRecord(ctx context.Context, id string, allowed []st
 	}
 	r.UpdatedAt = s.now()
 	s.save(r)
-	s.ObserveStateTransition(r.Platform, previous, r.State, r.Reason)
+	s.ObserveStateTransition(r.Platform, string(previous), string(r.State), r.Reason)
 	s.signal()
 	return nil
 }

@@ -177,7 +177,7 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		}
 	}
 	msg.ticket = &a.Ticket
-	if e.preparation != nil && (a.Disposition == AdmissionAllowed || a.Ticket.Kind == "owner_unbound" || strings.HasPrefix(a.Ticket.Kind, "pairing_hint")) {
+	if e.preparation != nil && (a.Disposition == AdmissionAllowed || a.Ticket.Kind == "owner_unbound" || a.Ticket.IsPairingHint()) {
 		transportTicket = &a.Ticket
 	}
 	prepare := func() bool {
@@ -186,7 +186,7 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		}
 		return e.preparation == nil || e.preparation.prepare == nil || e.preparation.prepare(a)
 	}
-	rec := IngressRecord{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, SemanticID: e.SemanticID, DeliveryID: e.DeliveryID, InputDigest: e.InputDigest, SourceTime: e.SourceTime, ReceivedAt: e.ReceivedAt, Kind: "task", State: "received"}
+	rec := IngressRecord{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, SemanticID: e.SemanticID, DeliveryID: e.DeliveryID, InputDigest: e.InputDigest, SourceTime: e.SourceTime, ReceivedAt: e.ReceivedAt, Kind: "task", State: ingressReceived}
 	if rec.ReceivedAt.IsZero() {
 		rec.ReceivedAt = time.Now()
 	}
@@ -201,18 +201,18 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		return s.store.acceptRecord(ctx, rec, e.Cursor, valid)
 	}
 	if a.Disposition == AdmissionRejected {
-		if (a.Ticket.Kind == "owner_unbound" || strings.HasPrefix(a.Ticket.Kind, "pairing_hint")) && !prepare() {
+		if (a.Ticket.Kind == "owner_unbound" || a.Ticket.IsPairingHint()) && !prepare() {
 			// The bounded refusal reply still needs the transport's inbound
 			// reply context; if the snapshot expired, retry instead of dropping.
 			return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
 		}
-		rec.State = "rejected"
+		rec.State = ingressRejected
 		rec.Reason = a.Reason
 		result := s.store.acceptRecord(ctx, rec, e.Cursor, valid)
 		if a.Ticket.Kind == "owner_unbound" && (result.Disposition == ReceiveRejected || result.Disposition == ReceiveDuplicate) {
 			s.router.enqueueIngressReply(msg, "This chat is not bound. Send "+s.router.ingressCommandHint(msg, "/bind <directory>")+".")
 		}
-		if strings.HasPrefix(a.Ticket.Kind, "pairing_hint") && result.Disposition == ReceiveRejected {
+		if a.Ticket.IsPairingHint() && result.Disposition == ReceiveRejected {
 			// Only fresh messages reach here: duplicates never re-hint.
 			s.router.enqueueIngressReply(msg, pairingHintReply(s.router, msg, a.Ticket.Kind))
 		}
@@ -368,15 +368,15 @@ func (s *IngressService) visitRoute(id ChatIdentity, routeBlocked bool) bool {
 	blocked := false
 	quarantined := make(map[ingressRevision]bool)
 	for _, rec := range records {
-		if rec.State == "dispatching" || rec.State == "unknown" {
+		if rec.State == ingressDispatching || rec.State == ingressUnknown {
 			blocked = true
 		}
-		if rec.State == "quarantined" {
+		if rec.State == ingressQuarantined {
 			quarantined[ingressRevision{id, rec.RouteRevision}] = true
 		}
 	}
 	for _, rec := range records {
-		if rec.State != "received" {
+		if rec.State != ingressReceived {
 			continue
 		}
 		if rec.Kind == "task" && (blocked || routeBlocked || quarantined[ingressRevision{id, rec.RouteRevision}]) {
@@ -397,7 +397,7 @@ func (s *IngressService) settleStalledRecords(records []IngressRecord) {
 	}
 	now := s.store.now()
 	for _, rec := range records {
-		if rec.State != "dispatching" && rec.State != "unknown" {
+		if rec.State != ingressDispatching && rec.State != ingressUnknown {
 			continue
 		}
 		if now.Sub(rec.UpdatedAt) < ingressStallDeadline {
@@ -421,19 +421,19 @@ func (s *IngressService) dispatchRoute(id ChatIdentity) {
 	unknown := blocked
 	quarantined := make(map[string]bool)
 	for _, rec := range records {
-		if rec.State == "unknown" {
+		if rec.State == ingressUnknown {
 			unknown = true
 		}
-		if rec.State == "unknown" || rec.State == "dispatching" {
+		if rec.State == ingressUnknown || rec.State == ingressDispatching {
 			blocked = true
 		}
-		if rec.State == "quarantined" {
+		if rec.State == ingressQuarantined {
 			quarantined[rec.RouteRevision] = true
 		}
 	}
 	records = s.prioritizeControls(records)
 	for _, rec := range records {
-		if rec.State != "received" {
+		if rec.State != ingressReceived {
 			continue
 		}
 		if rec.Kind == "control" {
@@ -473,9 +473,9 @@ func (s *IngressService) dispatchRoute(id ChatIdentity) {
 		return
 	}
 }
-func (s *IngressService) finish(rec IngressRecord, state, reason string) {
+func (s *IngressService) finish(rec IngressRecord, state ingressState, reason string) {
 	s.dropControl(rec.RecordID)
-	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []string{"received", "dispatching", "unknown"}, func(r *IngressRecord) error { r.State = state; r.Reason = reason; return nil })
+	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []ingressState{ingressReceived, ingressDispatching, ingressUnknown}, func(r *IngressRecord) error { r.State = state; r.Reason = reason; return nil })
 	if err != nil {
 		if current, getErr := s.store.Get(rec.RecordID); getErr == nil && current.Terminal() {
 			return
@@ -485,7 +485,7 @@ func (s *IngressService) finish(rec IngressRecord, state, reason string) {
 }
 func (s *IngressService) quarantine(ctx context.Context, rec IngressRecord, reason string) error {
 	s.dropControl(rec.RecordID)
-	return s.store.UpdateRecord(ctx, rec.RecordID, []string{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; r.Reason = reason; return nil })
+	return s.store.UpdateRecord(ctx, rec.RecordID, []ingressState{ingressReceived}, func(r *IngressRecord) error { r.State = ingressQuarantined; r.Reason = reason; return nil })
 }
 
 // dropControl releases retained control parameters once their record can no
@@ -514,7 +514,7 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 	// Scheduling only reads metadata. Load the body for this one delivery and
 	// recheck state in case cleanup or a route barrier changed it meanwhile.
 	rec, err := s.store.Get(rec.RecordID)
-	if err != nil || rec.Kind != "task" || rec.State != "received" {
+	if err != nil || rec.Kind != "task" || rec.State != ingressReceived {
 		return
 	}
 	// Current authorization is reacquired; old tickets are never reused.
@@ -578,7 +578,7 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 	current, readErr := s.store.Get(rec.RecordID)
 	currentRoute, routeErr := s.store.GetRoute(rec.Identity())
 	currentDigest, currentWorkspace, currentSession, identityErr := s.router.ingressRouteIdentity(rec.Identity())
-	if readErr != nil || current.State != "received" || routeErr != nil || currentRoute.Phase != "active" || currentRoute.Revision != rec.RouteRevision || identityErr != nil || currentDigest != digest || currentWorkspace != workspace || currentSession != identity.SessionID || s.router.mgr.GetProcessForKey(key) != p || s.router.mgr.transferBlocked(key) {
+	if readErr != nil || current.State != ingressReceived || routeErr != nil || currentRoute.Phase != "active" || currentRoute.Revision != rec.RouteRevision || identityErr != nil || currentDigest != digest || currentWorkspace != workspace || currentSession != identity.SessionID || s.router.mgr.GetProcessForKey(key) != p || s.router.mgr.transferBlocked(key) {
 		s.quarantineTask(rec, "route_identity_changed")
 		return
 	}
@@ -603,11 +603,11 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		return
 	}
 	requestID := "im-" + rec.RecordID
-	err = s.store.UpdateRecord(s.ctx, rec.RecordID, []string{"received"}, func(r *IngressRecord) error {
+	err = s.store.UpdateRecord(s.ctx, rec.RecordID, []ingressState{ingressReceived}, func(r *IngressRecord) error {
 		if !s.router.admission.Valid(a.Ticket) || !checkIngressDeliveryReadiness(s.router.findAdapterByType(rec.Platform), rec.Identity()).Ready {
 			return errIngressTransportChanged
 		}
-		r.State = "dispatching"
+		r.State = ingressDispatching
 		r.SessionID = identity.SessionID
 		r.RequestID = requestID
 		r.DispatchRuntimeID = identity.RuntimeID
@@ -621,8 +621,8 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		// No observer or stdin write exists yet, so this delivery is known not
 		// to have started. If restoring received fails, leave the conservative
 		// dispatching evidence for the existing unknown-outcome handling.
-		_ = s.store.UpdateRecord(s.ctx, rec.RecordID, []string{"dispatching"}, func(r *IngressRecord) error {
-			r.State = "received"
+		_ = s.store.UpdateRecord(s.ctx, rec.RecordID, []ingressState{ingressDispatching}, func(r *IngressRecord) error {
+			r.State = ingressReceived
 			return nil
 		})
 		return
@@ -631,12 +631,12 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		if receipt.RuntimeID != identity.RuntimeID || receipt.SessionID != identity.SessionID || receipt.SessionEpoch != identity.SessionEpoch {
 			return errIngressRouteChanged
 		}
-		state := "unknown"
+		state := ingressUnknown
 		switch receipt.Status {
 		case "handled", "queued", "started":
-			state = "consumed"
+			state = ingressConsumed
 		case "rejected":
-			state = "rejected"
+			state = ingressRejected
 		}
 		return s.commitInputReceipt(rec, state, receipt)
 	}, identity)
@@ -658,8 +658,8 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 // latches it for the rest of the process lifetime, so refusing a receipt for a
 // record that no longer accepts transitions would leave the process unable to
 // accept new input until it restarts.
-func (s *IngressService) commitInputReceipt(rec IngressRecord, state string, receipt ProcessInputReceipt) error {
-	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []string{"dispatching", "unknown"}, func(r *IngressRecord) error {
+func (s *IngressService) commitInputReceipt(rec IngressRecord, state ingressState, receipt ProcessInputReceipt) error {
+	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []ingressState{ingressDispatching, ingressUnknown}, func(r *IngressRecord) error {
 		r.State = state
 		r.ReceiptStatus = receipt.Status
 		return nil
@@ -732,7 +732,7 @@ func (s *IngressService) prioritizeControls(records []IngressRecord) []IngressRe
 	defer s.mu.Unlock()
 	for _, rec := range records {
 		urgent := false
-		if control, ok := s.controls[rec.RecordID]; ok && rec.State == "received" && rec.Kind == "control" {
+		if control, ok := s.controls[rec.RecordID]; ok && rec.State == ingressReceived && rec.Kind == "control" {
 			cmd := commandForIncomingMessage(control.message)
 			switch cmd.Type {
 			case "status", "cancel", "confirm", "question", "handoff", "sessions", "todos":
