@@ -81,7 +81,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Telegram intake now logs every fetched batch, the capture outcome of each update, and its dispatch disposition, so a message the gateway never accepts is distinguishable from one Telegram never delivered. An update that keeps failing to reach a terminal disposition warns once with its `update_id` and then at most once a minute, with an `acceptance_unconfirmed` metric, instead of retrying silently forever. A 409 immediately after a local restart retries briefly instead of exiting; only a persistent conflict stays fatal.
 - WeCom answer hints preserve `@request` for copyable replies. Slack now honors per-method `Retry-After` across lookups, identity checks and socket reconnects.
 - Partial-send diagnostics retain unknown delivery outcomes, including cancellation after sending; DingTalk distinguishes token acquisition and pacing failures from uncertain message delivery.
+- DingTalk now reports the real refusal reason for a message it could not accept. Every refusal was recorded as `capacity`, so a busy target and a closing intake were indistinguishable in the loss metrics; it now reports `target_busy`, `capacity` or `ingress_unavailable` as appropriate.
 - Intake capacity checks use a per-chat pending index, avoiding scans of retained completed messages during admission.
+- Input that can never be delivered is now settled and reclaimed instead of staying pending forever. Once a chat accumulated enough isolated inputs, every later message was refused as over capacity and only a gateway restart recovered; isolated input now releases its pending slot and its body, and is reclaimed by the same 24-hour window as a delivered message.
+- A delivery whose receipt never arrives is now settled after a bounded deadline. The receipt observer reports its own timeout at 30 seconds but never resolved the record, so one unconfirmed delivery could hold its chat's queue barrier and a pending slot until the gateway restarted.
 - Bursts above the bounded response queues no longer tear down DingTalk Stream or Feishu long connections: the overflowing frame answers 500 for redelivery while the connection stays up to drain workers. DingTalk also bounds its send-pacing table.
 - A late Question receipt for an ingress record already expired after 24 hours no longer marks the process input blocked; it is skipped while the 14-day question operation window drains.
 
@@ -100,6 +103,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Slack acknowledges `events_api` messages immediately, before conversation lookups finish, so a slow lookup can no longer miss the 3-second ACK deadline and trigger redelivery; only `/chord` slash commands that accept a response payload wait briefly for a hint, and a plain acceptance stays a bare ACK. Socket liveness is proven by any inbound frame instead of relying on an unguaranteed WebSocket ping interval.
 
 - Gateway Resume replay for Discord now buffers up to 1024 useful events instead of 128, so a longer transient disconnect no longer turns into a fatal reconnect loop.
+- Shutting down the Discord gateway now releases senders waiting on the command rate limiter. `Close` previously waited for them without releasing them, so stopping or restarting the gateway could hang until the limiter next granted a slot.
 
 - WeCom rejects out-of-range `create_time` values like every other platform instead of silently rewriting them to receipt time.
 
