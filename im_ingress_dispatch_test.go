@@ -420,3 +420,71 @@ func TestIngressSweepControlsDropsStaleEntries(t *testing.T) {
 		t.Fatal("retained parameters for a settled record")
 	}
 }
+
+// A delivery that outlives the stall deadline is settled while its receipt is
+// still in flight, so the receipt arrives for a record that no longer accepts
+// transitions. Refusing it would latch receipt backpressure for the rest of the
+// process lifetime and leave the chat unable to send anything until restart.
+func TestIngressLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
+	s, p, w, msg := ingressTestService(t)
+	msg.MessageID, msg.Text = "stalled", "task body"
+	accepted := s.Accept(context.Background(), IngressEnvelope{Message: msg})
+	if accepted.Disposition != ReceiveAccepted {
+		t.Fatal(accepted)
+	}
+	waitIngressCondition(t, func() bool { return len(w.snapshot()) == 1 })
+	requestID := "im-" + accepted.RecordID
+	p.mu.RLock()
+	_, observed := p.inputObservers[requestID]
+	p.mu.RUnlock()
+	if !observed {
+		t.Fatal("delivery was not dispatched, so no receipt can arrive")
+	}
+
+	stalled, err := s.store.Get(accepted.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Settle the delivery the way settleStalledRecords does once the receipt
+	// deadline passes. Swapping store.now here would race with the dispatcher
+	// goroutine that also reads it, and the deadline itself is covered by the
+	// retention tests.
+	s.finish(stalled, "expired", "receipt_timeout")
+	stalled, err = s.store.Get(accepted.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stalled.State != "expired" || !stalled.Terminal() {
+		t.Fatalf("delivery was not settled before its receipt arrived: %+v", stalled)
+	}
+
+	payload, err := json.Marshal(InputResultPayload{RequestID: requestID, Status: inputQueued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.applyInputResult(&HeadlessEnvelope{Payload: payload, Seq: 1}, time.Now())
+	p.mu.Unlock()
+
+	waitIngressCondition(t, func() bool {
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.inputReceiptBlocked || len(p.inputReceiptQueue) == 0
+	})
+	p.mu.RLock()
+	blocked, lastError := p.inputReceiptBlocked, p.state.LastError
+	p.mu.RUnlock()
+	if blocked {
+		t.Fatalf("a late receipt latched receipt backpressure: %q", lastError)
+	}
+	if err := p.SendUserMessageWithRequestID("next", "next-input"); err != nil {
+		t.Fatalf("input was refused after a late receipt: %v", err)
+	}
+	got, err := s.store.Get(accepted.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "expired" || got.ReceiptStatus != "" {
+		t.Fatalf("a late receipt rewrote a settled delivery: %+v", got)
+	}
+}

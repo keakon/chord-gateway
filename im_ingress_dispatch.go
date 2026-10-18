@@ -638,11 +638,7 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		case "rejected":
 			state = "rejected"
 		}
-		err := s.store.UpdateRecord(context.Background(), rec.RecordID, []string{"dispatching", "unknown"}, func(r *IngressRecord) error { r.State = state; r.ReceiptStatus = receipt.Status; return nil })
-		if err == nil {
-			s.signal()
-		}
-		return err
+		return s.commitInputReceipt(rec, state, receipt)
 	}, identity)
 	if err != nil {
 		s.finish(rec, "unknown", "observer_registration_failed")
@@ -651,6 +647,34 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 	if err = p.SendUserMessageWithRequestID(rec.Text, requestID); err != nil {
 		s.finish(rec, "unknown", "stdin_outcome_unknown")
 	}
+}
+
+// commitInputReceipt records a correlated input outcome on the ingress record.
+// A receipt that arrives after settleStalledRecords settled the delivery, or
+// after the record was pruned from history, is expected rather than a storage
+// fault: the receipt observer only fires its own timeout once, so a delivery
+// that outlives ingressStallDeadline is settled while its receipt is still in
+// flight. The caller treats every returned error as receipt backpressure and
+// latches it for the rest of the process lifetime, so refusing a receipt for a
+// record that no longer accepts transitions would leave the process unable to
+// accept new input until it restarts.
+func (s *IngressService) commitInputReceipt(rec IngressRecord, state string, receipt ProcessInputReceipt) error {
+	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []string{"dispatching", "unknown"}, func(r *IngressRecord) error {
+		r.State = state
+		r.ReceiptStatus = receipt.Status
+		return nil
+	})
+	if err == nil {
+		s.signal()
+		return nil
+	}
+	if errors.Is(err, errIngressMissing) || errors.Is(err, errIngressBlocked) {
+		// The record left dispatching while this receipt was in flight: it was
+		// settled as expired, quarantined, reverted by a transport recheck, or
+		// pruned. The delivery already has its outcome; the receipt adds none.
+		return nil
+	}
+	return err
 }
 
 // Accepted records already passed transport chat-kind evidence. Rebuilding an
