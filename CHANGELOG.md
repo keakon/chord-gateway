@@ -56,7 +56,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Unsupported YAML config keys are now reported in the gateway log with their line and ignored instead of doing nothing silently: typos and removed options such as `event_visibility.activity` are visible at startup while the rest of the file still loads.
 
-- Duplicate YAML keys in the configuration file no longer prevent startup. The first occurrence wins, every later duplicate is reported as a `duplicate key ignored` warning with its line, and the next configuration change rewrites the file without the duplicates.
+- Duplicate explicit YAML keys in the configuration file no longer prevent startup. The first occurrence wins, every later duplicate is reported as a `duplicate key ignored` warning with its line, and the next configuration change rewrites the file without the duplicates.
 
 - Private senders to an unpaired gateway now receive a bounded hint instead of being dropped silently: how to pair, what a malformed `/bind` is missing, or that a pairing code was wrong. When pairing is inactive the hint says to restart with `--pair`. Group chats, internal actions, and duplicate redeliveries stay silent, and hints draw on a separate rate-limit budget from pairing attempts.
 
@@ -69,8 +69,9 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - Console mode no longer demands `--pair` for dormant chat bindings: its pairing remedy is mutually exclusive with `--console`, so the check is skipped there.
 - Pairing hint replies are budgeted per private chat instead of per platform, so a spammer in one chat can no longer silence hints for unpaired users elsewhere on the same platform.
 - `pairing reset` prints the duplicate-key and unsupported-field warnings it is about to drop from the rewritten config, instead of silently deduplicating the file.
-- Discord now replies with a bounded, rate-limited diagnostic when a mention carries no usable content, instead of dropping it silently.
+- Discord now logs a bounded, rate-limited diagnostic when a mention carries no usable content, instead of dropping it silently.
 - Corrected the Slack guide so its reconnect description matches redelivery: a saturated intake leaves the frame unacknowledged instead of backing off locally.
+- Slack no longer drops a submission refusal without a trace: an envelope left unacknowledged for Slack to redeliver — for example when the shared normalization queue is saturated — is now counted as `lost_before_accept` with its bounded reason, like every other intake discard path.
 - Documented that WeCom single-chat callbacks only carry a plaintext `from.userid` when the bot creator is an enterprise super admin, and corrected the heartbeat-ACK description to two consecutive misses.
 - `/new` reports `Session created` and `/resume` reports `Session resumed`. Both previously answered `Session selected`, which described neither outcome and read as a failure on `/new`.
 - `/new` and `/resume` now refuse a busy Chord process before the route-change barrier, replying that `/cancel` comes first, instead of failing inside the replacement with a bare reason. Session-change failures also report distinct reasons — busy, transfer in progress, unresolved inputs — instead of one generic `session_change_failed`.
@@ -103,10 +104,18 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Slack acknowledges `events_api` messages immediately, before conversation lookups finish, so a slow lookup can no longer miss the 3-second ACK deadline and trigger redelivery; only `/chord` slash commands that accept a response payload wait briefly for a hint, and a plain acceptance stays a bare ACK. Socket liveness is proven by any inbound frame instead of relying on an unguaranteed WebSocket ping interval.
 
-- Gateway Resume replay for Discord now buffers up to 1024 useful events instead of 128, so a longer transient disconnect no longer turns into a fatal reconnect loop.
+- Gateway Resume replay for Discord now buffers up to 1024 useful events, so a longer transient disconnect no longer turns into a fatal reconnect loop.
 - Shutting down the Discord gateway now releases senders waiting on the command rate limiter. `Close` previously waited for them without releasing them, so stopping or restarting the gateway could hang until the limiter next granted a slot.
 
 - WeCom rejects out-of-range `create_time` values like every other platform instead of silently rewriting them to receipt time.
+- A WeChat batch item that keeps failing without a terminal outcome no longer blocks the account's polling order silently. The gateway warns with its message ID, disposition, reason and consecutive failure count and records an `acceptance_unconfirmed` metric, repeating at most once a minute.
+- WeCom now counts a malformed user text callback in `callback_dropped` with its bounded reason — `invalid_callback` or `source_time_out_of_range` — and warns at most once a minute; events, voice and other unsupported media stay ignored. Failed reconnect attempts also log the bounded transport category instead of leaving an empty log.
+- A DingTalk send attempted while its account is unavailable now reports `connection_unavailable` in the shared text-failure categories instead of an unobserved bare error, and an input admission that raced adapter shutdown stays unacknowledged for platform redelivery instead of being acknowledged without joining the work.
+- The startup error for unpaired `chat_bindings` now shows the actual first `/bind "<directory>" <pairing_code>` command, including the pairing code, matching the runtime hints and the guides.
+- Corrected the Chinese documentation's proxy anchors, the expired-confirmation description (a text reply is forwarded as an explicitly non-decisive follow-up instead of being rejected), and the permissions guide's platform, credential and incident-response lists, which were missing Telegram and Slack tokens.
+- WeCom and DingTalk no longer dispatch an empty or whitespace-only message as an empty task; both reject it as invalid input like Telegram.
+- Slack send failures report bounded categories (`invalid_target`, `forbidden`, `credentials`, `api_rejected`, `platform_rejected`) instead of collapsing every explicit rejection into `delivery_failed`, and the DingTalk refusal reply no longer tells the user that a redeliverable input was permanently lost.
+- The startup proxy log reports the effective per-platform value and treats a whitespace-only `proxy_url` as a direct connection instead of reporting it as configured.
 
 
 ## v0.3.3 – 2026-10-12
