@@ -88,7 +88,9 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 	}
 	err = p.ObserveInputReceipt(request, func(receipt ProcessInputReceipt) error {
 		if receipt.RuntimeID != identity.RuntimeID || receipt.SessionID != identity.SessionID || receipt.SessionEpoch != identity.SessionEpoch {
-			return errIngressRouteChanged
+			// See commitInputReceipt: refusing a receipt latches input
+			// backpressure for the rest of the process lifetime.
+			return nil
 		}
 		state := ingressUnknown
 		switch receipt.Status {
@@ -97,7 +99,7 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 		case "rejected":
 			state = "rejected"
 		}
-		return r.ingressStore.UpdateRecord(context.Background(), id, []ingressState{ingressDispatching, ingressUnknown}, func(rec *IngressRecord) error { rec.State = state; rec.ReceiptStatus = receipt.Status; return nil })
+		return r.ingress.commitInputReceipt(id, state, receipt)
 	}, identity)
 	if err != nil {
 		return DispatchResult{"unknown", "observer_unavailable"}

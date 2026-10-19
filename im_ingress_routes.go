@@ -134,5 +134,3 @@ func (r *NotificationRouter) enqueueIngressReply(msg IncomingMessage, text strin
 	}
 	return result
 }
-
-var errIngressRouteChanged = errors.New("ingress route changed")

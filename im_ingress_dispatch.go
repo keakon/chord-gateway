@@ -629,7 +629,11 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 	}
 	err = p.ObserveInputReceipt(requestID, func(receipt ProcessInputReceipt) error {
 		if receipt.RuntimeID != identity.RuntimeID || receipt.SessionID != identity.SessionID || receipt.SessionEpoch != identity.SessionEpoch {
-			return errIngressRouteChanged
+			// The observer carries its registration identity, so this is
+			// defense in depth rather than an expected receipt. Drop it: any
+			// returned error is treated as receipt backpressure and latches
+			// the whole process, and the record settles by its deadline anyway.
+			return nil
 		}
 		state := ingressUnknown
 		switch receipt.Status {
@@ -638,7 +642,7 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		case "rejected":
 			state = ingressRejected
 		}
-		return s.commitInputReceipt(rec, state, receipt)
+		return s.commitInputReceipt(rec.RecordID, state, receipt)
 	}, identity)
 	if err != nil {
 		s.finish(rec, "unknown", "observer_registration_failed")
@@ -657,9 +661,10 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 // flight. The caller treats every returned error as receipt backpressure and
 // latches it for the rest of the process lifetime, so refusing a receipt for a
 // record that no longer accepts transitions would leave the process unable to
-// accept new input until it restarts.
-func (s *IngressService) commitInputReceipt(rec IngressRecord, state ingressState, receipt ProcessInputReceipt) error {
-	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []ingressState{ingressDispatching, ingressUnknown}, func(r *IngressRecord) error {
+// accept new input until it restarts. Both the task and the control receipt
+// callbacks share this so neither can latch on a settled delivery.
+func (s *IngressService) commitInputReceipt(id string, state ingressState, receipt ProcessInputReceipt) error {
+	err := s.store.UpdateRecord(context.Background(), id, []ingressState{ingressDispatching, ingressUnknown}, func(r *IngressRecord) error {
 		r.State = state
 		r.ReceiptStatus = receipt.Status
 		return nil

@@ -75,6 +75,20 @@ func ingressTestService(t *testing.T) (*IngressService, *ChordProcess, *ingressT
 	})
 	return service, p, writer, msg
 }
+
+// ageIngressRecord backdates a record past the stall deadline without replacing
+// the store clock, which the dispatcher goroutine reads concurrently.
+func ageIngressRecord(t *testing.T, store *IngressStore, id string) {
+	t.Helper()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	rec, ok := store.records[id]
+	if !ok {
+		t.Fatal("record missing from the store")
+	}
+	rec.UpdatedAt = store.now().Add(-ingressStallDeadline - time.Minute)
+	store.records[id] = rec
+}
 func waitIngressCondition(t *testing.T, fn func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -425,14 +439,20 @@ func TestIngressSweepControlsDropsStaleEntries(t *testing.T) {
 // still in flight, so the receipt arrives for a record that no longer accepts
 // transitions. Refusing it would latch receipt backpressure for the rest of the
 // process lifetime and leave the chat unable to send anything until restart.
-func TestIngressLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
+// Tasks and control commands register separate receipt callbacks, so both paths
+// must drop the stale receipt instead of returning its storage error.
+func assertLateReceiptAfterSettlementKeepsInputUsable(t *testing.T, text string) {
+	t.Helper()
 	s, p, w, msg := ingressTestService(t)
-	msg.MessageID, msg.Text = "stalled", "task body"
+	msg.MessageID, msg.Text = "stalled", text
 	accepted := s.Accept(context.Background(), IngressEnvelope{Message: msg})
 	if accepted.Disposition != ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	waitIngressCondition(t, func() bool { return len(w.snapshot()) == 1 })
+	if got := w.snapshot()[0]; got["content"] != text {
+		t.Fatalf("delivery recorded %v, want %q", got, text)
+	}
 	requestID := "im-" + accepted.RecordID
 	p.mu.RLock()
 	_, observed := p.inputObservers[requestID]
@@ -442,10 +462,8 @@ func TestIngressLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
 	}
 
 	identity := ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}
-	real := s.store.now
-	s.store.now = func() time.Time { return real().Add(ingressStallDeadline + time.Minute) }
+	ageIngressRecord(t, s.store, accepted.RecordID)
 	s.settleStalledRecords(s.store.ListRoutePendingMetadata(identity))
-	s.store.now = real
 	stalled, err := s.store.Get(accepted.RecordID)
 	if err != nil {
 		t.Fatal(err)
@@ -483,4 +501,12 @@ func TestIngressLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
 	if got.State != "expired" || got.ReceiptStatus != "" {
 		t.Fatalf("a late receipt rewrote a settled delivery: %+v", got)
 	}
+}
+
+func TestIngressLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
+	assertLateReceiptAfterSettlementKeepsInputUsable(t, "task body")
+}
+
+func TestIngressControlLateReceiptAfterSettlementKeepsInputUsable(t *testing.T) {
+	assertLateReceiptAfterSettlementKeepsInputUsable(t, "/summary")
 }
