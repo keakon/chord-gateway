@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 // The receipt observer fires its own timeout once and is never heard from
@@ -31,9 +30,7 @@ func TestIngressStalledDeliveryIsSettled(t *testing.T) {
 				t.Fatalf("stalled record left the pending index: %d", got)
 			}
 
-			real := s.store.now
-			s.store.now = func() time.Time { return real().Add(ingressStallDeadline + time.Minute) }
-			defer func() { s.store.now = real }()
+			ageIngressRecord(t, s.store, result.RecordID)
 			s.settleStalledRecords(s.store.ListRoutePendingMetadata(id))
 
 			got, err := s.store.Get(result.RecordID)
@@ -78,11 +75,11 @@ func TestIngressFreshDeliverySurvivesTheStallSweep(t *testing.T) {
 	}
 }
 
-// The sweep only helps if the dispatcher's route visit runs it, so exercise the
-// path run() takes rather than the helper in isolation: dropping the call from
-// the route visit must fail here, not just in a direct unit of the helper.
+// The sweep only helps if the dispatcher's route visit runs it, so drive the
+// service loop instead of calling the helper: deleting the call from run()
+// must fail here rather than leaving only a direct unit of the helper.
 func TestIngressRouteVisitSettlesStalledDelivery(t *testing.T) {
-	s, _, _, msg := ingressTestService(t)
+	s, _, w, msg := ingressTestService(t)
 	id := pauseIngressTestRoute(t, s, msg)
 	msg.MessageID, msg.Text = "stalled", "task body"
 	stalled := s.Accept(context.Background(), IngressEnvelope{Message: msg})
@@ -96,40 +93,35 @@ func TestIngressRouteVisitSettlesStalledDelivery(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	ageIngressRecord(t, s.store, stalled.RecordID)
 
-	real := s.store.now
-	s.store.now = func() time.Time { return real().Add(ingressStallDeadline + time.Minute) }
-	defer func() { s.store.now = real }()
-
-	// A route whose only record is stalled has nothing to dispatch.
-	if s.visitRoute(id, false) {
-		t.Fatal("a route whose only record is stalled was reported ready")
-	}
+	// Leave the route eligible and wake the dispatcher; the settlement must
+	// come from run()'s visit, not from this test.
+	s.mu.Lock()
+	delete(s.active, id)
+	s.mu.Unlock()
+	s.signal()
+	waitIngressCondition(t, func() bool {
+		got, err := s.store.Get(stalled.RecordID)
+		return err == nil && got.State == ingressExpired && got.Terminal()
+	})
 	got, err := s.store.Get(stalled.RecordID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != "expired" || got.Reason != "receipt_timeout" || !got.Terminal() {
-		t.Fatalf("route visit did not settle the stalled delivery: %+v", got)
-	}
-	if got.Text != "" {
-		t.Fatal("settled record retained the body", got)
+	if got.Reason != "receipt_timeout" || got.Text != "" {
+		t.Fatalf("the dispatcher did not settle the stalled delivery: %+v", got)
 	}
 
-	// Settling a stalled delivery must not hold back work that arrived later.
+	// Settling a stalled delivery must not hold back work that arrived later:
+	// the dispatcher must deliver it without any direct visitRoute call.
 	msg.MessageID, msg.Text = "fresh", "new task"
 	fresh := s.Accept(context.Background(), IngressEnvelope{Message: msg})
 	if fresh.Disposition != ReceiveAccepted {
 		t.Fatal(fresh)
 	}
-	if !s.visitRoute(id, false) {
-		t.Fatal("a fresh delivery was blocked by a stalled one")
-	}
-	freshRecord, err := s.store.Get(fresh.RecordID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if freshRecord.State != "received" {
-		t.Fatalf("fresh delivery was disturbed by the route visit: %+v", freshRecord)
+	waitIngressCondition(t, func() bool { return len(w.snapshot()) == 1 })
+	if got := w.snapshot()[0]["content"]; got != "new task" {
+		t.Fatalf("fresh delivery was disturbed by the stalled one: %v", got)
 	}
 }
