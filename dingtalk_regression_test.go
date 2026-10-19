@@ -293,8 +293,18 @@ func TestDingtalkTrackAcceptanceRefusesAfterStopping(t *testing.T) {
 	f.a.stopping = true
 	f.a.mu.Unlock()
 	// The reservation and the shutdown seal share one lock, so Wait can never
-	// race a late Add; a refused worker leaves the envelope unacknowledged.
+	// race a late Add. The stream's 500 for this frame can no longer reach the
+	// platform, so the unobserved outcome is counted here instead.
 	if got := f.a.trackAcceptance(future, IncomingMessage{}); got != nil {
 		t.Fatal("accepted work after the shutdown seal")
+	}
+	var count uint64
+	for _, counter := range f.r.ingressStore.MetricsSnapshot().Counters {
+		if counter.Platform == "dingtalk" && counter.Event == "acceptance_unconfirmed" && counter.Reason == "transport_stopped" {
+			count = counter.Count
+		}
+	}
+	if count != 1 {
+		t.Fatalf("shutdown-race loss metric count=%d", count)
 	}
 }

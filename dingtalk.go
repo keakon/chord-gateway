@@ -350,9 +350,14 @@ func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg Incom
 	a.mu.Lock()
 	if a.stopping {
 		a.mu.Unlock()
-		// The stream reports 500 for this frame: robot callbacks are
-		// fire-and-forget, so the unaccepted input is not redelivered; the 500
-		// keeps the loss observable while nothing outlives Disconnect.
+		// Disconnect runs the shutdown lock before cancelling the connection,
+		// so the stream's 500 for this frame can no longer reach the platform
+		// and nothing may outlive Disconnect. The submitted envelope's outcome
+		// is now unobserved; robot callbacks are fire-and-forget, so the loss
+		// has to be counted here instead of inferred from redelivery.
+		if a.router != nil {
+			a.router.ObserveIngress("dingtalk", "acceptance_unconfirmed", "transport_stopped")
+		}
 		return nil
 	}
 	a.acceptWG.Add(1)
