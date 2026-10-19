@@ -308,9 +308,13 @@ func (a *telegramHTTPAPI) call(parent context.Context, method string, payload, r
 		if envelope.Parameters.MigrateToChatID != 0 {
 			category = "chat_migrated"
 		}
-		// 429 is safe to retry only with an explicit Telegram rejection and a
-		// positive, representable delay. Bare HTTP 429 remains an unknown send.
-		if category == "rate_limited" && (envelope.Parameters.RetryAfter <= 0 || envelope.Parameters.RetryAfter > int64((1<<63-1)/int64(time.Second))) {
+		// A send is safe to retry a 429 only with an explicit Telegram rejection
+		// and a positive, representable delay; a bare 429 leaves the send
+		// outcome unknown. Read-only methods never change state, so they keep
+		// rate_limited and back off instead of turning into the fatal
+		// method_rejected the next block derives.
+		if category == "rate_limited" && !telegramIngressMethods[method] &&
+			(envelope.Parameters.RetryAfter <= 0 || envelope.Parameters.RetryAfter > int64((1<<63-1)/int64(time.Second))) {
 			category = "api_rejected"
 		}
 		// getMe, getWebhookInfo and getUpdates only describe the poll loop

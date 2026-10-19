@@ -66,6 +66,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Fixed
 
+- A rate-limit refusal without a retry delay no longer stops the Telegram poller. A 429 on `getMe`, `getWebhookInfo` or `getUpdates` was downgraded to a permanent method refusal and exited the gateway; read-only methods now retry with the normal backoff, while sends still treat a bare 429 as an unknown outcome.
 - Console mode no longer demands `--pair` for dormant chat bindings: its pairing remedy is mutually exclusive with `--console`, so the check is skipped there.
 - Pairing hint replies are budgeted per private chat instead of per platform, so a spammer in one chat can no longer silence hints for unpaired users elsewhere on the same platform.
 - `pairing reset` prints the duplicate-key and unsupported-field warnings it is about to drop from the rewritten config, instead of silently deduplicating the file.

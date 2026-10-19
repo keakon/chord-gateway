@@ -236,6 +236,21 @@ func TestTelegramIngressMethodRejectionIsTerminal(t *testing.T) {
 	if _, err := api.SendMessage(t.Context(), 1, "test"); !errors.As(err, &apiErr) || apiErr.Category != "api_rejected" {
 		t.Fatalf("send 400 = %v", err)
 	}
+	// A 429 without a retry delay still describes the poll loop. A read-only
+	// method backs off; only a send keeps the unknown-outcome category.
+	api = testTelegramAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"ok":false,"error_code":429}`)
+	})
+	if _, err := api.GetUpdates(t.Context(), nil, telegramLongPollSeconds); !errors.As(err, &apiErr) || apiErr.Category != "rate_limited" {
+		t.Fatalf("bare 429 getUpdates = %v", err)
+	}
+	var backoff telegramBackoff
+	if _, retry := backoff.failed(apiErr); !retry {
+		t.Fatal("bare 429 stopped the poller")
+	}
+	if _, err := api.SendMessage(t.Context(), 1, "test"); !errors.As(err, &apiErr) || apiErr.Category != "api_rejected" {
+		t.Fatalf("bare 429 send = %v", err)
+	}
 }
 
 // A long poll outlives the ordinary request timeout, and the read must not
