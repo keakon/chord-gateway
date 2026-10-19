@@ -23,6 +23,12 @@ var (
 	errWechatPollingIdentityChanged = errors.New("wechat polling identity changed")
 )
 
+// wechatStuckReportInterval bounds how often a retrying batch item repeats its
+// warning. A retry keeps the item's position, so an input that never reaches a
+// terminal disposition blocks every later message in the account; it must not
+// retry silently.
+const wechatStuckReportInterval = time.Minute
+
 // A malformed business ID invalidates that delivery, rather than all the other
 // deliveries in its polling batch. An explicit invalid top-level ID remains
 // nonempty so inboundMessageID cannot fall back to an unrelated item ID.
@@ -231,6 +237,8 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 			}
 			return a.resolveIncomingMessage(ctx, msg, token, result)
 		}
+		var lastStuckWarn time.Time
+		stuckFailures := 0
 		for pollCtx.Err() == nil {
 			currentEpoch, ok := a.currentPollingEpoch(token)
 			if !ok || currentEpoch != epoch {
@@ -239,6 +247,15 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 			if batch.advance(pollCtx, receive, resolve) {
 				break
 			}
+			// Retrying in order is correct: skipping ahead would silently drop
+			// an input whose outcome is not terminal. Escalate loudly instead
+			// of blocking the whole account behind one item without evidence.
+			stuckFailures++
+			if stuckFailures == 1 || time.Since(lastStuckWarn) >= wechatStuckReportInterval {
+				log.Warnf("wechat: input not acknowledged, retrying message_id=%v disposition=%v reason=%v consecutive_failures=%v", batch.response.Msgs[batch.position].MessageID, batch.pending.Disposition, batch.pending.Reason, stuckFailures)
+				lastStuckWarn = time.Now()
+			}
+			r.ObserveIngress("wechat", "acceptance_unconfirmed", batch.pending.Reason)
 			sleepCtx(pollCtx, ilinkRetryDelay)
 		}
 		if pollCtx.Err() != nil || batch.position != len(resp.Msgs) {

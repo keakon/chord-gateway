@@ -113,6 +113,16 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("second item did not block")
 		}
+		// A retryable item blocks the account's polling order; the gateway must
+		// report it instead of retrying silently.
+		waitIngressCondition(t, func() bool {
+			for _, counter := range service.store.MetricsSnapshot().Counters {
+				if counter.Platform == "wechat" && counter.Event == "acceptance_unconfirmed" && counter.Reason == "storage_unavailable" && counter.Count > 0 {
+					return true
+				}
+			}
+			return false
+		})
 		if cursor, err := service.store.Cursor("wechat", "bot"); err != nil || cursor.Generation != 0 {
 			t.Fatal(cursor, err)
 		}
