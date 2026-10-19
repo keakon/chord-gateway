@@ -16,6 +16,12 @@ const retiredPinKeyPrefix = "paired:"
 // bindings, so a reset route starts without the old session.
 // Re-pairing to a different owner inherits the previous session by design for
 // single-user deployments: use /new or delete the pin for isolation.
+//
+// Scoping the key to the paired identity was tried and reverted: it silently
+// dropped sessions whenever an operator changed the account, while access to a
+// session is already gated by the binding's owner. The mapping is therefore the
+// identity, but it stays the single place that decides the pin namespace so a
+// future change cannot drift across the twenty-odd call sites.
 func pinKeyForBinding(key string) string {
 	return key
 }

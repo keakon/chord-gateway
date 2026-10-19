@@ -52,7 +52,8 @@ func (s *sessionPinStore) Load() error {
 	// do), can never be reached by a binding again: parseProcessKey only
 	// addresses v2: keys and Get matches exactly. They are dropped rather than
 	// rewritten so no key silently moves to a different identity; every other
-	// entry is preserved as-is. Dropped entries are counted, never logged.
+	// entry is preserved as-is. Only the dropped count is logged; the keys
+	// themselves never are.
 	dropped := 0
 	for key := range pins {
 		if strings.HasPrefix(key, retiredPinKeyPrefix) || strings.Contains(key, "|") {
