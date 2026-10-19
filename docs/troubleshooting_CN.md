@@ -88,7 +88,7 @@ chord_path: ~/go/bin/chord
 
 `reply_context_missing` 表示当前进程的任务尚未交付；owner 的新 `/status` 可建立上下文。重启会清空队列。容量不足时保留当前批次，接纳后才推进内存游标。
 
-`batch_too_large` 表示响应超过 4 MiB 或 1,024 条的客户端防护预算。微信接收循环停止且不推进游标，其他平台可继续运行；日志报告 `IM adapter exited with error type=wechat`。重启不保证解决服务端同一超大批次，`/login wechat` 也不会重启已退出循环。核查平台积压与 Chord 原会话后处理，不跳过不透明游标或盲目重发。
+`batch_too_large` 表示响应超过 4 MiB 或 1,024 条的客户端防护预算。微信接收循环停止且不推进游标。启用多个平台时其余平台继续运行，日志报告 `IM adapter exited with error type=wechat`；微信是唯一启用的平台时进程会退出，命令行报告 `IM adapter error: ...`。重启不保证解决服务端同一超大批次，`/login wechat` 也不会重启已退出循环。核查平台积压与 Chord 原会话后处理，不跳过不透明游标或盲目重发。
 
 未知结果可能已执行，先检查 `/status` 和 Chord 原会话的队列、执行记录与结果。确认结果后再决定重发或重启；重启不会取消已经执行的工作。
 

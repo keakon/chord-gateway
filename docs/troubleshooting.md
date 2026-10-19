@@ -88,7 +88,7 @@ Feishu does not need in-chat login or manual renewal; the gateway automatically 
 
 `reply_context_missing` means input in this process has not been delivered; a fresh owner `/status` can establish context. Process restart clears the queue without restoring old tasks. Temporary capacity refusal retains the current polling batch until intake can advance its in-memory cursor.
 
-`batch_too_large` means one response exceeds the client budget of 4 MiB or 1,024 items. The WeChat receive loop stops without advancing its cursor; other platforms may keep running. Logs report `IM adapter exited with error type=wechat`. Restart may encounter the same oversized server batch; `/login wechat` does not restart an exited loop. Inspect the platform backlog and original Chord session before acting; do not skip an opaque cursor or blindly resend old tasks.
+`batch_too_large` means one response exceeds the client budget of 4 MiB or 1,024 items. The WeChat receive loop stops without advancing its cursor. With more than one active platform the others keep running and the log reports `IM adapter exited with error type=wechat`; with WeChat as the only platform the process exits and the command reports `IM adapter error: ...`. Restart may encounter the same oversized server batch; `/login wechat` does not restart an exited loop. Inspect the platform backlog and original Chord session before acting; do not skip an opaque cursor or blindly resend old tasks.
 
 Unknown input may already have executed. Check `/status` and the original Chord session queue, execution history and results before deciding to resend or restart. Restart cannot cancel work already executed.
 
