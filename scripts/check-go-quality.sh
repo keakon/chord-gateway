@@ -64,3 +64,11 @@ go vet ./...
 
 echo "==> staticcheck -checks 'all,-ST1000' ./..."
 staticcheck -checks 'all,-ST1000' ./...
+
+echo "==> cross-repo contract gate"
+contract_repo="${CHORD_GATEWAY_CONTRACT_CHORD_REPO:-../chord}"
+if [[ -f "$contract_repo/go.mod" ]]; then
+  echo "Chord checkout found at $contract_repo; run ./scripts/check-chord-contract.sh to enforce the cross-repo contract tests."
+else
+  echo "No Chord checkout at $contract_repo; the cross-repo contract tests are not covered here. Run ./scripts/check-chord-contract.sh with CHORD_GATEWAY_CONTRACT_CHORD_REPO set once a checkout is available."
+fi
