@@ -33,7 +33,7 @@ func imMetricReason(reason string) string {
 	switch reason {
 	case "control_target_unavailable", "binding_unavailable", "binding_outcome_unknown", "authorization_changed", "outbound_full", "outbound_closed", "reply_expired":
 		return reason
-	case "invalid_identity", "identity_probe", "identity_unverified", "identity_probe_requires_private",
+	case "invalid_identity", "invalid_configuration", "identity_probe", "identity_unverified", "identity_probe_requires_private",
 		"sender_identity_unsupported", "unsupported_conversation", "unsupported_message",
 		"group_mention_required", "message_too_large", "invalid_message_id",
 		"update_id_conflict", "semantic_duplicate", "unsupported_update", "unsupported_topic", "unsupported_sender_chat", "unsupported_chat", "unsupported_content", "other_bot_command", "invalid_command_entity", "chat_migrated", "credentials", "forbidden", "poller_conflict", "unknown_send", "platform_rejected", "backpressure", "connection_lost", "connection_unavailable", "auth_failed", "duplicate_connection", "identity_mismatch", "invalid_message", "invalid_callback", "local_error", "api_rejected", "invalid_request":
@@ -52,10 +52,19 @@ func imMetricReason(reason string) string {
 	}
 	return "other"
 }
-func (m *ingressMetrics) record(platform, event, reason string) {
+
+// imMetricEventAllowed reports whether event is a bounded ingress metric event.
+// record() drops anything else, so caller-provided values can never create an
+// unbounded label.
+func imMetricEventAllowed(event string) bool {
 	switch event {
 	case "acceptance_unconfirmed", "callback_dropped", "received", "duplicate", "rejected", "retryable", "uncertain", "lost_before_accept", "consumed", "dispatching", "unknown", "quarantined", "expired", "submitted", "completed", "blocked", "slot_exhausted", "reply_dropped", "receipt_update_failed":
-	default:
+		return true
+	}
+	return false
+}
+func (m *ingressMetrics) record(platform, event, reason string) {
+	if !imMetricEventAllowed(event) {
 		return
 	}
 	m.mu.Lock()

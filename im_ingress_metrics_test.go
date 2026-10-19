@@ -135,17 +135,32 @@ var ingressReasonLiteral = regexp.MustCompile(`Reason:\s*"([a-z0-9_]+)"`)
 // must still be covered or it collapses to "other" unnoticed.
 var ingressPositionalReason = regexp.MustCompile(`(?:ObserveIngress\([^)]*?, "([a-z0-9_]+)"\)|ObserveLostBeforeAccept\("[a-z0-9_]+", "([a-z0-9_]+)"\))`)
 
-// producedIngressReasons reads the reasons out of the sources instead of
-// restating them here. A hand-maintained copy drifts, which is how the
-// normalization and transport reasons were lost to "other" while this guard
-// still passed. Adapter files are included: most emit metrics directly.
-func producedIngressReasons(t *testing.T) map[string]string {
+// ingressHelperReason matches bounded reasons produced by classifier helpers
+// that take the label as an argument; a struct-field scan cannot see them, so
+// the DingTalk identity categories collapsed to "other" unnoticed.
+var ingressHelperReason = regexp.MustCompile(`dingtalkIdentityFailure\("([a-z0-9_]+)"\)`)
+
+// The observe/record pair patterns capture emitters that write the event and
+// the reason as positional literals, and ingressMetricEvent captures the event
+// of every literal emitter regardless of a dynamic reason.
+var (
+	ingressObservePair = regexp.MustCompile(`(?:\.observe|observeIngress)\(\s*"([a-z0-9_]+)"\s*,\s*"([a-z0-9_]+)"\s*\)`)
+	ingressRecordPair  = regexp.MustCompile(`\.record\([^,()]+,\s*"([a-z0-9_]+)"\s*,\s*"([a-z0-9_]+)"\s*\)`)
+	ingressMetricEvent = regexp.MustCompile(`(?:ObserveIngress\([^,()]*?,\s*"([a-z0-9_]+)"|\.record\([^,()]+,\s*"([a-z0-9_]+)"|(?:\.observe|observeIngress)\(\s*"([a-z0-9_]+)")`)
+)
+
+// producedIngressLabels reads the reasons and events out of the sources
+// instead of restating them here. A hand-maintained copy drifts, which is how
+// the normalization and transport reasons were lost to "other" while this
+// guard still passed. Adapter files are included: most emit metrics directly.
+func producedIngressLabels(t *testing.T) (reasons, events map[string]string) {
 	t.Helper()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reasons := make(map[string]string)
+	reasons = make(map[string]string)
+	events = make(map[string]string)
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -173,11 +188,30 @@ func producedIngressReasons(t *testing.T) map[string]string {
 			}
 			reasons[string(reason)] = name
 		}
+		for _, match := range ingressHelperReason.FindAllSubmatch(source, -1) {
+			reasons[string(match[1])] = name
+		}
+		for _, match := range ingressObservePair.FindAllSubmatch(source, -1) {
+			events[string(match[1])] = name
+			reasons[string(match[2])] = name
+		}
+		for _, match := range ingressRecordPair.FindAllSubmatch(source, -1) {
+			events[string(match[1])] = name
+			reasons[string(match[2])] = name
+		}
+		for _, match := range ingressMetricEvent.FindAllSubmatch(source, -1) {
+			for _, group := range match[1:] {
+				if len(group) > 0 {
+					events[string(group)] = name
+					break
+				}
+			}
+		}
 	}
-	if len(reasons) < 10 {
-		t.Fatalf("the reason scan found only %d literals, so it is broken", len(reasons))
+	if len(reasons) < 10 || len(events) < 5 {
+		t.Fatalf("the label scan found %d reasons and %d events, so it is broken", len(reasons), len(events))
 	}
-	return reasons
+	return reasons, events
 }
 
 // TestIngressMetricVocabularyRoundTripsProducedLabels keeps the bounded metric
@@ -185,9 +219,33 @@ func producedIngressReasons(t *testing.T) map[string]string {
 // reason or terminal event that is missing from the allowlist is dropped to
 // "other" or discarded entirely, hiding the outcome operators need to see.
 func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
-	for reason, file := range producedIngressReasons(t) {
+	reasons, events := producedIngressLabels(t)
+	for reason, file := range reasons {
 		if got := imMetricReason(reason); got != reason {
 			t.Errorf("%s emits reason %q, which the snapshot collapses to %q", file, reason, got)
+		}
+	}
+	for event, file := range events {
+		if !imMetricEventAllowed(event) {
+			t.Errorf("%s emits event %q, which record() silently drops", file, event)
+		}
+	}
+	// Classifier helpers are exercised instead of restated: every reason they
+	// can return must round-trip, including one a future change adds.
+	for _, err := range []error{errIngressCaptureBusy, errIngressCapacity, errIngressClosed, errors.New("unclassified")} {
+		reason := ingressSubmitRefusalReason(err)
+		if got := imMetricReason(reason); got != reason {
+			t.Errorf("ingressSubmitRefusalReason(%v) = %q collapses to %q", err, reason, got)
+		}
+	}
+	for _, err := range []error{
+		fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomSourceTimeOutOfRange),
+		fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomEmptyText),
+		errWecomInvalidCallback,
+	} {
+		reason := wecomCallbackRejectionReason(err)
+		if got := imMetricReason(reason); got != reason {
+			t.Errorf("wecomCallbackRejectionReason(%v) = %q collapses to %q", err, reason, got)
 		}
 	}
 	// Transport failure categories are metric labels too, so the bounded set a
@@ -206,12 +264,12 @@ func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 	// Terminal states and saturation events are the outcomes operators act on;
 	// recording one must keep it.
 	s := testIngressStore(t)
-	events := []string{"dispatching", "consumed", "completed", "submitted", "expired", "quarantined", "blocked", "slot_exhausted"}
-	for _, event := range events {
+	terminalEvents := []string{"dispatching", "consumed", "completed", "submitted", "expired", "quarantined", "blocked", "slot_exhausted"}
+	for _, event := range terminalEvents {
 		s.metrics.record("slack", event, "")
 	}
 	snapshot := s.MetricsSnapshot()
-	for _, event := range events {
+	for _, event := range terminalEvents {
 		if ingressCounter(snapshot, event) == 0 {
 			t.Fatalf("terminal/state event dropped: %q", event)
 		}
