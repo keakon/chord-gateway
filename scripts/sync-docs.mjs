@@ -4,7 +4,7 @@
 // Source of truth stays in the repository root and docs/. The generated files
 // under website/src/content/docs are gitignored; do not edit them by hand.
 
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +36,53 @@ function deriveSlug(basename) {
 
 function detectLanguage(filename) {
   return filename.endsWith('_CN.md') ? 'zh' : 'en';
+}
+
+function counterpartFilename(filename) {
+  return filename.endsWith('_CN.md')
+    ? `${filename.slice(0, -'_CN.md'.length)}.md`
+    : `${filename.slice(0, -'.md'.length)}_CN.md`;
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Syncing is per-language, so a page without its counterpart would just make
+// the other site silently miss it. Fail before writing anything instead.
+async function validateLanguagePairs() {
+  const errors = [];
+  const entries = await readdir(docsDir, { withFileTypes: true });
+  const docNames = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && !SKIP_DOC_FILES.has(entry.name))
+    .map((entry) => entry.name);
+  const docsPresent = new Set(docNames);
+  for (const name of docNames) {
+    const counterpart = counterpartFilename(name);
+    if (!docsPresent.has(counterpart)) {
+      errors.push(`docs/${name}: missing docs/${counterpart}`);
+    }
+  }
+
+  const rootNames = new Set(ROOT_DOCS.map((rootDoc) => rootDoc.filename));
+  for (const rootDoc of ROOT_DOCS) {
+    const counterpart = counterpartFilename(rootDoc.filename);
+    if (!rootNames.has(counterpart)) {
+      errors.push(`${rootDoc.filename}: missing counterpart ${counterpart} in ROOT_DOCS`);
+    }
+    if (!(await fileExists(path.join(repoRoot, rootDoc.filename)))) {
+      errors.push(`${rootDoc.filename}: missing root doc file`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`documentation language pairs are incomplete:\n  ${errors.join('\n  ')}`);
+  }
 }
 
 function extractTitleAndBody(markdown) {
@@ -192,6 +239,7 @@ async function clean() {
 }
 
 async function main() {
+  await validateLanguagePairs();
   await clean();
 
   for (const rootDoc of ROOT_DOCS) {

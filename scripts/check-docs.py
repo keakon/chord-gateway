@@ -49,6 +49,36 @@ EVENT_LIST_BULLET_RE = re.compile(r"^- `([a-z_]+)`$")
 EVENT_LIST_ANCHORS = ("assistant_message", "idle", "error", "agent_done")
 EVENT_LIST_MIN_ENTRIES = 8
 
+# Numeric constants that are restated in user-facing docs. Doc/code drift here
+# was caught only by manual review, so each explicit pair below is compared on
+# every run. Numbers are normalized by stripping commas and spaces, so a doc's
+# "100,000" matches a source 100000. To extend the table, add an entry with the
+# Go file and regex that extract the value, plus one (doc, regex) pair for each
+# place that must state it. Anchor the doc regex on stable wording next to the
+# number so it cannot latch onto an unrelated value; if the sentence is
+# reworded, update the regex (or drop the pair when the doc stops making the
+# claim).
+DOCUMENTED_CONSTANTS = [
+    {
+        "name": "ReplayCapacity",
+        "source": "internal/discordgateway/gateway.go",
+        "source_re": r"\bconst ReplayCapacity = (\d+)",
+        "docs": [
+            ("docs/operations.md", r"Resume buffers at most ([\d,]+) useful events"),
+            ("docs/discord.md", r"replay buffer holds at most ([\d,]+) useful events"),
+        ],
+    },
+    {
+        "name": "ingressHistoryLimit",
+        "source": "im_ingress_store.go",
+        "source_re": r"\bconst ingressHistoryLimit = (\d+)",
+        "docs": [
+            ("docs/operations.md", r"share a ([\d,]+)-record"),
+            ("docs/operations_CN.md", r"另受 ([\d,]+) 条"),
+        ],
+    },
+]
+
 
 def check_local_links() -> list[str]:
     errors: list[str] = []
@@ -172,12 +202,49 @@ def check_event_lists() -> list[str]:
     return errors
 
 
+def _normalize_number(value: str) -> str:
+    return re.sub(r"[\s,]", "", value)
+
+
+def check_documented_constants() -> list[str]:
+    errors: list[str] = []
+    for entry in DOCUMENTED_CONSTANTS:
+        source = ROOT / entry["source"]
+        if not source.exists():
+            errors.append(f"{entry['source']}: missing file that defines {entry['name']}")
+            continue
+        source_match = re.search(entry["source_re"], source.read_text(encoding="utf-8"))
+        if not source_match:
+            errors.append(f"{entry['source']}: cannot find {entry['name']} with pattern {entry['source_re']!r}")
+            continue
+        expected = _normalize_number(source_match.group(1))
+        for doc_rel, doc_re in entry["docs"]:
+            doc_path = ROOT / doc_rel
+            if not doc_path.exists():
+                errors.append(f"{doc_rel}: missing document that states {entry['name']}")
+                continue
+            doc_match = re.search(doc_re, doc_path.read_text(encoding="utf-8"))
+            if not doc_match:
+                errors.append(
+                    f"{doc_rel}: no text matches {doc_re!r}; restate {entry['name']} or update the table"
+                )
+                continue
+            documented = _normalize_number(doc_match.group(1))
+            if documented != expected:
+                errors.append(
+                    f"{doc_rel}: documents {entry['name']} as {doc_match.group(1)} "
+                    f"but the source has {source_match.group(1)}"
+                )
+    return errors
+
+
 def main() -> int:
     checks = [
         ("local links", check_local_links()),
         ("language pairs", check_language_pairs()),
         ("stale phrases", check_stale_phrases()),
         ("event lists", check_event_lists()),
+        ("documented constants", check_documented_constants()),
     ]
     failed = False
     for name, errors in checks:
