@@ -247,6 +247,12 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 			if batch.advance(pollCtx, receive, resolve) {
 				break
 			}
+			if pollCtx.Err() != nil {
+				// A shutdown or credential change interrupted the batch between
+				// items; that is not a stuck acceptance and must not be reported
+				// as one while the loop is already stopping.
+				break
+			}
 			// Retrying in order is correct: skipping ahead would silently drop
 			// an input whose outcome is not terminal. Escalate loudly instead
 			// of blocking the whole account behind one item without evidence.

@@ -151,6 +151,69 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 	})
 }
 
+// A cancellation that lands between batch items is not a stuck acceptance, but
+// the retry loop reported it as one: it warned and counted an
+// acceptance_unconfirmed metric while the gateway was already stopping.
+func TestWechatMonitorCancellationDoesNotReportUnconfirmedAcceptance(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a, service, _, _ := newWechatIngressTest(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		receiver := &wechatMonitorCancellingReceiver{service: service, cancel: cancel}
+		service.normalizer.receiver = receiver
+		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/ilink/bot/getupdates" {
+				return wechatMonitorResponse(`{"ret":0}`), nil
+			}
+			messages := []ilinkMessage{wechatTextMessage("1", "owner", "first task", "context"), wechatTextMessage("2", "owner", "second task", "context")}
+			encoded, _ := json.Marshal(ilinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: messages})
+			return wechatMonitorResponse(string(encoded)), nil
+		})
+		done := make(chan error, 1)
+		finished := make(chan struct{})
+		go func() {
+			defer close(finished)
+			err := a.monitorLoop(ctx)
+			a.closeIngressAccount()
+			done <- err
+		}()
+		t.Cleanup(func() {
+			cancel()
+			select {
+			case <-finished:
+			case <-time.After(time.Second):
+				t.Error("monitor remained active during cleanup")
+			}
+		})
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("monitor did not stop after the in-flight cancellation")
+		}
+		for _, counter := range service.store.MetricsSnapshot().Counters {
+			if counter.Event == "acceptance_unconfirmed" {
+				t.Fatalf("cancellation was reported as an unconfirmed acceptance: %+v", counter)
+			}
+		}
+	})
+}
+
+type wechatMonitorCancellingReceiver struct {
+	service *IngressService
+	cancel  context.CancelFunc
+}
+
+func (r *wechatMonitorCancellingReceiver) Accept(ctx context.Context, envelope IngressEnvelope) ReceiveResult {
+	if envelope.Message.MessageID == wechatIngressBusinessID("owner", "2") {
+		// The parent cancellation lands while the batch is in flight.
+		r.cancel()
+		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "storage_unavailable"}
+	}
+	return r.service.Accept(ctx, envelope)
+}
+
 func TestWechatMonitorMalformedIDDoesNotBlockNextMessage(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, service, _, writer := newWechatIngressTest(t)
