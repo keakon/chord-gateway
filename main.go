@@ -69,7 +69,7 @@ func checkPairedOwnerRequirement(cfg *config.Config, pair bool) error {
 		case len(im.Bindings()) > 0 && pair:
 			log.Warnf("ims.%s: chat_bindings stay inactive until an owner is paired", im.Type())
 		case len(im.Bindings()) > 0:
-			return fmt.Errorf("ims.%s: chat_bindings requires a paired owner; restart with --pair and send /bind \"<directory>\" in a private chat (the pairing code is shown on the terminal), or set owner: {account_id: <bot account id>, user_id: <your user id>} in the config", im.Type())
+			return fmt.Errorf("ims.%s: chat_bindings requires a paired owner; restart with --pair, then send /bind \"<directory>\" <pairing_code> in a private chat (the pairing code is shown on the terminal), or set owner: {account_id: <bot account id>, user_id: <your user id>} in the config", im.Type())
 		case !pair:
 			log.Warnf("ims.%s: no paired owner; start with --pair to pair this platform", im.Type())
 		}
@@ -173,7 +173,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		// platform connects, so it is valid across all platforms for the window.
 		if terminal != nil {
 			if err := router.admission.pairing.BeginPairing(); err != nil {
-				return fmt.Errorf("pairing requires a controlling terminal: %w", err)
+				return fmt.Errorf("cannot begin pairing: %w", err)
 			}
 		}
 		var ingress *IngressService

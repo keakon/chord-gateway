@@ -16,7 +16,7 @@ var (
 	telegramConflictRetryDelay = 2 * time.Second
 	telegramConflictRetryLimit = 30
 	// telegramRetryBaseDelay is the first delay after an unclassified transport
-	// failure; it doubles up to the cap in failed.
+	// failure; each failed attempt doubles it up to the configured cap.
 	telegramRetryBaseDelay = time.Second
 )
 

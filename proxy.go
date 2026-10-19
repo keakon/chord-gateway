@@ -62,16 +62,14 @@ func proxiedTransport(proxyFunc func(*http.Request) (*url.URL, error)) *http.Tra
 	return transport
 }
 
-// logEffectiveProxies reports each configured outbound proxy once at startup,
-// with credentials stripped, so operators can confirm the value the gateway
-// actually resolved without grepping the config.
+// logEffectiveProxies reports the outbound proxy each active platform will
+// actually use, once, with credentials stripped, so operators can confirm the
+// resolution without grepping the config. The effective value is trimmed like
+// the transport does; whitespace-only values mean direct and are not reported.
 func logEffectiveProxies(cfg *config.Config) {
-	if cfg.ProxyURL != "" {
-		log.Infof("outbound proxy global=%s", redactProxyURL(cfg.ProxyURL))
-	}
 	for _, im := range cfg.ActiveIMs() {
-		if override := im.ProxyURLValue(); override != "" {
-			log.Infof("outbound proxy ims.%s=%s", im.Type(), redactProxyURL(override))
+		if effective := strings.TrimSpace(cfg.EffectiveProxyURL(im)); effective != "" {
+			log.Infof("outbound proxy ims.%s=%s", im.Type(), redactProxyURL(effective))
 		}
 	}
 }
