@@ -78,6 +78,9 @@ type wecomWSCallbacks struct {
 	// Reports unsubmitted delivery attempts, including overflow. A prior delivery
 	// of the same business ID may already be in-memory. Must not block.
 	OnDroppedBeforeAccept func(count int)
+	// Reports a user text callback that failed validation before intake, with a
+	// bounded reason. Unsupported events and media are not reported. Must not block.
+	OnCallbackRejected func(reason string)
 }
 
 type wecomWSTiming struct {
@@ -580,10 +583,14 @@ func (w *wecomWS) read(s *wecomWSSession) {
 		if !acceptCallback {
 			continue
 		}
-		// The shared pure normalizer defines supported business callbacks. Events,
-		// media and malformed messages never occupy recovery slots or count as lost
-		// business input; identity was checked first, including unsupported types.
+		// The shared pure normalizer defines supported business callbacks. Events
+		// and media never occupy recovery slots and are not counted as lost
+		// business input; a malformed text callback is reported instead of
+		// vanishing without evidence. Identity was checked first.
 		if _, err := NormalizeWecomCallback(raw, w.botID, receivedAt); err != nil {
+			if errors.Is(err, errWecomInvalidCallback) && w.callbacks.OnCallbackRejected != nil {
+				w.callbacks.OnCallbackRejected(wecomCallbackRejectionReason(err))
+			}
 			continue
 		}
 		callbackCtx := context.WithValue(s.ctx, wecomReceivedAtContextKey{}, receivedAt)

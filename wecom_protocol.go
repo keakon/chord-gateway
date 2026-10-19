@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -11,8 +12,32 @@ import (
 
 var (
 	errWecomAccountMismatch = errors.New("wecom callback account mismatch")
+	// errWecomUnsupportedCallback marks a callback that is deliberately not a
+	// user text command (events, media, assistant/channel sources). It is
+	// ignored without being counted as lost business input.
+	errWecomUnsupportedCallback = errors.New("unsupported wecom callback")
+	// errWecomInvalidCallback marks a callback that claimed to be user text but
+	// failed validation. It is reported instead of vanishing silently.
 	errWecomInvalidCallback = errors.New("invalid wecom callback")
+	// errWecomSourceTimeOutOfRange is wrapped by errWecomInvalidCallback so a
+	// skewed create_time is visible as its own metric reason.
+	errWecomSourceTimeOutOfRange = errors.New("wecom callback create_time out of range")
+	// errWecomEmptyText is wrapped by errWecomInvalidCallback so an empty or
+	// blank message is reported as invalid_input, matching the other adapters.
+	errWecomEmptyText = errors.New("wecom callback text is empty")
 )
+
+// wecomCallbackRejectionReason maps a validation failure to the bounded metric
+// reason reported through the callback_dropped counter.
+func wecomCallbackRejectionReason(err error) string {
+	switch {
+	case errors.Is(err, errWecomSourceTimeOutOfRange):
+		return "source_time_out_of_range"
+	case errors.Is(err, errWecomEmptyText):
+		return "invalid_input"
+	}
+	return "invalid_callback"
+}
 
 // EncodeWecomTarget keeps private users and groups in distinct routing scopes.
 func EncodeWecomTarget(kind, target string) (string, error) {
@@ -78,8 +103,11 @@ func NormalizeWecomCallback(raw []byte, account string, receivedAt time.Time) (I
 			} `json:"text"`
 		} `json:"body"`
 	}
-	if json.Unmarshal(raw, &frame) != nil || frame.Command != "aibot_msg_callback" {
+	if json.Unmarshal(raw, &frame) != nil {
 		return IngressEnvelope{}, errWecomInvalidCallback
+	}
+	if frame.Command != "aibot_msg_callback" {
+		return IngressEnvelope{}, errWecomUnsupportedCallback
 	}
 	b := frame.Body
 	if strings.TrimSpace(b.BotID) == "" {
@@ -94,15 +122,27 @@ func NormalizeWecomCallback(raw []byte, account string, receivedAt time.Time) (I
 	// not an ordinary text message from a real user. Detect key presence, not
 	// the payload content.
 	if b.CompatInfo != nil {
-		return IngressEnvelope{}, errWecomInvalidCallback
+		return IngressEnvelope{}, errWecomUnsupportedCallback
+	}
+	// Type comes before per-field validation: a voice or mixed callback is
+	// deliberately unsupported even when its other fields are incomplete, so it
+	// must not be reported as malformed user text.
+	if b.Type != "text" {
+		return IngressEnvelope{}, errWecomUnsupportedCallback
 	}
 	for _, id := range []string{b.BotID, b.MessageID, b.From.UserID} {
 		if strings.TrimSpace(id) == "" || len(id) > maxScopedIDBytes {
 			return IngressEnvelope{}, errWecomInvalidCallback
 		}
 	}
-	if len("message:")+len(b.MessageID) > maxScopedIDBytes || len(frame.Headers.RequestID) > maxScopedIDBytes || b.Type != "text" || b.Text == nil || b.Text.Content == nil || len(*b.Text.Content) > 64<<10 {
+	if len("message:")+len(b.MessageID) > maxScopedIDBytes || len(frame.Headers.RequestID) > maxScopedIDBytes || b.Text == nil || b.Text.Content == nil || len(*b.Text.Content) > 64<<10 {
 		return IngressEnvelope{}, errWecomInvalidCallback
+	}
+	// An empty or blank message is not a task; rejecting it here keeps the
+	// shared dispatch from sending empty input to Chord (Telegram already
+	// refuses empty text the same way).
+	if strings.TrimSpace(*b.Text.Content) == "" {
+		return IngressEnvelope{}, fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomEmptyText)
 	}
 	kind, target := "", ""
 	switch b.ChatType {
@@ -151,11 +191,11 @@ func wecomSourceTime(raw json.RawMessage, receivedAt time.Time) (time.Time, erro
 	}
 	source := time.Unix(n, 0)
 	// Reject out-of-range platform timestamps like every other adapter and
-	// the shared store (-24h/+5m window) instead of clamping, so a skewed
-	// create_time is visible as source_time_out_of_range rather than silently
-	// rewritten to receipt time.
+	// the shared store (-24h/+5m window) instead of clamping. This callback
+	// never reaches the store, so the rejection is reported directly as
+	// source_time_out_of_range instead of a store tombstone.
 	if source.Before(receivedAt.Add(-24*time.Hour)) || source.After(receivedAt.Add(5*time.Minute)) {
-		return time.Time{}, errWecomInvalidCallback
+		return time.Time{}, fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomSourceTimeOutOfRange)
 	}
 	return source, nil
 }

@@ -7,8 +7,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keakon/golog/log"
+
 	"github.com/keakon/chord-gateway/config"
 )
+
+// wecomCallbackWarnInterval bounds how often a rejected text callback repeats
+// its warning. Every rejection is counted; only the log line is rate-limited.
+const wecomCallbackWarnInterval = time.Minute
 
 // WecomAdapter uses the smart-robot long connection for both ingress and
 // proactive output. Durable admission and business execution stay in Gateway.
@@ -26,6 +32,7 @@ type WecomAdapter struct {
 	accountNext                     time.Time
 	targetNext                      map[string]time.Time
 	accountInterval, targetInterval time.Duration
+	callbackWarnAt                  time.Time
 
 	ingressReadinessNotifier
 }
@@ -40,7 +47,7 @@ func NewWecomAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &WecomAdapter{imCfg: imCfg, router: router, ctx: ctx, cancel: cancel, done: make(chan struct{}), targetNext: make(map[string]time.Time), accountInterval: 500 * time.Millisecond, targetInterval: 4 * time.Second}
-	a.ws = newWecomWSWithProxy(imCfg.Wecom.BotID, imCfg.Wecom.Secret, wecomWSCallbacks{OnAuthenticated: a.authenticated, OnReady: a.transportReady, CaptureFrame: a.captureFrame, OnFrame: a.receiveFrame, OnUnavailable: a.unavailable, OnDroppedBeforeAccept: a.droppedBeforeAccept}, proxyFunc)
+	a.ws = newWecomWSWithProxy(imCfg.Wecom.BotID, imCfg.Wecom.Secret, wecomWSCallbacks{OnAuthenticated: a.authenticated, OnReady: a.transportReady, CaptureFrame: a.captureFrame, OnFrame: a.receiveFrame, OnUnavailable: a.unavailable, OnDroppedBeforeAccept: a.droppedBeforeAccept, OnCallbackRejected: a.callbackRejected}, proxyFunc)
 	sender, err := NewIMTextSender(IMTextSendOptions{Platform: "wecom", Budget: 1024, Render: renderWecomText, Measure: func(s string) int { return len(s) }, SendSegment: a.sendSegment})
 	if err != nil {
 		cancel()
@@ -126,14 +133,44 @@ func (a *WecomAdapter) transportReady(ctx context.Context) error {
 	return nil
 }
 
-func (a *WecomAdapter) unavailable(_ error) {
+func (a *WecomAdapter) unavailable(err error) {
 	a.mu.Lock()
 	a.ready = false
+	stopping := a.stopping
 	a.mu.Unlock()
+	// A reconnect attempt must not be silent: without this, an ingress
+	// preparation failure leaves the bot offline with an empty log. Normal
+	// shutdown is not a failure.
+	if err != nil && !stopping {
+		var failure *WecomTransportError
+		if errors.As(err, &failure) {
+			log.Warnf("wecom: connection unavailable category=%v", failure.Category)
+		} else {
+			log.Warnf("wecom: connection unavailable")
+		}
+	}
 	if a.router != nil && a.router.admission != nil {
 		a.router.admission.pairing.PlatformUnavailable("wecom")
 	}
 	a.wakeIngressReadiness()
+}
+
+// callbackRejected counts a malformed user text callback that was dropped
+// before intake and keeps a bounded log trace. Unsupported events and media
+// take the unsupported path and never reach this method.
+func (a *WecomAdapter) callbackRejected(reason string) {
+	if a.router != nil {
+		a.router.ObserveIngress("wecom", "callback_dropped", reason)
+	}
+	a.mu.Lock()
+	warn := time.Since(a.callbackWarnAt) >= wecomCallbackWarnInterval
+	if warn {
+		a.callbackWarnAt = time.Now()
+	}
+	a.mu.Unlock()
+	if warn {
+		log.Warnf("wecom: rejected an invalid text callback reason=%v", reason)
+	}
 }
 
 func (a *WecomAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {

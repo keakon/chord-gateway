@@ -755,6 +755,7 @@ func wecomTestTextBody(id any) map[string]any {
 func TestWecomWSInvalidCallbacksDoNotStopOrEnterRecovery(t *testing.T) {
 	preparing := make(chan struct{})
 	dropped := make(chan int, 1)
+	rejected := make(chan string, 4)
 	w, _ := wecomTestWS(t, func(conn *websocket.Conn) {
 		if wecomTestSubscribe(conn) != nil {
 			return
@@ -766,12 +767,17 @@ func TestWecomWSInvalidCallbacksDoNotStopOrEnterRecovery(t *testing.T) {
 		// Supported event identities are validated, but events are not lost input.
 		conn.WriteJSON(map[string]any{"cmd": "aibot_event_callback", "body": map[string]any{"aibotid": "test-bot", "event": map[string]string{"eventtype": "enter_chat"}}})
 		conn.WriteJSON(map[string]any{"cmd": "aibot_msg_callback", "body": map[string]string{"aibotid": "test-bot", "msgtype": "voice"}})
+		// Malformed text callbacks are reported instead of vanishing silently.
 		conn.WriteJSON(map[string]any{"cmd": "aibot_msg_callback", "body": map[string]string{"aibotid": "test-bot", "msgtype": "text"}})
+		skewed := wecomTestTextBody("skewed")
+		skewed["create_time"] = 1
+		conn.WriteJSON(map[string]any{"cmd": "aibot_msg_callback", "body": skewed})
 		conn.WriteJSON(map[string]any{"cmd": "aibot_msg_callback", "body": wecomTestTextBody("valid")})
 		conn.ReadMessage()
 	}, wecomWSCallbacks{
 		OnAuthenticated:       func(ctx context.Context) error { close(preparing); <-ctx.Done(); return ctx.Err() },
 		OnDroppedBeforeAccept: func(count int) { dropped <- count },
+		OnCallbackRejected:    func(reason string) { rejected <- reason },
 	})
 	<-preparing
 	wecomWaitFor(t, func() bool {
@@ -779,9 +785,26 @@ func TestWecomWSInvalidCallbacksDoNotStopOrEnterRecovery(t *testing.T) {
 		defer w.mu.Unlock()
 		return w.current != nil && len(w.current.callbacks) == 1
 	})
+	reasons := map[string]bool{}
+	for range 2 {
+		select {
+		case reason := <-rejected:
+			reasons[reason] = true
+		case <-time.After(time.Second):
+			t.Fatalf("malformed text callbacks were not reported: %v", reasons)
+		}
+	}
+	if !reasons["invalid_callback"] || !reasons["source_time_out_of_range"] || len(reasons) != 2 {
+		t.Fatalf("reported reasons: %v", reasons)
+	}
 	w.Stop()
 	if count := <-dropped; count != 1 {
 		t.Fatalf("non-business callbacks counted as lost: %d", count)
+	}
+	select {
+	case reason := <-rejected:
+		t.Fatalf("unsupported callbacks must not be reported: %q", reason)
+	default:
 	}
 }
 

@@ -15,6 +15,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/keakon/golog"
+	"github.com/keakon/golog/log"
+
 	"github.com/keakon/chord-gateway/config"
 )
 
@@ -347,6 +350,57 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("ordered send did not finish")
 		}
+	}
+}
+
+func TestWecomRejectedCallbackIsCountedAndLoggedOnce(t *testing.T) {
+	a, _, store := wecomAdapterFixture(t)
+	var logged strings.Builder
+	log.SetLogfFunc(func(msg string, args ...interface{}) {
+		fmt.Fprintf(&logged, msg, args...)
+		logged.WriteByte('\n')
+	}, golog.WarnLevel)
+	t.Cleanup(func() { log.SetDefaultLogger(nil) })
+	// Every rejection is counted, but the warning is bounded to one line per
+	// interval so a malformed flood cannot overwhelm the log.
+	a.callbackRejected("invalid_callback")
+	a.callbackRejected("source_time_out_of_range")
+	counts := map[string]uint64{}
+	for _, counter := range store.MetricsSnapshot().Counters {
+		if counter.Platform == "wecom" && counter.Event == "callback_dropped" {
+			counts[counter.Reason] = counter.Count
+		}
+	}
+	if counts["invalid_callback"] != 1 || counts["source_time_out_of_range"] != 1 {
+		t.Fatalf("callback rejection metrics: %v", counts)
+	}
+	if got := strings.Count(logged.String(), "wecom: rejected an invalid text callback"); got != 1 {
+		t.Fatalf("rejection warnings are not bounded: %d (%q)", got, logged.String())
+	}
+	if !strings.Contains(logged.String(), "reason=invalid_callback") {
+		t.Fatalf("rejection warning lost its reason: %q", logged.String())
+	}
+}
+
+func TestWecomUnavailableIsLoggedUnlessStopping(t *testing.T) {
+	a, _, _ := wecomAdapterFixture(t)
+	var logged strings.Builder
+	log.SetLogfFunc(func(msg string, args ...interface{}) {
+		fmt.Fprintf(&logged, msg, args...)
+		logged.WriteByte('\n')
+	}, golog.WarnLevel)
+	t.Cleanup(func() { log.SetDefaultLogger(nil) })
+	a.unavailable(&WecomTransportError{Category: "connection_unavailable"})
+	if !strings.Contains(logged.String(), "connection unavailable category=connection_unavailable") {
+		t.Fatalf("transport failure was silent: %q", logged.String())
+	}
+	logged.Reset()
+	a.mu.Lock()
+	a.stopping = true
+	a.mu.Unlock()
+	a.unavailable(errors.New("dial failed"))
+	if logged.Len() != 0 {
+		t.Fatalf("shutdown reported as failure: %q", logged.String())
 	}
 }
 

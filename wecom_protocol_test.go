@@ -71,13 +71,31 @@ func TestWecomProtocolIdentityAndTargets(t *testing.T) {
 	}
 }
 
-func TestWecomProtocolRejectsInvalidCallbacks(t *testing.T) {
-	mutations := map[string]func(map[string]any){
-		"assistant":       func(b map[string]any) { b["compat_info"] = map[string]any{"source": "ai_assistant"} },
-		"channel":         func(b map[string]any) { b["compat_info"] = map[string]any{"source": "channel"} },
-		"unknown_source":  func(b map[string]any) { b["compat_info"] = map[string]any{"source": "future"} },
-		"empty_compat":    func(b map[string]any) { b["compat_info"] = map[string]any{} },
-		"null_compat":     func(b map[string]any) { b["compat_info"] = nil },
+func TestWecomProtocolClassifiesCallbacks(t *testing.T) {
+	// Events and non-text messages are deliberately outside the text command
+	// contract; they are ignored without being reported as lost input.
+	unsupported := map[string]func(map[string]any){
+		"assistant":      func(b map[string]any) { b["compat_info"] = map[string]any{"source": "ai_assistant"} },
+		"channel":        func(b map[string]any) { b["compat_info"] = map[string]any{"source": "channel"} },
+		"unknown_source": func(b map[string]any) { b["compat_info"] = map[string]any{"source": "future"} },
+		"empty_compat":   func(b map[string]any) { b["compat_info"] = map[string]any{} },
+		"null_compat":    func(b map[string]any) { b["compat_info"] = nil },
+		"voice": func(b map[string]any) {
+			b["msgtype"] = "voice"
+			b["voice"] = map[string]any{"content": "/approve example"}
+		},
+		"mixed": func(b map[string]any) { b["msgtype"] = "mixed" },
+	}
+	for name, mutate := range unsupported {
+		t.Run("unsupported/"+name, func(t *testing.T) {
+			if _, err := NormalizeWecomCallback(wecomProtocolFrame(t, mutate), "example-bot", time.Now()); !errors.Is(err, errWecomUnsupportedCallback) {
+				t.Fatalf("unsupported callback error: %v", err)
+			}
+		})
+	}
+	// A callback that claims to be user text but fails validation must be
+	// visible to the caller instead of vanishing without evidence.
+	invalid := map[string]func(map[string]any){
 		"missing_bot":     func(b map[string]any) { delete(b, "aibotid") },
 		"missing_message": func(b map[string]any) { delete(b, "msgid") },
 		"missing_sender":  func(b map[string]any) { delete(b, "from") },
@@ -90,19 +108,16 @@ func TestWecomProtocolRejectsInvalidCallbacks(t *testing.T) {
 			b["chattype"] = "group"
 			b["group"] = map[string]any{"chatid": "example-group"}
 		},
-		"voice": func(b map[string]any) {
-			b["msgtype"] = "voice"
-			b["voice"] = map[string]any{"content": "/approve example"}
-		},
-		"mixed":            func(b map[string]any) { b["msgtype"] = "mixed" },
 		"missing_text":     func(b map[string]any) { delete(b, "text") },
 		"missing_content":  func(b map[string]any) { b["text"] = map[string]any{} },
 		"null_content":     func(b map[string]any) { b["text"] = map[string]any{"content": nil} },
+		"empty_content":    func(b map[string]any) { b["text"] = map[string]any{"content": ""} },
+		"blank_content":    func(b map[string]any) { b["text"] = map[string]any{"content": " \t\n"} },
 		"large_text":       func(b map[string]any) { b["text"] = map[string]any{"content": strings.Repeat("x", 64<<10+1)} },
 		"large_message_id": func(b map[string]any) { b["msgid"] = strings.Repeat("x", maxScopedIDBytes) },
 	}
-	for name, mutate := range mutations {
-		t.Run(name, func(t *testing.T) {
+	for name, mutate := range invalid {
+		t.Run("invalid/"+name, func(t *testing.T) {
 			if _, err := NormalizeWecomCallback(wecomProtocolFrame(t, mutate), "example-bot", time.Now()); !errors.Is(err, errWecomInvalidCallback) {
 				t.Fatalf("invalid callback error: %v", err)
 			}
@@ -114,10 +129,36 @@ func TestWecomProtocolRejectsInvalidCallbacks(t *testing.T) {
 			t.Fatalf("account mismatch was not fatal: %v", err)
 		}
 	}
-	for _, raw := range [][]byte{[]byte(`{"cmd":"aibot_event_callback","body":{"event":{"eventtype":"enter_chat"}}}`), []byte(`{"cmd":"aibot_msg_callback"} {}`), []byte(strings.Repeat(" ", 1<<20+1)), {0xff}} {
-		if _, err := NormalizeWecomCallback(raw, "example-bot", time.Now()); err == nil {
-			t.Fatal("accepted invalid frame")
+	event := []byte(`{"cmd":"aibot_event_callback","body":{"event":{"eventtype":"enter_chat"}}}`)
+	if _, err := NormalizeWecomCallback(event, "example-bot", time.Now()); !errors.Is(err, errWecomUnsupportedCallback) {
+		t.Fatalf("event callback classification: %v", err)
+	}
+	for _, raw := range [][]byte{[]byte(`{"cmd":"aibot_msg_callback"} {}`), []byte(strings.Repeat(" ", 1<<20+1)), {0xff}} {
+		if _, err := NormalizeWecomCallback(raw, "example-bot", time.Now()); !errors.Is(err, errWecomInvalidCallback) {
+			t.Fatalf("invalid frame classification: %v", err)
 		}
+	}
+}
+
+func TestWecomProtocolRejectionReasons(t *testing.T) {
+	received := time.Unix(1800000002, 0)
+	skewed := wecomProtocolFrame(t, func(b map[string]any) { b["create_time"] = int64(1700000000) })
+	_, err := NormalizeWecomCallback(skewed, "example-bot", received)
+	if !errors.Is(err, errWecomInvalidCallback) || !errors.Is(err, errWecomSourceTimeOutOfRange) {
+		t.Fatalf("out-of-range source time classification: %v", err)
+	}
+	if reason := wecomCallbackRejectionReason(err); reason != "source_time_out_of_range" {
+		t.Fatalf("out-of-range source time reason: %q", reason)
+	}
+	malformed := wecomProtocolFrame(t, func(b map[string]any) { delete(b, "text") })
+	_, err = NormalizeWecomCallback(malformed, "example-bot", received)
+	if reason := wecomCallbackRejectionReason(err); reason != "invalid_callback" {
+		t.Fatalf("invalid callback reason: %q (%v)", reason, err)
+	}
+	blank := wecomProtocolFrame(t, func(b map[string]any) { b["text"] = map[string]any{"content": " \t\n"} })
+	_, err = NormalizeWecomCallback(blank, "example-bot", received)
+	if reason := wecomCallbackRejectionReason(err); reason != "invalid_input" {
+		t.Fatalf("blank text reason: %q (%v)", reason, err)
 	}
 }
 
