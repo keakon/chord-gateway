@@ -110,7 +110,7 @@
 
 - 企业微信对越界的 `create_time` 采用与其他平台一致的拒绝处理，不再静默改写为接收时间。
 - 微信批次中一直无法确定终态的条目不再静默阻塞账号轮询：gateway 会记录 message ID、disposition、reason 与连续失败次数并计入 `acceptance_unconfirmed` 指标，最多每分钟重复一次。
-- 企业微信将格式非法的用户文本回调计入 `callback_dropped` 并带上限定的原因（`invalid_callback` 或 `source_time_out_of_range`），最多每分钟告警一次；事件、语音及其他不支持的媒体仍被忽略。重连失败也会记录限定的传输类别，不再留下空日志。
+- 企业微信将格式非法的用户文本回调计入 `callback_dropped` 并带上限定的原因（`invalid_callback`、`invalid_input` 或 `source_time_out_of_range`），最多每分钟告警一次；事件、语音及其他不支持的媒体仍被忽略。重连失败也会记录限定的传输类别，不再留下空日志。
 - 钉钉在账号不可用时发送改为在共享的文本失败分类中报告 `connection_unavailable`，不再返回无人观测的裸错误；与适配器关闭竞争的入站接纳改为回 500 拒绝，使丢失可观测（fire-and-forget 语义下平台不会重投），而不是在未加入工作的前提下就确认成功。
 - `chat_bindings` 未配对时的启动错误现在显示实际的首次绑定命令 `/bind "<directory>" <pairing_code>`（含配对码），与运行期提示和文档一致。
 - 修正中文文档的代理锚点、过期确认说明（文本回复会作为明确非决断的补充消息转发，而不是被拒绝），以及权限指南的平台、凭据与事件响应清单中缺失的 Telegram 与 Slack token。
