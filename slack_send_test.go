@@ -160,7 +160,18 @@ func TestSlackSendPartialFailureNeverReplays(t *testing.T) {
 }
 
 func TestSlackSendClassifiesRejections(t *testing.T) {
-	for _, code := range []string{"channel_not_found", "not_in_channel", "is_archived", "missing_scope", "invalid_auth", "token_revoked", "not_authed", "account_inactive"} {
+	// A definite rejection must carry its bounded category; collapsing every
+	// failure into delivery_failed hides which platform decision happened.
+	for code, category := range map[string]string{
+		"channel_not_found": "invalid_target",
+		"not_in_channel":    "forbidden",
+		"is_archived":       "forbidden",
+		"missing_scope":     "forbidden",
+		"invalid_auth":      "credentials",
+		"token_revoked":     "credentials",
+		"not_authed":        "credentials",
+		"account_inactive":  "credentials",
+	} {
 		t.Run(code, func(t *testing.T) {
 			client := testSlackAPI(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintf(w, `{"ok":false,"error":%q}`, code) })
 			err := testSlackSender(t, client).Send(context.Background(), nil, "CCHAN1", "sample")
@@ -168,7 +179,20 @@ func TestSlackSendClassifiesRejections(t *testing.T) {
 			if !errors.As(err, &sendErr) || errors.Is(err, errDeliveryOutcomeUnknown) || !strings.Contains(sendErr.Cause.Error(), code) {
 				t.Fatalf("error=%v", err)
 			}
+			if sendErr.Category != category {
+				t.Fatalf("category=%q, want %q", sendErr.Category, category)
+			}
 		})
+	}
+	var calls atomic.Int32
+	client := testSlackAPI(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	})
+	err := testSlackSender(t, client).Send(context.Background(), nil, "CCHAN1", "sample")
+	var sendErr *IMTextSendError
+	if !errors.As(err, &sendErr) || sendErr.Category != "platform_rejected" || calls.Load() != 1 {
+		t.Fatalf("HTTP rejection category: error=%v calls=%d", err, calls.Load())
 	}
 }
 

@@ -87,6 +87,23 @@ func (s *slackSender) sendSegment(ctx context.Context, target, text string) erro
 	return nil
 }
 
+// slackSendRefusal carries the bounded failure category for a definite
+// platform rejection, so partial-send diagnostics and metrics distinguish an
+// explicit refusal from an unconfirmed outcome instead of reporting
+// delivery_failed for every Slack failure.
+type slackSendRefusal struct {
+	category string
+	cause    error
+}
+
+func (e *slackSendRefusal) Error() string                     { return e.cause.Error() }
+func (e *slackSendRefusal) Unwrap() error                     { return e.cause }
+func (e *slackSendRefusal) IMTextSendFailureCategory() string { return e.category }
+
+func slackRejection(category string, format string, args ...any) error {
+	return &slackSendRefusal{category: category, cause: fmt.Errorf(format, args...)}
+}
+
 func sanitizeSlackSendError(err error) error {
 	var unsent *slackUnsentRequestError
 	if errors.As(err, &unsent) {
@@ -97,16 +114,19 @@ func sanitizeSlackSendError(err error) error {
 		switch apiError.Err {
 		case "internal_error", "fatal_error":
 			return fmt.Errorf("%w: slack message operation %s", errDeliveryOutcomeUnknown, apiError.Err)
-		case "channel_not_found", "not_in_channel", "is_archived", "missing_scope",
-			"invalid_auth", "account_inactive", "token_revoked", "not_authed":
-			return fmt.Errorf("slack message rejected: %s", apiError.Err)
+		case "channel_not_found":
+			return slackRejection("invalid_target", "slack message rejected: %s", apiError.Err)
+		case "not_in_channel", "is_archived", "missing_scope":
+			return slackRejection("forbidden", "slack message rejected: %s", apiError.Err)
+		case "invalid_auth", "account_inactive", "token_revoked", "not_authed":
+			return slackRejection("credentials", "slack message rejected: %s", apiError.Err)
 		default:
-			return errors.New("slack message rejected: slack_api_rejected")
+			return slackRejection("api_rejected", "slack message rejected: slack_api_rejected")
 		}
 	}
 	var status slack.StatusCodeError
 	if errors.As(err, &status) && !isAmbiguousDeliveryStatus(status.Code) {
-		return fmt.Errorf("slack message rejected: HTTP %d", status.Code)
+		return slackRejection("platform_rejected", "slack message rejected: HTTP %d", status.Code)
 	}
 	if errors.Is(err, context.Canceled) {
 		return errors.Join(errDeliveryOutcomeUnknown, context.Canceled)

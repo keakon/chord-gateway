@@ -259,6 +259,47 @@ func TestSlackReceiptDeadlineDoesNotInventRetryableOutcome(t *testing.T) {
 	}
 }
 
+// A submit refusal from the shared normalizer - for example a saturated queue -
+// used to leave the envelope unacknowledged with no metric or log at all. The
+// reader must count it like every other discard before Slack redelivers it.
+func TestSlackSocketSubmitFailureRecordsLostIntake(t *testing.T) {
+	a, identity := slackSocketTestAdapter(t)
+	router := a.router.(*NotificationRouter)
+	gate := make(chan struct{})
+	defer close(gate)
+	for i := range ingressNormalizationCapacity {
+		if _, err := router.ingress.normalizer.Submit(fmt.Sprintf("key-%d", i), func(context.Context) (IngressEnvelope, error) {
+			<-gate
+			return IngressEnvelope{}, errors.New("sample normalization failure")
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, done, cancel := startSlackSocketTest(t, a, identity)
+	if err := conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
+		t.Fatal(err)
+	}
+	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	now := time.Now()
+	ts := fmt.Sprintf("%d.%06d", now.Unix(), now.Nanosecond()/1000)
+	if err := conn.WriteJSON(map[string]any{
+		"type": "events_api", "envelope_id": "capacity-envelope",
+		"payload": map[string]any{"type": "event_callback", "team_id": identity.TeamID, "api_app_id": identity.AppID, "event_id": "capacity-event", "event": map[string]string{"type": "message", "channel_type": "im", "channel": "DTEST", "user": "UOWNER", "text": "sample task", "ts": ts}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitIngressCondition(t, func() bool {
+		for _, counter := range router.ingressStore.MetricsSnapshot().Counters {
+			if counter.Platform == "slack" && counter.Event == "lost_before_accept" && counter.Reason == "capacity" && counter.Count > 0 {
+				return true
+			}
+		}
+		return false
+	})
+	cancel()
+	_ = waitSlackSocketDone(t, done)
+}
+
 func TestSlackReceiptTimeoutIsObservableBeforeACKDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewIngressStore()

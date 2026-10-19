@@ -162,6 +162,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 	}
 	inbound := a.inboundFor(identity)
 	var capacityLogged atomic.Bool
+	var submitFailuresLogged atomic.Bool
 	workers.Go(func() {
 		seenHello := false
 		for {
@@ -236,6 +237,17 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 						if a.router != nil {
 							a.router.ObserveIngress("slack", "lost_before_accept", "capture_busy")
 						}
+					default:
+						// A full shared normalization queue or a closing intake
+						// leaves the envelope unacknowledged for Slack to redeliver.
+						// Count it like every other discard in this loop instead of
+						// dropping the refusal without a metric.
+						if a.router != nil {
+							a.router.ObserveIngress("slack", "lost_before_accept", ingressSubmitRefusalReason(submitErr))
+						}
+						if submitFailuresLogged.CompareAndSwap(false, true) {
+							log.Warnf("slack: intake submission failed; leaving envelopes unacknowledged for Slack to redeliver")
+						}
 					}
 					continue
 				}
@@ -267,8 +279,10 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 				case receipts <- pending:
 				default:
 					cleanup()
-					// Same observability as the reader-side capacity discard:
-					// an unacknowledged envelope is a lost intake.
+					// Defense in depth: the reader's capacity guard normally
+					// keeps this branch unreachable, but if the queues ever
+					// decouple, an unacknowledged envelope must still leave the
+					// same lost-intake trace as the reader-side discard.
 					if a.router != nil {
 						a.router.ObserveIngress("slack", "lost_before_accept", "capacity")
 					}
