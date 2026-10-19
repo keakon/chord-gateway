@@ -269,9 +269,9 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 	transfers.mu.Lock()
 	future, err := f.a.onCallback(t.Context(), frame)
 	transfers.mu.Unlock()
-	// A delivery that races the target's state write must be refused as a
-	// retryable target_busy, so the platform redelivers and the loss is visible
-	// in the metrics instead of being swallowed by the retry helper.
+	// A delivery that races the target's state write must be refused as
+	// target_busy with the loss visible in the metrics; robot callbacks are
+	// fire-and-forget, so the refusal reply tells the user to resend.
 	if future != nil || !errors.Is(err, errIngressCaptureBusy) {
 		t.Fatalf("busy capture was not refused: future=%v err=%v", future, err)
 	}

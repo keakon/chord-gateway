@@ -69,9 +69,11 @@ func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkC
 			return receiveNormalization(t, future)
 		}
 		// Capture reads the target's process state without waiting, so a delivery
-		// that arrives while that state is being written is refused as retryable
-		// and the platform redelivers it. Model the redelivery here instead of
-		// failing on a scheduling race between two deliveries to one chat.
+		// that arrives while that state is being written is refused as
+		// target_busy. Robot callbacks are fire-and-forget, so production does
+		// not redeliver: the user resends. The retry below models that resend to
+		// keep the suite immune to a scheduling race between deliveries of one
+		// chat.
 		if !errors.Is(err, errIngressCaptureBusy) || time.Now().After(deadline) {
 			t.Fatal(err)
 		}

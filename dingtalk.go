@@ -350,8 +350,9 @@ func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg Incom
 	a.mu.Lock()
 	if a.stopping {
 		a.mu.Unlock()
-		// Leave the envelope unacknowledged: the stream responds 500 and
-		// redelivery stays possible, while nothing outlives Disconnect.
+		// The stream reports 500 for this frame: robot callbacks are
+		// fire-and-forget, so the unaccepted input is not redelivered; the 500
+		// keeps the loss observable while nothing outlives Disconnect.
 		return nil
 	}
 	a.acceptWG.Add(1)
@@ -373,9 +374,10 @@ func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg Incom
 
 func (a *DingtalkAdapter) notifyLostInput(msg IncomingMessage) {
 	if msg.ticket != nil {
-		// The envelope stays unacknowledged, so DingTalk may redeliver it; the
-		// reply must not claim the input is permanently lost.
-		a.router.enqueueIngressReply(msg, "This input was not accepted yet; DingTalk may redeliver it automatically. If it never appears, check Gateway ingress health before sending a new message.")
+		// Robot callbacks are fire-and-forget: the platform does not redeliver
+		// unacknowledged or rejected frames, so the reply must tell the user to
+		// resend instead of waiting for a retry that never comes.
+		a.router.enqueueIngressReply(msg, "This input was not accepted, and DingTalk does not redeliver robot callbacks, so please send it again. If the bot keeps dropping input, check Gateway ingress health first.")
 	}
 }
 
