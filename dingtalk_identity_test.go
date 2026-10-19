@@ -103,6 +103,8 @@ func TestDingtalkNormalizeRejectionsAreSanitized(t *testing.T) {
 		{"group without mention", "group_mention_required", func(c *dingtalkCallback) { c.ConversationType = "2" }, false},
 		{"missing group id", "invalid_target", func(c *dingtalkCallback) { c.ConversationType = "2"; c.IsInAtList = true; c.ConversationID = "" }, false},
 		{"oversized text", "message_too_large", func(c *dingtalkCallback) { c.Text.Content = strings.Repeat("x", 64*1024+1) }, false},
+		{"empty text", "invalid_input", func(c *dingtalkCallback) { c.Text.Content = "" }, false},
+		{"blank text", "invalid_input", func(c *dingtalkCallback) { c.Text.Content = " \t\n" }, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			callback := dingtalkIdentityTestCallback()
@@ -113,7 +115,7 @@ func TestDingtalkNormalizeRejectionsAreSanitized(t *testing.T) {
 			if msg.Text != "" {
 				t.Fatalf("rejection retained body: %+v", msg)
 			}
-			if test.category == "unsupported_message" || test.category == "message_too_large" || test.category == "group_mention_required" {
+			if test.category == "unsupported_message" || test.category == "message_too_large" || test.category == "group_mention_required" || test.category == "invalid_input" {
 				if msg.MessageID == "" || msg.ChatID == "" || msg.AccountID == "" || msg.SenderID == "" {
 					t.Fatalf("rejection omitted authenticated business identity: %+v", msg)
 				}
@@ -150,7 +152,6 @@ func TestDingtalkIdentityProbeOnlyPrivateAndNeverChangesConfig(t *testing.T) {
 }
 
 func TestDingtalkClientLockExcludesDifferentConfiguredIdentities(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	cfg := dingtalkIdentityTestConfig()
 	resources, err := dingtalkLockResources(cfg)
 	if err != nil || len(resources) != 2 || !sort.StringsAreSorted(resources) {

@@ -193,6 +193,12 @@ func normalizeDingtalkCallback(cfg *config.DingtalkConfig, payload string) (Inco
 	if kind == "group" && !callback.IsInAtList {
 		return msg, dingtalkIdentityFailure("group_mention_required")
 	}
+	// An empty or blank message is not a task; rejecting it here keeps the
+	// shared dispatch from sending empty input to Chord (Telegram already
+	// refuses empty text the same way).
+	if strings.TrimSpace(callback.Text.Content) == "" {
+		return msg, dingtalkIdentityFailure("invalid_input")
+	}
 	msg.Text = strings.TrimLeftFunc(callback.Text.Content, unicode.IsSpace)
 	return msg, nil
 }

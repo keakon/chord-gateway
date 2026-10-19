@@ -55,6 +55,13 @@ func NewDingtalkAdapter(globalCfg *config.Config, im config.IMAdapterConfig, _ *
 	a := &DingtalkAdapter{cfg: &cfg, router: router, account: account, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	a.api = newDingtalkAPI(ctx, &cfg, proxyFunc)
 	a.sender, err = NewIMTextSender(IMTextSendOptions{Platform: "dingtalk", Budget: 1024, Measure: func(s string) int { return len(s) }, SendSegment: func(ctx context.Context, target, text string) error {
+		// Refuse here rather than before the shared sender so the definite
+		// non-delivery lands in the shared category vocabulary; a bare error
+		// returned before textSender.Send is recorded as delivery_failed and
+		// never observed (the WeCom contract).
+		if !a.IngressDeliveryReadiness(ChatIdentity{Platform: "dingtalk", AccountID: a.account, ChatID: target}).Ready {
+			return &dingtalkAPIError{Category: "connection_unavailable"}
+		}
 		kind, raw, err := dingtalkDecodeTarget(cfg.CorpID, target)
 		if err != nil {
 			return err
@@ -333,12 +340,23 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 
 // The relay waits for the worker's actual result even when a disconnected socket
 // stops waiting for its ACK. Disconnect joins these bounded workers before return.
+// Add runs under the same lock that seals shutdown, so Wait cannot run between
+// the availability check and the reservation (a bare Add after Wait is a panic
+// even when it is benign-looking; -race does not detect it).
 func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg IncomingMessage) <-chan ReceiveResult {
 	if future == nil {
 		return nil
 	}
-	result := make(chan ReceiveResult, 1)
+	a.mu.Lock()
+	if a.stopping {
+		a.mu.Unlock()
+		// Leave the envelope unacknowledged: the stream responds 500 and
+		// redelivery stays possible, while nothing outlives Disconnect.
+		return nil
+	}
 	a.acceptWG.Add(1)
+	a.mu.Unlock()
+	result := make(chan ReceiveResult, 1)
 	go func() {
 		defer a.acceptWG.Done()
 		value, ok := <-future
@@ -355,7 +373,9 @@ func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg Incom
 
 func (a *DingtalkAdapter) notifyLostInput(msg IncomingMessage) {
 	if msg.ticket != nil {
-		a.router.enqueueIngressReply(msg, "This input was not saved. Check Gateway ingress health before sending a new message.")
+		// The envelope stays unacknowledged, so DingTalk may redeliver it; the
+		// reply must not claim the input is permanently lost.
+		a.router.enqueueIngressReply(msg, "This input was not accepted yet; DingTalk may redeliver it automatically. If it never appears, check Gateway ingress health before sending a new message.")
 	}
 }
 
@@ -388,13 +408,18 @@ func (a *DingtalkAdapter) SendTextContext(ctx context.Context, chat, text string
 		a.sendWG.Add(1)
 	}
 	a.mu.Unlock()
-	if !ready || a.router == nil {
-		if ready {
-			a.sendWG.Done()
-		}
-		return errors.New("dingtalk: account unavailable")
+	if ready {
+		defer a.sendWG.Done()
 	}
-	defer a.sendWG.Done()
+	// A not-ready adapter still enters the shared sender: its SendSegment
+	// produces a categorized, definite non-delivery instead of an unobserved
+	// bare error. Only ready calls are joined by sendWG, because not-ready
+	// segment refusal never touches the API.
+	if a.router == nil {
+		err := &dingtalkAPIError{Category: "connection_unavailable"}
+		a.reportSendFailure(err)
+		return err
+	}
 	im := a.router.getConfig().IMConfigByType("dingtalk")
 	expectedAccount, scoped := ctx.Value(replyAccountContextKey{}).(string)
 	if scoped {

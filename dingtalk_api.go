@@ -49,6 +49,8 @@ func (e *dingtalkAPIError) IMTextSendFailureCategory() string {
 		return "platform_rejected"
 	case "invalid_request":
 		return "invalid_request"
+	case "connection_unavailable":
+		return "connection_unavailable"
 	default:
 		return "delivery_failed"
 	}

@@ -213,3 +213,88 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 		t.Fatalf("shutdown permitted HTTP output: %v", err)
 	}
 }
+
+func TestDingtalkNotReadySendIsCategorized(t *testing.T) {
+	f := newDingtalkAdapterFixture(t)
+	dingtalkAdapterVerify(t, f)
+	target, err := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendCtx := context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account)
+	f.a.mu.Lock()
+	f.a.stopping = true
+	f.a.mu.Unlock()
+	// A definite non-delivery must use the shared category vocabulary instead
+	// of an unobserved bare error, so operators can see it in text metrics.
+	err = f.a.SendTextContext(sendCtx, target, "output")
+	var failure *dingtalkAPIError
+	if !errors.As(err, &failure) || failure.Category != "connection_unavailable" {
+		t.Fatalf("not-ready send error: %v", err)
+	}
+	if category := failure.IMTextSendFailureCategory(); category != "connection_unavailable" {
+		t.Fatalf("not-ready send category: %q", category)
+	}
+}
+
+func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
+	f := newDingtalkAdapterFixture(t)
+	dingtalkAdapterVerify(t, f)
+	// Bind the callback's chat: capture only freezes state for a bound target.
+	f.a.sender.options.SendSegment = func(context.Context, string, string) error { return nil }
+	binding := dingtalkIdentityTestCallback()
+	binding.MsgID = "busy-bind"
+	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, binding))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, dir := dingtalkAdapterNonce(f), t.TempDir()
+	msg.Text = fmt.Sprintf("/bind %q %s", dir, code)
+	ticket, ok := f.r.admission.Authorize(msg)
+	if !ok {
+		t.Fatal("binding not authorized")
+	}
+	if _, err := (&BindingService{router: f.r}).Bind(t.Context(), msg, ticket, []string{dir, code}); err != nil {
+		t.Fatal(err)
+	}
+	// A takeover command captures through the transfer store without waiting;
+	// holding it models a delivery racing the target's state write.
+	callback := dingtalkIdentityTestCallback()
+	callback.MsgID, callback.Text.Content = "busy-delivery", "/takeover status"
+	frame := dingtalkAdapterFrame(t, callback, "busy-delivery")
+	transfers := f.r.mgr.transfers
+	if transfers == nil {
+		t.Fatal("transfer store unavailable")
+	}
+	transfers.mu.Lock()
+	future, err := f.a.onCallback(t.Context(), frame)
+	transfers.mu.Unlock()
+	// A delivery that races the target's state write must be refused as a
+	// retryable target_busy, so the platform redelivers and the loss is visible
+	// in the metrics instead of being swallowed by the retry helper.
+	if future != nil || !errors.Is(err, errIngressCaptureBusy) {
+		t.Fatalf("busy capture was not refused: future=%v err=%v", future, err)
+	}
+	var count uint64
+	for _, counter := range f.r.ingressStore.MetricsSnapshot().Counters {
+		if counter.Platform == "dingtalk" && counter.Event == "lost_before_accept" && counter.Reason == "target_busy" {
+			count = counter.Count
+		}
+	}
+	if count != 1 {
+		t.Fatalf("capture-busy loss metric count=%d", count)
+	}
+}
+
+func TestDingtalkTrackAcceptanceRefusesAfterStopping(t *testing.T) {
+	f := newDingtalkAdapterFixture(t)
+	future := make(chan ReceiveResult, 1)
+	f.a.mu.Lock()
+	f.a.stopping = true
+	f.a.mu.Unlock()
+	// The reservation and the shutdown seal share one lock, so Wait can never
+	// race a late Add; a refused worker leaves the envelope unacknowledged.
+	if got := f.a.trackAcceptance(future, IncomingMessage{}); got != nil {
+		t.Fatal("accepted work after the shutdown seal")
+	}
+}
