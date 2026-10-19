@@ -1,6 +1,6 @@
 # Usage
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page covers day-to-day interaction with `chord-gateway` from IM chats.
 
@@ -143,7 +143,7 @@ After submitting a Feishu approval or denial, the original card reports that the
 
 Use `/status` if you are unsure whether a confirmation is pending.
 
-On Feishu, expired confirmations and stale controls are rejected instead of being forwarded as model context. Old cards cannot act on a replacement runtime or request. Check `/status`; if you want a new task, send its instructions explicitly. If the original operation still needs approval, ask Chord to issue a new confirmation.
+An expired confirmation is neither applied nor silently dropped. A text reply such as `/allow` is forwarded to Chord as a follow-up message explicitly annotated as not an approval or denial, and the gateway tells you the confirmation expired. Stale Feishu card actions and controls aimed at a replaced runtime or a request that no longer matches are rejected. Check `/status`; if the original operation still needs approval, ask Chord to issue a new confirmation.
 
 ## Handoff request routing
 

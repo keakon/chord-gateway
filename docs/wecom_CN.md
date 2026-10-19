@@ -45,13 +45,13 @@ ims:
 workspaces: {}
 ```
 
-连接地址固定为 `wss://openws.work.weixin.qq.com`。YAML 中的 `endpoint` 为未知字段，会被忽略并提示警告，不会覆盖连接地址。请保护 YAML 中的 secret，并确保目标目录已存在。直连受阻时，可在全局或 `ims.wecom` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；长连接不支持 `https`）。见[配置参考](./configuration_CN.md#proxy)。
+连接地址固定为 `wss://openws.work.weixin.qq.com`。YAML 中的 `endpoint` 为未知字段，会被忽略并提示警告，不会覆盖连接地址。请保护 YAML 中的 secret，并确保目标目录已存在。直连受阻时，可在全局或 `ims.wecom` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；长连接不支持 `https`）。见[配置参考](./configuration_CN.md#代理)。
 
 ```bash
 chord-gateway -f config.yaml --pair
 ```
 
-认证及收件准备完成后，前台终端显示配对码。在客户端从 通讯录 → 智能机器人 或 工作台 → 智能机器人 找到该机器人并私聊；搜不到时走 工作台 → 智能机器人 → 详情 → 去使用 → 发消息。发送：
+前台终端在启动时立即显示配对码，早于连接准备完成；机器人仍须先就绪，`/bind` 才会被授权。在客户端从 通讯录 → 智能机器人 或 工作台 → 智能机器人 找到该机器人并私聊；搜不到时走 工作台 → 智能机器人 → 详情 → 去使用 → 发消息。发送：
 
 ```text
 /bind "/path/to/project" <pairing_code>
@@ -79,7 +79,7 @@ Gateway 对每个聊天至少间隔 4 秒发送，账号最多每秒 2 条，bur
 | `ingress_prepare_failed` | 核查收件服务状态和配对账号；换 bot ID 后按上述步骤本机 reset，再重新配对。 |
 | `duplicate_connection` | 服务端通知另一连接取代本实例，本实例停止自动重连；关闭其他部署后重启。 |
 | `acceptance_unconfirmed` | 本次投递未能确认接纳；同一业务消息的早先投递可能已提交。先核查原 Chord 会话，不直接重发。 |
-| `callback_dropped` | 连接准备缓存溢出或断线时有投递未提交给公共入口；不代表该业务消息从未接纳，平台也不保证重投。核查原会话后决定后续操作。 |
+| `callback_dropped` | 有回调未进入公共入口：连接准备缓存溢出或断线导致投递未提交（不代表该业务消息从未接纳，平台也不保证重投），或格式非法的用户文本回调在校验阶段被拒绝。请核查原会话后决定后续操作。 |
 | `control_target_unavailable` | 接收时业务状态正被占用，无法冻结原控制目标；本条消息在当前进程内被拒绝，不会稍后对新状态执行。先查看 `/status`。 |
 | 私聊发送者或目标不可用 | 仅当机器人创建者是超级管理员时,单聊 callback 的 `from.userid` 才为明文;否则企业微信会加密该字段,Gateway 无法解析私聊发送者或目标。请由超级管理员创建机器人,或改为绑定群聊。 |
 

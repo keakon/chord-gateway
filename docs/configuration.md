@@ -1,6 +1,6 @@
 # Configuration Reference
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This document is the field-by-field reference for `chord-gateway` configuration.
 
@@ -172,7 +172,7 @@ Use `/chord bind ...` in root chats and `@Bot /bind ...` inside a thread. Each r
 
 ### Authorization and binding
 
-All platforms accept only the paired owner's input. Start with `chord-gateway --pair`: WeChat/Feishu/WeCom/DingTalk private pairing uses `/bind "<directory>" <pairing_code>`; Slack App DM pairing uses `/chord bind "<directory>" <pairing_code>`. Later bindings omit the code. Slack roots use `/chord bind ...` and threads use `@Bot /bind ...` inside that thread. All chats require explicit binding, including single-workspace deployments.
+All platforms accept only the paired owner's input. Start with `chord-gateway --pair`: WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private pairing uses `/bind "<directory>" <pairing_code>`; Slack App DM pairing uses `/chord bind "<directory>" <pairing_code>`. Later bindings omit the code. Slack roots use `/chord bind ...` and threads use `@Bot /bind ...` inside that thread. All chats require explicit binding, including single-workspace deployments.
 
 Binding registers an existing directory and enables the route only after saving YAML. Directories are reused by filesystem identity, never created or cloned. Resolve pending inputs, background work, and interactions before switching directories. See [pairing](./pairing.md) for path and recovery rules. Stop the service before manual configuration edits, then restart.
 

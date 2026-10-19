@@ -47,7 +47,7 @@ ims:
 chord-gateway -f config.yaml --pair
 ```
 
-直连 Slack 受阻时，可在全局或 `ims.slack` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；Socket Mode 不支持 `https`）。见[配置参考](./configuration_CN.md#proxy)。
+直连 Slack 受阻时，可在全局或 `ims.slack` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；Socket Mode 不支持 `https`）。见[配置参考](./configuration_CN.md#代理)。
 
 通过 App 的 Messages tab 打开已有私聊。终端显示配对码后发送：
 

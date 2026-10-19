@@ -1,6 +1,6 @@
 # IM 接入总览
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档是 `chord-gateway` 的“任务型入口页”，用于指导你把 IM 平台接入 gateway。
 
@@ -69,7 +69,6 @@
 ### 适合选 Slack 的场景
 
 如果需要通过 Socket Mode 接入，并在私聊、频道和 thread 保持独立会话，可选择 Slack。根命令入口统一为 `/chord`；频道/thread 任务需 owner 显式 @Bot。先阅读 [Slack 接入指南](./slack_CN.md)。
-
 
 ## 本地 console 模式
 

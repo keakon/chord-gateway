@@ -63,7 +63,7 @@ chord-gateway pairing reset --platform telegram --config /path/to/config.yaml
 
 只有普通文本任务保存用于冲突检测的正文摘要。控制命令和不支持的输入只保留身份去重证据，不保存配对码、回答等参数的摘要；重复控制不会再次执行。身份相同、仅参数不同的控制输入不做当前进程内参数比较。
 
-网络故障使用带抖动的指数退避，短暂成功不会重置等待时间，持续成功一分钟后才重置。Telegram 明确返回的 `retry_after` 优先，等待可以取消。每次重试都会按退避步骤记录一次日志，包含方法名、错误分类、冲突次数和等待时间；token 和请求 URL 不会出现在日志里。本地重启后紧接着的 409 会短暂重试（上一次服务端长轮询在其 25s 超时前仍残留）；持续 409 说明真有第二个 poller，仍为致命错误。网络失败和 409 分开计数，上游抖动不会耗尽冲突窗口。`getMe`、`getWebhookInfo` 或 `getUpdates` 返回的方法级拒绝——既不是 429，也不是凭据、冲突或迁移类的 `ok:false`——会被判为致命错误而不是重试，因为这种结果不会自行恢复；返回 HTTP 200 却带自己的错误体的代理正好长这样。
+网络故障使用带抖动的指数退避，短暂成功不会重置等待时间，持续成功一分钟后才重置。Telegram 明确返回的 `retry_after` 优先，等待可以取消。持续失败的请求会在首次失败时告警，之后最多每分钟一条，包含方法名、错误分类和等待时间；token 和请求 URL 不会出现在日志里。本地重启后紧接着的 409 会短暂重试（上一次服务端长轮询在其 25s 超时前仍残留）；持续 409 说明真有第二个 poller，仍为致命错误。网络失败和 409 分开计数，上游抖动不会耗尽冲突窗口。`getMe`、`getWebhookInfo` 或 `getUpdates` 返回的方法级拒绝——既不是 429，也不是凭据、冲突或迁移类的 `ok:false`——会被判为致命错误而不是重试，因为这种结果不会自行恢复；返回 HTTP 200 却带自己的错误体的代理正好长这样。
 
 Telegram 服务器最多保留未接收 update **24 小时**，离线超过保留期可能丢失消息。至少一周没有新 update 后，新的 update ID 可能随机重置，因此 Gateway 按当前批次确认，不依赖永久最大 ID。详见官方 [getUpdates](https://core.telegram.org/bots/api#getupdates) 和 [Update](https://core.telegram.org/bots/api#update) 文档。
 
@@ -78,7 +78,7 @@ Telegram 服务器最多保留未接收 update **24 小时**，离线超过保�
 | 403 | 检查机器人是否被屏蔽、被移出群或目标不可访问 |
 | `chat_migrated` | 由 owner 到新 supergroup 显式重新绑定；不会复制旧群授权 |
 | `unknown_send` | 请求可能已经送达，先查看聊天；Gateway 不会自动重发或重新执行任务 |
-| Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步；`telegram: <方法> request failed ... retrying in ...` 记录每一次退避重试。始终无法进入终态的 update 会按序阻塞后续 update（设计如此），首次告警一次、之后最多每分钟一次并带 `update_id`，同时记录 `acceptance_unconfirmed` 指标。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
+| Bot 完全收不到消息 | 以 debug 级别启动日志。`telegram: received updates` 说明 Telegram 已投递批次；`telegram: captured update ... reason=` 说明每条 update 如何被归一化；`telegram: dispatch update ... disposition=` 显示它停在哪一步；`telegram: <方法> request failed ... retrying in ...` 在首次失败时告警，之后最多每分钟一条。始终无法进入终态的 update 会按序阻塞后续 update（设计如此），首次告警一次、之后最多每分钟一次并带 `update_id`，同时记录 `acceptance_unconfirmed` 指标。若完全没有 `received updates`，说明轮询从未拉取，请把 `getWebhookInfo.pending_update_count` 与 offset `-1` 的 `getUpdates` 结果对照正在运行的进程核对 |
 | `method_rejected` | `getMe`、`getWebhookInfo` 或 `getUpdates` 返回了既不是 429，也不是凭据、冲突或迁移类的 `ok:false`。请检查代理和固定的 `https://api.telegram.org` 地址：返回 HTTP 200 却带自己的错误体的陈旧代理正好产生这个结果，且会被判为致命错误而不会一直重试 |
 
 ## 官方参考

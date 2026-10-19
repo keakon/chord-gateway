@@ -1,6 +1,6 @@
 # Gateway 控制面事件可见性
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 `chord-gateway` 从 `chord headless` 读取 JSONL 事件。必需控制面事件始终订阅并路由。`background_result` 默认订阅、可显式关闭；其余可选事件通过 `event_visibility` 选择启用。
 
@@ -171,6 +171,8 @@ Chord 结束处理时会清理并提示未完成的传输；切换会话或关�
 ### MCP 状态
 
 默认订阅 `mcp_status_changed`。它更新完整 MCP 视图，并在可见状态变化时发送独立于 Agent 回复的通知；相同通知不重复发送，中间操作状态不逐条推送，其他服务器的稳定故障仍会提示；`/status` 读取同一份缓存。事件不包含登录链接或凭证，执行登录命令前须进入该会话的工作目录，浏览器授权在 Chord 宿主机完成。可见范围变化后使用新的完整视图，迟到的快照不会覆盖较新的 MCP 状态。
+
+「全部可用」只在该进程曾报告过 MCP 故障后作为恢复确认推送。进程首次拿到的可用视图不会推送，因此会话发起时即使所有服务都可用也不会打扰聊天；`/status` 仍会显示该摘要。
 
 认证状态与连接状态分别展示：连接成功的服务仍可能需要重新登录。凭证自动刷新会显示为正在进行的操作，不会仅因需要刷新就要求用户在宿主机重新登录。
 

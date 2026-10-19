@@ -1,6 +1,6 @@
 # 飞书接入指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档用于指导你在 `chord-gateway` 中配置并跑通 **飞书**（`ims.feishu`）。
 
@@ -158,7 +158,7 @@ ims:
     app_secret: your-app-secret
 ```
 
-直连受阻时，可在全局或 `ims.feishu` 下设置 `proxy_url`。见[配置参考](./configuration_CN.md#proxy)。
+直连受阻时，可在全局或 `ims.feishu` 下设置 `proxy_url`。见[配置参考](./configuration_CN.md#代理)。
 
 在前台终端运行 `chord-gateway --config config.yaml --pair`。连接成功后，终端显示 10 分钟有效的配对码。在机器人**私聊**中发送：
 

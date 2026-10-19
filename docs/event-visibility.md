@@ -1,6 +1,6 @@
 # Gateway control-plane event visibility
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 `chord-gateway` reads JSONL events from `chord headless`. Required control-plane events are always subscribed and routed. `background_result` is subscribed by default and can be disabled; the remaining optional events are opt-in through `event_visibility`.
 
@@ -171,6 +171,8 @@ An exhausted upload, a platform rejection or an unconfirmed send is reported wit
 ### MCP status
 
 `mcp_status_changed` is subscribed by default. It updates the complete MCP view and notifies changes to the visible status, separate from agent replies. Repeated identical notifications and intermediate operations are suppressed; stable problems on other servers remain visible. `/status` reads the same cached view. Login URLs and credentials are not part of these events; browser authorization happens in the session's working directory on the Chord host. A changed view replaces the previous visibility scope, and delayed snapshots cannot restore older MCP state.
+
+The all-servers-available summary only confirms a recovery after the process reported an MCP problem. A fresh process's first view is not pushed, so starting a session with every server available stays silent while `/status` still shows the summary.
 
 Authentication and connection are reported separately. A connected server can still require sign-in. Automatic credential refresh is shown as an operation; it does not by itself require a host login.
 

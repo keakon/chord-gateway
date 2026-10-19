@@ -50,7 +50,7 @@ chord-gateway --config /path/to/config.yaml --pair
 
 ## 状态、发送与恢复
 
-身份验证结果只保存在当前进程内。每次启动后，owner 需先私聊发送 `hello` 完成同企业身份验证，再开放普通接纳和发送；同进程重连复用已验证身份并重新握手。原有 owner 与绑定仍在配置中，无需再次配对；修改配置不能授予新 owner 权限。
+身份验证结果只保存在当前进程内。每次启动后，需先由同企业员工私聊发送一条文本（启动提示为 `hello`）完成企业与员工身份验证，之后才开放普通接纳和发送；同进程重连复用已验证身份并重新握手。原有 owner 与绑定仍在配置中，无需再次配对；修改配置不能授予新 owner 权限。
 
 Stream 临时断线只暂停新消息接纳与配对。本次运行已完成账号激活后，只要原账号、绑定与运行实例的授权仍有效，已接纳任务继续交付，后台结果仍通过 HTTP 主动发送；停止服务或撤销授权会中止相关工作。进程重启后需重新私聊验证并激活账号。
 
@@ -64,7 +64,7 @@ chord-gateway pairing reset --platform dingtalk --config /path/to/config.yaml
 
 所有回复，包括后台结果，均通过主动 `sampleText` 发送；Gateway 不保存或使用 `sessionWebhook`。群会话 ID 直接来自已认证的回调。Access token 只保存在内存，提前刷新并合并并发请求；HTTP 重定向不会转发凭据或 token。
 
-文本按 Unicode 边界拆分，每段最多 1024 UTF-8 字节，同一目标至少间隔 3 秒，账号每秒最多 2 次。这是项目预算，不是钉钉官方硬限额。明确的 HTTP 429 可在原发送期限内最多重试 3 次；网络错误与 5xx 结果未知，不重发。部分发送成功后，不会从第一段重新发送整个结果。直连受阻时，可在全局或 `ims.dingtalk` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；Stream 长连接不支持 `https`）。见[配置参考](./configuration_CN.md#proxy)。
+文本按 Unicode 边界拆分，每段最多 1024 UTF-8 字节，同一目标至少间隔 3 秒，账号每秒最多 2 次。这是项目预算，不是钉钉官方硬限额。明确的 HTTP 429 可在原发送期限内最多重试 3 次；网络错误与 5xx 结果未知，不重发。部分发送成功后，不会从第一段重新发送整个结果。直连受阻时，可在全局或 `ims.dingtalk` 下设置 `proxy_url`（`http`、`socks5`/`socks5h`；Stream 长连接不支持 `https`）。见[配置参考](./configuration_CN.md#代理)。
 
 机器人回调是 fire-and-forget：500 或未 ACK **不保证平台重投**。协议成功响应表示 Gateway 接纳或拒绝，不表示 Chord 已执行。不要自动重发结果不确定的命令；先查看 `/status` 与[本机收件状态](./operations_CN.md#消息投递与重启)。详见[官方 Stream 协议](https://open-dingtalk.github.io/developerpedia/docs/learn/stream/protocol/)。
 

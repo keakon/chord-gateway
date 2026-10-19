@@ -46,7 +46,7 @@ DingTalk first waits for a same-enterprise employee private `hello` before autho
 
 ## Later bindings
 
-The owner can bind another chat, including a Feishu, WeCom, or DingTalk group (@robot is required for DingTalk), or a Discord channel/thread, without a code:
+The owner can bind another chat, including a Feishu, Telegram, WeCom, or DingTalk group (Telegram uses `/bind@BotUsername` and DingTalk requires @robot), or a Discord channel/thread, without a code:
 
 ```text
 /bind "/path/to/another workspace"
@@ -66,7 +66,7 @@ If a directory switch completes while `/takeover` is still checking the source, 
 
 ## Configuration and routing
 
-`owner` contains `account_id` and `user_id`; all supported platforms use `chat_bindings` to map chat IDs to workspace IDs. Before first pairing, omit the owner, workspaces, and bindings. Empty workspaces and bindings may be omitted or written as `{}` or `null`. An unpaired platform only accepts valid pairing commands during a foreground `--pair` window. A private sender without a valid pairing command receives a bounded hint instead of silence — how to pair, what a malformed `/bind` is missing, or that a code was wrong; when pairing is inactive the hint says to restart with `--pair`. Group chats, internal actions, and duplicate redeliveries stay silent, and hints draw on a separate rate-limit budget from pairing attempts. Unbound chats cannot execute tasks or fall back to the only workspace.
+`owner` contains `account_id` and `user_id`; all supported platforms use `chat_bindings` to map chat IDs to workspace IDs. Before first pairing, omit the owner, workspaces, and bindings. Empty workspaces and bindings may be omitted or written as `{}` or `null`. An unpaired platform only accepts valid pairing commands during a foreground `--pair` window. Starting without `--pair` while `chat_bindings` exist but no owner is paired exits with guidance instead of starting an unreachable deployment; a platform with no bindings only logs a warning. A private sender without a valid pairing command receives a bounded hint instead of silence — how to pair, what a malformed `/bind` is missing, or that a code was wrong; when pairing is inactive the hint says to restart with `--pair`. Group chats, internal actions, and duplicate redeliveries stay silent, and hints draw on a separate rate-limit budget from pairing attempts. Unbound chats cannot execute tasks or fall back to the only workspace.
 
 Old authorization fields and mode switches have been removed without automatic migration; see the [upgrade notes](../CHANGELOG.md). Local stdin/stdout uses explicit `--console`, requires exactly one workspace, connects to no IM platform, and cannot be combined with `--pair`.
 

@@ -1,6 +1,6 @@
 # 权限与安全边界
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 `chord-gateway` 是本地 `chord headless` 进程的远程控制面。任何能向 gateway 发送并被接受的 IM 消息的用户，都可能影响 Chord 在配置工作区中的行为。
 
@@ -24,7 +24,7 @@
 
 ## IM 访问控制
 
-微信、飞书、企业微信、钉钉、Discord 和 Slack 都只接受已配对 owner 的输入，且聊天必须显式绑定。首次通过前台 `--pair` 和机器人私聊登记 owner；普通启动不会开放配对。运行在本机并不意味着外部用户无法向机器人发消息。配对码在整个 10 分钟窗口内始终可用,不会被单次绑定消耗,可绑定多个聊天和平台;请妥善保管终端与配对码。
+微信、飞书、Telegram、企业微信、钉钉、Discord 和 Slack 都只接受已配对 owner 的输入，且聊天必须显式绑定。首次通过前台 `--pair` 和机器人私聊登记 owner；普通启动不会开放配对。运行在本机并不意味着外部用户无法向机器人发消息。配对码在整个 10 分钟窗口内始终可用,不会被单次绑定消耗,可绑定多个聊天和平台;请妥善保管终端与配对码。
 
 owner 拥有与 gateway 进程相当的本机控制能力，包括已有 shell 命令；配对并不是目录沙箱。
 
@@ -38,8 +38,10 @@ owner 拥有与 gateway 进程相当的本机控制能力，包括已有 shell �
 
 - Discord `bot_token`
 - 飞书 `app_secret`
+- Telegram `bot_token`
 - 企业微信 `secret`
 - 钉钉 `client_secret`
+- Slack `app_token` 和 `bot_token`
 - 微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）
 - 微信旧同步游标和去重文件（不再导入;文件已失效,可以删除）
 - gateway 状态目录
@@ -55,7 +57,7 @@ owner 拥有与 gateway 进程相当的本机控制能力，包括已有 shell �
 
 飞书多工作区模式下，请配置 `ims.feishu.chat_bindings`，把每个飞书 chat ID 映射到预期 workspace。
 
-微信仅支持私聊，每个聊天同时绑定一个目录，可通过 `/bind` 切换。需要在不同私聊或群聊中分别控制不同目录时，可使用飞书、企业微信、钉钉或 Discord。Discord thread 需独立绑定并具备访问权限；只授予 View Channel、Send Messages、Send Messages in Threads，输出 mention 不触发通知。频道与 thread 的回复对成员可见。
+微信仅支持私聊，每个聊天同时绑定一个目录，可通过 `/bind` 切换。需要在不同私聊或群聊中分别控制不同目录时，可使用飞书、Telegram、企业微信、钉钉、Discord 或 Slack。Discord thread 需独立绑定并具备访问权限；只授予 View Channel、Send Messages、Send Messages in Threads，输出 mention 不触发通知。频道与 thread 的回复对成员可见。
 
 ## 钉钉身份边界
 
@@ -66,7 +68,7 @@ owner 拥有与 gateway 进程相当的本机控制能力，包括已有 shell �
 如果怀疑出现未授权访问：
 
 1. 停止 gateway。
-2. 吊销或轮换受影响的飞书应用密钥、企业微信机器人 secret、钉钉 client_secret 和 Discord bot token。
+2. 吊销或轮换受影响的飞书应用密钥、Telegram bot token、企业微信机器人 secret、钉钉 client_secret、Discord bot token 以及 Slack app token 和 bot token。
 3. 删除或轮换微信 token 文件（默认 `<state_dir>/wechat/token.json`，或 `ims.wechat.token_path`）。
 4. 检查 gateway 日志和 Chord session 历史。
 5. 检查配置工作区中的变更。

@@ -1,6 +1,6 @@
 # chord-gateway
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./docs/slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./docs/slack_CN.md)。
 
 [![CI](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/keakon/chord-gateway?display_name=release)](https://github.com/keakon/chord-gateway/releases)
@@ -90,7 +90,7 @@ Telegram 的 token、群 privacy 与部署步骤见[接入指南](./docs/telegra
 
 - 源码构建需要 Go 1.27.0+，并且需要单独安装 `chord` 二进制；`chord-gateway` 不会内置 Chord。
 - 当前 CI 会构建这些目标：`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`、`windows/amd64`。
-- 微信、飞书、企业微信、钉钉和 Slack 都通过显式 `chat_bindings` 选择工作区；owner 使用对应平台命令入口分别绑定各目标。
+- 微信、飞书、Telegram、企业微信、钉钉、Discord 和 Slack 都通过显式 `chat_bindings` 选择工作区；owner 使用对应平台命令入口分别绑定各目标。
 - 飞书多 workspace 路由通过 `ims.feishu.chat_bindings` 把 chat ID 映射到 workspace ID。当前飞书入站处理只接受文本消息，非文本消息会被忽略。
 - 企业微信首版仅支持文本，暂不支持媒体、卡片或流式回复；真实企业账号验收仍未完成。
 - Slack 首版仅支持文本；频道/thread 任务必须由 owner 显式 @Bot。slash 命令作用于根聊天，thread 控制使用 `@Bot /命令`。详见 [Slack 指南](./docs/slack_CN.md)。

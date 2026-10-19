@@ -1,6 +1,6 @@
 # IM Integration Overview
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 This page is a task-oriented entry point for connecting IM platforms to `chord-gateway`.
 
@@ -21,7 +21,7 @@ If you are looking for field-by-field configuration documentation, see:
 - **Discord** (`ims.discord`) — bot DMs and explicit @Bot messages in server text channels and existing threads.
 - **Slack** (`ims.slack`) — single-workspace Socket Mode for DMs, channels and threads.
 
-WeCom, DingTalk, and Discord implementations and automated tests do not complete deployment acceptance. Real-account acceptance  remain pending; follow the [WeCom checklist](./wecom.md#deployment-acceptance) , [DingTalk deployment checklist](./dingtalk.md#deployment-acceptance-checklist), or [Discord deployment checks](./discord.md#troubleshooting-and-deployment-checks) before deployment.
+WeCom, DingTalk, and Discord implementations and automated tests do not complete deployment acceptance. Real-account acceptance remains pending; follow the [WeCom checklist](./wecom.md#deployment-acceptance), [DingTalk deployment checklist](./dingtalk.md#deployment-acceptance-checklist), or [Discord deployment checks](./discord.md#troubleshooting-and-deployment-checks) before deployment.
 
 ## Which one should you use?
 

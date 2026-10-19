@@ -1,6 +1,6 @@
 # 使用指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档说明如何在 IM 聊天中日常使用 `chord-gateway`。
 
@@ -134,7 +134,7 @@ IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题�
 
 如果不确定是否有待确认请求，可以先发送 `/status`。
 
-飞书上的过期确认和失效控制会被拒绝，不再作为模型上下文转发；旧卡片不能作用于替换后的运行实例或请求。先查看 `/status`；需要新任务时明确发送任务内容。原操作仍需确认时，请让 Chord 重新发起确认。
+确认已过期时既不会生效也不会被静默丢弃：`/allow` 等文本回复会作为附加上下文转发给 Chord，并明确标注不得当作批准或拒绝，同时 gateway 会提示确认已过期。指向已替换运行实例或不再匹配的请求的失效飞书卡片操作与控制会被拒绝。先查看 `/status`；原操作仍需确认时，请让 Chord 重新发起确认。
 
 ## Handoff 请求路由
 

@@ -1,6 +1,6 @@
 # 配置说明
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
+所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
 
 本文档提供 `chord-gateway` 的字段级配置说明。
 
@@ -172,7 +172,7 @@ Discord 接收 Bot DM 和服务器频道/thread 中显式 @Bot 的消息，不�
 
 ### 授权与绑定
 
-所有平台都只接受配对 owner 的输入。首次运行 `chord-gateway --pair`，微信/飞书/企业微信/钉钉私聊使用 `/bind "<directory>" <pairing_code>`，Slack App 私聊使用 `/chord bind "<directory>" <pairing_code>`。后续绑定省略配对码；Slack 根目标使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`。所有聊天都必须显式绑定，单工作区也不例外。
+所有平台都只接受配对 owner 的输入。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 私聊使用 `/bind "<directory>" <pairing_code>`，Slack App 私聊使用 `/chord bind "<directory>" <pairing_code>`。后续绑定省略配对码；Slack 根目标使用 `/chord bind ...`，thread 内使用 `@Bot /bind ...`。所有聊天都必须显式绑定，单工作区也不例外。
 
 命令会注册已存在的目录，并在持久保存 YAML 后启用聊天绑定。目录按真实文件系统身份复用，不会创建或克隆目录；切换目录前必须处理完待执行输入、后台任务和交互。路径和恢复规则见[配对指南](./pairing_CN.md)。手工修改配置需先停服务，再修改并重启。
 

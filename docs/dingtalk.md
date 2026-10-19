@@ -50,7 +50,7 @@ In group examples, `@robot` means selecting your actual robot from DingTalk’s 
 
 ## State, sending, and recovery
 
-Identity verification stays in memory. After each process start, the owner must send a private `hello` to verify the enterprise identity before ordinary intake and sending open. Reconnects within that process reuse the verified identity after a fresh handshake. Existing owners and bindings remain configured without pairing again; editing configuration cannot grant a new owner.
+Identity verification stays in memory. After each process start, a same-enterprise employee must first send a private text (the startup hint suggests `hello`) to verify the enterprise and staff identity before ordinary intake and sending open. Reconnects within that process reuse the verified identity after a fresh handshake. Existing owners and bindings remain configured without pairing again; editing configuration cannot grant a new owner.
 
 A temporary Stream outage pauses new input admission and pairing. Once this process has activated the account, accepted tasks and proactive HTTP replies continue under their existing account, binding, and runtime authorization. Shutdown or authorization revocation still stops that work. Restart requires a new private identity probe and account activation.
 

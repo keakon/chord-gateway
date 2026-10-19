@@ -1,6 +1,6 @@
 # Quick Start
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
 
 Use this guide to connect one project to WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, or Slack. You can register directories from the chat after pairing.
 

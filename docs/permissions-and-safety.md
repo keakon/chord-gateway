@@ -1,6 +1,6 @@
 # Permissions & Safety
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/WeCom/DingTalk private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
+All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
 
 `chord-gateway` is a remote control plane for a local `chord headless` process. Anyone who can send accepted IM messages to the gateway may influence what Chord does in the configured workspace.
 
@@ -24,7 +24,7 @@ Session takeover uses the same accepted IM sender and workspace routing rules. T
 
 ## IM access control
 
-WeChat, Feishu, WeCom, DingTalk, Discord, and Slack accept only the paired owner's input, and each chat requires an explicit binding. Register the owner through foreground `--pair` and a private bot chat. Ordinary startup never opens pairing. Running locally does not prevent external users from messaging the bot. The pairing code stays valid for the whole 10-minute window and is not consumed by a single bind, so it can pair several chats and platforms; keep the terminal and the code private.
+WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, and Slack accept only the paired owner's input, and each chat requires an explicit binding. Register the owner through foreground `--pair` and a private bot chat. Ordinary startup never opens pairing. Running locally does not prevent external users from messaging the bot. The pairing code stays valid for the whole 10-minute window and is not consumed by a single bind, so it can pair several chats and platforms; keep the terminal and the code private.
 
 The owner has local control equivalent to the gateway process, including existing shell commands; pairing is not a directory sandbox.
 
@@ -38,8 +38,10 @@ Treat these as sensitive:
 
 - Discord `bot_token`
 - Feishu `app_secret`
+- Telegram `bot_token`
 - WeCom `secret`
 - DingTalk `client_secret`
+- Slack `app_token` and `bot_token`
 - WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`)
 - legacy WeChat cursor and deduplication files (no longer imported; they are inert and may be deleted)
 - Gateway state directory
@@ -55,7 +57,7 @@ Same-account polling is exclusive for one OS user on one host even with separate
 
 For Feishu multi-workspace mode, configure `ims.feishu.chat_bindings` so each Feishu chat ID maps to the intended workspace.
 
-WeChat supports private chat only. Each chat binds to one directory at a time and can switch with `/bind`. Use Feishu, WeCom, DingTalk, or Discord to control separate directories from different chats. Discord threads require individual bindings and existing access; grant only View Channel, Send Messages, and Send Messages in Threads. Output mentions are disabled. Channels and threads expose replies to members.
+WeChat supports private chat only. Each chat binds to one directory at a time and can switch with `/bind`. Use Feishu, Telegram, WeCom, DingTalk, Discord, or Slack to control separate directories from different chats. Discord threads require individual bindings and existing access; grant only View Channel, Send Messages, and Send Messages in Threads. Output mentions are disabled. Channels and threads expose replies to members.
 
 ## DingTalk identity boundary
 
@@ -66,7 +68,7 @@ A same-enterprise private callback validates configured enterprise/robot identit
 If you suspect unauthorized access:
 
 1. Stop the gateway.
-2. Revoke or rotate affected Feishu app secrets, WeCom bot secrets, DingTalk client secrets, and Discord bot tokens.
+2. Revoke or rotate affected Feishu app secrets, Telegram bot tokens, WeCom bot secrets, DingTalk client secrets, Discord bot tokens, and Slack app and bot tokens.
 3. Remove or rotate WeChat token files (`<state_dir>/wechat/token.json` by default, or `ims.wechat.token_path`).
 4. Review gateway logs and Chord session history.
 5. Review changes in configured workspaces.

@@ -51,7 +51,7 @@ The endpoint is fixed at `wss://openws.work.weixin.qq.com`. An `endpoint` YAML f
 chord-gateway -f config.yaml --pair
 ```
 
-After authentication and ingress preparation, the foreground terminal displays a pairing code. Find the bot in the client under Contacts → Smart Robot or Workbench → Smart Robot; if it is missing, use Workbench → Smart Robot → Details → Go to Use → Send Message. Send privately:
+The foreground terminal displays a pairing code immediately at startup, before the connection finishes preparing. The bot must still become ready before `/bind` is authorized. Find the bot in the client under Contacts → Smart Robot or Workbench → Smart Robot; if it is missing, use Workbench → Smart Robot → Details → Go to Use → Send Message. Send privately:
 
 ```text
 /bind "/path/to/project" <pairing_code>
@@ -79,7 +79,7 @@ Sends are spaced at least four seconds per chat, with an account limit of two pe
 | `ingress_prepare_failed` | Check ingress service availability and the paired account. After changing bot ID, perform the local reset above before pairing again. |
 | `duplicate_connection` | Another connection replaced this instance. Automatic reconnection stops; close the other deployment and restart. |
 | `acceptance_unconfirmed` | This delivery attempt did not confirm acceptance; an earlier delivery of the same business message may already be committed. Inspect the original Chord session before sending anything again. |
-| `callback_dropped` | Connection preparation overflow or disconnect left a delivery unsubmitted to shared ingress. This does not prove the business message was never accepted, and redelivery is not guaranteed. Inspect the original session. |
+| `callback_dropped` | A callback did not reach shared ingress. Either connection preparation overflow or a disconnect left a delivery unsubmitted (this does not prove the business message was never accepted, and redelivery is not guaranteed), or a malformed user text callback was rejected during validation. Inspect the original session. |
 | `control_target_unavailable` | Business state was busy at receipt, preventing capture of the original control target. The message is rejected within this process and cannot execute against a later state. Check `/status`. |
 | Private sender or target unavailable | Single-chat callbacks only carry a plaintext `from.userid` when the bot creator is an enterprise super admin; otherwise WeCom encrypts it and Gateway cannot resolve the private sender or target. Have a super admin create the bot, or bind a group. |
 
