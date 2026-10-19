@@ -216,20 +216,15 @@ func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
 	if err != nil {
 		return nil
 	} // Unknown events and malformed messages grant no authority.
-	// Diagnostic authorization runs on an existing bounded worker, never on
-	// the socket reader. It cannot change the reader's frozen control target:
-	// the admitted ticket only addresses this attempt's diagnostic reply, while
-	// the pipeline authorizes the submitted envelope independently.
-	// The envelope is already normalized; only the diagnostic reply needs the
-	// admitted identity, so submit without a normalize hook and observe instead.
-	msg := e.Message
-	if a.router.admission != nil {
-		im := a.router.getConfig().IMConfigByType("wecom")
-		if im != nil && im.OwnerIdentity() != nil && im.OwnerIdentity().AccountID == msg.AccountID && im.OwnerIdentity().UserID == msg.SenderID && msg.ChatKind == "private" {
-			msg, _ = admittedMessage(a.router, msg)
-		}
-	}
-	_, err = a.router.SubmitIngressObserved(ctx, e, func(result ReceiveResult) { a.observeReceive(msg, result) })
+	// Diagnostic authorization runs on the bounded worker that observes the
+	// result, never on the socket reader: the reply-only ticket is minted once
+	// the attempt has an outcome. It cannot change the reader's frozen control
+	// target, because the pipeline authorizes the submitted envelope
+	// independently. The envelope is already normalized, so submit without a
+	// normalize hook and resolve the reply identity inside the observer.
+	_, err = a.router.SubmitIngressObserved(ctx, e, func(result ReceiveResult) {
+		a.observeReceive(a.admitDiagnosticReply(e.Message), result)
+	})
 	if err != nil {
 		a.observeReceive(e.Message, ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
 	}
@@ -259,6 +254,25 @@ func (a *WecomAdapter) observeReceive(msg IncomingMessage, result ReceiveResult)
 			a.router.enqueueIngressReply(msg, "Request was not applied: control_target_unavailable. Check /status before trying again.")
 		}
 	}
+}
+
+// admitDiagnosticReply mints the reply-only ticket used by this attempt's
+// diagnostics. Admission reads pairing and binding state under its own locks,
+// so callers must run it on a bounded worker rather than a socket reader.
+func (a *WecomAdapter) admitDiagnosticReply(msg IncomingMessage) IncomingMessage {
+	if a.router.admission == nil {
+		return msg
+	}
+	im := a.router.getConfig().IMConfigByType("wecom")
+	if im == nil {
+		return msg
+	}
+	owner := im.OwnerIdentity()
+	if owner == nil || owner.AccountID != msg.AccountID || owner.UserID != msg.SenderID || msg.ChatKind != "private" {
+		return msg
+	}
+	msg, _ = admittedMessage(a.router, msg)
+	return msg
 }
 
 func (a *WecomAdapter) droppedBeforeAccept(count int) {
