@@ -228,7 +228,10 @@ func (a *WecomAdapter) droppedBeforeAccept(count int) {
 	if a.router == nil || a.router.ingressStore == nil {
 		return
 	}
-	if count > 0 {
+	// One record per dropped delivery, not per batch: the counter answers how
+	// many messages never reached the ingress, and a batch of N is N of them.
+	// The Discord adapter records the same event the same way.
+	for range count {
 		a.router.ingressStore.metrics.record("wecom", "callback_dropped", "")
 	}
 }

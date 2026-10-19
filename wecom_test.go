@@ -28,6 +28,18 @@ func countWecomIngressEvent(store *IngressStore, event string) uint64 {
 	return n
 }
 
+// A batch drop is N lost deliveries, not one event. The counter answers how
+// many messages never reached the ingress, which is what docs/wecom.md promises
+// and what the Discord adapter's callback_dropped accounting already does.
+func TestWecomDroppedBeforeAcceptCountsEachDelivery(t *testing.T) {
+	a, _, store := wecomAdapterFixture(t)
+	a.droppedBeforeAccept(3)
+	a.droppedBeforeAccept(0)
+	if got := countWecomIngressEvent(store, "callback_dropped"); got != 3 {
+		t.Fatalf("callback_dropped = %d, want 3", got)
+	}
+}
+
 func TestWecomCallbacksUseDurableBusinessDedupe(t *testing.T) {
 	a, _, store := wecomAdapterFixture(t)
 	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "delivery-1", "business")); err != nil {
