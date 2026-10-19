@@ -35,7 +35,6 @@ func TestScopedIdentityCanonical(t *testing.T) {
 }
 
 func TestAccountLockStableAcrossStateDirectories(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	first, err := AcquireIMAccountLock("telegram", "test-account")
 	if err != nil {
 		t.Fatal(err)

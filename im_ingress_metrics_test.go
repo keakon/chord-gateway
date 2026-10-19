@@ -129,10 +129,16 @@ func TestIngressStoreControlSharesRouteCapacity(t *testing.T) {
 // ReceiveResult, AdmissionResult and IngressRecord.
 var ingressReasonLiteral = regexp.MustCompile(`Reason:\s*"([a-z0-9_]+)"`)
 
-// producedIngressReasons reads the reasons out of the ingress sources instead of
+// ingressPositionalReason matches literal reasons passed positionally to the
+// metric emitters, which the field-literal scan above cannot see. Adapter
+// code that emits a new reason through ObserveIngress/ObserveLostBeforeAccept
+// must still be covered or it collapses to "other" unnoticed.
+var ingressPositionalReason = regexp.MustCompile(`(?:ObserveIngress\([^)]*?, "([a-z0-9_]+)"\)|ObserveLostBeforeAccept\("[a-z0-9_]+", "([a-z0-9_]+)"\))`)
+
+// producedIngressReasons reads the reasons out of the sources instead of
 // restating them here. A hand-maintained copy drifts, which is how the
 // normalization and transport reasons were lost to "other" while this guard
-// still passed.
+// still passed. Adapter files are included: most emit metrics directly.
 func producedIngressReasons(t *testing.T) map[string]string {
 	t.Helper()
 	entries, err := os.ReadDir(".")
@@ -145,11 +151,12 @@ func producedIngressReasons(t *testing.T) map[string]string {
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		if !strings.HasPrefix(name, "im_") && name != "wechat_ingress.go" && name != "inbound_admission.go" {
-			continue
-		}
-		if name == "im_ingress_metrics.go" {
+		switch name {
+		case "im_ingress_metrics.go":
 			// The allowlist itself: scanning it would assert nothing.
+			continue
+		case "process_protocol.go":
+			// NotificationPayload.Reason is not an ingress metric label.
 			continue
 		}
 		source, err := os.ReadFile(name)
@@ -158,6 +165,13 @@ func producedIngressReasons(t *testing.T) map[string]string {
 		}
 		for _, match := range ingressReasonLiteral.FindAllSubmatch(source, -1) {
 			reasons[string(match[1])] = name
+		}
+		for _, match := range ingressPositionalReason.FindAllSubmatch(source, -1) {
+			reason := match[1]
+			if len(reason) == 0 {
+				reason = match[2]
+			}
+			reasons[string(reason)] = name
 		}
 	}
 	if len(reasons) < 10 {
