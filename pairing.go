@@ -93,7 +93,10 @@ func (p *PairingService) PlatformReadyWithPresentation(platform, accountID strin
 	state := p.platforms[platform]
 	if state == nil {
 		accountCtx, cancel := context.WithCancel(context.Background())
-		state = &pairingPlatform{account: accountID, epoch: 1, ctx: accountCtx, cancel: cancel}
+		// Seed the bind-attempt budget once, when the platform first becomes
+		// known. Reconnecting must not refill it: the budget exists to cap
+		// guessing against the pairing code.
+		state = &pairingPlatform{account: accountID, epoch: 1, ctx: accountCtx, cancel: cancel, tokens: 30, refilled: p.now()}
 		p.platforms[platform] = state
 	} else if state.account != accountID {
 		if state.cancel != nil {
@@ -129,8 +132,6 @@ func (p *PairingService) PlatformReadyWithPresentation(platform, accountID strin
 	}
 	state.ready = true
 	message, err := p.preparePairingCodeLocked()
-	state.tokens = 30
-	state.refilled = p.now()
 	p.mu.Unlock()
 	if err != nil {
 		return err

@@ -162,3 +162,35 @@ func TestUniversalPairingCodeIsImmediateAndCrossPlatform(t *testing.T) {
 		t.Fatal("expired universal code still accepted")
 	}
 }
+
+// A platform reconnect must not refill the bind-attempt budget: that budget caps
+// guessing against the pairing code, so only the first readiness may seed it.
+func TestPairingReadyDoesNotRefillBindAttempts(t *testing.T) {
+	s := testConfigStore(t, "ims: {wechat: {}}\n")
+	var terminal bytes.Buffer
+	p := NewPairingService(s, true, &terminal)
+	p.now = func() time.Time { return time.Unix(1000, 0) }
+	for range 2 {
+		if err := p.PlatformReadyWithPresentation("wechat", "bot", PlatformPresentation{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.mu.Lock()
+	tokens := p.platforms["wechat"].tokens
+	p.mu.Unlock()
+	if tokens != 30 {
+		t.Fatalf("bind attempts after reconnect = %d, want the single seeded budget", tokens)
+	}
+	p.mu.Lock()
+	p.platforms["wechat"].tokens = 4
+	p.mu.Unlock()
+	if err := p.PlatformReadyWithPresentation("wechat", "bot", PlatformPresentation{}); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	remaining := p.platforms["wechat"].tokens
+	p.mu.Unlock()
+	if remaining != 4 {
+		t.Fatalf("reconnect refilled the bind budget: %d", remaining)
+	}
+}
