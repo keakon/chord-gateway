@@ -53,6 +53,7 @@ type NotificationRouter struct {
 type cardHandleEntry struct {
 	handle     InteractiveCardHandle
 	recordedAt time.Time
+	terminal   bool
 }
 
 // interactiveCardHandleTTL matches the Feishu card update window: a handle
@@ -150,6 +151,25 @@ func (r *NotificationRouter) clearExpiredPending(key string) {
 	r.mu.Unlock()
 }
 
+func (r *NotificationRouter) markConfirmCardTerminal(processKey, requestID string) {
+	if strings.TrimSpace(requestID) == "" {
+		return
+	}
+	key := cardHandleKey(processKey, "confirm", requestID)
+	r.mu.Lock()
+	if r.cardHandles == nil {
+		r.cardHandles = make(map[string]cardHandleEntry)
+	}
+	r.pruneCardHandlesLocked(time.Now())
+	entry := r.cardHandles[key]
+	if entry.recordedAt.IsZero() {
+		entry.recordedAt = time.Now()
+	}
+	entry.terminal = true
+	r.cardHandles[key] = entry
+	r.mu.Unlock()
+}
+
 func (r *NotificationRouter) lookupExpiredPending(key string) expiredPendingState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -165,6 +185,14 @@ func cardHandleKey(processKey, requestType, requestID string) string {
 	return compositeKey(processKey, requestType, requestID)
 }
 
+func (r *NotificationRouter) pruneCardHandlesLocked(now time.Time) {
+	for key, entry := range r.cardHandles {
+		if now.Sub(entry.recordedAt) > interactiveCardHandleTTL {
+			delete(r.cardHandles, key)
+		}
+	}
+}
+
 func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID string, handle *InteractiveCardHandle) {
 	if strings.TrimSpace(requestID) == "" || handle == nil || (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
 		return
@@ -174,12 +202,10 @@ func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID
 		r.cardHandles = make(map[string]cardHandleEntry)
 	}
 	now := time.Now()
-	for key, entry := range r.cardHandles {
-		if now.Sub(entry.recordedAt) > interactiveCardHandleTTL {
-			delete(r.cardHandles, key)
-		}
-	}
-	r.cardHandles[cardHandleKey(processKey, requestType, requestID)] = cardHandleEntry{handle: *handle, recordedAt: now}
+	r.pruneCardHandlesLocked(now)
+	key := cardHandleKey(processKey, requestType, requestID)
+	// The terminal event may arrive while the original card send is in flight.
+	r.cardHandles[key] = cardHandleEntry{handle: *handle, recordedAt: now, terminal: r.cardHandles[key].terminal}
 	r.mu.Unlock()
 }
 
@@ -502,6 +528,10 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 			return
 		}
 	}
+	if eventType == "confirm_resolved" && target.Identity.Platform == "feishu" && state.LastConfirmResolved != nil &&
+		(state.LastConfirmResolved.Outcome == ConfirmOutcomeTimeout || state.LastConfirmResolved.Outcome == ConfirmOutcomeCancelled) {
+		r.markConfirmCardTerminal(key, state.LastConfirmResolved.RequestID)
+	}
 	if strings.HasPrefix(eventType, "session_transfer_") {
 		r.stopReminder(key)
 	}
@@ -692,6 +722,14 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 				return
 			}
 		}
+		if eventType == "confirm_resolved" {
+			if updated, err := r.resolveConfirmCard(target, state); updated || errors.Is(err, errDeliveryOutcomeUnknown) {
+				if updated {
+					r.markVisibleOutput(key)
+				}
+				return
+			}
+		}
 		if eventType == "question_resolved" {
 			if updated, err := r.resolveQuestionCard(target, state); updated || errors.Is(err, errDeliveryOutcomeUnknown) {
 				if updated {
@@ -706,6 +744,24 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 	if delivered {
 		r.markVisibleOutput(key)
 	}
+}
+
+// resolveConfirmCard greys out a delivered confirmation card whose wait chord
+// settled without an answer. Answered resolutions return without patching: the
+// answering interaction already resolved the card itself. Like the question
+// variant, an uncertain patch must not trigger the text fallback, and a
+// text-delivered confirmation (no stored handle) falls back to the text notice.
+func (r *NotificationRouter) resolveConfirmCard(target DeliveryTarget, state ControlState) (bool, error) {
+	p := state.LastConfirmResolved
+	if p == nil || (p.Outcome != ConfirmOutcomeTimeout && p.Outcome != ConfirmOutcomeCancelled) {
+		return false, nil
+	}
+	title, message := "Confirmation expired", "⌛ The pending confirmation has expired."
+	if p.Outcome == ConfirmOutcomeCancelled {
+		title, message = "Confirmation cancelled", "⌛ The pending confirmation was cancelled."
+	}
+	message += "\nRequest: " + p.RequestID
+	return r.patchFeishuCardForTargetContext(context.Background(), IncomingMessage{IMType: "feishu"}, target, "confirm", p.RequestID, buildFeishuResolvedCard(title, message, "grey"), true)
 }
 
 // resolveQuestionCard patches the interactive question card for a request that

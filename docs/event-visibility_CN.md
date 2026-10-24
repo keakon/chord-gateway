@@ -13,6 +13,7 @@ gateway 默认订阅以下事件：
 - `activity`
 - `assistant_message`
 - `confirm_request`
+- `confirm_resolved`
 - `question_request`
 - `question_updated`
 - `question_resolved`
@@ -129,6 +130,8 @@ SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent 
 `idle` 表示 agent 空闲：主 agent 与所有 SubAgent 都已停止活跃工作。单个 agent 的 idle 状态变化不会作为协议 `idle` 事件暴露，因此只要仍有任何 agent 在工作，gateway 就会保持 busy，不会停止长时间提醒，也不会发送 idle 通知。
 
 `idle` 和 `idle_timeout` 不关闭问题。问题只通过按 ID 的可靠终态事件收口；历史补答使用显式 ID，保留原终态。`question_updated` 推送计时、介入、依赖处置与历史修正，不能仅更新缓存。状态快照也能恢复遗漏的答题入口或关闭已知待答题；缓存快照不会吞掉随后到达的历史修订通知。
+
+Chord 在确认请求落定时推送 `confirm_resolved`。`timeout`（到期无人作答、自动拒绝）与 `cancelled`（等待提前结束）会把飞书确认卡片置灰并提示已过期——其他 IM 平台以文本提示——同时把该请求标记为过期。过期或失效的 IM 确认操作会被拒绝，并提示检查 `/status`；console 对过期确认的回复仍会作为后续消息发送，不会被当作批准或拒绝。`approved` 与 `denied` 是 gateway 自己作答的回执，保持静默；该事件可能迟到或对应较早的请求，只会清理它指向的那条待决确认。
 
 Chord 也可能在未做决策的情况下取消待处理 handoff，例如该请求被新的请求或会话切换取代。gateway 会消费 `handoff_cancelled` 事件，丢弃已失效的待决 handoff，并发送取消通知。之后再用 `/handoff` 或 `/handoff-deny` 会回到常见的「没有待处理 handoff」提示，而不会把回复路由到已取消的请求。`handoff_cancelled` 事件可能迟到，或携带不匹配的 request ID；gateway 只清理该事件指向的待决 handoff，不会误清更新的待决请求。
 

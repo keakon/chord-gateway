@@ -194,6 +194,170 @@ func TestFeishuIngressConfirmationWriteDoesNotClaimChordAcceptance(t *testing.T)
 	}
 }
 
+func TestFeishuConfirmResolutionWinsOverLateSubmissionFeedback(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		terminalFirst  bool
+		cardSendQueued bool
+		outcome        string
+	}{
+		{name: "timeout delivered first", terminalFirst: true, outcome: ConfirmOutcomeTimeout},
+		{name: "feedback before timeout", outcome: ConfirmOutcomeTimeout},
+		{name: "cancellation delivered first", terminalFirst: true, outcome: ConfirmOutcomeCancelled},
+		{name: "feedback before cancellation", outcome: ConfirmOutcomeCancelled},
+		{name: "confirmation card still sending", terminalFirst: true, cardSendQueued: true, outcome: ConfirmOutcomeTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var cards []string
+			var texts int
+			r, p, msg := migrationFeishuRouter(t, func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if req.Method == http.MethodPatch {
+					var body map[string]string
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					cards = append(cards, body["content"])
+				} else {
+					texts++
+				}
+				fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
+			})
+			msg.InternalAction = &InternalAction{Type: "confirm", Action: "allow", RequestID: "req-1", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}
+			if tc.cardSendQueued {
+				release := make(chan struct{})
+				released := false
+				defer func() {
+					if !released {
+						close(release)
+					}
+				}()
+				r.outbound.enqueueOrWait(p.key, func() { <-release })
+				p.processEnvelope(&HeadlessEnvelope{Type: "confirm_request", Seq: 1, Payload: json.RawMessage(`{"request_id":"req-1","tool_name":"Read"}`)})
+				p.processEnvelope(&HeadlessEnvelope{Type: "confirm_resolved", Seq: 2, Payload: confirmResolvedPayload("req-1", tc.outcome)})
+				r.enqueueIngressInteractionPresentation(msg, "confirm", "req-1", "Approval submitted", "Chord acceptance is unconfirmed; check /status.", "grey", false, "binding")
+				close(release)
+				released = true
+			} else {
+				p.mu.Lock()
+				p.state.PendingConfirm = &ConfirmPayload{RequestID: "req-1", ToolName: "Read"}
+				p.mu.Unlock()
+				r.recordCardHandle(p.key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "card"})
+
+				queueFeedback := func() {
+					r.enqueueIngressInteractionPresentation(msg, "confirm", "req-1", "Approval submitted", "Chord acceptance is unconfirmed; check /status.", "grey", false, "binding")
+				}
+				resolve := func() {
+					p.processEnvelope(&HeadlessEnvelope{Type: "confirm_resolved", Seq: 1, Payload: confirmResolvedPayload("req-1", tc.outcome)})
+				}
+				if tc.terminalFirst {
+					resolve()
+					flushIngressPresentation(t, r, msg)
+					queueFeedback()
+				} else {
+					queueFeedback()
+					flushIngressPresentation(t, r, msg)
+					resolve()
+				}
+			}
+			flushIngressPresentation(t, r, msg)
+
+			mu.Lock()
+			defer mu.Unlock()
+			wantTexts := 0
+			if tc.cardSendQueued {
+				wantTexts = 1
+			}
+			wantTitle := "Confirmation expired"
+			if tc.outcome == ConfirmOutcomeCancelled {
+				wantTitle = "Confirmation cancelled"
+			}
+			if len(cards) == 0 || texts != wantTexts || !strings.Contains(cards[len(cards)-1], wantTitle) {
+				t.Fatalf("cards=%v texts=%d, want terminal confirmation card last", cards, texts)
+			}
+			for _, card := range cards {
+				if tc.terminalFirst && strings.Contains(card, "Approval submitted") {
+					t.Fatalf("stale submission overwrote final card: %v", cards)
+				}
+			}
+			r.mu.RLock()
+			entry := r.cardHandles[cardHandleKey(p.key, "confirm", "req-1")]
+			r.mu.RUnlock()
+			if !entry.terminal || entry.handle != (InteractiveCardHandle{}) {
+				t.Fatalf("terminal card guard not retained after patch: %+v", entry)
+			}
+		})
+	}
+}
+
+func TestFeishuConfirmResolutionDelivery(t *testing.T) {
+	for _, name := range []string{"success", "no handle", "rejected patch", "unknown patch"} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var patches, texts int
+			r, p, msg := migrationFeishuRouter(t, func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case req.Method == http.MethodPatch && name == "rejected patch":
+					patches++
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprint(w, `{"code":230099,"msg":"failure"}`)
+					return
+				case req.Method == http.MethodPatch && name == "unknown patch":
+					patches++
+					w.WriteHeader(http.StatusBadGateway)
+					fmt.Fprint(w, `{"code":230099,"msg":"failure"}`)
+					return
+				case req.Method == http.MethodPatch:
+					patches++
+				default:
+					texts++
+				}
+				fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
+			})
+			if name != "no handle" {
+				r.recordCardHandle(p.key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "card"})
+			}
+			p.processEnvelope(&HeadlessEnvelope{Type: "confirm_resolved", Seq: 1, Payload: confirmResolvedPayload("req-1", ConfirmOutcomeTimeout)})
+			flushIngressPresentation(t, r, msg)
+			mu.Lock()
+			wantPatches, wantTexts := 1, 0
+			switch name {
+			case "no handle":
+				wantPatches, wantTexts = 0, 1
+			case "rejected patch":
+				wantTexts = 1
+			}
+			gotPatches, gotTexts := patches, texts
+			mu.Unlock()
+			if gotPatches != wantPatches || gotTexts != wantTexts {
+				t.Fatalf("patches=%d texts=%d, want %d and %d", gotPatches, gotTexts, wantPatches, wantTexts)
+			}
+			r.mu.RLock()
+			entry := r.cardHandles[cardHandleKey(p.key, "confirm", "req-1")]
+			r.mu.RUnlock()
+			wantHandle := ""
+			if name == "rejected patch" || name == "unknown patch" {
+				wantHandle = "card"
+			}
+			if !entry.terminal || entry.handle.MessageID != wantHandle {
+				t.Fatalf("unexpected terminal handle state: %+v", entry)
+			}
+			msg.InternalAction = &InternalAction{Type: "confirm", RequestID: "req-1", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}
+			r.enqueueIngressInteractionFeedback(msg, "confirm", "req-1", "Request not applied", "Request was rejected.", "red", true, true, "binding")
+			flushIngressPresentation(t, r, msg)
+			mu.Lock()
+			defer mu.Unlock()
+			if patches != wantPatches || texts != wantTexts+1 {
+				t.Fatalf("diagnostic overwrote terminal card or disappeared: patches=%d texts=%d", patches, texts)
+			}
+		})
+	}
+}
+
 func TestFeishuIngressRoleFailureDoesNotRepeatChatMessage(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0

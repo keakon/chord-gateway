@@ -45,6 +45,11 @@ type ControlState struct {
 	ExpiredConfirm *ConfirmPayload             `json:"-"`
 	ExpiredHandoff *HandoffPayload             `json:"-"`
 
+	// LastConfirmResolved is the most recent confirm_resolved event, used to
+	// retire a delivered confirmation card once the runtime settles the wait
+	// without an answer (auto-deny timeout or early cancellation).
+	LastConfirmResolved *ConfirmResolutionPayload `json:"-"`
+
 	LastQuestion *QuestionPayload `json:"-"`
 
 	// Todos from chord process
@@ -124,6 +129,31 @@ type CompactionStatusPayload struct {
 type InteractiveCardHandle struct {
 	MessageID string
 	Token     string
+}
+
+// Confirm resolution outcomes, mirroring chord's confirm_resolved event.
+const (
+	ConfirmOutcomeApproved  = "approved"
+	ConfirmOutcomeDenied    = "denied"
+	ConfirmOutcomeTimeout   = "timeout"
+	ConfirmOutcomeCancelled = "cancelled"
+)
+
+func validConfirmOutcome(outcome string) bool {
+	switch outcome {
+	case ConfirmOutcomeApproved, ConfirmOutcomeDenied, ConfirmOutcomeTimeout, ConfirmOutcomeCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// ConfirmResolutionPayload is the confirm_resolved event payload.
+type ConfirmResolutionPayload struct {
+	RequestID string `json:"request_id"`
+	ToolName  string `json:"tool_name"`
+	AgentID   string `json:"agent_id"`
+	Outcome   string `json:"outcome"`
 }
 
 // ConfirmPayload is the confirm_request event payload.

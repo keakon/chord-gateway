@@ -74,6 +74,12 @@ func (r *NotificationRouter) enqueueIngressInteractionPresentation(msg IncomingM
 func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg IncomingMessage, kind, request, title, text, template string, terminal, diagnostic bool, expectedBindings ...string) {
 	r.enqueueIngressPresentation(msg, func(ctx context.Context, target DeliveryTarget) error {
 		if msg.IMType == "feishu" {
+			if kind == "confirm" && r.confirmCardIsTerminal(target.ProcessKey, request) {
+				if diagnostic {
+					return r.SendBound(ctx, target, text)
+				}
+				return nil
+			}
 			// A committed Question closure may precede its operation receipt.
 			// Its notification owns the final card; a later generic reply must
 			// not overwrite it through the callback-supplied handle.
@@ -104,6 +110,12 @@ func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg IncomingMessa
 		}
 		return r.SendBound(ctx, target, text)
 	}, expectedBindings...)
+}
+
+func (r *NotificationRouter) confirmCardIsTerminal(processKey, requestID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cardHandles[cardHandleKey(processKey, "confirm", requestID)].terminal
 }
 
 // Role dispatch renders its own detailed errors. All other controls share one

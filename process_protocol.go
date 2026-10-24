@@ -250,6 +250,23 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		eventType = "confirm_request"
 
+	case "confirm_resolved":
+		var payload ConfirmResolutionPayload
+		if err := json.Unmarshal(env.Payload, &payload); err != nil || payload.RequestID == "" || !validConfirmOutcome(payload.Outcome) {
+			break
+		}
+		if pc := p.state.PendingConfirm; pc != nil && pc.RequestID == payload.RequestID {
+			switch payload.Outcome {
+			case ConfirmOutcomeTimeout, ConfirmOutcomeCancelled:
+				p.state.ExpiredConfirm = pc
+			case ConfirmOutcomeApproved, ConfirmOutcomeDenied:
+				p.state.ExpiredConfirm = nil
+			}
+			p.state.PendingConfirm = nil
+		}
+		p.state.LastConfirmResolved = &payload
+		eventType = "confirm_resolved"
+
 	case "question_request", "question_updated", "question_resolved":
 		var payload QuestionPayload
 		if json.Unmarshal(env.Payload, &payload) == nil && payload.RequestID != "" {

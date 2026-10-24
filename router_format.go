@@ -38,6 +38,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "confirm_request":
 		return r.formatConfirmNotification(state, hints...)
 
+	case "confirm_resolved":
+		return formatConfirmResolvedNotification(state)
+
 	case "question_revision":
 		q := state.questionForNotification()
 		if q == nil || q.RevisionResult == nil {
@@ -568,6 +571,24 @@ func (r *NotificationRouter) formatQuestionResolvedNotification(state ControlSta
 		message = "⌛ No answer before the deadline. You can still revise this question by ID, for example " + commandHint("/answer @"+p.RequestID+" <answer>", hints) + "; the original outcome stays."
 	}
 	return truncate("Question: " + p.RequestID + "\n" + message)
+}
+
+// formatConfirmResolvedNotification reports a confirmation the runtime settled
+// without an answer, so the chat knows the card stopped being actionable.
+// Answered resolutions stay silent: the answering interaction already replied.
+func formatConfirmResolvedNotification(state ControlState) string {
+	p := state.LastConfirmResolved
+	if p == nil {
+		return ""
+	}
+	switch p.Outcome {
+	case ConfirmOutcomeTimeout:
+		return truncate("⌛ The pending confirmation (" + p.ToolName + ") expired and was auto-denied. Reply as a normal message if you still want it.")
+	case ConfirmOutcomeCancelled:
+		return truncate("⌛ The pending confirmation (" + p.ToolName + ") was cancelled before you answered.")
+	default:
+		return ""
+	}
 }
 
 // questionResolvedCardStatus maps a close reason to the card title, status

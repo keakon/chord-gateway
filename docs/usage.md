@@ -143,7 +143,7 @@ After submitting a Feishu approval or denial, the original card reports that the
 
 Use `/status` if you are unsure whether a confirmation is pending.
 
-An expired confirmation is neither applied nor silently dropped. A text reply such as `/allow` is forwarded to Chord as a follow-up message explicitly annotated as not an approval or denial, and the gateway tells you the confirmation expired. Stale Feishu card actions and controls aimed at a replaced runtime or a request that no longer matches are rejected. Check `/status`; if the original operation still needs approval, ask Chord to issue a new confirmation.
+On IM platforms, expired confirmation commands and stale card actions are rejected; they are not forwarded to Chord as follow-up messages. Check `/status`; if the original operation still needs approval, ask Chord to issue a new confirmation. In the console, a text reply to an expired confirmation is sent as a follow-up message, not applied as an approval or denial.
 
 ## Handoff request routing
 

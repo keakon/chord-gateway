@@ -13,6 +13,7 @@ The gateway subscribes to these events by default:
 - `activity`
 - `assistant_message`
 - `confirm_request`
+- `confirm_resolved`
 - `question_request`
 - `question_updated`
 - `question_resolved`
@@ -129,6 +130,8 @@ If local shell commands are still pending when agents become idle, the completio
 `idle` represents agent idle: the main agent and all SubAgents have stopped active work. Per-agent idle transitions are not exposed as protocol `idle` events, so the gateway keeps the process busy and does not stop reminders or send idle notifications while any agent is still working.
 
 `idle` and `idle_timeout` do not close questions. Questions settle through durable ID-based outcomes; historical revisions use an explicit ID and retain the original outcome. `question_updated` pushes timer, interaction, requirement, and revision changes instead of silently updating a cache. A status snapshot can also restore missing answer entries or close a known open question; caching a snapshot does not consume a later revision notification.
+
+Chord pushes `confirm_resolved` when a delivered confirmation settles. `timeout` (the deadline auto-denied with no answer) and `cancelled` (the wait ended early) grey out the Feishu confirmation card with an expiry notice — or send the notice as text on other IM platforms — and mark the request expired. Stale IM confirmation actions are rejected and direct users to check `/status`; console replies to an expired confirmation are sent as follow-up messages, not applied as approvals or denials. `approved` and `denied` echo the gateway's own answer and stay silent; a resolution may arrive late or for an older request, and only clears the pending confirmation it targets.
 
 Chord may also cancel a pending handoff without a decision, for example when a new request or session switch supersedes it. The gateway consumes the `handoff_cancelled` event, drops the stale pending handoff, and sends a cancellation notice. A later `/handoff` or `/handoff-deny` then falls back to the usual no-pending warning instead of routing the reply to the cancelled request. A `handoff_cancelled` event may arrive late or without a matching request ID; the gateway only clears the pending handoff it targets and leaves a newer pending request untouched.
 

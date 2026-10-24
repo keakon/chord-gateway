@@ -7,6 +7,7 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 使用的 Chord 构建必须支持以下全部能力：
 
 - 带单调递增 `seq` 的状态事件，以及 `input_result` 输入消费回执。
+- `confirm_resolved` 事件，包含 `request_id`、`tool_name`、`agent_id`，以及值为 `approved`、`denied`、`timeout` 或 `cancelled` 的 `outcome`。没有此事件时，gateway 中过期的确认操作可能仍可点击。
 - `status_response.questions` 持久化问题集合、稳定的 `option_ids`，以及 `question_request`、`question_updated`、`question_resolved` 事件。
 - 带 `action` / `operation_id` 的问题命令、关联的 `question_receipt` 回执，以及带 `version`、`binding_id`、`supports_interaction` 的展示确认命令。
 - `idle` 和 `status_response` 中的后台任务数量。

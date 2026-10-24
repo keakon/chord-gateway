@@ -190,6 +190,102 @@ func TestChordHeadlessContract_DefaultSubscribeIncludesIdle(t *testing.T) {
 	provider.assertRequests(t, 1)
 }
 
+func TestChordHeadlessContractConfirmResolved(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping cross-repo contract test in short mode")
+	}
+
+	chordBin := mustChordBinary(t)
+	workspaceDir := t.TempDir()
+	chordConfigHome := filepath.Join(t.TempDir(), "chord-config")
+	chordStateDir := filepath.Join(t.TempDir(), "chord-state")
+	mustWriteChordTestConfig(t, chordConfigHome)
+	overrideLoginShellEnv(t, chordConfigHome, chordStateDir)
+	if err := os.WriteFile(filepath.Join(workspaceDir, "target.txt"), []byte("temporary"), 0o600); err != nil {
+		t.Fatalf("write temporary delete target: %v", err)
+	}
+
+	provider := newMockOpenAIProvider()
+	provider.enqueue(sseScenario{
+		chunks: []string{
+			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"delete"}}]}}]}`,
+			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"paths\":[\"target.txt\"],\"reason\":\"contract test\"}"}}]}}]}`,
+			`data: {"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"finish_reason":"tool_calls"}]}`,
+			`data: [DONE]`,
+		},
+	})
+	server := httptest.NewServer(provider)
+	defer server.Close()
+	mustRewriteChordTestConfigAPIURL(t, chordConfigHome, server.URL+"/v1/chat/completions")
+
+	cfg := &config.Config{
+		IMs:             []config.IMAdapterConfig{{}},
+		Workspaces:      []config.Workspace{{ID: "test", Path: workspaceDir}},
+		ChordPath:       chordBin,
+		SessionPinsFile: filepath.Join(t.TempDir(), "session-pins.json"),
+	}
+
+	type observedEvent struct {
+		eventType string
+		state     ControlState
+	}
+	eventsCh := make(chan observedEvent, 64)
+	mgr := NewChordManager(cfg, testPaths(t))
+	mgr.SetOnEvent(func(_ string, eventType string, state ControlState) {
+		select {
+		case eventsCh <- observedEvent{eventType: eventType, state: state}:
+		default:
+		}
+	})
+
+	key := processKey{workspaceID: "test", imType: "console", chatID: "console-chat"}.String()
+	proc, err := mgr.GetOrSpawnForKey(key)
+	if err != nil {
+		t.Fatalf("spawn chord headless: %v", err)
+	}
+	defer mgr.StopAll(2 * time.Second)
+
+	waitForCondition(t, 20*time.Second, func() bool {
+		return proc.State().SessionID != ""
+	}, "ready/session_id", procDiagnostics(proc))
+	if err := proc.SendUserMessage("Delete target.txt"); err != nil {
+		t.Fatalf("send delete request: %v", err)
+	}
+	waitForCondition(t, 20*time.Second, func() bool {
+		return proc.State().PendingConfirm != nil
+	}, "pending delete confirmation", procDiagnostics(proc))
+	requestID := proc.State().PendingConfirm.RequestID
+
+	if err := proc.SendCommand(map[string]any{"type": "cancel"}); err != nil {
+		t.Fatalf("cancel pending confirmation: %v", err)
+	}
+	timer := time.NewTimer(20 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case observed := <-eventsCh:
+			if observed.eventType != "confirm_resolved" {
+				continue
+			}
+			resolved := observed.state.LastConfirmResolved
+			if resolved == nil || resolved.RequestID != requestID || resolved.ToolName != "delete" ||
+				resolved.AgentID != "main" || resolved.Outcome != ConfirmOutcomeCancelled {
+				t.Fatalf("confirm_resolved = %#v, want request %q, tool delete, outcome cancelled", resolved, requestID)
+			}
+			if observed.state.PendingConfirm != nil || observed.state.ExpiredConfirm == nil ||
+				observed.state.ExpiredConfirm.RequestID != requestID {
+				t.Fatalf("cancelled confirmation not retired: pending=%+v expired=%+v", observed.state.PendingConfirm, observed.state.ExpiredConfirm)
+			}
+			if _, err := os.Stat(filepath.Join(workspaceDir, "target.txt")); err != nil {
+				t.Fatalf("cancelled confirmation did not preserve target: %v", err)
+			}
+			return
+		case <-timer.C:
+			t.Fatalf("timed out waiting for confirm_resolved/cancelled\n%s", procDiagnostics(proc)())
+		}
+	}
+}
+
 func requestStatusSnapshot(t *testing.T, proc *ChordProcess) ControlState {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

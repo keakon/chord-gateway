@@ -108,6 +108,9 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 	if ok {
 		handle = entry.handle
 	}
+	if requestType == "confirm" && !terminal && entry.terminal {
+		return false, nil
+	}
 	if msg.InternalAction != nil {
 		handle = mergeCardHandles(handle, msg.InternalAction.Handle)
 	}
@@ -121,7 +124,12 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 	if terminal && ok {
 		r.mu.Lock()
 		if current, exists := r.cardHandles[key]; exists && current.recordedAt == entry.recordedAt {
-			delete(r.cardHandles, key)
+			if current.terminal {
+				current.handle = InteractiveCardHandle{}
+				r.cardHandles[key] = current
+			} else {
+				delete(r.cardHandles, key)
+			}
 		}
 		r.mu.Unlock()
 	}

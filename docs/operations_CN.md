@@ -162,6 +162,7 @@ gateway 运行 `chord headless` 并从 stdout 读取 JSONL 事件。默认订阅
 - `activity`
 - `assistant_message`
 - `confirm_request`
+- `confirm_resolved`
 - `question_request`
 - `question_updated`
 - `question_resolved`

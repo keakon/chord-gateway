@@ -8,6 +8,7 @@ that are intentionally retained, plus the rule for cleaning them up.
 Use a Chord build that supports all of the following:
 
 - Versioned envelopes with monotonic `seq` and `input_result` consumption receipts.
+- The `confirm_resolved` event with `request_id`, `tool_name`, `agent_id`, and an `outcome` of `approved`, `denied`, `timeout`, or `cancelled`. Without this event, expired confirmation controls may remain actionable in the gateway.
 - Durable question collections in `status_response.questions`, stable `option_ids`, and `question_request`, `question_updated`, and `question_resolved` events.
 - Question commands with `action` / `operation_id`, correlated `question_receipt`, and presentation commands with `version`, `binding_id`, and `supports_interaction`.
 - Background-job counts in `idle` and `status_response`.
