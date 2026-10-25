@@ -6,7 +6,7 @@ Gateway 负责平台接入、授权和转发，Chord 负责会话、执行与结
 
 适配器实现身份核验、连接生命周期、事件归一化和发送。复用 `IngressNormalizer` 的有界异步工作、公共接纳与分发层的授权和回执，以及 `IMTextSender` 的分段、期限和发送诊断。新增平台不再新建收件库、去重数据库、迁移、命令路由器或恢复队列。
 
-`im_adapter_host.go` 提供账号、轮询和 Socket 的宿主接口，Telegram 与 Slack 已使用这些边界。优先依赖所需的小接口，不直接访问 `NotificationRouter` 内部状态。旧适配器仍有具体 router 依赖，在修改相关路径时逐步收口，不复制到新平台。平台事件 ID 与经过验证的账号、聊天身份进入统一 `IngressEnvelope`。ACK 时序由适配器负责：提交归一化不等于接纳，接纳不等于 Chord 执行完成。
+`internal/im/im_adapter_host.go` 提供账号、轮询和 Socket 的宿主接口，Telegram 与 Slack 已使用这些边界。优先依赖所需的小接口，不直接访问 `NotificationRouter` 内部状态。旧适配器仍有具体 router 依赖，在修改相关路径时逐步收口，不复制到新平台。平台事件 ID 与经过验证的账号、聊天身份进入统一 `IngressEnvelope`。ACK 时序由适配器负责：提交归一化不等于接纳，接纳不等于 Chord 执行完成。
 
 只有额外本地前置条件才实现可选 readiness 接口，例如微信回复上下文。检查不得执行 I/O，通知必须在锁外调用。独立可用的 HTTP 发送不应仅因其他平台这样做就增加 WebSocket 就绪门控。实现 `IMTextMetricsProvider` 时增加编译期断言。
 

@@ -70,7 +70,7 @@ DOCUMENTED_CONSTANTS = [
     },
     {
         "name": "ingressHistoryLimit",
-        "source": "im_ingress_store.go",
+        "source": "internal/gateway/im_ingress_store.go",
         "source_re": r"\bconst ingressHistoryLimit = (\d+)",
         "docs": [
             ("docs/operations.md", r"share a ([\d,]+)-record"),

@@ -1,0 +1,232 @@
+package gateway
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
+)
+
+// swapTestValue temporarily replaces a package-level knob for one test and
+// restores it at cleanup. It lets timing tests exercise retry and backoff state
+// transitions without waiting out the production windows.
+func swapTestValue[T any](t *testing.T, target *T, value T) {
+	t.Helper()
+	old := *target
+	*target = value
+	t.Cleanup(func() { *target = old })
+}
+
+// newTestChordManager creates a ChordManager with cfg pre-loaded for tests.
+// Avoids inline struct literals that would conflict with cfg's atomic.Pointer type.
+func newTestChordManager(cfg *config.Config) *ChordManager {
+	mgr := &ChordManager{procs: make(map[string]*ChordProcess)}
+	mgr.cfg.Store(cfg)
+	return mgr
+}
+
+type sentMessage struct {
+	chatID string
+	text   string
+}
+
+type stubIMAdapter struct {
+	typ string
+
+	connectFunc          func() error
+	sendFunc             func(chatID, text string) error
+	disconnectFunc       func()
+	supportsLoginRenewal bool
+	startLoginFunc       func() (string, error)
+
+	mu              sync.Mutex
+	connectCalls    int
+	disconnectCalls int
+	startLoginCalls int
+	sent            []sentMessage
+}
+
+func (a *stubIMAdapter) Connect() error {
+	a.mu.Lock()
+	a.connectCalls++
+	fn := a.connectFunc
+	a.mu.Unlock()
+	if fn != nil {
+		return fn()
+	}
+	return nil
+}
+
+func (a *stubIMAdapter) SendText(chatID, text string) error {
+	a.mu.Lock()
+	a.sent = append(a.sent, sentMessage{chatID: chatID, text: text})
+	fn := a.sendFunc
+	a.mu.Unlock()
+	if fn != nil {
+		return fn(chatID, text)
+	}
+	return nil
+}
+
+func (a *stubIMAdapter) Disconnect() {
+	a.mu.Lock()
+	a.disconnectCalls++
+	fn := a.disconnectFunc
+	a.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+func (a *stubIMAdapter) Type() string { return a.typ }
+
+func (a *stubIMAdapter) SupportsLoginRenewal() bool { return a.supportsLoginRenewal }
+
+func (a *stubIMAdapter) StartLogin() (string, error) {
+	a.mu.Lock()
+	a.startLoginCalls++
+	fn := a.startLoginFunc
+	a.mu.Unlock()
+	if fn != nil {
+		return fn()
+	}
+	return "", im.ErrLoginNotSupported
+}
+
+func (a *stubIMAdapter) sentMessages() []sentMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]sentMessage, len(a.sent))
+	copy(out, a.sent)
+	return out
+}
+
+func (a *stubIMAdapter) lastMessage() sentMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.sent) == 0 {
+		return sentMessage{}
+	}
+	return a.sent[len(a.sent)-1]
+}
+
+type errorWriteCloser struct {
+	err error
+}
+
+func (w *errorWriteCloser) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func (w *errorWriteCloser) Close() error {
+	return nil
+}
+
+type captureWriteCloser struct {
+	questionProcess *ChordProcess
+	mu              sync.Mutex
+	buf             bytes.Buffer
+	closed          bool
+}
+
+func (w *captureWriteCloser) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if w.questionProcess != nil {
+		var cmd map[string]any
+		if json.Unmarshal(p, &cmd) == nil && cmd["type"] == "question" {
+			proc := w.questionProcess
+			go func() {
+				receipt := QuestionReceipt{OperationID: cmd["operation_id"].(string), RequestID: cmd["request_id"].(string), Accepted: true, Status: "answered"}
+				data, _ := json.Marshal(receipt)
+				proc.processEnvelope(&HeadlessEnvelope{Type: "question_receipt", Payload: data})
+			}()
+		}
+	}
+	return n, err
+}
+
+func (w *captureWriteCloser) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	return nil
+}
+
+func (w *captureWriteCloser) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+func makeFakeChordBinary(t testingT, behavior string) string {
+	path, _ := makeFakeChordBinaryWithArgsFile(t, behavior)
+	return path
+}
+
+func makeFakeChordBinaryWithArgsFile(t testingT, behavior string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := dir + "/fake-chord.sh"
+	argsFile := dir + "/args.txt"
+	readySession := ""
+	if strings.HasPrefix(behavior, "ready:") {
+		readySession = strings.TrimPrefix(behavior, "ready:")
+	}
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellQuote(argsFile) + "\n" +
+		"case " + shellQuote(behavior) + " in\n" +
+		"  fail) exit 42 ;;\n" +
+		"  ready:*) printf '{\"type\":\"ready\",\"payload\":{\"session_id\":\"%s\"}}\\n' " + shellQuote(readySession) + " ;;\n" +
+		"esac\n" +
+		"while IFS= read -r line; do :; done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake chord binary: %v", err)
+	}
+	return path, argsFile
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+type testingT interface {
+	Helper()
+	TempDir() string
+	Fatalf(string, ...any)
+}
+
+func readFakeChordArgs(t testingT, path string) string {
+	t.Helper()
+	var data []byte
+	var err error
+	for i := 0; i < 200; i++ {
+		data, err = os.ReadFile(path)
+		if err == nil {
+			return string(data)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("read fake chord args %s: %v", path, err)
+	return ""
+}
+
+func requireContains(t testingT, got, want string) {
+	t.Helper()
+	if !bytes.Contains([]byte(got), []byte(want)) {
+		t.Fatalf("got %q, want to contain %q", got, want)
+	}
+}
+
+func attachQuestionTestReceipts(p *ChordProcess) {
+	if writer, ok := p.stdin.(*captureWriteCloser); ok {
+		writer.questionProcess = p
+	}
+}
