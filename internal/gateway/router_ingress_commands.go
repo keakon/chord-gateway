@@ -51,8 +51,8 @@ func (r *NotificationRouter) ingressStatus(msg im.IncomingMessage) string {
 	return text
 }
 func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg im.IncomingMessage, p *ChordProcess, cmd im.IMCommand, target *im.IngressControlTarget, id string) DispatchResult {
-	switch strings.ToLower(strings.TrimSpace(cmd.Content)) {
-	case "/model", "/export":
+	switch content := strings.ToLower(strings.TrimSpace(cmd.Content)); {
+	case isChordLocalOnlySlashCommand(content), isGatewayOwnedSlashCommand(content):
 		return DispatchResult{"rejected", "command_requires_local_tui"}
 	}
 	if action, ok := remoteMCPCommand(cmd.Content); ok {

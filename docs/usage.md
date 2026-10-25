@@ -73,7 +73,7 @@ Notes:
 
 - `/login wechat` is the documented command name for WeChat login renewal.
 - `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
-- Unrecognized slash commands are forwarded to Chord as normal text.
+- Unrecognized slash commands are forwarded to Chord as normal text, with one exception: Chord runs `/queue`, `/export`, `/models`, `/tier`, `/rename`, `/yolo`, `/compact` and a bare `/skill` on its own side rather than treating them as chat input, and nothing they change is reported back over the headless protocol. The gateway refuses them instead of forwarding them, and replies that they are only available in the local TUI. `/yolo` matters most: forwarding it would let an IM caller turn permission confirmations off without anything visible happening in the chat. Manage these from the local Chord TUI.
 - `/summary` is not part of the documented gateway command set.
 
 `/sessions` queries `chord sessions list --json --limit 10` in the bound directory and forwards `chord_state_dir`. Chord resolves custom session roots and sessions shared by repository worktrees. Results are ordered by recent activity and mark sessions in use. Query failures are reported separately from an empty list. Use a Chord build providing this command; the gateway does not scan legacy directories.

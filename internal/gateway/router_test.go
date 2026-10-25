@@ -2724,9 +2724,37 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 	})
 
 	t.Run("send blocks local-only slash commands", func(t *testing.T) {
+		// The coverage is argument-sensitive: Chord takes these on the main
+		// agent whether or not arguments follow, so plain /models and
+		// /models <pool> have to be refused alike.
+		for _, content := range []string{"/models", "/models dev-pool", "/yolo", "/yolo on", "/queue", "/tier", "/rename beta", "/COMPACT"} {
+			r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
+			r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: content}, "wechat", nil)
+			if got := sender.lastMessage().text; !strings.Contains(got, "only available in local TUI") {
+				t.Fatalf("%s: message = %q", content, got)
+			}
+			if got := stdin.String(); got != "" {
+				t.Fatalf("%s: stdin should be empty, got %q", content, got)
+			}
+		}
+	})
+
+	t.Run("send forwards argument forms that Chord treats as ordinary messages", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "/model"}, "wechat", nil)
-		if got := sender.lastMessage().text; !strings.Contains(got, "only available in local TUI") {
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "/skill review-pr"}, "wechat", nil)
+		if got := sender.sentMessages(); len(got) != 0 {
+			t.Fatalf("/skill with a name is a normal user message, got rejection %#v", got)
+		}
+		out := stdin.String()
+		if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, "/skill review-pr") {
+			t.Fatalf("stdin = %q", out)
+		}
+	})
+
+	t.Run("send refuses gateway-owned slash commands bypassing command parsing", func(t *testing.T) {
+		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "/resume session-9"}, "wechat", nil)
+		if got := sender.lastMessage().text; !strings.Contains(got, "belongs to the gateway") {
 			t.Fatalf("message = %q", got)
 		}
 		if got := stdin.String(); got != "" {

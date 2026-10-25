@@ -302,11 +302,16 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 		r.handleConfirmCommand(ws, chatID, im.IMCommand{Type: "confirm", Action: "deny", Reason: cmd.Content}, msg, procKey, proc)
 		return
 	}
-	// Filter slash commands that are only supported in local TUI.
-	// Remote control plane must not forward them.
-	switch strings.ToLower(strings.TrimSpace(cmd.Content)) {
-	case "/model", "/new", "/resume", "/export":
+	// Refuse slash commands Chord would run locally on the main agent. Their
+	// effects never reach the headless protocol, so forwarding them would let
+	// an IM caller mutate a session the gateway can no longer observe — /yolo
+	// in particular turns permission confirmations off silently.
+	switch content := strings.ToLower(strings.TrimSpace(cmd.Content)); {
+	case isChordLocalOnlySlashCommand(content):
 		r.sendTextForKey(procKey, chatID, "⚠️ This command is only available in local TUI.")
+		return
+	case isGatewayOwnedSlashCommand(content):
+		r.sendTextForKey(procKey, chatID, "⚠️ This command belongs to the gateway; send it without extra text.")
 		return
 	}
 	if err := proc.SendUserMessage(cmd.Content); err != nil {
@@ -511,7 +516,11 @@ func buildRoleMenuText(current string, roles []RoleInfo, hints ...func(string) s
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
-	sb.WriteString("Reply " + commandHint("/role <number>", hints) + " or " + commandHint("/role <name>", hints) + " to switch.")
+	sb.WriteString("Reply ")
+	sb.WriteString(commandHint("/role <number>", hints))
+	sb.WriteString(" or ")
+	sb.WriteString(commandHint("/role <name>", hints))
+	sb.WriteString(" to switch.")
 	return truncate(sb.String())
 }
 

@@ -69,6 +69,8 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送新要求给 Chord，待答问题继续保留 |
 
+未识别的斜杠命令会作为普通文本转发给 Chord，但有一类例外：Chord 会在自身侧执行 `/queue`、`/export`、`/models`、`/tier`、`/rename`、`/yolo`、`/compact` 以及不带参数的 `/skill`，而它们造成的变化都不会通过 headless 协议回报。gateway 会直接拒绝这些命令并提示只能在本地 TUI 使用，而不是转发出去。其中 `/yolo` 影响最大：一旦转发，IM 侧可以在聊天里完全无感知地关闭权限确认。请在本地 Chord TUI 中管理这些命令。
+
 `/sessions` 在绑定目录中调用 `chord sessions list --json --limit 10`，并传递 `chord_state_dir`。自定义会话根目录和仓库 worktree 的共享会话由 Chord 解析。结果按最近活动时间排序，并标出使用中的会话；查询失败与空列表会分别提示。需要使用提供此命令的 Chord，gateway 不再扫描旧目录。
 
 ## 会话接管
