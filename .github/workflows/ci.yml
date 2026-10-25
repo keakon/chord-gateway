@@ -133,8 +133,7 @@ jobs:
           go install golang.org/x/tools/gopls@latest
 
       - name: Gopls check
-        run: |
-          git ls-files '*.go' | xargs gopls check
+        run: scripts/check_gopls.sh
 
   gofmt:
     name: Check Go formatting
