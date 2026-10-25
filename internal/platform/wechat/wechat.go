@@ -419,10 +419,10 @@ func randomWechatUIN() string {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
 		log.Warnf("wechat ilink: failed to generate random uin bytes, using time-based fallback error=%v", err)
-		return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		return base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%d", time.Now().UnixNano()))
 	}
 	val := uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
-	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", val)))
+	return base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%d", val))
 }
 
 func (a *WechatAdapter) buildHeaders() http.Header {

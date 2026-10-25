@@ -23,7 +23,7 @@ const discordTestBotID = "9007199254740993"
 func discordTestChannel(t *testing.T, kind disgo.ChannelType, id string) disgo.Channel {
 	t.Helper()
 	var channel disgo.UnmarshalChannel
-	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"id":%q,"type":%d,"guild_id":"700","parent_id":"400","name":"sample"}`, id, kind)), &channel); err != nil {
+	if err := json.Unmarshal(fmt.Appendf(nil, `{"id":%q,"type":%d,"guild_id":"700","parent_id":"400","name":"sample"}`, id, kind), &channel); err != nil {
 		t.Fatal(err)
 	}
 	return channel.Channel

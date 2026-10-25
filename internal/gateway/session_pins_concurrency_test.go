@@ -180,7 +180,7 @@ func BenchmarkSessionPinStoreSetUnchanged(b *testing.B) {
 	s := newSessionPinStore(b.TempDir())
 	s.pins["key"] = "session"
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := s.Set("key", "session"); err != nil {
 			b.Fatal(err)
 		}

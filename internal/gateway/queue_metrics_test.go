@@ -96,7 +96,7 @@ func TestReportQueueMetricsLogsFinalSnapshotOnCancel(t *testing.T) {
 func BenchmarkQueueMetricsHotPath(b *testing.B) {
 	var metrics queueMetrics
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		metrics.enqueued.Add(1)
 	}
 }

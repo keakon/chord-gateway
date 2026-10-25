@@ -30,7 +30,7 @@ import (
 // when separate race/coverage processes run the same tests concurrently.
 func discordAdapterAccountID(t *testing.T) string {
 	t.Helper()
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%d/%s", os.Getpid(), t.Name())))
+	digest := sha256.Sum256(fmt.Appendf(nil, "%d/%s", os.Getpid(), t.Name()))
 	return strconv.FormatUint(binary.BigEndian.Uint64(digest[:8])&((1<<63)-1)|1, 10)
 }
 

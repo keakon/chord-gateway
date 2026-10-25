@@ -19,7 +19,7 @@ import (
 )
 
 func wecomAdapterCallback(bot, delivery, business string) []byte {
-	return []byte(fmt.Sprintf(`{"cmd":"aibot_msg_callback","headers":{"req_id":%q},"body":{"aibotid":%q,"msgid":%q,"chattype":"single","msgtype":"text","from":{"userid":"owner"},"text":{"content":"task"}}}`, delivery, bot, business))
+	return fmt.Appendf(nil, `{"cmd":"aibot_msg_callback","headers":{"req_id":%q},"body":{"aibotid":%q,"msgid":%q,"chattype":"single","msgtype":"text","from":{"userid":"owner"},"text":{"content":"task"}}}`, delivery, bot, business)
 }
 
 func countWecomIngressEvent(store *IngressStore, event string) uint64 {

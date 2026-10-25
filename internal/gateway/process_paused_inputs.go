@@ -103,7 +103,8 @@ func formatPausedInputDetails(value *PausedInputs) string {
 	for i, input := range value.Inputs {
 		b.WriteString(rows[i])
 		if input.Preview != "" && previewRunes > 0 {
-			b.WriteString(": " + truncateRunes(input.Preview, previewRunes, ellipsis))
+			b.WriteString(": ")
+			b.WriteString(truncateRunes(input.Preview, previewRunes, ellipsis))
 		}
 	}
 	b.WriteString(footer)

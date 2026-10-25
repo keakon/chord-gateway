@@ -342,7 +342,10 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState, hints
 			sb.WriteString(p)
 		}
 	}
-	sb.WriteString("\nReply " + commandHint("/allow", hints) + " or " + commandHint("/deny [reason]", hints))
+	sb.WriteString("\nReply ")
+	sb.WriteString(commandHint("/allow", hints))
+	sb.WriteString(" or ")
+	sb.WriteString(commandHint("/deny [reason]", hints))
 	return truncate(sb.String())
 }
 
@@ -377,7 +380,11 @@ func (r *NotificationRouter) formatDoneConfirmNotification(c *ConfirmPayload, hi
 		sb.WriteString("\n\n")
 		sb.WriteString(report)
 	}
-	sb.WriteString("\n\nReply " + commandHint("/allow", hints) + " to finish, or " + commandHint("/deny <reason>", hints) + " to continue.")
+	sb.WriteString("\n\nReply ")
+	sb.WriteString(commandHint("/allow", hints))
+	sb.WriteString(" to finish, or ")
+	sb.WriteString(commandHint("/deny <reason>", hints))
+	sb.WriteString(" to continue.")
 	return truncate(sb.String())
 }
 
@@ -512,7 +519,13 @@ func (r *NotificationRouter) formatHandoffNotification(state ControlState, hints
 			}
 		}
 	}
-	sb.WriteString("\n\nReply " + commandHint("/handoff <agent> [model_pool]", hints) + " to execute, " + commandHint("/handoff", hints) + " to use the default, or " + commandHint("/handoff-deny <reason>", hints) + " to reject.")
+	sb.WriteString("\n\nReply ")
+	sb.WriteString(commandHint("/handoff <agent> [model_pool]", hints))
+	sb.WriteString(" to execute, ")
+	sb.WriteString(commandHint("/handoff", hints))
+	sb.WriteString(" to use the default, or ")
+	sb.WriteString(commandHint("/handoff-deny <reason>", hints))
+	sb.WriteString(" to reject.")
 	return sb.String()
 }
 
@@ -544,11 +557,14 @@ func (r *NotificationRouter) formatQuestionNotification(state ControlState, hint
 		sb.WriteString(" (multi-select)")
 	}
 	if len(q.Options) == 0 {
-		sb.WriteString("\nReply " + commandHint("/answer @"+q.RequestID+" <answer>", hints))
+		sb.WriteString("\nReply ")
+		sb.WriteString(commandHint("/answer @"+q.RequestID+" <answer>", hints))
 	} else if q.Multiple {
-		sb.WriteString("\nReply " + commandHint("/answer @"+q.RequestID+" 1,2", hints))
+		sb.WriteString("\nReply ")
+		sb.WriteString(commandHint("/answer @"+q.RequestID+" 1,2", hints))
 	} else {
-		sb.WriteString("\nReply " + commandHint("/answer @"+q.RequestID+" 1", hints))
+		sb.WriteString("\nReply ")
+		sb.WriteString(commandHint("/answer @"+q.RequestID+" 1", hints))
 	}
 	return truncate(sb.String())
 }
@@ -803,10 +819,12 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		sb.WriteString("⏸️ Idle")
 	}
 	if status := formatMCPStatus(state.MCP); status != "" {
-		sb.WriteString("\n" + status)
+		sb.WriteString("\n")
+		sb.WriteString(status)
 	}
 	if status := formatInputQueueStatus(state.InputQueue); status != "" {
-		sb.WriteString("\n" + status)
+		sb.WriteString("\n")
+		sb.WriteString(status)
 	}
 	if state.UnconfirmedInputs > 0 {
 		fmt.Fprintf(&sb, "\n⚠️ Unconfirmed inputs: %d. Check the original session on the host before resending or changing directories.", state.UnconfirmedInputs)
@@ -861,7 +879,10 @@ func formatBindingStatus(ws *config.Workspace, imType, chatID string, state Cont
 		}
 		slices.Sort(ids)
 		for _, id := range ids {
-			sb.WriteString("\n  " + id + ": " + state.Questions[id].Question)
+			sb.WriteString("\n  ")
+			sb.WriteString(id)
+			sb.WriteString(": ")
+			sb.WriteString(state.Questions[id].Question)
 		}
 	}
 	if state.LastOutcome != "" {
