@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // dingtalkIdentityError contains only a fixed, safe classification. Callback
@@ -33,7 +34,7 @@ func dingtalkAccountID(cfg *config.DingtalkConfig) (string, error) {
 	if cfg == nil {
 		return "", dingtalkIdentityFailure("invalid_configuration")
 	}
-	account, err := EncodeScopedID("account-v1:", cfg.CorpID, cfg.ClientID, cfg.RobotCode)
+	account, err := im.EncodeScopedID("account-v1:", cfg.CorpID, cfg.ClientID, cfg.RobotCode)
 	if err != nil {
 		return "", dingtalkIdentityFailure("invalid_configuration")
 	}
@@ -50,7 +51,7 @@ func dingtalkEncodeTarget(corp, kind, raw string) (string, error) {
 	default:
 		return "", dingtalkIdentityFailure("invalid_target")
 	}
-	target, err := EncodeScopedID("target-v1:", scope, corp, raw)
+	target, err := im.EncodeScopedID("target-v1:", scope, corp, raw)
 	if err != nil {
 		return "", dingtalkIdentityFailure("invalid_target")
 	}
@@ -58,7 +59,7 @@ func dingtalkEncodeTarget(corp, kind, raw string) (string, error) {
 }
 
 func dingtalkDecodeTarget(corp, target string) (kind, raw string, err error) {
-	parts, err := DecodeScopedID(target, "target-v1:", 3)
+	parts, err := im.DecodeScopedID(target, "target-v1:", 3)
 	if err != nil || parts[1] != corp {
 		return "", "", dingtalkIdentityFailure("invalid_target")
 	}
@@ -80,11 +81,11 @@ func dingtalkLockResources(cfg *config.DingtalkConfig) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := EncodeScopedID("dingtalk-client-v1:", cfg.ClientID)
+	client, err := im.EncodeScopedID("dingtalk-client-v1:", cfg.ClientID)
 	if err != nil {
 		return nil, dingtalkIdentityFailure("invalid_configuration")
 	}
-	accountLock, err := EncodeScopedID("im-account-v1:", "dingtalk", account)
+	accountLock, err := im.EncodeScopedID("im-account-v1:", "dingtalk", account)
 	if err != nil {
 		return nil, dingtalkIdentityFailure("invalid_configuration")
 	}
@@ -93,12 +94,12 @@ func dingtalkLockResources(cfg *config.DingtalkConfig) ([]string, error) {
 	return resources, nil
 }
 
-func acquireDingtalkAccountLocks(cfg *config.DingtalkConfig) (*instanceLocks, error) {
+func acquireDingtalkAccountLocks(cfg *config.DingtalkConfig) (*im.InstanceLocks, error) {
 	resources, err := dingtalkLockResources(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return acquireInstanceLocks(resources)
+	return im.AcquireInstanceLocks(resources)
 }
 
 type dingtalkCallback struct {
@@ -151,16 +152,16 @@ func validateDingtalkIdentityProbe(cfg *config.DingtalkConfig, callback *dingtal
 	return nil
 }
 
-func normalizeDingtalkCallback(cfg *config.DingtalkConfig, payload string) (IncomingMessage, error) {
+func normalizeDingtalkCallback(cfg *config.DingtalkConfig, payload string) (im.IncomingMessage, error) {
 	callback, err := parseDingtalkCallback(payload)
 	if err != nil {
-		return IncomingMessage{}, err
+		return im.IncomingMessage{}, err
 	}
 	if err = validateDingtalkCallbackIdentity(cfg, &callback); err != nil {
-		return IncomingMessage{}, err
+		return im.IncomingMessage{}, err
 	}
-	if callback.MsgID == "" || len(callback.MsgID) > maxScopedIDBytes || !utf8.ValidString(callback.MsgID) {
-		return IncomingMessage{}, dingtalkIdentityFailure("invalid_message_id")
+	if callback.MsgID == "" || len(callback.MsgID) > im.MaxScopedIDBytes || !utf8.ValidString(callback.MsgID) {
+		return im.IncomingMessage{}, dingtalkIdentityFailure("invalid_message_id")
 	}
 	var kind, raw string
 	switch callback.ConversationType {
@@ -169,17 +170,17 @@ func normalizeDingtalkCallback(cfg *config.DingtalkConfig, payload string) (Inco
 	case "2":
 		kind, raw = "group", callback.ConversationID
 	default:
-		return IncomingMessage{}, dingtalkIdentityFailure("unsupported_conversation")
+		return im.IncomingMessage{}, dingtalkIdentityFailure("unsupported_conversation")
 	}
 	target, err := dingtalkEncodeTarget(cfg.CorpID, kind, raw)
 	if err != nil {
-		return IncomingMessage{}, err
+		return im.IncomingMessage{}, err
 	}
 	account, err := dingtalkAccountID(cfg)
 	if err != nil {
-		return IncomingMessage{}, err
+		return im.IncomingMessage{}, err
 	}
-	msg := IncomingMessage{IMType: "dingtalk", AccountID: account, ChatKind: kind,
+	msg := im.IncomingMessage{IMType: "dingtalk", AccountID: account, ChatKind: kind,
 		ChatID: target, SenderID: callback.SenderStaffID, MessageID: "message:" + callback.MsgID,
 	}
 	// A permanent content rejection retains only authenticated business identity

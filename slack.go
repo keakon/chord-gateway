@@ -14,13 +14,14 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // SlackAdapter owns one Socket Mode supervisor. Web API sends share its root
 // lifetime, so a socket refresh does not revoke an authorized long-running task.
 type SlackAdapter struct {
 	imCfg                                      config.IMAdapterConfig
-	router                                     IMSocketHost
+	router                                     im.IMSocketHost
 	client                                     *slack.Client
 	sender                                     *slackSender
 	mu                                         sync.Mutex
@@ -45,12 +46,12 @@ type SlackAdapter struct {
 	helloTimeout, pingTimeout time.Duration
 }
 
-func NewSlackAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router IMSocketHost) (*SlackAdapter, error) {
+func NewSlackAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router im.IMSocketHost) (*SlackAdapter, error) {
 	c := imCfg.Slack
 	if c == nil || c.AppToken == "" || c.BotToken == "" || c.AppID == "" || c.TeamID == "" {
 		return nil, errors.New("slack: app_token, bot_token, app_id and team_id are required")
 	}
-	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	proxyFunc, err := im.WebsocketProxyFuncFor(cfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +84,7 @@ func NewSlackAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config
 
 func (*SlackAdapter) Type() string                { return "slack" }
 func (*SlackAdapter) SupportsLoginRenewal() bool  { return false }
-func (*SlackAdapter) StartLogin() (string, error) { return "", ErrLoginNotSupported }
+func (*SlackAdapter) StartLogin() (string, error) { return "", im.ErrLoginNotSupported }
 
 func (a *SlackAdapter) Connect() error {
 	a.mu.Lock()
@@ -93,7 +94,7 @@ func (a *SlackAdapter) Connect() error {
 	}
 	a.started = true
 	a.mu.Unlock()
-	var locks *instanceLocks
+	var locks *im.InstanceLocks
 	defer func() {
 		a.mu.Lock()
 		a.stopping = true
@@ -124,12 +125,12 @@ func (a *SlackAdapter) Connect() error {
 			a.mu.Unlock()
 			if changed {
 				// Let the shared authority revoke old account leases and nonce.
-				_ = a.router.PlatformReady("slack", identity.AccountID, PlatformPresentation{Platform: "slack", BotUsername: identity.BotName})
+				_ = a.router.PlatformReady("slack", identity.AccountID, im.PlatformPresentation{Platform: "slack", BotUsername: identity.BotName})
 				return slackConnectionError{"identity_changed", true}
 			}
 			if locks == nil {
 				// Exclude other receivers for both the bot account and the app.
-				locks, err = AcquireIMAccountLocks("slack", identity.AccountID, identity.AppID)
+				locks, err = im.AcquireIMAccountLocks("slack", identity.AccountID, identity.AppID)
 				if err != nil {
 					return fmt.Errorf("slack: account/app receive lock: %w", err)
 				}
@@ -156,7 +157,7 @@ func (a *SlackAdapter) Connect() error {
 			}
 			continue
 		}
-		delay := reconnectBackoff(attempt)
+		delay := im.ReconnectBackoff(attempt)
 		var limited *slack.RateLimitedError
 		if errors.As(err, &limited) {
 			delay = max(delay, limited.RetryAfter)
@@ -189,7 +190,7 @@ func (a *SlackAdapter) Disconnect() {
 func (a *SlackAdapter) SendText(chatID, text string) error {
 	return a.SendTextContext(context.Background(), chatID, text)
 }
-func (a *SlackAdapter) TextSendMetrics() IMTextMetricsSnapshot {
+func (a *SlackAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {
 	return a.sender.text.TextSendMetrics()
 }
 func (a *SlackAdapter) SendTextContext(ctx context.Context, chatID, text string) error {
@@ -207,7 +208,7 @@ func (a *SlackAdapter) SendTextContext(ctx context.Context, chatID, text string)
 	}
 	defer a.sends.Done()
 	if account, _ := ctx.Value(replyAccountContextKey{}).(string); account != "" && account != identity.AccountID {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	return a.sender.Send(ctx, a.ctx, chatID, text)
 }
@@ -235,16 +236,16 @@ func (a *SlackAdapter) setUnavailable() {
 	}
 	a.wakeIngressReadiness()
 }
-func (a *SlackAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *SlackAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.identityVerified || a.stopping || id.AccountID != a.identity.AccountID {
-		return IngressDeliveryReadiness{Reason: IngressWaitingAccount}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingAccount}
 	}
 	if !a.ready {
-		return IngressDeliveryReadiness{Reason: IngressWaitingPlatform}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingPlatform}
 	}
-	return IngressDeliveryReadiness{Ready: true}
+	return im.IngressDeliveryReadiness{Ready: true}
 }
 
 type slackConnectionError struct {
@@ -311,8 +312,8 @@ func slackReconnectImmediately(err error) bool {
 	return e.category == "socket_warning" || e.category == "socket_refresh_requested"
 }
 
-var _ IMTextMetricsProvider = (*SlackAdapter)(nil)
+var _ im.IMTextMetricsProvider = (*SlackAdapter)(nil)
 
-func (a *SlackAdapter) TextSendTargetSnapshot(target string) IMTextTargetSnapshot {
+func (a *SlackAdapter) TextSendTargetSnapshot(target string) im.IMTextTargetSnapshot {
 	return a.sender.text.TextSendTargetSnapshot(target)
 }

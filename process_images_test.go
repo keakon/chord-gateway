@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func testImageBytes(t *testing.T) []byte {
@@ -45,7 +47,7 @@ func TestImageReceiverIntegrityAndDuplicate(t *testing.T) {
 	m := testImageMetadata(data)
 	var receiver imageReceiver
 	defer receiver.reset()
-	initial := imageSpoolBytes.Load()
+	initial := im.ImageSpoolBytes.Load()
 	if err := receiver.result(testImageResult(t, "call-1", []receivedImageMetadata{m}), "session-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestImageReceiverIntegrityAndDuplicate(t *testing.T) {
 	if image.SessionID != "session-1" || image.SHA256 != m.SHA256 {
 		t.Fatal("source binding lost")
 	}
-	if _, err := readReceivedImage(image); err != nil {
+	if _, err := im.ReadReceivedImage(image); err != nil {
 		t.Fatal(err)
 	}
 	if err := receiver.result(testImageResult(t, "call-1", []receivedImageMetadata{m}), "session-1"); err != nil {
@@ -74,7 +76,7 @@ func TestImageReceiverIntegrityAndDuplicate(t *testing.T) {
 	if _, err := os.Stat(image.Path); !os.IsNotExist(err) {
 		t.Fatal("temporary original retained")
 	}
-	if imageSpoolBytes.Load() != initial {
+	if im.ImageSpoolBytes.Load() != initial {
 		t.Fatal("image budget leaked")
 	}
 }
@@ -86,7 +88,7 @@ func TestImageReceiverRejectsCorruptionAndCleansPartial(t *testing.T) {
 			m := testImageMetadata(data)
 			var receiver imageReceiver
 			defer receiver.reset()
-			initial := imageSpoolBytes.Load()
+			initial := im.ImageSpoolBytes.Load()
 			if err := receiver.result(testImageResult(t, "call", []receivedImageMetadata{m}), "session"); err != nil {
 				t.Fatal(err)
 			}
@@ -118,7 +120,7 @@ func TestImageReceiverRejectsCorruptionAndCleansPartial(t *testing.T) {
 			if err == nil || got != nil {
 				t.Fatal("invalid image accepted")
 			}
-			if imageSpoolBytes.Load() != initial {
+			if im.ImageSpoolBytes.Load() != initial {
 				t.Fatal("failed receive leaked budget")
 			}
 		})
@@ -126,14 +128,14 @@ func TestImageReceiverRejectsCorruptionAndCleansPartial(t *testing.T) {
 	var receiver imageReceiver
 	data := testImageBytes(t)
 	m := testImageMetadata(data)
-	initial := imageSpoolBytes.Load()
+	initial := im.ImageSpoolBytes.Load()
 	_ = receiver.result(testImageResult(t, "call", []receivedImageMetadata{m}), "session")
 	_, _ = receiver.chunk(testImageChunk(t, "call", m, 0, false, data[:10]), "session")
-	if imageSpoolBytes.Load() != initial+m.Size {
+	if im.ImageSpoolBytes.Load() != initial+m.Size {
 		t.Fatal("partial not reserved")
 	}
 	receiver.reset()
-	if imageSpoolBytes.Load() != initial {
+	if im.ImageSpoolBytes.Load() != initial {
 		t.Fatal("partial not released")
 	}
 	if _, err := receiver.chunk(testImageChunk(t, "call", m, 10, true, data[10:]), "session"); err == nil {
@@ -153,7 +155,7 @@ func TestImageReceiverMetadataAndBudgetLimits(t *testing.T) {
 			case "count":
 				metas = make([]receivedImageMetadata, 6)
 			case "size":
-				metas[0].Size = maxGatewayImageBytes + 1
+				metas[0].Size = im.MaxGatewayImageBytes + 1
 			case "hash":
 				metas[0].SHA256 = "invalid"
 			case "pixels":
@@ -173,8 +175,8 @@ func TestImageReceiverMetadataAndBudgetLimits(t *testing.T) {
 	var receiver imageReceiver
 	defer receiver.reset()
 	_ = receiver.result(testImageResult(t, "call", []receivedImageMetadata{base}), "session")
-	old := imageSpoolBytes.Swap(maxGatewayImageSpool)
-	defer imageSpoolBytes.Store(old)
+	old := im.ImageSpoolBytes.Swap(maxGatewayImageSpool)
+	defer im.ImageSpoolBytes.Store(old)
 	if _, err := receiver.chunk(testImageChunk(t, "call", base, 0, true, data), "session"); err == nil {
 		t.Fatal("spool limit ignored")
 	}
@@ -205,7 +207,7 @@ func TestImageReceiverScopesIdentityAndFailure(t *testing.T) {
 			a, b := testImageMetadata(data), testImageMetadata(other)
 			var receiver imageReceiver
 			defer receiver.reset()
-			initial := imageSpoolBytes.Load()
+			initial := im.ImageSpoolBytes.Load()
 			for agent, meta := range map[string]receivedImageMetadata{"agent-a": a, "agent-b": b} {
 				if err := receiver.result(imagePayloadAgent(t, testImageResult(t, "call-1", []receivedImageMetadata{meta}), agent), "session-1"); err != nil {
 					t.Fatal(err)
@@ -231,7 +233,7 @@ func TestImageReceiverScopesIdentityAndFailure(t *testing.T) {
 			if err := receiver.result(json.RawMessage(`{"call_id":"call-1","agent_id":"agent-a","status":"error"}`), "session-1"); err != nil {
 				t.Fatal(err)
 			}
-			if len(receiver.entries) != 1 || imageSpoolBytes.Load() != initial+b.Size {
+			if len(receiver.entries) != 1 || im.ImageSpoolBytes.Load() != initial+b.Size {
 				t.Fatal("failure removed sibling image")
 			}
 			img, err := receiver.chunk(raw, "session-1")
@@ -274,7 +276,7 @@ func TestImageReceiverDedupIncludesAgentAndSession(t *testing.T) {
 func TestImageTransfersFinishOnAggregateIdle(t *testing.T) {
 	data := testImageBytes(t)
 	meta := testImageMetadata(data)
-	initial := imageSpoolBytes.Load()
+	initial := im.ImageSpoolBytes.Load()
 	var events []string
 	p := &ChordProcess{state: ControlState{SessionID: "session-1", Busy: true}, onEvent: func(_ string, event string, _ ControlState) { events = append(events, event) }}
 	defer p.images.reset()
@@ -293,13 +295,13 @@ func TestImageTransfersFinishOnAggregateIdle(t *testing.T) {
 	}
 	defer complete.Close()
 	p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: json.RawMessage(`{}`)})
-	if len(p.images.entries) != 0 || imageSpoolBytes.Load() != initial+meta.Size {
+	if len(p.images.entries) != 0 || im.ImageSpoolBytes.Load() != initial+meta.Size {
 		t.Fatal("idle leaked incomplete reservations or took outbound ownership")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("partial file retained")
 	}
-	if _, err := readReceivedImage(complete); err != nil {
+	if _, err := im.ReadReceivedImage(complete); err != nil {
 		t.Fatal("idle deleted outbound image", err)
 	}
 	if p.State().Busy || !slices.Equal(events, []string{"transport_error", "idle"}) {
@@ -320,7 +322,7 @@ func TestImageTransfersFinishOnAggregateIdle(t *testing.T) {
 func TestImageTransfersResetOnSessionSwitch(t *testing.T) {
 	data := testImageBytes(t)
 	meta := testImageMetadata(data)
-	initial := imageSpoolBytes.Load()
+	initial := im.ImageSpoolBytes.Load()
 	p := &ChordProcess{state: ControlState{SessionID: "session-1"}}
 	defer p.images.reset()
 	p.processEnvelope(&HeadlessEnvelope{Type: imageResultEvent, Payload: testImageResult(t, "call-1", []receivedImageMetadata{meta})})
@@ -329,7 +331,7 @@ func TestImageTransfersResetOnSessionSwitch(t *testing.T) {
 	}
 	path := p.images.entries[imageReceiveKey{"session-1", "", "call-1", meta.Reference}].file.Name()
 	p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"session-2"}`)})
-	if len(p.images.entries) != 0 || imageSpoolBytes.Load() != initial {
+	if len(p.images.entries) != 0 || im.ImageSpoolBytes.Load() != initial {
 		t.Fatal("session switch retained incomplete transfers")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -345,11 +347,11 @@ func TestImageReceiveFailureReportsOnceAndPreservesSibling(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			data := testImageBytes(t)
 			meta := testImageMetadata(data)
-			initial := imageSpoolBytes.Load()
+			initial := im.ImageSpoolBytes.Load()
 			warnings := 0
 			mgr := &ChordManager{}
-			var delivered []*ReceivedImage
-			mgr.SetOnImage(func(_ string, img *ReceivedImage) { delivered = append(delivered, img) })
+			var delivered []*im.ReceivedImage
+			mgr.SetOnImage(func(_ string, img *im.ReceivedImage) { delivered = append(delivered, img) })
 			p := &ChordProcess{mgr: mgr, state: ControlState{SessionID: "session"}, onEvent: func(_ string, event string, _ ControlState) {
 				if event == "transport_error" {
 					warnings++
@@ -359,13 +361,13 @@ func TestImageReceiveFailureReportsOnceAndPreservesSibling(t *testing.T) {
 			if kind != "orphan" {
 				resultMeta := meta
 				if kind == "invalid_summary" {
-					resultMeta.Width = maxGatewayImageDimension + 1
+					resultMeta.Width = im.MaxGatewayImageDimension + 1
 				}
 				p.processEnvelope(&HeadlessEnvelope{Type: imageResultEvent, Payload: testImageResult(t, "failed", []receivedImageMetadata{resultMeta})})
 			}
 			if kind == "spool" {
-				imageSpoolBytes.Store(maxGatewayImageSpool)
-				defer imageSpoolBytes.Store(initial)
+				im.ImageSpoolBytes.Store(maxGatewayImageSpool)
+				defer im.ImageSpoolBytes.Store(initial)
 			}
 			for offset := range 8 {
 				chunkOffset := offset + 1
@@ -375,10 +377,10 @@ func TestImageReceiveFailureReportsOnceAndPreservesSibling(t *testing.T) {
 				p.processEnvelope(&HeadlessEnvelope{Type: imageArtifactEvent, Payload: testImageChunk(t, "failed", meta, chunkOffset, offset == 7, data[:1])})
 			}
 			if kind == "spool" {
-				if imageSpoolBytes.Load() != maxGatewayImageSpool {
+				if im.ImageSpoolBytes.Load() != maxGatewayImageSpool {
 					t.Fatal("failed receive changed existing reservations")
 				}
-				imageSpoolBytes.Store(initial)
+				im.ImageSpoolBytes.Store(initial)
 			}
 			if warnings != 1 {
 				t.Fatalf("failure warnings = %d, want 1", warnings)
@@ -392,7 +394,7 @@ func TestImageReceiveFailureReportsOnceAndPreservesSibling(t *testing.T) {
 				t.Fatalf("warnings=%d delivered=%v", warnings, delivered)
 			}
 			delivered[0].Close()
-			if imageSpoolBytes.Load() != initial {
+			if im.ImageSpoolBytes.Load() != initial {
 				t.Fatal("failed transfer leaked spool capacity")
 			}
 		})

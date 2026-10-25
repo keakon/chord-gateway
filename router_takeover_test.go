@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestParseTakeoverCommand(t *testing.T) {
@@ -67,11 +68,11 @@ func TestTransferGuardsRouterMessagesRemindersAndOldCardsAfterRestart(t *testing
 	router := NewNotificationRouter(m)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	for _, message := range []IncomingMessage{
+	for _, message := range []im.IncomingMessage{
 		{IMType: "wechat", ChatID: "chat", Text: "new request"},
 		{IMType: "wechat", ChatID: "chat", Text: "!printf hello"},
 		{IMType: "wechat", ChatID: "chat", Text: "/answer @old-question late answer"},
-		{IMType: "wechat", ChatID: "chat", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "old-confirm", BindingInstanceID: "binding-old"}},
+		{IMType: "wechat", ChatID: "chat", InternalAction: &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "old-confirm", BindingInstanceID: "binding-old"}},
 	} {
 		router.dispatchMessage(message)
 		if m.GetProcessForKey(key) != nil {
@@ -173,7 +174,7 @@ func TestStaleCardCannotReachReplacementBinding(t *testing.T) {
 	router := NewNotificationRouter(m)
 	adapter := &stubIMAdapter{typ: "wechat"}
 	router.SetAdapter(adapter)
-	router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm-1", BindingInstanceID: "binding-old"}})
+	router.dispatchMessage(im.IncomingMessage{IMType: "wechat", ChatID: "chat", InternalAction: &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm-1", BindingInstanceID: "binding-old"}})
 	if w.String() != "" || m.GetProcessForKey(p.key) != p || !strings.Contains(adapter.lastMessage().text, "previous process") {
 		t.Fatal("stale approval reached replacement runtime")
 	}
@@ -244,7 +245,7 @@ func TestFailedExplicitSessionChangeKeepsTransferGuard(t *testing.T) {
 			router := NewNotificationRouter(m)
 			adapter := &stubIMAdapter{typ: "wechat"}
 			router.SetAdapter(adapter)
-			router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: command})
+			router.dispatchMessage(im.IncomingMessage{IMType: "wechat", ChatID: "chat", Text: command})
 			if !m.transferBlocked(key) || m.pins.Get(key) != "session-1" || m.GetProcessForKey(key) != nil {
 				t.Fatal("failed explicit change cleared guard or published target pin")
 			}

@@ -4,23 +4,25 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type DeliveryTarget struct {
-	Identity                        ChatIdentity
+	Identity                        im.ChatIdentity
 	AccountEpoch, BindingGeneration uint64
 	ProcessKey, RuntimeInstanceID   string
-	lease                           *BindingLease
+	lease                           *im.BindingLease
 	paired                          bool
 }
 
 type ReplyPermit struct {
-	Identity        ChatIdentity
+	Identity        im.ChatIdentity
 	SenderID        string
 	AccountEpoch    uint64
 	RequestID, Kind string
 	ExpiresAt       time.Time
-	ticket          AdmissionTicket
+	ticket          im.AdmissionTicket
 }
 
 type contextTextSender interface {
@@ -29,7 +31,7 @@ type contextTextSender interface {
 
 func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
 	ws, platform, chat := parseProcessKey(key)
-	target := DeliveryTarget{Identity: ChatIdentity{Platform: platform, ChatID: chat}, ProcessKey: key}
+	target := DeliveryTarget{Identity: im.ChatIdentity{Platform: platform, ChatID: chat}, ProcessKey: key}
 	if r.mgr != nil {
 		if p := r.mgr.GetProcessForKey(key); p != nil {
 			target.RuntimeInstanceID = p.bindingInstanceID
@@ -42,11 +44,11 @@ func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
 	if platform == "console" {
 		if r.admission != nil {
 			r.admission.mu.Lock()
-			gate := r.admission.gates[ChatIdentity{Platform: platform, ChatID: chat}]
+			gate := r.admission.gates[im.ChatIdentity{Platform: platform, ChatID: chat}]
 			r.admission.mu.Unlock()
 			if gate != nil {
-				lease, gen, phase := gate.snapshot()
-				if phase != "active" || lease == nil || lease.WorkspaceID != ws || lease.ctx.Err() != nil {
+				lease, gen, phase := gate.Snapshot()
+				if phase != "active" || lease == nil || lease.WorkspaceID != ws || lease.Context().Err() != nil {
 					return target, false
 				}
 				target.lease = lease
@@ -59,12 +61,12 @@ func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
 	if r.admission == nil {
 		return target, false
 	}
-	im := cfg.IMConfigByType(platform)
-	if im == nil {
+	imCfg := cfg.IMConfigByType(platform)
+	if imCfg == nil {
 		return target, false
 	}
-	owner := im.OwnerIdentity()
-	if owner == nil || im.Bindings()[chat] != ws {
+	owner := imCfg.OwnerIdentity()
+	if owner == nil || imCfg.Bindings()[chat] != ws {
 		return target, false
 	}
 	target.Identity.AccountID = owner.AccountID
@@ -75,8 +77,8 @@ func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
 	if gate == nil || closed {
 		return target, false
 	}
-	lease, generation, phase := gate.snapshot()
-	if lease == nil || phase != "active" || lease.ctx.Err() != nil {
+	lease, generation, phase := gate.Snapshot()
+	if lease == nil || phase != "active" || lease.Context().Err() != nil {
 		return target, false
 	}
 	target.lease = lease
@@ -130,14 +132,14 @@ func (r *NotificationRouter) SendBound(ctx context.Context, target DeliveryTarge
 
 func (r *NotificationRouter) SendFlowReply(ctx context.Context, permit ReplyPermit, text string) error {
 	if !time.Now().Before(permit.ExpiresAt) || !r.admission.Valid(permit.ticket) {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	p := r.admission.pairing
 	p.mu.Lock()
 	state := p.platforms[permit.Identity.Platform]
 	if state == nil || !state.ready || state.changed || state.epoch != permit.AccountEpoch || state.account != permit.Identity.AccountID {
 		p.mu.Unlock()
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	parent := state.ctx
 	p.mu.Unlock()
@@ -252,18 +254,18 @@ func (r *NotificationRouter) deliveryContext(parent context.Context, target Deli
 			done()
 			return nil, nil, context.Canceled
 		}
-		watch(target.lease.ctx)
+		watch(target.lease.Context())
 		cleanup := done
 		done = func() { cleanup(); target.lease.EndSend() }
 	}
 	return ctx, done, nil
 }
 
-func (r *NotificationRouter) sendCardToTarget(target DeliveryTarget, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
+func (r *NotificationRouter) sendCardToTarget(target DeliveryTarget, card map[string]any, fallback string) (*im.InteractiveCardHandle, error) {
 	return r.sendCardToTargetContext(context.Background(), target, card, fallback)
 }
 
-func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target DeliveryTarget, card map[string]any, fallback string) (*InteractiveCardHandle, error) {
+func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target DeliveryTarget, card map[string]any, fallback string) (*im.InteractiveCardHandle, error) {
 	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
 		return nil, err
@@ -275,13 +277,13 @@ func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target
 		return nil, errors.New("adapter unavailable")
 	}
 	handle, err := adapter.sendMessageContext(ctx, chat, "interactive", card, false)
-	if err != nil && !errors.Is(err, errDeliveryOutcomeUnknown) && fallback != "" {
+	if err != nil && !errors.Is(err, im.ErrDeliveryOutcomeUnknown) && fallback != "" {
 		err = adapter.SendTextContext(ctx, chat, fallback)
 	}
 	return handle, err
 }
 
-func (r *NotificationRouter) deliveryAdapter(platform string) IMAdapter {
+func (r *NotificationRouter) deliveryAdapter(platform string) im.IMAdapter {
 	adapter := r.findAdapterByType(platform)
 	if adapter == nil && r.admission == nil {
 		if current := r.currentAdapter(); current != nil {
@@ -303,11 +305,11 @@ func (r *NotificationRouter) ensureOwnedGate(platform, chat, workspace string) {
 	}
 	account, epoch := state.account, state.epoch
 	p.mu.Unlock()
-	im := r.getConfig().IMConfigByType(platform)
-	if im == nil || im.OwnerIdentity() == nil || im.OwnerIdentity().AccountID != account {
+	imCfg := r.getConfig().IMConfigByType(platform)
+	if imCfg == nil || imCfg.OwnerIdentity() == nil || imCfg.OwnerIdentity().AccountID != account {
 		return
 	}
-	r.admission.gate(ChatIdentity{platform, account, chat}, workspace, epoch)
+	r.admission.gate(im.ChatIdentity{Platform: platform, AccountID: account, ChatID: chat}, workspace, epoch)
 }
 
 type replyAccountContextKey struct{}

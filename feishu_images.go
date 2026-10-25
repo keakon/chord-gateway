@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const feishuImageUploadLimit = 10_000_000
@@ -26,7 +28,7 @@ const feishuMediaUploadTimeout = 2 * time.Minute
 // http.Client.Timeout cannot be extended by a longer context.
 func (a *FeishuAdapter) mediaClient() *http.Client {
 	if a.httpClient == nil {
-		return &http.Client{Transport: proxiedTransport(a.proxyFunc)}
+		return &http.Client{Transport: im.ProxiedTransport(a.proxyFunc)}
 	}
 	client := *a.httpClient
 	client.Timeout = 0
@@ -44,21 +46,21 @@ func imageExtension(mimeType string) string {
 	}
 }
 
-func (a *FeishuAdapter) SendImage(chatID string, image *ReceivedImage) error {
+func (a *FeishuAdapter) SendImage(chatID string, image *im.ReceivedImage) error {
 	return a.SendImageContext(a.connectionContext(), chatID, image)
 }
-func (a *FeishuAdapter) SendImageContext(parent context.Context, chatID string, image *ReceivedImage) error {
+func (a *FeishuAdapter) SendImageContext(parent context.Context, chatID string, image *im.ReceivedImage) error {
 	// Root the deadline at the adapter's connection context so a shutdown
 	// cancels an upload already in flight; fall back to Background when the
 	// adapter is used before Connect has run.
 	ctx, cancel := context.WithTimeout(parent, feishuMediaUploadTimeout)
 	defer cancel()
-	release, err := acquireImageUpload(ctx)
+	release, err := im.AcquireImageUpload(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
-	f, err := openReceivedImage(image)
+	f, err := im.OpenReceivedImage(image)
 	if err != nil {
 		return err
 	}
@@ -69,7 +71,7 @@ func (a *FeishuAdapter) SendImageContext(parent context.Context, chatID string, 
 	name := "image" + imageExtension(mimeType)
 	preview := size >= feishuImageUploadLimit
 	if preview {
-		data, err := imageUploadPreview(ctx, f, feishuImageUploadLimit)
+		data, err := im.ImageUploadPreview(ctx, f, feishuImageUploadLimit)
 		if err != nil {
 			return err
 		}
@@ -132,7 +134,7 @@ func (a *FeishuAdapter) uploadImage(ctx context.Context, source io.ReadSeeker, s
 		return "", fmt.Errorf("upload feishu image: %w", err)
 	}
 	defer resp.Body.Close()
-	if isAmbiguousDeliveryStatus(resp.StatusCode) {
+	if im.IsAmbiguousDeliveryStatus(resp.StatusCode) {
 		return "", fmt.Errorf("feishu image upload failed: HTTP %d", resp.StatusCode)
 	}
 	var result struct {

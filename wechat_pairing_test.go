@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatPairedReadinessRequiresSuccess(t *testing.T) {
@@ -87,7 +88,7 @@ func TestWechatSendOutcomes(t *testing.T) {
 					return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
 				})
 				err := a.SendTextContext(context.Background(), "chat", "sample")
-				if (err != nil) != tc.rejected || errors.Is(err, errDeliveryOutcomeUnknown) != tc.unknown || calls != 1 {
+				if (err != nil) != tc.rejected || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown || calls != 1 {
 					t.Fatalf("error=%v calls=%d", err, calls)
 				}
 			}
@@ -101,7 +102,7 @@ func TestWechatPairedRejectsLateAccountResponse(t *testing.T) {
 	old := &TokenData{AccountID: "bot", Token: "old"}
 	a.token.Store(&TokenData{AccountID: "different", Token: "new"})
 	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("101", "sender", "/bind /tmp/project invalid", "context"), old)
-	if result.Disposition != ReceiveRetryable || result.Reason != "transport_identity_changed" || len(a.replyContexts) != 0 {
+	if result.Disposition != im.ReceiveRetryable || result.Reason != "transport_identity_changed" || len(a.replyContexts) != 0 {
 		t.Fatal("late response affected account", result)
 	}
 }
@@ -130,7 +131,7 @@ func TestWechatPairedContextBounds(t *testing.T) {
 func TestResetTransferGuardPreservesIdentity(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	dir := t.TempDir()
-	dispatchPairingTest(r, IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)})
+	dispatchPairingTest(r, im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)})
 	stateDir := filepath.Dir(r.mgr.pins.path)
 	if err := os.WriteFile(filepath.Join(stateDir, "session-transfers.json.pending"), []byte(`{"invalid":{}}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -162,7 +163,7 @@ func TestWechatBindPreservesBoundReplyContext(t *testing.T) {
 			}
 			a.cachePairedContext("bot", "owner", "task-context", true)
 			result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("102", "owner", text, "bind-context"), a.token.Load())
-			if result.Disposition != ReceiveAccepted {
+			if result.Disposition != im.ReceiveAccepted {
 				t.Fatal(result)
 			}
 			waitIngressCondition(t, func() bool { record, err := s.store.Get(result.RecordID); return err == nil && record.Terminal() })

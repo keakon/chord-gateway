@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"encoding/base64"
@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-const maxScopedIDBytes = 2048
+const MaxScopedIDBytes = 2048
 const maxScopedJSONBytes = 1536
 
 func validIDPrefix(prefix string) bool {
@@ -38,14 +38,14 @@ func EncodeScopedID(prefix string, parts ...string) (string, error) {
 		return "", err
 	}
 	value := prefix + base64.RawURLEncoding.EncodeToString(b)
-	if len(b) > maxScopedJSONBytes || len(value) > maxScopedIDBytes {
+	if len(b) > maxScopedJSONBytes || len(value) > MaxScopedIDBytes {
 		return "", errors.New("scoped identity too long")
 	}
 	return value, nil
 }
 
 func DecodeScopedID(value, prefix string, count int) ([]string, error) {
-	if count < 1 || !validIDPrefix(prefix) || !strings.HasPrefix(value, prefix) || len(value) > maxScopedIDBytes {
+	if count < 1 || !validIDPrefix(prefix) || !strings.HasPrefix(value, prefix) || len(value) > MaxScopedIDBytes {
 		return nil, errors.New("invalid scoped identity")
 	}
 	b, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimPrefix(value, prefix))
@@ -64,7 +64,7 @@ func DecodeScopedID(value, prefix string, count int) ([]string, error) {
 }
 
 // AcquireIMAccountLock excludes other local gateways regardless of state directory.
-func AcquireIMAccountLock(platform, accountID string) (*instanceLocks, error) {
+func AcquireIMAccountLock(platform, accountID string) (*InstanceLocks, error) {
 	return AcquireIMAccountLocks(platform, accountID)
 }
 
@@ -72,7 +72,7 @@ func AcquireIMAccountLock(platform, accountID string) (*instanceLocks, error) {
 // Adapters that must exclude more than one scope per platform (Slack excludes
 // both the bot account and the app) go through here so the key format stays in
 // one place.
-func AcquireIMAccountLocks(platform string, accountIDs ...string) (*instanceLocks, error) {
+func AcquireIMAccountLocks(platform string, accountIDs ...string) (*InstanceLocks, error) {
 	keys := make([]string, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
 		key, err := EncodeScopedID("im-account-v1:", platform, accountID)
@@ -82,12 +82,12 @@ func AcquireIMAccountLocks(platform string, accountIDs ...string) (*instanceLock
 		keys = append(keys, key)
 	}
 	if len(keys) == 0 {
-		return &instanceLocks{}, nil
+		return &InstanceLocks{}, nil
 	}
-	return acquireInstanceLocks(keys)
+	return AcquireInstanceLocks(keys)
 }
 
-func supportedIMPlatform(platform string) bool {
+func SupportedIMPlatform(platform string) bool {
 	switch platform {
 	case "wechat", "feishu", "telegram", "discord", "wecom", "dingtalk", "slack":
 		return true

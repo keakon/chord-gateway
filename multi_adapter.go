@@ -8,11 +8,12 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // MultiAdapter runs multiple IM adapters in parallel.
 type MultiAdapter struct {
-	adapters []IMAdapter
+	adapters []im.IMAdapter
 	router   *NotificationRouter
 }
 
@@ -43,7 +44,7 @@ func (m *MultiAdapter) Connect() error {
 	)
 	for _, a := range m.adapters {
 		wg.Add(1)
-		go func(a IMAdapter) {
+		go func(a im.IMAdapter) {
 			defer wg.Done()
 			log.Infof("starting IM adapter type=%v", a.Type())
 			if err := a.Connect(); err != nil {
@@ -103,16 +104,16 @@ func (m *MultiAdapter) Type() string { return "multi" }
 
 func (m *MultiAdapter) SupportsLoginRenewal() bool { return false }
 
-// StartLogin returns ErrLoginNotSupported.
+// StartLogin returns im.ErrLoginNotSupported.
 // Login routing for the active adapter is handled by NotificationRouter via
-// findAdapterByType. This method exists only to satisfy the IMAdapter interface
+// findAdapterByType. This method exists only to satisfy the im.IMAdapter interface
 // for the multi adapter wrapper.
 func (m *MultiAdapter) StartLogin() (string, error) {
-	return "", ErrLoginNotSupported
+	return "", im.ErrLoginNotSupported
 }
 
 // FindAdapterByType returns the adapter matching the given type, or nil.
-func (m *MultiAdapter) FindAdapterByType(adapterType string) IMAdapter {
+func (m *MultiAdapter) FindAdapterByType(adapterType string) im.IMAdapter {
 	adapterType = config.NormalizeIMType(adapterType)
 	for _, a := range m.adapters {
 		if a.Type() == adapterType {

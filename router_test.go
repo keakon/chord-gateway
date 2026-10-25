@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // ---------------------------------------------------------------------------
@@ -108,7 +109,7 @@ func TestHandleIncomingMessageNoConfigLoaded(t *testing.T) {
 	sender := &stubIMAdapter{typ: "console"}
 	r := &NotificationRouter{adapter: sender, lastKeyChatID: make(map[string]string)}
 
-	r.dispatchMessage(IncomingMessage{IMType: "console", ChatID: "chat", SenderID: "user", Text: "/status"})
+	r.dispatchMessage(im.IncomingMessage{IMType: "console", ChatID: "chat", SenderID: "user", Text: "/status"})
 
 	if got := sender.lastMessage().text; !strings.Contains(got, "Configuration not loaded") {
 		t.Fatalf("message = %q", got)
@@ -135,7 +136,7 @@ func TestHandleIncomingMessageRoutesMissingWorkspaceError(t *testing.T) {
 		lastKeyChatID: make(map[string]string),
 	}
 
-	r.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat-1", SenderID: "chat-1", Text: "hello"})
+	r.dispatchMessage(im.IncomingMessage{IMType: "wechat", ChatID: "chat-1", SenderID: "chat-1", Text: "hello"})
 	if got := sender.lastMessage().text; !strings.Contains(got, "workspace_id") {
 		t.Fatalf("message = %q", got)
 	}
@@ -150,7 +151,7 @@ func TestHandleIncomingMessageNoWorkspace(t *testing.T) {
 		lastKeyChatID: make(map[string]string),
 	}
 
-	r.dispatchMessage(IncomingMessage{IMType: "console", ChatID: "chat-1", Text: "hello"})
+	r.dispatchMessage(im.IncomingMessage{IMType: "console", ChatID: "chat-1", Text: "hello"})
 	if got := sender.lastMessage().text; !strings.Contains(got, "console requires exactly one workspace") {
 		t.Fatalf("message = %q", got)
 	}
@@ -176,11 +177,11 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 	}
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 
-	r.dispatchMessage(IncomingMessage{
+	r.dispatchMessage(im.IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
 		Text:   "",
-		InternalAction: &InternalAction{
+		InternalAction: &im.InternalAction{
 			Type:      "confirm",
 			Action:    "allow",
 			RequestID: "req-confirm",
@@ -199,11 +200,11 @@ func TestHandleIncomingMessageUsesInternalAction(t *testing.T) {
 	stdin = &captureWriteCloser{}
 	mgr.procs[key].stdin = stdin
 	attachQuestionTestReceipts(mgr.procs[key])
-	r.dispatchMessage(IncomingMessage{
+	r.dispatchMessage(im.IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
 		Text:   "",
-		InternalAction: &InternalAction{
+		InternalAction: &im.InternalAction{
 			Type:      "question",
 			RequestID: "req-question",
 			Value:     "yes",
@@ -233,7 +234,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
-		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept", Agent: "reviewer", Pool: "fast"}, key, proc)
+		r.handleHandoffCommand(ws, "chat-1", im.IMCommand{Type: "handoff", Action: "accept", Agent: "reviewer", Pool: "fast"}, key, proc)
 
 		var sent map[string]any
 		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
@@ -259,7 +260,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
-		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept"}, key, proc)
+		r.handleHandoffCommand(ws, "chat-1", im.IMCommand{Type: "handoff", Action: "accept"}, key, proc)
 
 		var sent map[string]any
 		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
@@ -285,7 +286,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
-		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "deny", Reason: "revise plan"}, key, proc)
+		r.handleHandoffCommand(ws, "chat-1", im.IMCommand{Type: "handoff", Action: "deny", Reason: "revise plan"}, key, proc)
 
 		var sent map[string]any
 		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
@@ -304,7 +305,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		r := &NotificationRouter{adapter: sender}
 		proc := &ChordProcess{}
 
-		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept"}, key, proc)
+		r.handleHandoffCommand(ws, "chat-1", im.IMCommand{Type: "handoff", Action: "accept"}, key, proc)
 
 		if got := sender.lastMessage().text; got != "⚠️ No pending handoff to respond to." {
 			t.Fatalf("message = %q", got)
@@ -317,7 +318,7 @@ func TestHandleHandoffCommand(t *testing.T) {
 		proc := &ChordProcess{stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
 		proc.state.PendingHandoff = &HandoffPayload{RequestID: "handoff-4"}
 
-		r.handleHandoffCommand(ws, "chat-1", IMCommand{Type: "handoff", Action: "accept"}, key, proc)
+		r.handleHandoffCommand(ws, "chat-1", im.IMCommand{Type: "handoff", Action: "accept"}, key, proc)
 
 		if got := sender.lastMessage().text; got != "❌ Failed to send handoff response." {
 			t.Fatalf("message = %q", got)
@@ -340,7 +341,7 @@ func TestHandleLocalShellCommand(t *testing.T) {
 		mgr.procs[key] = proc
 		defer r.stopReminder(key)
 
-		r.handleLocalShellCommand(ws, "chat-1", IMCommand{Type: "local_shell", Content: " pwd "}, key, proc)
+		r.handleLocalShellCommand(ws, "chat-1", im.IMCommand{Type: "local_shell", Content: " pwd "}, key, proc)
 
 		var sent map[string]any
 		if err := json.Unmarshal([]byte(strings.TrimSpace(stdin.String())), &sent); err != nil {
@@ -358,7 +359,7 @@ func TestHandleLocalShellCommand(t *testing.T) {
 		sender := &stubIMAdapter{typ: "wechat"}
 		r := &NotificationRouter{adapter: sender}
 
-		r.handleLocalShellCommand(ws, "chat-1", IMCommand{Type: "local_shell", Content: "   "}, key, &ChordProcess{})
+		r.handleLocalShellCommand(ws, "chat-1", im.IMCommand{Type: "local_shell", Content: "   "}, key, &ChordProcess{})
 
 		if got := sender.lastMessage().text; got != "⚠️ Empty command after !" {
 			t.Fatalf("message = %q", got)
@@ -370,7 +371,7 @@ func TestHandleLocalShellCommand(t *testing.T) {
 		r := &NotificationRouter{adapter: sender}
 		proc := &ChordProcess{stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
 
-		r.handleLocalShellCommand(ws, "chat-1", IMCommand{Type: "local_shell", Content: "pwd"}, key, proc)
+		r.handleLocalShellCommand(ws, "chat-1", im.IMCommand{Type: "local_shell", Content: "pwd"}, key, proc)
 
 		if got := sender.lastMessage().text; got != "❌ Failed to run local shell command." {
 			t.Fatalf("message = %q", got)
@@ -402,7 +403,7 @@ func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.
 	oldProc := &ChordProcess{key: key, workspaceID: "ws1", stdin: &errorWriteCloser{err: errors.New("closed pipe")}}
 	mgr.procs[key] = oldProc
 
-	r.handleSendCommand(ws, "chat-1", IMCommand{Type: "send", Content: "hello after cleanup"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"}, key, oldProc)
+	r.handleSendCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "hello after cleanup"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"}, key, oldProc)
 	defer mgr.StopAll(time.Second)
 
 	if got := mgr.pins.Get(key); got != "" {
@@ -494,7 +495,7 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
 	r := &NotificationRouter{
-		adapter: &MultiAdapter{adapters: []IMAdapter{wechat, feishu}},
+		adapter: &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}},
 		mgr:     newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"feishu-chat": "ws1"}}}, {Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"wechat-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{
 			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat",
@@ -933,11 +934,11 @@ func TestRecordCardHandlePrunesExpiredEntries(t *testing.T) {
 	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
 
 	staleKey := cardHandleKey(key, "confirm", "req-stale")
-	r.cardHandles[staleKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_stale"}, recordedAt: time.Now().Add(-interactiveCardHandleTTL - time.Minute)}
+	r.cardHandles[staleKey] = cardHandleEntry{handle: im.InteractiveCardHandle{MessageID: "om_stale"}, recordedAt: time.Now().Add(-interactiveCardHandleTTL - time.Minute)}
 	freshKey := cardHandleKey(key, "question", "req-fresh")
-	r.cardHandles[freshKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_fresh"}, recordedAt: time.Now().Add(-time.Minute)}
+	r.cardHandles[freshKey] = cardHandleEntry{handle: im.InteractiveCardHandle{MessageID: "om_fresh"}, recordedAt: time.Now().Add(-time.Minute)}
 
-	r.recordCardHandle(key, "confirm", "req-new", &InteractiveCardHandle{MessageID: "om_new"})
+	r.recordCardHandle(key, "confirm", "req-new", &im.InteractiveCardHandle{MessageID: "om_new"})
 
 	if _, ok := r.cardHandles[staleKey]; ok {
 		t.Fatal("expired card handle was not pruned")
@@ -955,7 +956,7 @@ func TestTakeCardHandleDropsExpiredEntries(t *testing.T) {
 	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
 
 	staleKey := cardHandleKey(key, "confirm", "req-stale")
-	r.cardHandles[staleKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_stale"}, recordedAt: time.Now().Add(-interactiveCardHandleTTL - time.Minute)}
+	r.cardHandles[staleKey] = cardHandleEntry{handle: im.InteractiveCardHandle{MessageID: "om_stale"}, recordedAt: time.Now().Add(-interactiveCardHandleTTL - time.Minute)}
 	if _, ok := r.takeCardHandle(key, "confirm", "req-stale"); ok {
 		t.Fatal("expired card handle must not be returned")
 	}
@@ -964,7 +965,7 @@ func TestTakeCardHandleDropsExpiredEntries(t *testing.T) {
 	}
 
 	freshKey := cardHandleKey(key, "question", "req-fresh")
-	r.cardHandles[freshKey] = cardHandleEntry{handle: InteractiveCardHandle{MessageID: "om_fresh"}, recordedAt: time.Now().Add(-time.Minute)}
+	r.cardHandles[freshKey] = cardHandleEntry{handle: im.InteractiveCardHandle{MessageID: "om_fresh"}, recordedAt: time.Now().Add(-time.Minute)}
 	if handle, ok := r.takeCardHandle(key, "question", "req-fresh"); !ok || handle.MessageID != "om_fresh" {
 		t.Fatalf("fresh card handle = %#v, ok=%v", handle, ok)
 	}
@@ -1406,7 +1407,7 @@ func TestHandoffCommandAfterCancelledFallsBackToNoPending(t *testing.T) {
 	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_request", Payload: json.RawMessage(`{"request_id":"handoff-1","plan_path":"plan.md","version":1}`)})
 	proc.processEnvelope(&HeadlessEnvelope{Type: "handoff_cancelled", Payload: json.RawMessage(`{"request_id":"handoff-1","reason":"superseded","version":2}`)})
 
-	for _, cmd := range []IMCommand{
+	for _, cmd := range []im.IMCommand{
 		{Type: "handoff", Action: "accept"},
 		{Type: "handoff", Action: "deny", Reason: "no longer needed"},
 	} {
@@ -1547,8 +1548,8 @@ func TestChatIDLookupHelpers(t *testing.T) {
 
 func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
-	feishu := &stubIMAdapter{typ: "feishu", startLoginFunc: func() (string, error) { return "", ErrLoginNotSupported }}
-	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+	feishu := &stubIMAdapter{typ: "feishu", startLoginFunc: func() (string, error) { return "", im.ErrLoginNotSupported }}
+	multi := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{adapter: multi}
 
 	if got := r.findAdapterByType("wechat"); got != wechat {
@@ -1604,7 +1605,7 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("login not supported", func(t *testing.T) {
 		loginless := &stubIMAdapter{typ: "feishu"}
 		sender := &stubIMAdapter{typ: "wechat"}
-		r := &NotificationRouter{adapter: &MultiAdapter{adapters: []IMAdapter{sender, loginless}}}
+		r := &NotificationRouter{adapter: &MultiAdapter{adapters: []im.IMAdapter{sender, loginless}}}
 		r.handleLogin("chat", "feishu")
 		if got := sender.lastMessage().text; !strings.Contains(got, "Feishu does not support login renewal") {
 			t.Fatalf("message = %q", got)
@@ -1634,7 +1635,7 @@ func TestHandleLogin(t *testing.T) {
 func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
 	feishu := &stubIMAdapter{typ: "feishu"}
-	multi := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+	multi := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 	r := &NotificationRouter{
 		adapter:       multi,
 		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"feishu-chat": "ws1"}}}, {Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"wechat-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
@@ -2153,7 +2154,7 @@ func roleHandlerTestRouter(sender *stubIMAdapter, proc *ChordProcess) (*Notifica
 // runRoleHandler drives handleRoleCommand in a goroutine and feeds it
 // role_response envelopes whenever it issues the matching role request.
 // responses must line up with requests by index.
-func runRoleHandler(t *testing.T, sender *stubIMAdapter, proc *ChordProcess, cmd IMCommand, incoming IncomingMessage, requests []string, responses []RoleResponse) {
+func runRoleHandler(t *testing.T, sender *stubIMAdapter, proc *ChordProcess, cmd im.IMCommand, incoming im.IncomingMessage, requests []string, responses []RoleResponse) {
 	t.Helper()
 	r, key := roleHandlerTestRouter(sender, proc)
 	ws := &config.Workspace{ID: "ws1", Path: "/tmp/ws1"}
@@ -2209,7 +2210,7 @@ func roleListResponse(current string, names ...string) RoleResponse {
 func TestRoleMenuShownForBareRole(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	proc := newRoleTestProcess("wechat")
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
 		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
 	msg := sender.lastMessage().text
 	requireContains(t, msg, "Current role: builder")
@@ -2221,7 +2222,7 @@ func TestRoleMenuShownForBareRole(t *testing.T) {
 func TestRoleSwitchByNumber(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	proc := newRoleTestProcess("wechat")
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "2"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "2"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
 		[]string{"list", "set"}, []RoleResponse{roleListResponse("builder", "builder", "planner"), {OK: true, Role: "planner"}})
 	requireContains(t, sender.lastMessage().text, "✅ Switched role: planner")
 }
@@ -2229,7 +2230,7 @@ func TestRoleSwitchByNumber(t *testing.T) {
 func TestRoleSwitchByNameSkipsStaleNumber(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	proc := newRoleTestProcess("wechat")
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "reviewer"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "reviewer"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
 		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
 	msg := sender.lastMessage().text
 	requireContains(t, msg, `"reviewer" is not an available role`)
@@ -2241,7 +2242,7 @@ func TestRoleSwitchByNameSkipsStaleNumber(t *testing.T) {
 func TestRoleAlreadyCurrentIsNoOp(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	proc := newRoleTestProcess("wechat")
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "1"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "1"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
 		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
 	requireContains(t, sender.lastMessage().text, "builder is already the current role")
 	if s := proc.stdin.(*captureWriteCloser).String(); strings.Contains(s, `"action":"set"`) {
@@ -2252,7 +2253,7 @@ func TestRoleAlreadyCurrentIsNoOp(t *testing.T) {
 func TestRoleInvalidNumberIsRejected(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	proc := newRoleTestProcess("wechat")
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "99"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "99"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
 		[]string{"list"}, []RoleResponse{roleListResponse("builder", "builder", "planner")})
 	requireContains(t, sender.lastMessage().text, "Invalid role selection")
 	if s := proc.stdin.(*captureWriteCloser).String(); strings.Contains(s, `"action":"set"`) {
@@ -2263,7 +2264,7 @@ func TestRoleInvalidNumberIsRejected(t *testing.T) {
 func TestRoleSwitchRejectedMessageIsShown(t *testing.T) {
 	sender := &stubIMAdapter{typ: "wechat"}
 	proc := newRoleTestProcess("wechat")
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "planner"}, IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "planner"}, im.IncomingMessage{IMType: "wechat", ChatID: "chat-1"},
 		[]string{"list", "set"},
 		[]RoleResponse{roleListResponse("builder", "builder", "planner"), {OK: false, Message: "resolve the pending handoff before switching role"}})
 	requireContains(t, sender.lastMessage().text, "resolve the pending handoff before switching role")
@@ -2272,8 +2273,8 @@ func TestRoleSwitchRejectedMessageIsShown(t *testing.T) {
 func TestRoleInternalActionSwitchesRole(t *testing.T) {
 	sender := &stubIMAdapter{typ: "feishu"}
 	proc := newRoleTestProcess("feishu")
-	incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-123", Value: "planner"}}
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "planner"}, incoming,
+	incoming := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &im.InternalAction{Type: "role", Action: "switch", RequestID: "role-123", Value: "planner"}}
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "planner"}, incoming,
 		[]string{"list", "set"},
 		[]RoleResponse{roleListResponse("builder", "builder", "planner"), {OK: true, Role: "planner"}})
 	requireContains(t, sender.lastMessage().text, "✅ Switched role: planner")
@@ -2286,8 +2287,8 @@ func TestRoleInternalActionNumericNameMatchedByName(t *testing.T) {
 	// role instead.
 	sender := &stubIMAdapter{typ: "feishu"}
 	proc := newRoleTestProcess("feishu")
-	incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-456", Value: "2"}}
-	runRoleHandler(t, sender, proc, IMCommand{Type: "role", Content: "2"}, incoming,
+	incoming := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &im.InternalAction{Type: "role", Action: "switch", RequestID: "role-456", Value: "2"}}
+	runRoleHandler(t, sender, proc, im.IMCommand{Type: "role", Content: "2"}, incoming,
 		[]string{"list", "set"},
 		[]RoleResponse{roleListResponse("builder", "builder", "planner", "2"), {OK: true, Role: "2"}})
 	requireContains(t, sender.lastMessage().text, "✅ Switched role: 2")
@@ -2345,14 +2346,14 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 			r := &NotificationRouter{adapter: feishu, lastKeyChatID: make(map[string]string)}
 			proc := newRoleTestProcess("feishu")
 			key := proc.key
-			r.recordCardHandle(key, "role", "role-1", &InteractiveCardHandle{MessageID: "om_role_1"})
+			r.recordCardHandle(key, "role", "role-1", &im.InteractiveCardHandle{MessageID: "om_role_1"})
 			ws := &config.Workspace{ID: "ws1", Path: "/tmp/ws1"}
-			incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"}}
+			incoming := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &im.InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"}}
 
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				r.handleRoleCommand(ws, "chat-1", IMCommand{Type: "role", Content: "planner"}, incoming, key, proc)
+				r.handleRoleCommand(ws, "chat-1", im.IMCommand{Type: "role", Content: "planner"}, incoming, key, proc)
 			}()
 			waitForRoleRequest(t, proc.stdin.(*captureWriteCloser), "list")
 			if tc.failSwitch || tc.timeout {
@@ -2418,14 +2419,14 @@ func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
 	r := &NotificationRouter{adapter: feishu, lastKeyChatID: make(map[string]string)}
 	proc := newRoleTestProcess("feishu")
 	key := proc.key
-	r.recordCardHandle(key, "role", "role-1", &InteractiveCardHandle{MessageID: "om_role_1"})
+	r.recordCardHandle(key, "role", "role-1", &im.InteractiveCardHandle{MessageID: "om_role_1"})
 	ws := &config.Workspace{ID: "ws1", Path: "/tmp/ws1"}
-	incoming := IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"}}
+	incoming := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", InternalAction: &im.InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"}}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		r.handleRoleCommand(ws, "chat-1", IMCommand{Type: "role", Content: "planner"}, incoming, key, proc)
+		r.handleRoleCommand(ws, "chat-1", im.IMCommand{Type: "role", Content: "planner"}, incoming, key, proc)
 	}()
 	waitForRoleRequest(t, proc.stdin.(*captureWriteCloser), "list")
 	proc.processEnvelope(&HeadlessEnvelope{Type: "role_response", Payload: []byte(`{"ok":true,"role":"builder","roles":[{"name":"builder"},{"name":"planner"}]}`)})
@@ -2449,7 +2450,7 @@ func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
 }
 
 func TestCommandFromInternalActionRole(t *testing.T) {
-	cmd := commandFromInternalAction(&InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"})
+	cmd := commandFromInternalAction(&im.InternalAction{Type: "role", Action: "switch", RequestID: "role-1", Value: "planner"})
 	if cmd.Type != "role" || cmd.Content != "planner" {
 		t.Fatalf("commandFromInternalAction(role) = %#v", cmd)
 	}
@@ -2545,7 +2546,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("cancel sends command and ack", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "cancel"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "cancel"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "🛑 Cancel requested." {
 			t.Fatalf("message = %q", got)
 		}
@@ -2556,7 +2557,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm uses matching internal request id", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-1"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-1"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "confirm", Action: "allow", RequestID: "req-1"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "✅ allowed" {
 			t.Fatalf("message = %q", got)
 		}
@@ -2567,7 +2568,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm rejects mismatched internal request id", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-current"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow", RequestID: "req-stale"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "confirm", Action: "allow", RequestID: "req-stale"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "No matching pending confirmation") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2578,7 +2579,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm uses current pending request id and deny reason", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-pending"}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny", Reason: "not safe"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "confirm", Action: "deny", Reason: "not safe"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "✅ denied: not safe" {
 			t.Fatalf("message = %q", got)
 		}
@@ -2592,7 +2593,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("plain text during Done confirm becomes deny reason", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-done", ToolName: "Done", ArgsJSON: `{"report":"done"}`}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "Need to update docs first"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "Need to update docs first"}, "wechat", nil)
 		if got := stdin.String(); !strings.Contains(got, `"request_id":"req-done"`) || !strings.Contains(got, `"action":"deny"`) || !strings.Contains(got, `"deny_reason":"Need to update docs first"`) {
 			t.Fatalf("stdin = %q", got)
 		}
@@ -2603,7 +2604,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("Done deny requires reason", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{PendingConfirm: &ConfirmPayload{RequestID: "req-done", ToolName: "Done", ArgsJSON: `{"report":"done"}`}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "deny"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "confirm", Action: "deny"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "Rejecting Done requires a reason") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2614,7 +2615,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("confirm without pending sends follow-up instead of approval", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "confirm", Action: "allow"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "confirm", Action: "allow"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "sent as a follow-up message") || strings.Contains(got, "No pending confirmation") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2626,7 +2627,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("question maps numeric answers", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Options: []string{"yes", "no"}, OptionIDs: []string{"yes", "no"}, Version: 1}}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"1"}}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "question", Answers: []string{"1"}}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "✅ Answer accepted (req-q): yes" {
 			t.Fatalf("message = %q", got)
 		}
@@ -2637,11 +2638,11 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("historical question requires explicit target", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{Questions: map[string]*QuestionPayload{"req-q": {RequestID: "req-q", Question: "Choose environment", Options: []string{"dev", "prod"}, OptionIDs: []string{"dev", "prod"}, Version: 1, Outcome: "no_response"}}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
 		if !strings.Contains(sender.lastMessage().text, "No pending question") || stdin.String() != "" {
 			t.Fatal("historical question guessed without target")
 		}
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", RequestID: "req-q", Answers: []string{"prod"}}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "question", RequestID: "req-q", Answers: []string{"prod"}}, "wechat", nil)
 		if !strings.Contains(sender.lastMessage().text, "Answer accepted") || !strings.Contains(stdin.String(), `"action":"revise"`) {
 			t.Fatalf("historical revision: %s %s", sender.lastMessage().text, stdin.String())
 		}
@@ -2659,7 +2660,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		if got := proc.State().Questions["req-q"]; got != nil {
 			t.Fatalf("ExpiredQuestion after switch = %+v, want nil", got)
 		}
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "question", Answers: []string{"prod"}}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "No pending question") {
 			t.Fatalf("late answer after a session switch = %q, want it rejected", got)
 		}
@@ -2667,7 +2668,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("plain send keeps pending question", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{Questions: map[string]*QuestionPayload{"req-auto": {RequestID: "req-auto", Version: 1}}})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "free text answer"}, "wechat", nil)
 		if got := sender.lastMessage().text; got != "" {
 			t.Fatalf("message = %q", got)
 		}
@@ -2707,9 +2708,9 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		feishuOpenBaseURL = server.URL
 		defer func() { feishuOpenBaseURL = oldBaseURL }()
 		r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]cardHandleEntry)}
-		r.recordCardHandle(key, "question", "req-auto", &InteractiveCardHandle{MessageID: "om_sent_1"})
-		msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
-		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", IMCommand{Type: "send", Content: "free text answer"}, "feishu", &msg)
+		r.recordCardHandle(key, "question", "req-auto", &im.InteractiveCardHandle{MessageID: "om_sent_1"})
+		msg := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
+		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", im.IMCommand{Type: "send", Content: "free text answer"}, "feishu", &msg)
 		// Submitting an answer must not patch the card: only the core
 		// question_resolved(answered) event proves the answer was accepted.
 		if patchedPath != "" {
@@ -2722,7 +2723,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("send blocks local-only slash commands", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "/model"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "/model"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "only available in local TUI") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2733,7 +2734,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("send writes user message without auxiliary status request", func(t *testing.T) {
 		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "send", Content: "hello"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "hello"}, "wechat", nil)
 		if len(sender.sentMessages()) != 0 {
 			t.Fatalf("unexpected notification messages: %#v", sender.sentMessages())
 		}
@@ -2748,7 +2749,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 
 	t.Run("unknown command type warns", func(t *testing.T) {
 		r, _, sender, _, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", IMCommand{Type: "mystery"}, "wechat", nil)
+		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "mystery"}, "wechat", nil)
 		if got := sender.lastMessage().text; !strings.Contains(got, "Unknown command") {
 			t.Fatalf("message = %q", got)
 		}
@@ -2934,7 +2935,7 @@ func TestQuestionCommandRevisesExpiredWhileNewQuestionPending(t *testing.T) {
 	attachQuestionTestReceipts(proc)
 	proc.state.applyQuestionState(&QuestionPayload{RequestID: "old", Version: 2, Outcome: QuestionResolvedNoResponse})
 	proc.state.applyQuestionState(&QuestionPayload{RequestID: "new", Version: 1})
-	r.handleQuestionCommand(ws, "chat-1", IMCommand{Type: "question", RequestID: "old", Answers: []string{"yes"}}, IncomingMessage{IMType: "wechat", MessageID: "input-1"}, "ws1|wechat|chat-1", proc)
+	r.handleQuestionCommand(ws, "chat-1", im.IMCommand{Type: "question", RequestID: "old", Answers: []string{"yes"}}, im.IncomingMessage{IMType: "wechat", MessageID: "input-1"}, "ws1|wechat|chat-1", proc)
 	if !strings.Contains(stdin.String(), `"action":"revise"`) || !strings.Contains(sender.lastMessage().text, "accepted") {
 		t.Fatal("historical answer failed with a new pending question")
 	}
@@ -2966,11 +2967,11 @@ func TestFormatQuestionResolvedNotification(t *testing.T) {
 }
 
 func TestCommandFromInternalActionQuestion(t *testing.T) {
-	cmd := commandFromInternalAction(&InternalAction{Type: "question", Action: "answer", RequestID: "q-1", Value: "yes"})
+	cmd := commandFromInternalAction(&im.InternalAction{Type: "question", Action: "answer", RequestID: "q-1", Value: "yes"})
 	if cmd.Type != "question" || cmd.RequestID != "q-1" || strings.Join(cmd.Answers, ",") != "yes" {
 		t.Fatalf("button click command = %#v", cmd)
 	}
-	cmd = commandFromInternalAction(&InternalAction{Type: "question", Action: "answer", RequestID: "q-1", Values: []string{"1", "3"}})
+	cmd = commandFromInternalAction(&im.InternalAction{Type: "question", Action: "answer", RequestID: "q-1", Values: []string{"1", "3"}})
 	if strings.Join(cmd.Answers, ",") != "1,3" {
 		t.Fatalf("form submit command = %#v", cmd)
 	}
@@ -3069,10 +3070,10 @@ func TestHandleIncomingMessageQuestionFormSubmit(t *testing.T) {
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 	defer r.stopReminder(key)
 
-	r.dispatchMessage(IncomingMessage{
+	r.dispatchMessage(im.IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
-		InternalAction: &InternalAction{
+		InternalAction: &im.InternalAction{
 			Type:      "question",
 			Action:    "answer",
 			RequestID: "req-q",
@@ -3109,10 +3110,10 @@ func TestHandleIncomingMessageQuestionNumericLabelButton(t *testing.T) {
 	r := &NotificationRouter{mgr: mgr, adapter: sender, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState)}
 	defer r.stopReminder(key)
 
-	r.dispatchMessage(IncomingMessage{
+	r.dispatchMessage(im.IncomingMessage{
 		IMType: "feishu",
 		ChatID: "oc_chat",
-		InternalAction: &InternalAction{
+		InternalAction: &im.InternalAction{
 			Type:      "question",
 			Action:    "answer",
 			RequestID: "req-q",

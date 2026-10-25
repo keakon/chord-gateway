@@ -14,13 +14,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func newPairingCommand(paths *config.Paths, configFile *string) *cobra.Command {
 	pairing := &cobra.Command{Use: "pairing", Short: "Manage local pairing identity"}
 	var platform string
 	reset := &cobra.Command{Use: "reset", Short: "Clear one platform identity and automatic session pins", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if !supportedIMPlatform(platform) {
+		if !im.SupportedIMPlatform(platform) {
 			return errors.New("--platform must name a supported IM platform")
 		}
 		store, locks, err := loadLockedConfiguration(*configFile, paths)

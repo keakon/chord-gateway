@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -101,13 +103,13 @@ func (a *WechatAdapter) currentPollingEpoch(token *TokenData) (uint64, bool) {
 type wechatPollingBatch struct {
 	response  *ilinkGetUpdatesResponse
 	position  int
-	pending   ReceiveResult
+	pending   im.ReceiveResult
 	uncertain bool
 }
 
 // advance handles one item at a time. A retry keeps the same position; an
 // uncertain item is queried instead of being accepted a second time.
-func (b *wechatPollingBatch) advance(ctx context.Context, receive, resolve func(context.Context, ilinkMessage, ReceiveResult) ReceiveResult) bool {
+func (b *wechatPollingBatch) advance(ctx context.Context, receive, resolve func(context.Context, ilinkMessage, im.ReceiveResult) im.ReceiveResult) bool {
 	for b.position < len(b.response.Msgs) && ctx.Err() == nil {
 		msg := b.response.Msgs[b.position]
 		if b.uncertain {
@@ -116,16 +118,16 @@ func (b *wechatPollingBatch) advance(ctx context.Context, receive, resolve func(
 			b.pending = receive(ctx, msg, b.pending)
 		}
 		switch b.pending.Disposition {
-		case ReceiveAccepted, ReceiveDuplicate, ReceiveTransportIgnored:
+		case im.ReceiveAccepted, im.ReceiveDuplicate, im.ReceiveTransportIgnored:
 			b.position++
 			b.uncertain = false
-		case ReceiveRejected:
+		case im.ReceiveRejected:
 			if b.pending.RecordID == "" {
 				return false // A nonpersisted refusal cannot certify batch progress.
 			}
 			b.position++
 			b.uncertain = false
-		case ReceiveUncertain:
+		case im.ReceiveUncertain:
 			b.uncertain = true
 			return false
 		default:
@@ -138,7 +140,7 @@ func (b *wechatPollingBatch) advance(ctx context.Context, receive, resolve func(
 
 func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 	var prepared *TokenData
-	var cursor IngressCursor
+	var cursor im.IngressCursor
 	consecutiveFailures := 0
 	for ctx.Err() == nil {
 		token := a.token.Load()
@@ -225,13 +227,13 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 			continue
 		}
 		batch := wechatPollingBatch{response: resp}
-		receive := func(ctx context.Context, msg ilinkMessage, _ ReceiveResult) ReceiveResult {
+		receive := func(ctx context.Context, msg ilinkMessage, _ im.ReceiveResult) im.ReceiveResult {
 			if currentEpoch, ok := a.currentPollingEpoch(token); !ok || currentEpoch != epoch {
-				return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
+				return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "transport_identity_changed"}
 			}
 			return a.receiveIncomingMessage(ctx, msg, token)
 		}
-		resolve := func(ctx context.Context, msg ilinkMessage, result ReceiveResult) ReceiveResult {
+		resolve := func(ctx context.Context, msg ilinkMessage, result im.ReceiveResult) im.ReceiveResult {
 			if currentEpoch, ok := a.currentPollingEpoch(token); !ok || currentEpoch != epoch {
 				return result
 			}
@@ -304,36 +306,36 @@ func wechatPollingBackoff(failures *int) time.Duration {
 	return ilinkRetryDelay
 }
 
-func wechatCursorBuf(cursor IngressCursor) string {
+func wechatCursorBuf(cursor im.IngressCursor) string {
 	if cursor.Wechat == nil {
 		return ""
 	}
 	return cursor.Wechat.Buf
 }
 
-func nextWechatCursor(current IngressCursor, account, buf string) (IngressCursor, error) {
+func nextWechatCursor(current im.IngressCursor, account, buf string) (im.IngressCursor, error) {
 	if current.Generation == ^uint64(0) {
-		return IngressCursor{}, errIngressCursorConflict
+		return im.IngressCursor{}, errIngressCursorConflict
 	}
 	version := uint64(1)
 	if current.Wechat != nil {
 		if current.Wechat.BatchVersion == ^uint64(0) {
-			return IngressCursor{}, errIngressCursorConflict
+			return im.IngressCursor{}, errIngressCursorConflict
 		}
 		version = current.Wechat.BatchVersion + 1
 	}
 	if buf == "" {
 		buf = wechatCursorBuf(current)
 	}
-	next := IngressCursor{Kind: "wechat", Version: 1, Generation: current.Generation + 1, Wechat: &WechatIngressCursor{AccountID: account, Buf: buf, BatchVersion: version}}
+	next := im.IngressCursor{Kind: "wechat", Version: 1, Generation: current.Generation + 1, Wechat: &im.WechatIngressCursor{AccountID: account, Buf: buf, BatchVersion: version}}
 	return next, validateIngressCursor("wechat", &next)
 }
 
-func equalWechatCursor(a, b IngressCursor) bool {
+func equalWechatCursor(a, b im.IngressCursor) bool {
 	return a.Kind == b.Kind && a.Version == b.Version && a.Generation == b.Generation && a.Telegram == nil && b.Telegram == nil && a.Wechat != nil && b.Wechat != nil && *a.Wechat == *b.Wechat
 }
 
-func (a *WechatAdapter) commitPollingCursor(ctx context.Context, token *TokenData, epoch uint64, previous, next IngressCursor) error {
+func (a *WechatAdapter) commitPollingCursor(ctx context.Context, token *TokenData, epoch uint64, previous, next im.IngressCursor) error {
 	r := a.pairingRouter()
 	p := r.admission.pairing
 	if err := lockIngressMutex(ctx, &p.store.txMu); err != nil {

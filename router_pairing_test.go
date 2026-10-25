@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type pairingTestAdapter struct {
@@ -22,7 +23,7 @@ func (a *pairingTestAdapter) Connect() error              { return nil }
 func (a *pairingTestAdapter) Disconnect()                 {}
 func (a *pairingTestAdapter) Type() string                { return "wechat" }
 func (a *pairingTestAdapter) SupportsLoginRenewal() bool  { return false }
-func (a *pairingTestAdapter) StartLogin() (string, error) { return "", ErrLoginNotSupported }
+func (a *pairingTestAdapter) StartLogin() (string, error) { return "", im.ErrLoginNotSupported }
 func (a *pairingTestAdapter) SendText(chat, text string) error {
 	return a.SendTextContext(context.Background(), chat, text)
 }
@@ -63,12 +64,12 @@ func pairedTestRouterWithConfig(t *testing.T, data string) (*NotificationRouter,
 	t.Fatal("pairing instructions missing")
 	return nil, ""
 }
-func dispatchPairingTest(r *NotificationRouter, msg IncomingMessage) bool {
+func dispatchPairingTest(r *NotificationRouter, msg im.IncomingMessage) bool {
 	ticket, ok := r.admission.Authorize(msg)
 	if !ok {
 		return false
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	r.HandleIncomingMessage(msg)
 	return true
 }
@@ -76,7 +77,7 @@ func dispatchPairingTest(r *NotificationRouter, msg IncomingMessage) bool {
 func TestPairingBindAndReset(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	dir := t.TempDir()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
 	if !dispatchPairingTest(r, msg) {
 		t.Fatal("pairing rejected")
 	}
@@ -146,12 +147,12 @@ func TestPairingConcurrentClaimHasSingleOwner(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, sender := range []string{"first", "second"} {
 		wg.Go(func() {
-			dispatchPairingTest(r, IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: sender, SenderID: sender, MessageID: sender, Text: fmt.Sprintf("/bind %q %s", dir, code)})
+			dispatchPairingTest(r, im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: sender, SenderID: sender, MessageID: sender, Text: fmt.Sprintf("/bind %q %s", dir, code)})
 		})
 	}
 	wg.Wait()
-	im := r.getConfig().IMConfigByType("wechat")
-	if im.OwnerIdentity() == nil || len(im.Bindings()) != 1 {
+	imCfg := r.getConfig().IMConfigByType("wechat")
+	if imCfg.OwnerIdentity() == nil || len(imCfg.Bindings()) != 1 {
 		t.Fatal("claim did not select exactly one owner")
 	}
 }
@@ -159,7 +160,7 @@ func TestPairingConcurrentClaimHasSingleOwner(t *testing.T) {
 func TestPairedRebindInvalidatesOldTicket(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	first, second := t.TempDir(), t.TempDir()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", first, code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", first, code)}
 	dispatchPairingTest(r, msg)
 	msg.MessageID = "old-task"
 	msg.Text = "task"
@@ -167,11 +168,11 @@ func TestPairedRebindInvalidatesOldTicket(t *testing.T) {
 	if !ok {
 		t.Fatal("owner task rejected")
 	}
-	oldLease, _, _ := old.gate.snapshot()
+	oldLease, _, _ := old.Gate.Snapshot()
 	msg.MessageID = "switch"
 	msg.Text = fmt.Sprintf("/bind %q", second)
 	dispatchPairingTest(r, msg)
-	if r.admission.Valid(old) || oldLease.ctx.Err() == nil {
+	if r.admission.Valid(old) || oldLease.Context().Err() == nil {
 		t.Fatal("old binding remained authorized")
 	}
 	msg.MessageID = "return"
@@ -188,7 +189,7 @@ func TestPairedRebindInvalidatesOldTicket(t *testing.T) {
 func TestPairedPinSurvivesAccountChange(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	dir := t.TempDir()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
 	dispatchPairingTest(r, msg)
 	ws, err := r.getConfig().ResolveWorkspace("wechat", "chat")
 	if err != nil {
@@ -206,7 +207,7 @@ func TestPairedPinSurvivesAccountChange(t *testing.T) {
 func TestPairedInputDuringBindingBarrierIsNotQueued(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	dir := t.TempDir()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "first", Text: fmt.Sprintf("/bind %q %s", dir, code)}
 	dispatchPairingTest(r, msg)
 	msg.MessageID = "task"
 	msg.Text = "task"
@@ -214,14 +215,14 @@ func TestPairedInputDuringBindingBarrierIsNotQueued(t *testing.T) {
 	if !ok {
 		t.Fatal("owner rejected")
 	}
-	ticket.gate.switching()
+	ticket.Gate.Switching()
 	if _, ok = r.admission.Authorize(msg); ok {
 		t.Fatal("binding barrier admitted a task")
 	}
 }
 
 func TestCancelledBindingCannotWriteHeadlessInput(t *testing.T) {
-	lease := newBindingLease(ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}, "workspace", 1, 1)
+	lease := im.NewBindingLease(im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}, "workspace", 1, 1)
 	writer := &captureWriteCloser{}
 	p := &ChordProcess{lease: lease, stdin: writer}
 	lease.Close()
@@ -238,7 +239,7 @@ func TestIMIngressRequiresAdmission(t *testing.T) {
 	defer r.Close()
 	adapter := &pairingTestAdapter{}
 	r.SetAdapter(adapter)
-	r.HandleIncomingMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", SenderID: "owner", Text: "/status"})
+	r.HandleIncomingMessage(im.IncomingMessage{IMType: "wechat", ChatID: "chat", SenderID: "owner", Text: "/status"})
 	if len(adapter.messages) != 0 || len(r.mgr.procs) != 0 {
 		t.Fatal("IM input bypassed admission")
 	}

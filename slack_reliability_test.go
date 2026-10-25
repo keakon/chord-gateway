@@ -11,6 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestSlackInboundDecodesOnlyEventsTextAfterMentionCheck(t *testing.T) {
@@ -142,7 +144,7 @@ func TestSlackSocketBusyCapturePreservesPingAndShutdown(t *testing.T) {
 
 func TestSlackDuplicateACKReportsOriginalTerminalState(t *testing.T) {
 	for _, tc := range []struct {
-		state        ingressState
+		state        im.IngressState
 		reason, want string
 	}{
 		{"expired", "acceptance_outcome_uncertain", "Expired"},
@@ -151,8 +153,8 @@ func TestSlackDuplicateACKReportsOriginalTerminalState(t *testing.T) {
 		{"quarantined", "", "Quarantined"},
 	} {
 		t.Run(string(tc.state)+tc.reason, func(t *testing.T) {
-			future := make(chan ReceiveResult, 1)
-			future <- ReceiveResult{Disposition: ReceiveDuplicate, State: tc.state, Reason: tc.reason}
+			future := make(chan im.ReceiveResult, 1)
+			future <- im.ReceiveResult{Disposition: im.ReceiveDuplicate, State: tc.state, Reason: tc.reason}
 			queue := make(chan slackACK, 1)
 			done := make(chan struct{})
 			receipt := slackReceipt{Frame: slackSocketFrame{Type: "slash_commands", EnvelopeID: "DUPLICATE", AcceptsResponsePayload: true}, ReceivedAt: time.Now(), Future: future}
@@ -194,7 +196,7 @@ func TestSlackRenamedBotKeepsInstallationAndReadableHints(t *testing.T) {
 	conn, done, cancel := startSlackSocketTest(t, a, id)
 	_ = conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": id.AppID}})
 	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
-	hint := a.router.(*NotificationRouter).commandHint("slack", CommandTarget{Thread: true}, "/allow")
+	hint := a.router.(*NotificationRouter).commandHint("slack", im.CommandTarget{Thread: true}, "/allow")
 	if !strings.Contains(hint, "@RenamedBot /allow") || !strings.Contains(hint, "@ menu") || strings.Contains(hint, id.BotUserID) {
 		t.Fatal(hint)
 	}

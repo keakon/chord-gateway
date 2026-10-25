@@ -8,10 +8,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type ingressReadinessAdapter struct {
-	IMAdapter
+	im.IMAdapter
 	mu    sync.Mutex
 	ready bool
 	wake  func()
@@ -21,8 +23,8 @@ func TestGatewayIngressUnboundOwnerAndBindUseFlowReplies(t *testing.T) {
 	s, _, _, msg := ingressTestService(t)
 	adapter := s.router.currentAdapter().(*pairingTestAdapter)
 	msg.ChatID, msg.MessageID, msg.Text = "new-chat", "unbound-task", "task"
-	result := s.router.ReceiveIngress(t.Context(), IngressEnvelope{Message: msg})
-	if result.Disposition != ReceiveRejected || result.Reason != "chat_unbound" || result.RecordID == "" {
+	result := s.router.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: msg})
+	if result.Disposition != im.ReceiveRejected || result.Reason != "chat_unbound" || result.RecordID == "" {
 		t.Fatal(result)
 	}
 	waitIngressCondition(t, func() bool {
@@ -36,8 +38,8 @@ func TestGatewayIngressUnboundOwnerAndBindUseFlowReplies(t *testing.T) {
 		return false
 	})
 	msg.MessageID, msg.Text = "new-binding", fmt.Sprintf("/bind %q", t.TempDir())
-	bound := s.router.ReceiveIngress(t.Context(), IngressEnvelope{Message: msg})
-	if bound.Disposition != ReceiveAccepted {
+	bound := s.router.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: msg})
+	if bound.Disposition != im.ReceiveAccepted {
 		t.Fatal(bound)
 	}
 	waitIngressCondition(t, func() bool {
@@ -55,17 +57,17 @@ func TestGatewayIngressUnboundOwnerAndBindUseFlowReplies(t *testing.T) {
 		return false
 	})
 	// Binding later never resurrects the rejected original message.
-	duplicate := s.router.ReceiveIngress(t.Context(), IngressEnvelope{Message: IncomingMessage{IMType: msg.IMType, AccountID: msg.AccountID, ChatKind: msg.ChatKind, ChatID: msg.ChatID, SenderID: msg.SenderID, MessageID: "unbound-task", Text: "task"}})
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.State != "rejected" {
+	duplicate := s.router.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: im.IncomingMessage{IMType: msg.IMType, AccountID: msg.AccountID, ChatKind: msg.ChatKind, ChatID: msg.ChatID, SenderID: msg.SenderID, MessageID: "unbound-task", Text: "task"}})
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.State != "rejected" {
 		t.Fatal(duplicate)
 	}
 }
 
 func (a *ingressReadinessAdapter) Type() string { return "wechat" }
-func (a *ingressReadinessAdapter) IngressDeliveryReadiness(ChatIdentity) IngressDeliveryReadiness {
+func (a *ingressReadinessAdapter) IngressDeliveryReadiness(im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return IngressDeliveryReadiness{Ready: a.ready, Reason: IngressWaitingReplyContext}
+	return im.IngressDeliveryReadiness{Ready: a.ready, Reason: im.IngressWaitingReplyContext}
 }
 func (a *ingressReadinessAdapter) SetIngressReadinessNotifier(wake func()) {
 	a.mu.Lock()
@@ -86,11 +88,11 @@ func TestGatewayIngressWaitingPreservesFIFOAndWakes(t *testing.T) {
 	s, p, w, msg := ingressTestService(t)
 	a := &ingressReadinessAdapter{IMAdapter: s.router.currentAdapter()}
 	s.router.SetAdapter(a)
-	var accepted []ReceiveResult
+	var accepted []im.ReceiveResult
 	for _, content := range []string{"first", "second"} {
 		msg.MessageID, msg.Text = content, content
-		result := s.router.ReceiveIngress(context.Background(), IngressEnvelope{Message: msg})
-		if result.Disposition != ReceiveAccepted {
+		result := s.router.ReceiveIngress(context.Background(), im.IngressEnvelope{Message: msg})
+		if result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 		accepted = append(accepted, result)
@@ -138,8 +140,8 @@ func TestGatewayIngressWaitingExpiresWithoutDelivery(t *testing.T) {
 	s, _, w, msg := ingressTestService(t)
 	s.router.SetAdapter(&ingressReadinessAdapter{IMAdapter: s.router.currentAdapter()})
 	msg.MessageID, msg.Text = "expired", "expired task"
-	result := s.router.ReceiveIngress(context.Background(), IngressEnvelope{Message: msg, ReceivedAt: time.Now().Add(-24 * time.Hour)})
-	if result.Disposition != ReceiveAccepted {
+	result := s.router.ReceiveIngress(context.Background(), im.IngressEnvelope{Message: msg, ReceivedAt: time.Now().Add(-24 * time.Hour)})
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	waitIngressCondition(t, func() bool {
@@ -155,7 +157,7 @@ func TestGatewayIngressNormalizationCannotReplaceOperation(t *testing.T) {
 	s, _, _, msg := ingressTestService(t)
 	pauseIngressTestRoute(t, s, msg)
 	msg.MessageID, msg.Text = "original", "original task"
-	future, err := s.router.SubmitIngressNormalization(context.Background(), "account/chat", IngressEnvelope{Message: msg}, func(_ context.Context, e IngressEnvelope) (IngressEnvelope, error) {
+	future, err := s.router.SubmitIngressNormalization(context.Background(), "account/chat", im.IngressEnvelope{Message: msg}, func(_ context.Context, e im.IngressEnvelope) (im.IngressEnvelope, error) {
 		e.Message.Text = "/allow"
 		return e, nil
 	})
@@ -163,7 +165,7 @@ func TestGatewayIngressNormalizationCannotReplaceOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := WaitIngressNormalization(context.Background(), future)
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	rec, err := s.store.Get(result.RecordID)
@@ -171,14 +173,14 @@ func TestGatewayIngressNormalizationCannotReplaceOperation(t *testing.T) {
 		t.Fatal(rec, err)
 	}
 	msg.MessageID = "identity-change"
-	future, err = s.router.SubmitIngressNormalization(context.Background(), "account/chat", IngressEnvelope{Message: msg}, func(_ context.Context, e IngressEnvelope) (IngressEnvelope, error) {
+	future, err = s.router.SubmitIngressNormalization(context.Background(), "account/chat", im.IngressEnvelope{Message: msg}, func(_ context.Context, e im.IngressEnvelope) (im.IngressEnvelope, error) {
 		e.Message.ChatID = "replacement"
 		return e, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result = WaitIngressNormalization(context.Background(), future); result.Disposition != ReceiveRetryable || result.Reason != "normalization_failed" {
+	if result = WaitIngressNormalization(context.Background(), future); result.Disposition != im.ReceiveRetryable || result.Reason != "normalization_failed" {
 		t.Fatal(result)
 	}
 }
@@ -187,7 +189,7 @@ func TestGatewayIngressUnavailableNeverExecutes(t *testing.T) {
 	s, _, w, msg := ingressTestService(t)
 	s.Close()
 	msg.MessageID, msg.Text = "closed", "task"
-	if result := s.router.ReceiveIngress(context.Background(), IngressEnvelope{Message: msg}); result.Disposition != ReceiveRetryable {
+	if result := s.router.ReceiveIngress(context.Background(), im.IngressEnvelope{Message: msg}); result.Disposition != im.ReceiveRetryable {
 		t.Fatal(result)
 	}
 	if len(w.snapshot()) != 0 {
@@ -198,7 +200,7 @@ func TestGatewayIngressUnavailableNeverExecutes(t *testing.T) {
 	}
 	// A router without the common receiver cannot silently use the legacy path.
 	s.router.ingress = nil
-	if result := s.router.ReceiveIngress(context.Background(), IngressEnvelope{Message: msg}); result.Disposition != ReceiveRetryable {
+	if result := s.router.ReceiveIngress(context.Background(), im.IngressEnvelope{Message: msg}); result.Disposition != im.ReceiveRetryable {
 		t.Fatal(result)
 	}
 }
@@ -207,13 +209,13 @@ func TestGatewayIngressInvalidInteractionKeepsDurableRejection(t *testing.T) {
 	s, _, w, msg := ingressTestService(t)
 	msg.MessageID = "invalid-callback"
 	msg.Text = ""
-	msg.InternalAction = &InternalAction{Type: "unsupported", RequestID: "request", BindingInstanceID: "binding", Value: "private-argument"}
-	first := s.router.ReceiveIngress(t.Context(), IngressEnvelope{Message: msg})
-	if first.Disposition != ReceiveRejected || first.RecordID == "" || first.Reason != "invalid_interaction" {
+	msg.InternalAction = &im.InternalAction{Type: "unsupported", RequestID: "request", BindingInstanceID: "binding", Value: "private-argument"}
+	first := s.router.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: msg})
+	if first.Disposition != im.ReceiveRejected || first.RecordID == "" || first.Reason != "invalid_interaction" {
 		t.Fatal(first)
 	}
-	second := s.router.ReceiveIngress(t.Context(), IngressEnvelope{Message: msg})
-	if second.Disposition != ReceiveDuplicate || second.RecordID != first.RecordID || second.State != "rejected" {
+	second := s.router.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: msg})
+	if second.Disposition != im.ReceiveDuplicate || second.RecordID != first.RecordID || second.State != "rejected" {
 		t.Fatal(second)
 	}
 	rec, err := s.store.Get(first.RecordID)
@@ -226,22 +228,22 @@ func TestGatewayIngressUnknownStillAllowsReadOnlyQueries(t *testing.T) {
 	s, p, w, msg := ingressTestService(t)
 	id := pauseIngressTestRoute(t, s, msg)
 	msg.MessageID, msg.Text = "unresolved", "task"
-	first := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-	if first.Disposition != ReceiveAccepted {
+	first := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
-	if err := s.store.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+	if err := s.store.UpdateRecord(t.Context(), first.RecordID, []im.IngressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	queryWriter := &ingressInteractionWriter{proc: p, snapshot: StatusResponse{SessionID: "session"}}
 	p.mu.Lock()
 	p.stdin = queryWriter
 	p.mu.Unlock()
-	var controls []ReceiveResult
+	var controls []im.ReceiveResult
 	for _, command := range []string{"/help", "/status", "/todos"} {
 		msg.MessageID, msg.Text = command, command
-		result := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-		if result.Disposition != ReceiveAccepted {
+		result := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+		if result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 		controls = append(controls, result)

@@ -6,20 +6,22 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func pauseIngressTestRoute(t *testing.T, s *IngressService, msg IncomingMessage) ChatIdentity {
+func pauseIngressTestRoute(t *testing.T, s *IngressService, msg im.IncomingMessage) im.ChatIdentity {
 	t.Helper()
 	if err := s.PrepareAccount(context.Background(), msg.IMType, msg.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	id := ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}
+	id := im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID}
 	s.mu.Lock()
 	s.active[id] = true
 	s.mu.Unlock()
 	return id
 }
-func dispatchIngressTestRoute(s *IngressService, id ChatIdentity) {
+func dispatchIngressTestRoute(s *IngressService, id im.ChatIdentity) {
 	s.slots <- struct{}{}
 	s.wg.Add(1)
 	s.dispatchRoute(id)
@@ -28,11 +30,11 @@ func TestIngressQuarantineOldRevisionDoesNotBlockNewTask(t *testing.T) {
 	s, _, w, msg := ingressTestService(t)
 	id := pauseIngressTestRoute(t, s, msg)
 	msg.MessageID, msg.Text = "old", "old task"
-	old := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if old.Disposition != ReceiveAccepted {
+	old := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if old.Disposition != im.ReceiveAccepted {
 		t.Fatal(old)
 	}
-	err := s.store.UpdateRecord(context.Background(), old.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil })
+	err := s.store.UpdateRecord(context.Background(), old.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +50,8 @@ func TestIngressQuarantineOldRevisionDoesNotBlockNewTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg.MessageID, msg.Text = "new", "new task"
-	fresh := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if fresh.Disposition != ReceiveAccepted {
+	fresh := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if fresh.Disposition != im.ReceiveAccepted {
 		t.Fatal(fresh)
 	}
 	s.mu.Lock()
@@ -76,8 +78,8 @@ func TestIngressPriorityControlsPreserveSideEffectFIFO(t *testing.T) {
 	id := pauseIngressTestRoute(t, s, msg)
 	for i, text := range []string{"! echo setup", "task", "/status", "/status", "/status", "/status"} {
 		msg.MessageID, msg.Text = fmt.Sprint(i), text
-		result := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-		if result.Disposition != ReceiveAccepted {
+		result := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+		if result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 	}
@@ -102,7 +104,7 @@ func TestIngressReplyDoesNotWaitForFullOutboundShard(t *testing.T) {
 	if !ok {
 		t.Fatal("authorize")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	d := s.router.outbound
 	key := compositeKey(msg.IMType, msg.AccountID, msg.ChatID)
 	started, release := make(chan struct{}), make(chan struct{})
@@ -131,8 +133,8 @@ func TestIngressReplyDoesNotWaitForFullOutboundShard(t *testing.T) {
 			t.Fatal("missing reply backpressure metric")
 		}
 		msg.MessageID, msg.Text = "status-during-backpressure", "/status"
-		accepted := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-		if accepted.Disposition != ReceiveAccepted {
+		accepted := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+		if accepted.Disposition != im.ReceiveAccepted {
 			t.Fatal(accepted)
 		}
 		waitIngressCondition(t, func() bool {
@@ -161,7 +163,7 @@ func TestIngressBindingPersistenceOutcomes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind-new", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
+			msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind-new", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
 			id := pauseIngressTestRoute(t, s, msg)
 			switch stage {
 			case "before_replace":
@@ -177,8 +179,8 @@ func TestIngressBindingPersistenceOutcomes(t *testing.T) {
 				}
 
 			}
-			accepted := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-			if accepted.Disposition != ReceiveAccepted {
+			accepted := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+			if accepted.Disposition != im.ReceiveAccepted {
 				t.Fatal(accepted)
 			}
 			dispatchIngressTestRoute(s, id)
@@ -203,8 +205,8 @@ func TestIngressBindingPersistenceOutcomes(t *testing.T) {
 				r.mgr.store.writer = defaultConfigWriteOps()
 				pauseIngressTestRoute(t, s, msg)
 				msg.MessageID = "bind-retry"
-				retried := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-				if retried.Disposition != ReceiveAccepted {
+				retried := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+				if retried.Disposition != im.ReceiveAccepted {
 					t.Fatal(retried)
 				}
 				dispatchIngressTestRoute(s, id)

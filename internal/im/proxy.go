@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"net/http"
@@ -10,11 +10,11 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-// proxyFuncFor resolves per-IM > global priority. Empty (both unset) means
+// ProxyFuncFor resolves per-IM > global priority. Empty (both unset) means
 // disabled: it returns nil so callers use a direct connection and must not
 // fall back to environment proxy variables. The returned closure shares the
 // parsed config URL read-only; transports must never mutate it.
-func proxyFuncFor(cfg *config.Config, im config.IMAdapterConfig) (func(*http.Request) (*url.URL, error), error) {
+func ProxyFuncFor(cfg *config.Config, im config.IMAdapterConfig) (func(*http.Request) (*url.URL, error), error) {
 	var raw string
 	if cfg != nil {
 		raw = cfg.EffectiveProxyURL(im)
@@ -32,11 +32,11 @@ func proxyFuncFor(cfg *config.Config, im config.IMAdapterConfig) (func(*http.Req
 	return func(*http.Request) (*url.URL, error) { return parsed, nil }, nil
 }
 
-// websocketProxyFuncFor is proxyFuncFor plus the WebSocket scheme check. Use
+// WebsocketProxyFuncFor is ProxyFuncFor plus the WebSocket scheme check. Use
 // it in adapters that open a long-connection so an unsupported scheme fails at
 // startup instead of only on the first dial.
-func websocketProxyFuncFor(cfg *config.Config, im config.IMAdapterConfig) (func(*http.Request) (*url.URL, error), error) {
-	proxyFunc, err := proxyFuncFor(cfg, im)
+func WebsocketProxyFuncFor(cfg *config.Config, im config.IMAdapterConfig) (func(*http.Request) (*url.URL, error), error) {
+	proxyFunc, err := ProxyFuncFor(cfg, im)
 	if err != nil {
 		return nil, err
 	}
@@ -50,10 +50,10 @@ func websocketProxyFuncFor(cfg *config.Config, im config.IMAdapterConfig) (func(
 	return proxyFunc, nil
 }
 
-// proxiedTransport clones the default transport and pins its proxy behavior:
+// ProxiedTransport clones the default transport and pins its proxy behavior:
 // explicit config proxy when set, otherwise a direct connection. Environment
 // proxy variables are never consulted so unset means disabled.
-func proxiedTransport(proxyFunc func(*http.Request) (*url.URL, error)) *http.Transport {
+func ProxiedTransport(proxyFunc func(*http.Request) (*url.URL, error)) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxyFunc == nil {
 		proxyFunc = func(*http.Request) (*url.URL, error) { return nil, nil }
@@ -62,11 +62,11 @@ func proxiedTransport(proxyFunc func(*http.Request) (*url.URL, error)) *http.Tra
 	return transport
 }
 
-// logEffectiveProxies reports the outbound proxy each active platform will
+// LogEffectiveProxies reports the outbound proxy each active platform will
 // actually use, once, with credentials stripped, so operators can confirm the
 // resolution without grepping the config. The effective value is trimmed like
 // the transport does; whitespace-only values mean direct and are not reported.
-func logEffectiveProxies(cfg *config.Config) {
+func LogEffectiveProxies(cfg *config.Config) {
 	for _, im := range cfg.ActiveIMs() {
 		if effective := strings.TrimSpace(cfg.EffectiveProxyURL(im)); effective != "" {
 			log.Infof("outbound proxy ims.%s=%s", im.Type(), redactProxyURL(effective))
@@ -84,12 +84,12 @@ func redactProxyURL(raw string) string {
 	return u.String()
 }
 
-// websocketProxyFunc adapts an HTTP proxy func for gorilla/websocket dialers.
+// WebsocketProxyFunc adapts an HTTP proxy func for gorilla/websocket dialers.
 // The vendored dialer only understands "socks5", not "socks5h"; Go's HTTP
 // transport treats both identically (remote DNS), so rewrite the scheme here.
 // Nil stays an explicit direct connection so environment proxy variables are
 // never consulted. The returned URL is a copy; the shared config URL is kept.
-func websocketProxyFunc(proxyFunc func(*http.Request) (*url.URL, error)) func(*http.Request) (*url.URL, error) {
+func WebsocketProxyFunc(proxyFunc func(*http.Request) (*url.URL, error)) func(*http.Request) (*url.URL, error) {
 	if proxyFunc == nil {
 		return func(*http.Request) (*url.URL, error) { return nil, nil }
 	}

@@ -102,7 +102,7 @@ func (r *NotificationRouter) fireReminder(key string) {
 		}
 		ctx := context.Background()
 		if target.lease != nil {
-			ctx = target.lease.ctx
+			ctx = target.lease.Context()
 		}
 		task := func() {
 			if r.mgr.transferBlocked(key) || r.mgr.GetProcessForKey(key) != proc {

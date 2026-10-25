@@ -9,13 +9,15 @@ import (
 	"unicode"
 
 	"github.com/disgoorg/disgo/discord"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const discordChannelCacheCapacity = 4096
 
 var errDiscordStaleGeneration = errors.New("discord connection generation unavailable")
 
-type discordIngressSubmit func(context.Context, string, IngressEnvelope, func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error)
+type discordIngressSubmit func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error)
 
 type discordChannelMetadata struct {
 	kind discord.ChannelType
@@ -159,7 +161,7 @@ func (d *discordInbound) reportContentless() {
 // CaptureMessage freezes an authenticated socket event before Resume replay is
 // complete. The SDK checks its producing generation; delivery later uses the
 // same common queue and never recaptures a newer control target.
-func (d *discordInbound) CaptureMessage(generation uint64, message discord.Message, capture func(IngressEnvelope) IngressEnvelope) (func() error, error) {
+func (d *discordInbound) CaptureMessage(generation uint64, message discord.Message, capture func(im.IngressEnvelope) im.IngressEnvelope) (func() error, error) {
 	if err := d.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -190,8 +192,8 @@ func (d *discordInbound) CaptureMessage(generation uint64, message discord.Messa
 	if d.submit == nil {
 		return nil, errors.New("discord ingress unavailable")
 	}
-	envelope := IngressEnvelope{
-		Message: IncomingMessage{
+	envelope := im.IngressEnvelope{
+		Message: im.IncomingMessage{
 			IMType: "discord", AccountID: d.accountID, AppID: d.applicationID,
 			ChatID: message.ChannelID.String(), SenderID: message.Author.ID.String(),
 			SenderName: message.Author.Username, MessageID: "message:" + message.ID.String(),
@@ -204,22 +206,22 @@ func (d *discordInbound) CaptureMessage(generation uint64, message discord.Messa
 		envelope = capture(envelope)
 	}
 	return func() error {
-		_, err := d.submit(d.ctx, envelope.Message.ChatID, envelope, func(ctx context.Context, captured IngressEnvelope) (IngressEnvelope, error) {
+		_, err := d.submit(d.ctx, envelope.Message.ChatID, envelope, func(ctx context.Context, captured im.IngressEnvelope) (im.IngressEnvelope, error) {
 			if err := ctx.Err(); err != nil {
-				return IngressEnvelope{}, err
+				return im.IngressEnvelope{}, err
 			}
 			if err := d.ctx.Err(); err != nil {
-				return IngressEnvelope{}, err
+				return im.IngressEnvelope{}, err
 			}
 			metadata, err := d.channelMetadata(ctx, generation, captured.Message.ChatID)
 			if err != nil {
-				return IngressEnvelope{}, err
+				return im.IngressEnvelope{}, err
 			}
 			if err := ctx.Err(); err != nil {
-				return IngressEnvelope{}, err
+				return im.IngressEnvelope{}, err
 			}
 			if err := d.ctx.Err(); err != nil {
-				return IngressEnvelope{}, err
+				return im.IngressEnvelope{}, err
 			}
 			switch metadata.kind {
 			case discord.ChannelTypeDM:

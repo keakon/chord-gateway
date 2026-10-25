@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type telegramClock func() time.Time
@@ -45,17 +47,17 @@ const (
 var realTelegramClock telegramClock = time.Now
 
 type telegramCursorStore interface {
-	Cursor(string, string) (IngressCursor, error)
-	CommitCursor(context.Context, string, string, uint64, IngressCursor) error
+	Cursor(string, string) (im.IngressCursor, error)
+	CommitCursor(context.Context, string, string, uint64, im.IngressCursor) error
 }
 
-func (a *TelegramAdapter) loadCursor(ctx context.Context) (IngressCursor, error) {
+func (a *TelegramAdapter) loadCursor(ctx context.Context) (im.IngressCursor, error) {
 	cursor, err := a.store.Cursor("telegram", a.accountID)
 	if err != nil {
 		return cursor, err
 	}
 	if cursor.Generation == 0 {
-		cursor = IngressCursor{Kind: "telegram", Version: 1, Telegram: &TelegramIngressCursor{BotID: a.accountID, State: "empty"}}
+		cursor = im.IngressCursor{Kind: "telegram", Version: 1, Telegram: &im.TelegramIngressCursor{BotID: a.accountID, State: "empty"}}
 	}
 	if cursor.Telegram == nil {
 		return cursor, errors.New("telegram invalid stored cursor")
@@ -77,7 +79,7 @@ func (a *TelegramAdapter) loadCursor(ctx context.Context) (IngressCursor, error)
 	}
 	return cursor, nil
 }
-func (a *TelegramAdapter) commitCursor(ctx context.Context, current *IngressCursor, next IngressCursor) error {
+func (a *TelegramAdapter) commitCursor(ctx context.Context, current *im.IngressCursor, next im.IngressCursor) error {
 	next.Generation = current.Generation + 1
 	if err := a.store.CommitCursor(ctx, "telegram", a.accountID, current.Generation, next); err != nil {
 		return err
@@ -85,7 +87,7 @@ func (a *TelegramAdapter) commitCursor(ctx context.Context, current *IngressCurs
 	*current = next
 	return nil
 }
-func (a *TelegramAdapter) pollRequest(ctx context.Context, cursor *IngressCursor, probe bool) ([]telegramUpdate, error) {
+func (a *TelegramAdapter) pollRequest(ctx context.Context, cursor *im.IngressCursor, probe bool) ([]telegramUpdate, error) {
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -128,17 +130,17 @@ func (a *TelegramAdapter) pollRequest(ctx context.Context, cursor *IngressCursor
 
 type telegramCapturedUpdate struct {
 	fingerprint string
-	envelope    IngressEnvelope
+	envelope    im.IngressEnvelope
 	reason      string
 }
 
-// captureKind reports the ingress kind frozen for this update, or "" when the
-// update was refused before capture.
-func (e *IngressEnvelope) captureKind() string {
-	if e == nil || e.capture == nil {
+// telegramCaptureKind reports the ingress kind frozen for this update, or ""
+// when the update was refused before capture.
+func telegramCaptureKind(e *im.IngressEnvelope) string {
+	if e == nil || e.Capture == nil {
 		return ""
 	}
-	return e.capture.kind
+	return e.Capture.Kind
 }
 
 // Freeze the entire response before readiness, checkpoint writes or admission
@@ -155,14 +157,14 @@ func (a *TelegramAdapter) captureBatch(batch []telegramUpdate) {
 				// Polling owns the complete batch and can wait for the snapshot.
 				// A transient busy refusal must not poison retained redeliveries.
 				kind, target := a.router.CaptureIngress(e.Message)
-				e.capture = &ingressCapture{kind: kind, target: target}
-				if e.capture.kind == "control" {
+				e.Capture = &im.IngressCapture{Kind: kind, Target: target}
+				if e.Capture.Kind == "control" {
 					e.InputDigest = ""
 				}
 			}
 			// Without this, a message the gateway never accepts is
 			// indistinguishable from one Telegram never delivered.
-			log.Debugf("telegram: captured update id=%v chat_id=%v chat_kind=%v reason=%v kind=%v", u.UpdateID, e.Message.ChatID, e.Message.ChatKind, reason, e.captureKind())
+			log.Debugf("telegram: captured update id=%v chat_id=%v chat_kind=%v reason=%v kind=%v", u.UpdateID, e.Message.ChatID, e.Message.ChatKind, reason, telegramCaptureKind(&e))
 			input = telegramCapturedUpdate{u.receivedDigest, e, reason}
 		}
 		captured[u.UpdateID] = input
@@ -183,7 +185,7 @@ func telegramWait(ctx context.Context, d time.Duration) bool {
 
 // telegramLastObservedUpdateID names the last update the cursor recorded, so a
 // reported batch loss points at input instead of vanishing without an identity.
-func telegramLastObservedUpdateID(cursor IngressCursor) string {
+func telegramLastObservedUpdateID(cursor im.IngressCursor) string {
 	if cursor.Telegram == nil || cursor.Telegram.LastObservedUpdateID == nil {
 		return "unknown"
 	}
@@ -192,7 +194,7 @@ func telegramLastObservedUpdateID(cursor IngressCursor) string {
 
 // poll confirms only the in-memory prefix of the current batch. Empty polls
 // never synthesize an offset from a historical maximum update ID.
-func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch []telegramUpdate, hasResponse bool) error {
+func (a *TelegramAdapter) poll(ctx context.Context, cursor im.IngressCursor, batch []telegramUpdate, hasResponse bool) error {
 	if hasResponse {
 		a.captureBatch(batch)
 	}
@@ -258,7 +260,7 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 			envelope, reason := update.captured.envelope, update.captured.reason
 			next.Telegram.LastUpdateSourceTime = envelope.SourceTime
 			envelope.Cursor = next
-			var result ReceiveResult
+			var result im.ReceiveResult
 			if reason != "" {
 				result = a.reject(ctx, envelope, reason)
 			} else {
@@ -270,7 +272,7 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor IngressCursor, batch 
 			// A non-terminal disposition is retried forever; make it visible.
 			log.Debugf("telegram: dispatch update id=%v disposition=%v reason=%v record_id=%v", update.UpdateID, result.Disposition, result.Reason, result.RecordID)
 			// A permanent refusal counts only when a in-memory tombstone was returned.
-			if (result.Disposition == ReceiveAccepted || result.Disposition == ReceiveDuplicate || result.Disposition == ReceiveRejected) && result.RecordID != "" {
+			if (result.Disposition == im.ReceiveAccepted || result.Disposition == im.ReceiveDuplicate || result.Disposition == im.ReceiveRejected) && result.RecordID != "" {
 				cursor = *next
 				failures = 0
 			} else {
@@ -318,10 +320,10 @@ func telegramDigest(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
-func (a *TelegramAdapter) normalizeUpdate(update telegramUpdate) (IngressEnvelope, string) {
+func (a *TelegramAdapter) normalizeUpdate(update telegramUpdate) (im.IngressEnvelope, string) {
 	received := a.now()
-	msg := IncomingMessage{IMType: "telegram", AccountID: a.accountID, ChatID: "unsupported-update", MessageID: "update:" + strconv.FormatInt(update.UpdateID, 10)}
-	e := IngressEnvelope{Message: msg, DeliveryID: msg.MessageID, ReceivedAt: received}
+	msg := im.IncomingMessage{IMType: "telegram", AccountID: a.accountID, ChatID: "unsupported-update", MessageID: "update:" + strconv.FormatInt(update.UpdateID, 10)}
+	e := im.IngressEnvelope{Message: msg, DeliveryID: msg.MessageID, ReceivedAt: received}
 	if update.Message == nil {
 		return e, "unsupported_update"
 	}
@@ -335,7 +337,7 @@ func (a *TelegramAdapter) normalizeUpdate(update telegramUpdate) (IngressEnvelop
 	if m.Chat.ID != 0 && m.MessageID > 0 {
 		// A dropped SemanticID would silently degrade semantic dedup to
 		// business-ID dedup, so refuse the message instead.
-		semanticID, err := EncodeScopedID("message:", e.Message.ChatID, strconv.FormatInt(m.MessageID, 10))
+		semanticID, err := im.EncodeScopedID("message:", e.Message.ChatID, strconv.FormatInt(m.MessageID, 10))
 		if err != nil {
 			return e, "invalid_target"
 		}
@@ -431,10 +433,10 @@ func telegramNormalizeCommand(text string, entities []telegramEntity, username s
 			// them as model input; generated hints use supported aliases.
 			word, _, _ := strings.Cut(text, " ")
 			name, _, suffixed := strings.Cut(word, "@")
-			if suffixed && telegramCommandAlias(name, true) != name {
+			if suffixed && im.TelegramCommandAlias(name, true) != name {
 				return "", "invalid_command_entity"
 			}
-			return telegramCommandAlias(token, false) + text[end:], ""
+			return im.TelegramCommandAlias(token, false) + text[end:], ""
 		}
 		if !strings.EqualFold(token[at+1:], username) || username == "" {
 			return "", "other_bot_command"
@@ -442,26 +444,12 @@ func telegramNormalizeCommand(text string, entities []telegramEntity, username s
 		// Telegram marks the whole command, suffix included, as one entity, so
 		// the suffixed shape reaches this branch too. The legacy hyphenated
 		// form is still not an alias here and must not become a real command.
-		if telegramCommandAlias(token[:at], true) != token[:at] {
+		if im.TelegramCommandAlias(token[:at], true) != token[:at] {
 			return "", "invalid_command_entity"
 		}
-		return telegramCommandAlias(token[:at], false) + text[end:], ""
+		return im.TelegramCommandAlias(token[:at], false) + text[end:], ""
 	}
 	return text, ""
 }
 
-// Explicit aliases avoid rewriting arbitrary paths, model commands or args.
-func telegramCommandAlias(command string, outbound bool) string {
-	for _, canonical := range []string{"/handoff-deny", "/question-interact", "/question-withdraw", "/question-replace"} {
-		alias := strings.ReplaceAll(canonical, "-", "_")
-		if outbound && strings.EqualFold(command, canonical) {
-			return alias
-		}
-		if !outbound && strings.EqualFold(command, alias) {
-			return canonical
-		}
-	}
-	return command
-}
-
-var _ IMAdapter = (*TelegramAdapter)(nil)
+var _ im.IMAdapter = (*TelegramAdapter)(nil)

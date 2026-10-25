@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"fmt"
@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	privateDirMode  = 0o700
-	privateFileMode = 0o600
+	PrivateDirMode  = 0o700
+	PrivateFileMode = 0o600
 )
 
-func writePrivateFileAtomically(path string, data []byte) error {
+func WritePrivateFileAtomically(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, privateDirMode); err != nil {
+	if err := os.MkdirAll(dir, PrivateDirMode); err != nil {
 		return fmt.Errorf("mkdir atomic write dir: %w", err)
 	}
 
@@ -30,7 +30,7 @@ func writePrivateFileAtomically(path string, data []byte) error {
 		}
 	}()
 
-	if err := tmp.Chmod(privateFileMode); err != nil {
+	if err := tmp.Chmod(PrivateFileMode); err != nil {
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {

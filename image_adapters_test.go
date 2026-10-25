@@ -24,9 +24,10 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func imageForUpload(t *testing.T) *ReceivedImage {
+func imageForUpload(t *testing.T) *im.ReceivedImage {
 	t.Helper()
 	data := testImageBytes(t)
 	m := testImageMetadata(data)
@@ -36,7 +37,7 @@ func imageForUpload(t *testing.T) *ReceivedImage {
 	}
 	_, _ = f.Write(data)
 	_ = f.Close()
-	return &ReceivedImage{Path: f.Name(), Size: m.Size, SHA256: m.SHA256, MIME: m.MIME, Width: m.Width, Height: m.Height}
+	return &im.ReceivedImage{Path: f.Name(), Size: m.Size, SHA256: m.SHA256, MIME: m.MIME, Width: m.Width, Height: m.Height}
 }
 
 // The cipher grows the plaintext buffer in place, so pin both allocation paths:
@@ -239,7 +240,7 @@ func TestImageUploadPreviewPreservesAlphaAndLimit(t *testing.T) {
 	if err := png.Encode(&data, original); err != nil {
 		t.Fatal(err)
 	}
-	preview, err := imageUploadPreview(t.Context(), bytes.NewReader(data.Bytes()), 1024)
+	preview, err := im.ImageUploadPreview(t.Context(), bytes.NewReader(data.Bytes()), 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +252,7 @@ func TestImageUploadPreviewPreservesAlphaAndLimit(t *testing.T) {
 	if alpha >= 65535 || len(preview) >= 1024 {
 		t.Fatal("preview lost transparency or limit")
 	}
-	if _, err := imageUploadPreview(t.Context(), strings.NewReader("invalid"), 1024); err == nil {
+	if _, err := im.ImageUploadPreview(t.Context(), strings.NewReader("invalid"), 1024); err == nil {
 		t.Fatal("invalid image accepted")
 	}
 }
@@ -303,7 +304,7 @@ func TestFeishuImageSendRequiresConfirmedReceipt(t *testing.T) {
 			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 			a.httpClient = srv.Client()
 			err := a.SendImage("sample-chat", imageForUpload(t))
-			if err == nil || errors.Is(err, errDeliveryOutcomeUnknown) != tc.unknown {
+			if err == nil || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown {
 				t.Fatalf("receipt error = %v", err)
 			}
 			if uploads.Load() != 1 || sends.Load() != 1 {
@@ -344,7 +345,7 @@ func TestWechatSendRequiresExplicitReceipt(t *testing.T) {
 			a := newTestWechatAdapter(t)
 			a.imCfg.Wechat.BaseURL = srv.URL
 			err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{})
-			if err == nil || errors.Is(err, errDeliveryOutcomeUnknown) != tc.unknown {
+			if err == nil || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown {
 				t.Fatalf("receipt error = %v", err)
 			}
 			if requests.Load() != 1 {
@@ -386,7 +387,7 @@ func TestFeishuImageSendRefreshRequiresFreshReceipt(t *testing.T) {
 			a.httpClient = srv.Client()
 			err := a.SendImage("sample-chat", imageForUpload(t))
 			success := strings.Contains(body, "sample-message")
-			if success && err != nil || !success && !errors.Is(err, errDeliveryOutcomeUnknown) {
+			if success && err != nil || !success && !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 				t.Fatalf("fresh send receipt: %v", err)
 			}
 			if tokens.Load() != 1 || uploads.Load() != 1 || sends.Load() != 2 {
@@ -550,7 +551,7 @@ func TestWechatMediaUploadRetryPolicy(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("upload error = %v", err)
 			}
-			if errors.Is(err, errDeliveryOutcomeUnknown) {
+			if errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 				t.Fatal("upload failure reported as an unknown send outcome")
 			}
 			if attempts != tc.wantAttempts {

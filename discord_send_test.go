@@ -20,9 +20,10 @@ import (
 	"github.com/disgoorg/disgo/rest"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func discordTestSender(t *testing.T, send func(context.Context, string, string) error) *IMTextSender {
+func discordTestSender(t *testing.T, send func(context.Context, string, string) error) *im.IMTextSender {
 	t.Helper()
 	sender, err := newDiscordTextSender(send)
 	if err != nil {
@@ -49,8 +50,8 @@ func TestDiscordTextSenderRenderedUTF16Boundary(t *testing.T) {
 				t.Fatalf("segment boundary or body changed: lengths=%v", discordPartLengths(parts))
 			}
 			for _, part := range parts {
-				if !utf8.ValidString(part) || imUTF16Units(part) > 1900 {
-					t.Fatal("invalid segment", imUTF16Units(part))
+				if !utf8.ValidString(part) || im.UTF16Units(part) > 1900 {
+					t.Fatal("invalid segment", im.UTF16Units(part))
 				}
 				trailing := len(part) - len(strings.TrimRight(part, `\`))
 				if trailing%2 != 0 {
@@ -67,7 +68,7 @@ func TestDiscordTextSenderRenderedUTF16Boundary(t *testing.T) {
 func discordPartLengths(parts []string) []int {
 	lengths := make([]int, len(parts))
 	for index, part := range parts {
-		lengths[index] = imUTF16Units(part)
+		lengths[index] = im.UTF16Units(part)
 	}
 	return lengths
 }
@@ -88,8 +89,8 @@ func TestDiscordTextSenderTruncationReservesFinalNotice(t *testing.T) {
 				t.Fatalf("missing reserved notice or too many segments: count=%d", len(parts))
 			}
 			for _, part := range parts {
-				if !utf8.ValidString(part) || imUTF16Units(part) > 1900 {
-					t.Fatal("truncation broke segment", imUTF16Units(part))
+				if !utf8.ValidString(part) || im.UTF16Units(part) > 1900 {
+					t.Fatal("truncation broke segment", im.UTF16Units(part))
 				}
 			}
 			if tc.name == "source_byte_limit" && len(strings.ReplaceAll(strings.Join(parts, ""), `\`, "")) > 64<<10 {
@@ -113,7 +114,7 @@ func TestDiscordTextSenderPartialFailureAndCancellation(t *testing.T) {
 				calls++
 				if tc == "unknown" {
 					if calls == 2 {
-						return errDeliveryOutcomeUnknown
+						return im.ErrDeliveryOutcomeUnknown
 					}
 					return nil
 				}
@@ -129,12 +130,12 @@ func TestDiscordTextSenderPartialFailureAndCancellation(t *testing.T) {
 				return nil // This segment had an explicit acceptance before cancellation.
 			})
 			err := sender.Send(caller, lifecycle, permit, "500", strings.Repeat("a", 5700), false)
-			var partial *IMTextSendError
+			var partial *im.IMTextSendError
 			if !errors.As(err, &partial) || partial.AcceptedSegments != 1 {
 				t.Fatalf("accepted segment evidence lost: %v", err)
 			}
 			if tc == "unknown" {
-				if !errors.Is(err, errDeliveryOutcomeUnknown) || calls != 2 {
+				if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls != 2 {
 					t.Fatal("unknown output retried or continued", calls, err)
 				}
 			} else if !errors.Is(err, context.Canceled) || calls != 1 {
@@ -160,7 +161,7 @@ func TestDiscordTextSenderTargetOrderingAndQueuedCancellation(t *testing.T) {
 	go func() { done <- sender.Send(t.Context(), nil, nil, "500", strings.Repeat("a", 3800), false) }()
 	<-entered
 	go func() { done <- sender.Send(t.Context(), nil, nil, "500", strings.Repeat("b", 3800), false) }()
-	waitIngressCondition(t, func() bool { sender.mu.Lock(); defer sender.mu.Unlock(); return sender.targets["500"].refs == 2 })
+	waitIngressCondition(t, func() bool { return sender.TargetRefsForTest("500") == 2 })
 	queued, cancel := context.WithCancel(t.Context())
 	cancel()
 	if err := sender.Send(queued, nil, nil, "500", "cancelled", false); !errors.Is(err, context.Canceled) {
@@ -180,7 +181,7 @@ func TestDiscordTextSenderTargetOrderingAndQueuedCancellation(t *testing.T) {
 	if !reflect.DeepEqual(calls, []string{strings.Repeat("a", 1900), strings.Repeat("a", 1900), strings.Repeat("b", 1900), strings.Repeat("b", 1900)}) {
 		t.Fatal("same-target output interleaved")
 	}
-	if len(sender.targets) != 0 {
+	if sender.TargetCountForTest() != 0 {
 		t.Fatal("target slot leaked")
 	}
 }
@@ -256,8 +257,8 @@ func TestDiscordRESTUnknownSendIsNeverRetried(t *testing.T) {
 			defer server.Close()
 			adapter := discordRESTTestAdapter(t, server)
 			err := adapter.SendTextContext(t.Context(), "500", strings.Repeat("a", 3800))
-			var partial *IMTextSendError
-			if !errors.Is(err, errDeliveryOutcomeUnknown) || !errors.As(err, &partial) || partial.AcceptedSegments != 0 || requests.Load() != 1 {
+			var partial *im.IMTextSendError
+			if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || !errors.As(err, &partial) || partial.AcceptedSegments != 0 || requests.Load() != 1 {
 				t.Fatalf("unknown POST retried or misclassified: count=%d err=%v", requests.Load(), err)
 			}
 		})
@@ -280,8 +281,8 @@ func TestDiscordRESTPartialFailureKeepsThreadTarget(t *testing.T) {
 	defer server.Close()
 	adapter := discordRESTTestAdapter(t, server)
 	err := adapter.SendTextContext(t.Context(), "501", strings.Repeat("a", 5700))
-	var partial *IMTextSendError
-	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || requests.Load() != 2 || errors.Is(err, errDeliveryOutcomeUnknown) {
+	var partial *im.IMTextSendError
+	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || requests.Load() != 2 || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		t.Fatalf("partial thread rejection retried or continued: requests=%d err=%v", requests.Load(), err)
 	}
 }
@@ -297,7 +298,7 @@ func TestDiscordRESTInvalidReceiptIsUnknownAndDoesNotRetry(t *testing.T) {
 			defer server.Close()
 			adapter := discordRESTTestAdapter(t, server)
 			err := adapter.SendTextContext(t.Context(), "500", "sample task")
-			if !errors.Is(err, errDeliveryOutcomeUnknown) || requests.Load() != 1 {
+			if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || requests.Load() != 1 {
 				t.Fatalf("invalid acceptance receipt was retried or trusted: count=%d err=%v", requests.Load(), err)
 			}
 		})

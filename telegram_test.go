@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestTelegramNormalizeIdentityAndUnsupportedInputs(t *testing.T) {
@@ -56,7 +57,7 @@ func TestTelegramNormalizeIdentityAndUnsupportedInputs(t *testing.T) {
 				t.Fatal("missing original-input digest")
 			}
 			if reason == "" {
-				parts, err := DecodeScopedID(e.SemanticID, "message:", 2)
+				parts, err := im.DecodeScopedID(e.SemanticID, "message:", 2)
 				if err != nil || parts[0] != e.Message.ChatID {
 					t.Fatal(parts, err)
 				}
@@ -128,7 +129,7 @@ func TestTelegramAdapterConstructionAndLifecycle(t *testing.T) {
 	if a.Type() != "telegram" || a.SupportsLoginRenewal() {
 		t.Fatal("adapter identity")
 	}
-	if _, err := a.StartLogin(); !errors.Is(err, ErrLoginNotSupported) {
+	if _, err := a.StartLogin(); !errors.Is(err, im.ErrLoginNotSupported) {
 		t.Fatal(err)
 	}
 	if err := a.SendTextContext(t.Context(), "7", "text"); err == nil {
@@ -248,7 +249,7 @@ func TestTelegramAdapterShutdownJoinsPollAndSendBeforeReleasingAccount(t *testin
 		t.Fatal("Connect returned before send cleanup", err)
 	default:
 	}
-	lock, err := AcquireIMAccountLock("telegram", strconv.FormatInt(f.botID, 10))
+	lock, err := im.AcquireIMAccountLock("telegram", strconv.FormatInt(f.botID, 10))
 	if err == nil {
 		lock.Close()
 		t.Fatal("account lock released before send cleanup")
@@ -276,10 +277,10 @@ func TestTelegramAdapterShutdownJoinsPollAndSendBeforeReleasingAccount(t *testin
 	if ready {
 		t.Fatal("pairing remained ready after shutdown")
 	}
-	if a.IngressDeliveryReadiness(ChatIdentity{Platform: "telegram", AccountID: "840001", ChatID: "123456"}).Ready {
+	if a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "telegram", AccountID: "840001", ChatID: "123456"}).Ready {
 		t.Fatal("delivery remained ready")
 	}
-	lock, err = AcquireIMAccountLock("telegram", strconv.FormatInt(f.botID, 10))
+	lock, err = im.AcquireIMAccountLock("telegram", strconv.FormatInt(f.botID, 10))
 	if err != nil {
 		t.Fatal("shutdown retained account lock", err)
 	}
@@ -320,7 +321,7 @@ func TestTelegramAdapterAccountLockAcrossStateDirectories(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("poller did not stop")
 	}
-	lock, err := AcquireIMAccountLock("telegram", "840002")
+	lock, err := im.AcquireIMAccountLock("telegram", "840002")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +357,7 @@ func TestTelegramAdapterPollerConflictTerminatesAndRevokesReadiness(t *testing.T
 	if err := a.SendTextContext(t.Context(), "123456", "result"); err == nil {
 		t.Fatal("409 allowed outbound send")
 	}
-	lock, err := AcquireIMAccountLock("telegram", "840003")
+	lock, err := im.AcquireIMAccountLock("telegram", "840003")
 	if err != nil {
 		t.Fatal("409 retained account lock", err)
 	}
@@ -400,14 +401,14 @@ func TestTelegramAdapterWebhookConflictStopsBeforePolling(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"getMe", "getWebhookInfo"}) {
 		t.Fatalf("startup methods=%v", got)
 	}
-	if a.IngressDeliveryReadiness(ChatIdentity{Platform: "telegram", AccountID: strconv.FormatInt(f.botID, 10)}).Ready {
+	if a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "telegram", AccountID: strconv.FormatInt(f.botID, 10)}).Ready {
 		t.Fatal("webhook conflict marked adapter ready")
 	}
 	cursor, err := f.service.store.Cursor("telegram", strconv.FormatInt(f.botID, 10))
 	if err != nil || cursor.Generation != 0 {
 		t.Fatal("webhook conflict committed cursor", cursor, err)
 	}
-	lock, err := AcquireIMAccountLock("telegram", strconv.FormatInt(f.botID, 10))
+	lock, err := im.AcquireIMAccountLock("telegram", strconv.FormatInt(f.botID, 10))
 	if err != nil {
 		t.Fatal("webhook conflict retained account lock", err)
 	}

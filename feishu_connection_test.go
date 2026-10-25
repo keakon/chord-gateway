@@ -13,11 +13,12 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-type feishuReceiverFunc func(context.Context, IngressEnvelope) ReceiveResult
+type feishuReceiverFunc func(context.Context, im.IngressEnvelope) im.ReceiveResult
 
-func (f feishuReceiverFunc) Accept(ctx context.Context, e IngressEnvelope) ReceiveResult {
+func (f feishuReceiverFunc) Accept(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 	return f(ctx, e)
 }
 
@@ -88,17 +89,17 @@ func readFeishuResponse(t *testing.T, client *websocket.Conn) (larkws.Frame, int
 func TestFeishuFrameReaderDoesNotWaitForAcceptance(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
 	entered, release := make(chan struct{}), make(chan struct{})
-	installFeishuReceiver(t, a, func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	installFeishuReceiver(t, a, func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		close(entered)
 		select {
 		case <-release:
 		case <-ctx.Done():
-			return ReceiveResult{Disposition: ReceiveUncertain}
+			return im.ReceiveResult{Disposition: im.ReceiveUncertain}
 		}
 		if e.DeliveryID != "delivery" || e.Message.MessageID != "message:business" {
 			t.Errorf("identity %+v", e)
 		}
-		return ReceiveResult{Disposition: ReceiveAccepted}
+		return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 	})
 	conn, client := feishuSocketPair(t)
 	g := a.startGeneration(t.Context(), conn)
@@ -153,10 +154,12 @@ func TestFeishuFrameReaderDoesNotWaitForAcceptance(t *testing.T) {
 	}
 }
 func TestFeishuFramesMapUnconfirmedAcceptanceToFailure(t *testing.T) {
-	for _, disposition := range []ReceiveDisposition{ReceiveAccepted, ReceiveDuplicate, ReceiveRejected, ReceiveRetryable, ReceiveUncertain} {
+	for _, disposition := range []im.ReceiveDisposition{im.ReceiveAccepted, im.ReceiveDuplicate, im.ReceiveRejected, im.ReceiveRetryable, im.ReceiveUncertain} {
 		t.Run(string(disposition), func(t *testing.T) {
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
-			installFeishuReceiver(t, a, func(context.Context, IngressEnvelope) ReceiveResult { return ReceiveResult{Disposition: disposition} })
+			installFeishuReceiver(t, a, func(context.Context, im.IngressEnvelope) im.ReceiveResult {
+				return im.ReceiveResult{Disposition: disposition}
+			})
 			conn, client := feishuSocketPair(t)
 			g := a.startGeneration(t.Context(), conn)
 			defer g.close()
@@ -165,7 +168,7 @@ func TestFeishuFramesMapUnconfirmedAcceptanceToFailure(t *testing.T) {
 			}
 			_, code := readFeishuResponse(t, client)
 			want := 200
-			if disposition == ReceiveRetryable || disposition == ReceiveUncertain {
+			if disposition == im.ReceiveRetryable || disposition == im.ReceiveUncertain {
 				want = 500
 			}
 			if code != want {

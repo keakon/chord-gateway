@@ -13,6 +13,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -29,7 +30,7 @@ type NotificationRouter struct {
 	ingress      *IngressService
 
 	mgr       *ChordManager
-	adapter   IMAdapter // protected by adapterMu
+	adapter   im.IMAdapter // protected by adapterMu
 	adapterMu sync.RWMutex
 
 	mu                sync.RWMutex
@@ -51,7 +52,7 @@ type NotificationRouter struct {
 // cardHandleEntry is a recorded interactive card handle together with the time
 // it was registered, so handles that can no longer be used can be pruned.
 type cardHandleEntry struct {
-	handle     InteractiveCardHandle
+	handle     im.InteractiveCardHandle
 	recordedAt time.Time
 	terminal   bool
 }
@@ -87,7 +88,7 @@ func NewNotificationRouter(mgr *ChordManager) *NotificationRouter {
 }
 
 // SetAdapter sets the IM adapter used for sending notifications.
-func (r *NotificationRouter) SetAdapter(adapter IMAdapter) {
+func (r *NotificationRouter) SetAdapter(adapter im.IMAdapter) {
 	r.adapterMu.Lock()
 	r.adapter = adapter
 	r.adapterMu.Unlock()
@@ -95,7 +96,7 @@ func (r *NotificationRouter) SetAdapter(adapter IMAdapter) {
 }
 
 // currentAdapter returns the active IM adapter, or nil if not yet set.
-func (r *NotificationRouter) currentAdapter() IMAdapter {
+func (r *NotificationRouter) currentAdapter() im.IMAdapter {
 	r.adapterMu.RLock()
 	defer r.adapterMu.RUnlock()
 	return r.adapter
@@ -193,7 +194,7 @@ func (r *NotificationRouter) pruneCardHandlesLocked(now time.Time) {
 	}
 }
 
-func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID string, handle *InteractiveCardHandle) {
+func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID string, handle *im.InteractiveCardHandle) {
 	if strings.TrimSpace(requestID) == "" || handle == nil || (strings.TrimSpace(handle.MessageID) == "" && strings.TrimSpace(handle.Token) == "") {
 		return
 	}
@@ -209,9 +210,9 @@ func (r *NotificationRouter) recordCardHandle(processKey, requestType, requestID
 	r.mu.Unlock()
 }
 
-func (r *NotificationRouter) takeCardHandle(processKey, requestType, requestID string) (InteractiveCardHandle, bool) {
+func (r *NotificationRouter) takeCardHandle(processKey, requestType, requestID string) (im.InteractiveCardHandle, bool) {
 	if strings.TrimSpace(requestID) == "" {
-		return InteractiveCardHandle{}, false
+		return im.InteractiveCardHandle{}, false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -223,13 +224,13 @@ func (r *NotificationRouter) takeCardHandle(processKey, requestType, requestID s
 		// card; drop it instead of returning a handle that is guaranteed to
 		// fail. Callers fall back to the callback-supplied handle, if any.
 		if time.Since(entry.recordedAt) > interactiveCardHandleTTL {
-			return InteractiveCardHandle{}, false
+			return im.InteractiveCardHandle{}, false
 		}
 	}
 	return entry.handle, ok
 }
 
-func mergeCardHandles(primary, fallback InteractiveCardHandle) InteractiveCardHandle {
+func mergeCardHandles(primary, fallback im.InteractiveCardHandle) im.InteractiveCardHandle {
 	if strings.TrimSpace(primary.MessageID) == "" {
 		primary.MessageID = fallback.MessageID
 	}
@@ -284,7 +285,7 @@ func (r *NotificationRouter) findFeishuAdapter() *FeishuAdapter {
 
 // HandleIncomingMessage is the primary entry point for IM messages.
 // It parses the message into a command and dispatches it.
-func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
+func (r *NotificationRouter) HandleIncomingMessage(msg im.IncomingMessage) {
 	if msg.IMType != "console" {
 		if r.admission == nil {
 			return
@@ -295,7 +296,7 @@ func (r *NotificationRouter) HandleIncomingMessage(msg IncomingMessage) {
 	r.dispatchMessage(msg)
 }
 
-func (r *NotificationRouter) dispatchMessage(msg IncomingMessage) {
+func (r *NotificationRouter) dispatchMessage(msg im.IncomingMessage) {
 	imType := msg.IMType
 	chatID := msg.ChatID
 	text := msg.Text
@@ -496,7 +497,7 @@ func (r *NotificationRouter) availableLoginTargets() []string {
 }
 
 // findAdapterByType finds an adapter by type name.
-func (r *NotificationRouter) findAdapterByType(name string) IMAdapter {
+func (r *NotificationRouter) findAdapterByType(name string) im.IMAdapter {
 	a := r.currentAdapter()
 	if a == nil {
 		return nil
@@ -520,7 +521,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	}
 	sendCtx := context.Background()
 	if target.lease != nil {
-		sendCtx = target.lease.ctx
+		sendCtx = target.lease.Context()
 	}
 	if state.BindingInstanceID != "" {
 		p := r.mgr.GetProcessForKey(key)
@@ -605,7 +606,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	)
 
 	msg := r.formatNotification(eventType, state, func(command string) string {
-		return r.commandHint(imType, commandTargetForChat(imType, chatID), command)
+		return r.commandHint(imType, im.CommandTargetForChat(imType, chatID), command)
 	})
 	willSend := msg != ""
 	msgLen := len(msg)
@@ -723,7 +724,7 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 			}
 		}
 		if eventType == "confirm_resolved" {
-			if updated, err := r.resolveConfirmCard(target, state); updated || errors.Is(err, errDeliveryOutcomeUnknown) {
+			if updated, err := r.resolveConfirmCard(target, state); updated || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 				if updated {
 					r.markVisibleOutput(key)
 				}
@@ -731,7 +732,7 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 			}
 		}
 		if eventType == "question_resolved" {
-			if updated, err := r.resolveQuestionCard(target, state); updated || errors.Is(err, errDeliveryOutcomeUnknown) {
+			if updated, err := r.resolveQuestionCard(target, state); updated || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 				if updated {
 					r.markVisibleOutput(key)
 				}
@@ -761,7 +762,7 @@ func (r *NotificationRouter) resolveConfirmCard(target DeliveryTarget, state Con
 		title, message = "Confirmation cancelled", "⌛ The pending confirmation was cancelled."
 	}
 	message += "\nRequest: " + p.RequestID
-	return r.patchFeishuCardForTargetContext(context.Background(), IncomingMessage{IMType: "feishu"}, target, "confirm", p.RequestID, buildFeishuResolvedCard(title, message, "grey"), true)
+	return r.patchFeishuCardForTargetContext(context.Background(), im.IncomingMessage{IMType: "feishu"}, target, "confirm", p.RequestID, buildFeishuResolvedCard(title, message, "grey"), true)
 }
 
 // resolveQuestionCard patches the interactive question card for a request that
@@ -779,7 +780,7 @@ func (r *NotificationRouter) resolveQuestionCard(target DeliveryTarget, state Co
 		message += "\n" + strings.Join(p.Selected, ", ")
 	}
 	message += "\nQuestion: " + p.RequestID
-	return r.patchFeishuCardForTargetContext(context.Background(), IncomingMessage{IMType: "feishu"}, target, "question", p.RequestID, buildFeishuResolvedCard(title, message, template), true)
+	return r.patchFeishuCardForTargetContext(context.Background(), im.IncomingMessage{IMType: "feishu"}, target, "question", p.RequestID, buildFeishuResolvedCard(title, message, template), true)
 }
 
 // chatIDsForWorkspace returns imType→chatID for all adapters that have a
@@ -798,8 +799,8 @@ func (r *NotificationRouter) chatIDsForWorkspace(workspaceID string) map[string]
 	// Fill in missing IDs from Feishu chat bindings.
 	cfg := r.getConfig()
 	if cfg != nil {
-		if im := cfg.IMConfigByType("feishu"); im != nil && im.Feishu != nil {
-			for chatID, boundWorkspaceID := range im.Feishu.ChatBindings {
+		if imCfg := cfg.IMConfigByType("feishu"); imCfg != nil && imCfg.Feishu != nil {
+			for chatID, boundWorkspaceID := range imCfg.Feishu.ChatBindings {
 				if boundWorkspaceID == workspaceID {
 					if _, has := result["feishu"]; !has {
 						result["feishu"] = chatID
@@ -840,8 +841,8 @@ func (r *NotificationRouter) adapterTypeForChatID(chatID string) string {
 	}
 	cfg := r.getConfig()
 	if cfg != nil {
-		if im := cfg.IMConfigByType("feishu"); im != nil && im.Feishu != nil {
-			if _, ok := im.Feishu.ChatBindings[chatID]; ok {
+		if imCfg := cfg.IMConfigByType("feishu"); imCfg != nil && imCfg.Feishu != nil {
+			if _, ok := imCfg.Feishu.ChatBindings[chatID]; ok {
 				return "feishu"
 			}
 		}
@@ -898,15 +899,15 @@ func (r *NotificationRouter) HandleLoginResult(imType string, success bool, errM
 // given type. Used for cross-IM notifications.
 func (r *NotificationRouter) broadcastExcept(excludeType string, text string) {
 	if cfg := r.getConfig(); cfg != nil {
-		for _, im := range cfg.IMs {
-			if im.Type() == excludeType {
+		for _, imCfg := range cfg.IMs {
+			if imCfg.Type() == excludeType {
 				continue
 			}
-			for chat, ws := range im.Bindings() {
+			for chat, ws := range imCfg.Bindings() {
 				if r.admission != nil {
-					r.ensureOwnedGate(im.Type(), chat, ws)
+					r.ensureOwnedGate(imCfg.Type(), chat, ws)
 				}
-				r.sendTextForIM(im.Type(), chat, text)
+				r.sendTextForIM(imCfg.Type(), chat, text)
 			}
 		}
 	}
@@ -934,7 +935,7 @@ func imDisplayName(imType string) string {
 	}
 }
 
-// parseIMCommand parses a user's text message into an IMCommand.
+// parseIMCommand parses a user's text message into an im.IMCommand.
 
 func (r *NotificationRouter) replyPlatform(platform []string) string {
 	if len(platform) > 0 {

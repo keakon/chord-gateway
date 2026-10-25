@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // A receive lock must protect the application's entire lifecycle, including a
@@ -28,11 +30,11 @@ func TestDingtalkRegressionAccountLocksCoverSendJoin(t *testing.T) {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(sendRelease) }) }
 	defer release()
-	f.a.sender.options.SendSegment = func(context.Context, string, string) error {
+	f.a.sender.SetSendSegmentForTest(func(context.Context, string, string) error {
 		close(sendEntered)
 		<-sendRelease
 		return context.Canceled
-	}
+	})
 	target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
 	sendCtx := context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account)
 	sendDone := make(chan error, 1)
@@ -50,7 +52,7 @@ func TestDingtalkRegressionAccountLocksCoverSendJoin(t *testing.T) {
 			locks.Close()
 			t.Fatal("account locks released before admitted send joined")
 		}
-		if !errors.Is(err, errInstanceRunning) {
+		if !errors.Is(err, im.ErrInstanceRunning) {
 			t.Fatal(err)
 		}
 		select {
@@ -93,16 +95,16 @@ func TestDingtalkRegressionCurrentProbeActivatesVerifiedButUnreadyConnection(t *
 	if err := f.a.activate(t.Context(), oldGeneration); !errors.Is(err, context.Canceled) {
 		t.Fatalf("old generation activated: %v", err)
 	}
-	if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
 		t.Fatal("old evidence activated current connection")
 	}
 	callback := dingtalkIdentityTestCallback()
 	callback.MsgID, callback.Text.Content = "current-generation-probe", "hello"
 	result := dingtalkAdapterReceive(t, f.a, callback, "current-generation-delivery")
-	if result.Disposition != ReceiveRejected || result.Reason != "identity_probe" {
+	if result.Disposition != im.ReceiveRejected || result.Reason != "identity_probe" {
 		t.Fatalf("current private probe refused: %+v", result)
 	}
-	if !f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready {
+	if !f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
 		t.Fatal("verified but unready connection could not recover from a current private probe")
 	}
 	if f.store.Snapshot().IMConfigByType("dingtalk").OwnerIdentity() != nil {
@@ -114,7 +116,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
 	var sends atomic.Int32
-	f.a.sender.options.SendSegment = func(ctx context.Context, _ string, text string) error {
+	f.a.sender.SetSendSegmentForTest(func(ctx context.Context, _ string, text string) error {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Error("send has no deadline")
@@ -122,12 +124,12 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 		if text == "background result during reconnect" && time.Until(deadline) < 4*time.Minute {
 			t.Error("account scope incorrectly shortened background output deadline")
 		}
-		if text == "flow response" && time.Until(deadline) > IMControlSendTimeout {
+		if text == "flow response" && time.Until(deadline) > im.IMControlSendTimeout {
 			t.Error("flow response exceeded control deadline")
 		}
 		sends.Add(1)
 		return nil
-	}
+	})
 	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()))
 	if err != nil {
 		t.Fatal(err)
@@ -175,14 +177,14 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	f.s.mu.Unlock()
 	callback := dingtalkIdentityTestCallback()
 	callback.MsgID, callback.Text.Content = "accepted-before-outage", "run accepted task"
-	if result := dingtalkAdapterReceive(t, f.a, callback, "delivery-before-outage"); result.Disposition != ReceiveAccepted {
+	if result := dingtalkAdapterReceive(t, f.a, callback, "delivery-before-outage"); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	f.a.onUnavailable()
 	if !f.r.admission.Valid(ticket) || !f.a.IngressDeliveryReadiness(id).Ready {
 		t.Fatal("temporary outage revoked accepted work")
 	}
-	if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", "other-account", msg.ChatID}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: "other-account", ChatID: msg.ChatID}).Ready {
 		t.Fatal("other account became available")
 	}
 	callback.MsgID = "new-input-during-outage"
@@ -241,7 +243,7 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
 	// Bind the callback's chat: capture only freezes state for a bound target.
-	f.a.sender.options.SendSegment = func(context.Context, string, string) error { return nil }
+	f.a.sender.SetSendSegmentForTest(func(context.Context, string, string) error { return nil })
 	binding := dingtalkIdentityTestCallback()
 	binding.MsgID = "busy-bind"
 	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, binding))
@@ -288,14 +290,14 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 
 func TestDingtalkTrackAcceptanceRefusesAfterStopping(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
-	future := make(chan ReceiveResult, 1)
+	future := make(chan im.ReceiveResult, 1)
 	f.a.mu.Lock()
 	f.a.stopping = true
 	f.a.mu.Unlock()
 	// The reservation and the shutdown seal share one lock, so Wait can never
 	// race a late Add. The stream's 500 for this frame can no longer reach the
 	// platform, so the unobserved outcome is counted here instead.
-	if got := f.a.trackAcceptance(future, IncomingMessage{}); got != nil {
+	if got := f.a.trackAcceptance(future, im.IncomingMessage{}); got != nil {
 		t.Fatal("accepted work after the shutdown seal")
 	}
 	var count uint64

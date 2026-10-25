@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func telegramTestDigest(text string) string {
@@ -22,27 +24,27 @@ func TestTelegramDuplicateDeliveryTracksFingerprintAndCleanupKeepsOriginalIndex(
 	original := mustAcceptIngress(t, s, r)
 	r.BusinessID = "update:11"
 	duplicate := s.AcceptRecord(context.Background(), r, nil)
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID == original.RecordID {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID == original.RecordID {
 		t.Fatalf("new delivery lacks fingerprint: %+v", duplicate)
 	}
 	r.InputDigest = telegramTestDigest("different")
 	conflict := s.AcceptRecord(context.Background(), r, nil)
-	if conflict.Disposition != ReceiveRejected || conflict.Reason != "update_id_conflict" {
+	if conflict.Disposition != im.ReceiveRejected || conflict.Reason != "update_id_conflict" {
 		t.Fatalf("duplicate delivery ID conflict: %+v", conflict)
 	}
 	// The duplicate/conflict tombstones expire before the original record.
 	now = now.Add(24 * time.Hour)
-	if err := s.UpdateRecord(context.Background(), original.RecordID, []ingressState{"received"}, func(r *IngressRecord) error {
+	if err := s.UpdateRecord(context.Background(), original.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error {
 		r.State = "consumed"
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
-	s.pruneHistory(ChatIdentity{})
+	s.pruneHistory(im.ChatIdentity{})
 	r.BusinessID, r.InputDigest = "update:12", telegramTestDigest("original")
 	result := s.AcceptRecord(context.Background(), r, nil)
-	if result.Disposition != ReceiveDuplicate || result.Reason != "semantic_duplicate" {
+	if result.Disposition != im.ReceiveDuplicate || result.Reason != "semantic_duplicate" {
 		t.Fatalf("cleanup removed original semantic index: %+v", result)
 	}
 }
@@ -69,7 +71,7 @@ func TestTelegramUpdateConflictPreservesOriginalAndCommitsCheckpoint(t *testing.
 				r.ChatID = "other-chat"
 			}
 			result := s.AcceptRecord(context.Background(), r, testTelegramIngressCursor(1, 11))
-			if result.Disposition != ReceiveRejected || result.Reason != "update_id_conflict" || result.RecordID == original.RecordID {
+			if result.Disposition != im.ReceiveRejected || result.Reason != "update_id_conflict" || result.RecordID == original.RecordID {
 				t.Fatalf("conflict result: %+v", result)
 			}
 			conflict, err := s.Get(result.RecordID)
@@ -85,7 +87,7 @@ func TestTelegramUpdateConflictPreservesOriginalAndCommitsCheckpoint(t *testing.
 				t.Fatalf("conflict checkpoint: %+v %v", cursor, err)
 			}
 			repeat := s.AcceptRecord(context.Background(), r, testTelegramIngressCursor(2, 11))
-			if repeat.Disposition != ReceiveDuplicate || repeat.Reason != "update_id_conflict" || repeat.RecordID != result.RecordID {
+			if repeat.Disposition != im.ReceiveDuplicate || repeat.Reason != "update_id_conflict" || repeat.RecordID != result.RecordID {
 				t.Fatalf("repeat conflict: %+v", repeat)
 			}
 			rows, err := s.listAll()
@@ -103,7 +105,7 @@ func TestTelegramConflictCursorFailureRollsBackIsolation(t *testing.T) {
 	mustAcceptIngress(t, s, r)
 	r.InputDigest = telegramTestDigest("conflict")
 	result := s.AcceptRecord(context.Background(), r, testTelegramIngressCursor(2, 11))
-	if result.Disposition != ReceiveRetryable || result.Reason != "cursor_generation_conflict" {
+	if result.Disposition != im.ReceiveRetryable || result.Reason != "cursor_generation_conflict" {
 		t.Fatalf("stale checkpoint: %+v", result)
 	}
 	rows, err := s.listAll()
@@ -139,17 +141,17 @@ func TestTelegramControlDeduplicationDoesNotPersistParameterDigests(t *testing.T
 		t.Fatalf("control persisted parameters or their hashes: %+v", original)
 	}
 	r.InputDigest = telegramTestDigest("different parameters")
-	if repeat := s.AcceptRecord(t.Context(), r, nil); repeat.Disposition != ReceiveDuplicate || repeat.RecordID != original.RecordID {
+	if repeat := s.AcceptRecord(t.Context(), r, nil); repeat.Disposition != im.ReceiveDuplicate || repeat.RecordID != original.RecordID {
 		t.Fatalf("control parameter change must not execute the same delivery twice: %+v", repeat)
 	}
 	r.BusinessID = "update:11"
 	duplicate := s.AcceptRecord(t.Context(), r, nil)
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID == original.RecordID {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID == original.RecordID {
 		t.Fatalf("control redelivery lacks separate identity evidence: %+v", duplicate)
 	}
 	r.SemanticID = "message:chat:2"
 	conflict := s.AcceptRecord(t.Context(), r, nil)
-	if conflict.Reason != "update_id_conflict" || conflict.Disposition != ReceiveRejected {
+	if conflict.Reason != "update_id_conflict" || conflict.Disposition != im.ReceiveRejected {
 		t.Fatalf("control identity conflict not quarantined: %+v", conflict)
 	}
 	rows, err := s.listAll()

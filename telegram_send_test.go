@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type telegramSenderTestAPI struct {
@@ -33,7 +35,7 @@ func TestTelegramUTF16Segmentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, text := range []string{strings.Repeat("a", 3500), strings.Repeat("😀", 1750), strings.Repeat("😀", 1751), strings.Repeat("a", 3400) + "\n" + strings.Repeat("😀", 100)} {
-		parts, err := sender.segments(text)
+		parts, err := sender.Segments(text)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,7 +43,7 @@ func TestTelegramUTF16Segmentation(t *testing.T) {
 			t.Fatal("segmentation lost text")
 		}
 		for _, part := range parts {
-			if !utf8.ValidString(part) || imUTF16Units(part) > telegramTextBudget {
+			if !utf8.ValidString(part) || im.UTF16Units(part) > telegramTextBudget {
 				t.Fatal("invalid segment")
 			}
 		}
@@ -54,13 +56,13 @@ func TestTelegramSendUnknownOutcomeNeverRetries(t *testing.T) {
 	var calls atomic.Int32
 	sender, err := newTelegramTextSender(&telegramSenderTestAPI{send: func(context.Context, int64, string) (telegramMessage, error) {
 		calls.Add(1)
-		return telegramMessage{}, &telegramAPIError{Method: "sendMessage", Category: "unknown_send", Cause: errDeliveryOutcomeUnknown}
+		return telegramMessage{}, &telegramAPIError{Method: "sendMessage", Category: "unknown_send", Cause: im.ErrDeliveryOutcomeUnknown}
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = sender.Send(t.Context(), nil, nil, "1", "test", false)
-	if !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 1 {
+	if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 1 {
 		t.Fatalf("calls=%d err=%v", calls.Load(), err)
 	}
 }
@@ -133,7 +135,7 @@ func TestTelegramLimiterGlobalRetryAfter(t *testing.T) {
 func TestTelegramSendErrorRetainsSanitizedCategory(t *testing.T) {
 	for _, category := range []string{"unknown_send", "chat_migrated", "forbidden", "private description"} {
 		calls := 0
-		sender, err := NewIMTextSender(IMTextSendOptions{Platform: "telegram", Budget: 1, TruncationNotice: "!", SendSegment: func(context.Context, string, string) error {
+		sender, err := im.NewIMTextSender(im.IMTextSendOptions{Platform: "telegram", Budget: 1, TruncationNotice: "!", SendSegment: func(context.Context, string, string) error {
 			calls++
 			if calls == 1 {
 				return nil
@@ -148,7 +150,7 @@ func TestTelegramSendErrorRetainsSanitizedCategory(t *testing.T) {
 		if category == "private description" {
 			want = "delivery_failed"
 		}
-		var sendErr *IMTextSendError
+		var sendErr *im.IMTextSendError
 		if !errors.As(err, &sendErr) || sendErr.AcceptedSegments != 1 || sendErr.Category != want {
 			t.Fatalf("%s: %v", category, err)
 		}
@@ -163,13 +165,13 @@ func TestTelegramCancelledInFlightSendRemainsUnknown(t *testing.T) {
 	defer cancel()
 	sender, err := newTelegramTextSender(&telegramSenderTestAPI{send: func(context.Context, int64, string) (telegramMessage, error) {
 		cancel()
-		return telegramMessage{}, &telegramAPIError{Method: "sendMessage", Category: "unknown_send", Cause: errDeliveryOutcomeUnknown}
+		return telegramMessage{}, &telegramAPIError{Method: "sendMessage", Category: "unknown_send", Cause: im.ErrDeliveryOutcomeUnknown}
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = sender.Send(ctx, nil, nil, "1", "test", true)
-	if !errors.Is(err, errDeliveryOutcomeUnknown) || !strings.Contains(err.Error(), "unknown_send") {
+	if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || !strings.Contains(err.Error(), "unknown_send") {
 		t.Fatalf("in-flight unknown delivery was replaced by cancellation: %v", err)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestInputQueueProjectionVersionsAndBindings(t *testing.T) {
@@ -228,7 +230,7 @@ func TestDeadProcessCannotDiscardUnknownInputs(t *testing.T) {
 	defer r.Close()
 	adapter := &stubIMAdapter{typ: "wechat"}
 	r.SetAdapter(adapter)
-	r.handleChordCommand(r.getConfig().WorkspaceByID("test"), "chat", IMCommand{Type: "status"}, "wechat", nil)
+	r.handleChordCommand(r.getConfig().WorkspaceByID("test"), "chat", im.IMCommand{Type: "status"}, "wechat", nil)
 	if text := adapter.lastMessage().text; !strings.Contains(text, "disconnected") || !strings.Contains(text, "Unconfirmed inputs: 1") {
 		t.Fatalf("guarded status: %s", text)
 	}

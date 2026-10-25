@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
@@ -23,7 +25,7 @@ type DingtalkAdapter struct {
 	cancel                                        context.CancelFunc
 	api                                           *dingtalkAPI
 	stream                                        *dingtalkStream
-	sender                                        *IMTextSender
+	sender                                        *im.IMTextSender
 	mu                                            sync.Mutex
 	started, stopping, connected, verified, ready bool
 	// activated survives temporary Stream outages, but is never restored from
@@ -38,28 +40,28 @@ type DingtalkAdapter struct {
 	ingressReadinessNotifier
 }
 
-func NewDingtalkAdapter(globalCfg *config.Config, im config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DingtalkAdapter, error) {
-	if im.Dingtalk == nil || im.Dingtalk.ClientSecret == "" {
+func NewDingtalkAdapter(globalCfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DingtalkAdapter, error) {
+	if imCfg.Dingtalk == nil || imCfg.Dingtalk.ClientSecret == "" {
 		return nil, errors.New("dingtalk: incomplete configuration")
 	}
-	account, err := dingtalkAccountID(im.Dingtalk)
+	account, err := dingtalkAccountID(imCfg.Dingtalk)
 	if err != nil {
 		return nil, err
 	}
-	cfg := *im.Dingtalk
-	proxyFunc, err := websocketProxyFuncFor(globalCfg, im)
+	cfg := *imCfg.Dingtalk
+	proxyFunc, err := im.WebsocketProxyFuncFor(globalCfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &DingtalkAdapter{cfg: &cfg, router: router, account: account, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	a.api = newDingtalkAPI(ctx, &cfg, proxyFunc)
-	a.sender, err = NewIMTextSender(IMTextSendOptions{Platform: "dingtalk", Budget: 1024, Measure: func(s string) int { return len(s) }, SendSegment: func(ctx context.Context, target, text string) error {
+	a.sender, err = im.NewIMTextSender(im.IMTextSendOptions{Platform: "dingtalk", Budget: 1024, Measure: func(s string) int { return len(s) }, SendSegment: func(ctx context.Context, target, text string) error {
 		// Refuse here rather than before the shared sender so the definite
 		// non-delivery lands in the shared category vocabulary; a bare error
 		// returned before textSender.Send is recorded as delivery_failed and
 		// never observed (the WeCom contract).
-		if !a.IngressDeliveryReadiness(ChatIdentity{Platform: "dingtalk", AccountID: a.account, ChatID: target}).Ready {
+		if !a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: a.account, ChatID: target}).Ready {
 			return &dingtalkAPIError{Category: "connection_unavailable"}
 		}
 		kind, raw, err := dingtalkDecodeTarget(cfg.CorpID, target)
@@ -72,12 +74,12 @@ func NewDingtalkAdapter(globalCfg *config.Config, im config.IMAdapterConfig, _ *
 		cancel()
 		return nil, err
 	}
-	a.api.observeRateWait = a.sender.observeRateWait
-	a.stream = newDingtalkStreamWithProxy(a.api, dingtalkStreamCallbacks{OnConnected: a.onConnected, OnUnavailable: a.onUnavailable, OnCallback: a.onCallback, OnReceiveResult: func(result ReceiveResult) {
-		if result.Disposition == ReceiveRetryable && result.Reason == "stream_capacity" {
+	a.api.observeRateWait = a.sender.ObserveRateWait
+	a.stream = newDingtalkStreamWithProxy(a.api, dingtalkStreamCallbacks{OnConnected: a.onConnected, OnUnavailable: a.onUnavailable, OnCallback: a.onCallback, OnReceiveResult: func(result im.ReceiveResult) {
+		if result.Disposition == im.ReceiveRetryable && result.Reason == "stream_capacity" {
 			a.observeReceiveResult(result)
 		}
-		if result.Disposition == ReceiveUncertain {
+		if result.Disposition == im.ReceiveUncertain {
 			log.Warnf("dingtalk: acceptance outcome uncertain; inspect in-memory ingress before retrying")
 		}
 	}, OnDiagnostic: func(category string) {
@@ -94,7 +96,7 @@ func NewDingtalkAdapter(globalCfg *config.Config, im config.IMAdapterConfig, _ *
 
 func (a *DingtalkAdapter) Type() string                { return "dingtalk" }
 func (a *DingtalkAdapter) SupportsLoginRenewal() bool  { return false }
-func (a *DingtalkAdapter) StartLogin() (string, error) { return "", ErrLoginNotSupported }
+func (a *DingtalkAdapter) StartLogin() (string, error) { return "", im.ErrLoginNotSupported }
 
 func (a *DingtalkAdapter) Connect() error {
 	a.mu.Lock()
@@ -104,7 +106,7 @@ func (a *DingtalkAdapter) Connect() error {
 	}
 	a.started = true
 	a.mu.Unlock()
-	var locks *instanceLocks
+	var locks *im.InstanceLocks
 	defer func() {
 		a.mu.Lock()
 		a.stopping = true
@@ -190,8 +192,8 @@ func (a *DingtalkAdapter) activate(ctx context.Context, generation uint64) error
 		a.mu.Unlock()
 		return context.Canceled
 	}
-	if err := a.router.admission.pairing.PlatformReadyWithPresentation("dingtalk", a.account, PlatformPresentation{Platform: "dingtalk", BotMention: "@robot"}); err != nil {
-		if errors.Is(err, errPairingDenied) {
+	if err := a.router.admission.pairing.PlatformReadyWithPresentation("dingtalk", a.account, im.PlatformPresentation{Platform: "dingtalk", BotMention: "@robot"}); err != nil {
+		if errors.Is(err, im.ErrPairingDenied) {
 			a.fatal = &dingtalkIdentityError{Category: dingtalkCategoryTenantMismatch}
 			a.cancel()
 			err = a.fatal
@@ -217,18 +219,18 @@ func (a *DingtalkAdapter) onUnavailable() {
 	a.wakeIngressReadiness()
 }
 
-func dingtalkResult(result ReceiveResult) <-chan ReceiveResult {
-	ch := make(chan ReceiveResult, 1)
+func dingtalkResult(result im.ReceiveResult) <-chan im.ReceiveResult {
+	ch := make(chan im.ReceiveResult, 1)
 	ch <- result
 	close(ch)
 	return ch
 }
 
-func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (<-chan ReceiveResult, error) {
+func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (<-chan im.ReceiveResult, error) {
 	received := time.Now()
 	callback, err := parseDingtalkCallback(frame.Data)
 	if err != nil {
-		return dingtalkResult(ReceiveResult{Disposition: ReceiveRejected, Reason: "invalid_input"}), nil
+		return dingtalkResult(im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: "invalid_input"}), nil
 	}
 	// Enterprise/robot mismatch is terminal; unsupported sender identity is a
 	// permanent refusal and never falls back to the platform's opaque senderId.
@@ -245,9 +247,9 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 			reason = refusal.Category
 		}
 		log.Warnf("dingtalk: callback refused category=%s", reason)
-		return dingtalkResult(ReceiveResult{Disposition: ReceiveRejected, Reason: reason}), nil
+		return dingtalkResult(im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: reason}), nil
 	}
-	e := IngressEnvelope{Message: msg, DeliveryID: frame.headerString("messageId"), ReceivedAt: received, SourceTime: received}
+	e := im.IngressEnvelope{Message: msg, DeliveryID: frame.headerString("messageId"), ReceivedAt: received, SourceTime: received}
 	if _, exists := frame.Headers["time"]; exists {
 		timestamp := frame.headerString("time")
 		ms, err := strconv.ParseInt(timestamp, 10, 64)
@@ -275,16 +277,16 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		// cannot acquire permission from a later pairing or binding change.
 		// Assign into the submitted envelope copy: e.Message was cloned from
 		// msg at construction, so mutating msg alone would drop the ticket.
-		im := a.router.getConfig().IMConfigByType("dingtalk")
-		if im != nil && im.OwnerIdentity() != nil {
+		imCfg := a.router.getConfig().IMConfigByType("dingtalk")
+		if imCfg != nil && imCfg.OwnerIdentity() != nil {
 			if ticket, allowed := a.router.admission.Authorize(msg); allowed {
-				msg.ticket = &ticket
-				e.Message.ticket = msg.ticket
+				msg.SetAdmissionTicket(&ticket)
+				e.Message.SetAdmissionTicket(msg.AdmissionTicket())
 			}
 		}
 		future, err := a.router.SubmitIngress(ctx, e)
 		if err != nil {
-			a.observeReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
+			a.observeReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
 			a.notifyLostInput(msg)
 		}
 		return a.trackAcceptance(future, msg), err
@@ -300,7 +302,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		return nil, errIngressClosed
 	}
 	key := string(ingressKey("", "dingtalk", a.account, msg.ChatID))
-	future, submitErr := n.submitProtocol(ctx, key, func(ctx context.Context) ReceiveResult {
+	future, submitErr := n.submitProtocol(ctx, key, func(ctx context.Context) im.ReceiveResult {
 		ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
 		defer cancel()
 		reason := "identity_unverified"
@@ -315,27 +317,27 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		if probe {
 			reason = "identity_probe"
 		}
-		record := IngressRecord{Platform: "dingtalk", AccountID: a.account, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, DeliveryID: e.DeliveryID, SourceTime: e.SourceTime, ReceivedAt: received, Kind: "control", State: ingressRejected, Reason: reason}
+		record := IngressRecord{Platform: "dingtalk", AccountID: a.account, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, DeliveryID: e.DeliveryID, SourceTime: e.SourceTime, ReceivedAt: received, Kind: "control", State: im.IngressRejected, Reason: reason}
 		result := a.router.ingressStore.AcceptRecord(ctx, record, nil)
-		if !probe || result.RecordID == "" || result.Reason != "identity_probe" || (result.Disposition != ReceiveRejected && result.Disposition != ReceiveDuplicate) {
+		if !probe || result.RecordID == "" || result.Reason != "identity_probe" || (result.Disposition != im.ReceiveRejected && result.Disposition != im.ReceiveDuplicate) {
 			return result
 		}
 		a.mu.Lock()
 		if a.stopping || !a.connected || a.generation != gen || ctx.Err() != nil {
 			a.mu.Unlock()
-			return ReceiveResult{Disposition: ReceiveUncertain, Reason: "platform_unavailable"}
+			return im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "platform_unavailable"}
 		}
 		a.verified = true
 		a.mu.Unlock()
 		if err := a.activate(ctx, gen); err != nil {
-			return ReceiveResult{Disposition: ReceiveUncertain, Reason: "platform_unavailable"}
+			return im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "platform_unavailable"}
 		}
 		return result
 	})
 	if submitErr != nil {
-		a.observeReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(submitErr)})
+		a.observeReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(submitErr)})
 	}
-	return a.trackAcceptance(future, IncomingMessage{}), submitErr
+	return a.trackAcceptance(future, im.IncomingMessage{}), submitErr
 }
 
 // The relay waits for the worker's actual result even when a disconnected socket
@@ -343,7 +345,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 // Add runs under the same lock that seals shutdown, so Wait cannot run between
 // the availability check and the reservation (a bare Add after Wait is a panic
 // even when it is benign-looking; -race does not detect it).
-func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg IncomingMessage) <-chan ReceiveResult {
+func (a *DingtalkAdapter) trackAcceptance(future <-chan im.ReceiveResult, msg im.IncomingMessage) <-chan im.ReceiveResult {
 	if future == nil {
 		return nil
 	}
@@ -362,13 +364,13 @@ func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg Incom
 	}
 	a.acceptWG.Add(1)
 	a.mu.Unlock()
-	result := make(chan ReceiveResult, 1)
+	result := make(chan im.ReceiveResult, 1)
 	go func() {
 		defer a.acceptWG.Done()
 		value, ok := <-future
 		value = ingressNormalizationResult(value, ok)
 		a.observeReceiveResult(value)
-		if value.Disposition == ReceiveRetryable {
+		if value.Disposition == im.ReceiveRetryable {
 			a.notifyLostInput(msg)
 		}
 		result <- value
@@ -377,8 +379,8 @@ func (a *DingtalkAdapter) trackAcceptance(future <-chan ReceiveResult, msg Incom
 	return result
 }
 
-func (a *DingtalkAdapter) notifyLostInput(msg IncomingMessage) {
-	if msg.ticket != nil {
+func (a *DingtalkAdapter) notifyLostInput(msg im.IncomingMessage) {
+	if msg.AdmissionTicket() != nil {
 		// Robot callbacks are fire-and-forget: the platform does not redeliver
 		// unacknowledged or rejected frames, so the reply must tell the user to
 		// resend instead of waiting for a retry that never comes.
@@ -386,18 +388,18 @@ func (a *DingtalkAdapter) notifyLostInput(msg IncomingMessage) {
 	}
 }
 
-func (a *DingtalkAdapter) observeReceiveResult(result ReceiveResult) {
+func (a *DingtalkAdapter) observeReceiveResult(result im.ReceiveResult) {
 	if a.router == nil || a.router.ingressStore == nil {
 		return
 	}
-	if result.Disposition == ReceiveRetryable {
+	if result.Disposition == im.ReceiveRetryable {
 		reason := result.Reason
 		if reason == "stream_capacity" {
 			reason = "capacity"
 		}
 		a.router.ingressStore.ObserveLostBeforeAccept("dingtalk", reason)
 	}
-	if result.Disposition == ReceiveUncertain {
+	if result.Disposition == im.ReceiveUncertain {
 		log.Warnf("dingtalk: acceptance outcome uncertain; inspect in-memory ingress before retrying")
 	}
 }
@@ -427,21 +429,21 @@ func (a *DingtalkAdapter) SendTextContext(ctx context.Context, chat, text string
 		a.reportSendFailure(err)
 		return err
 	}
-	im := a.router.getConfig().IMConfigByType("dingtalk")
+	imCfg := a.router.getConfig().IMConfigByType("dingtalk")
 	expectedAccount, scoped := ctx.Value(replyAccountContextKey{}).(string)
 	if scoped {
 		if expectedAccount != a.account {
-			return errPairingDenied
+			return im.ErrPairingDenied
 		}
-	} else if im == nil || im.OwnerIdentity() == nil || im.OwnerIdentity().AccountID != a.account || im.Bindings()[chat] == "" {
-		return errPairingDenied
+	} else if imCfg == nil || imCfg.OwnerIdentity() == nil || imCfg.OwnerIdentity().AccountID != a.account || imCfg.Bindings()[chat] == "" {
+		return im.ErrPairingDenied
 	}
 	_, control := ctx.Value(outboundReplyContextKey{}).(ReplyPermit)
 	err := a.sender.Send(ctx, a.ctx, nil, chat, text, control)
 	a.reportSendFailure(err)
 	return err
 }
-func (a *DingtalkAdapter) ValidateBindingTarget(ctx context.Context, target BindingProbeTarget) error {
+func (a *DingtalkAdapter) ValidateBindingTarget(ctx context.Context, target im.BindingProbeTarget) error {
 	a.mu.Lock()
 	ready := a.ready && !a.stopping
 	if ready {
@@ -449,11 +451,11 @@ func (a *DingtalkAdapter) ValidateBindingTarget(ctx context.Context, target Bind
 	}
 	a.mu.Unlock()
 	if !ready {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	defer a.sendWG.Done()
 	if target.Platform != "dingtalk" || target.AccountID != a.account {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	if _, _, err := dingtalkDecodeTarget(a.cfg.CorpID, target.ChatID); err != nil {
 		return err
@@ -472,18 +474,20 @@ func (a *DingtalkAdapter) reportSendFailure(err error) {
 	if errors.As(err, &apiError) {
 		category = apiError.Category
 	}
-	var partial *IMTextSendError
+	var partial *im.IMTextSendError
 	if errors.As(err, &partial) {
 		accepted = partial.AcceptedSegments
 	}
 	log.Warnf("dingtalk: proactive send failed category=%s accepted_segments=%d", category, accepted)
 }
-func (a *DingtalkAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *DingtalkAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return IngressDeliveryReadiness{Ready: a.activated && !a.stopping && a.ctx.Err() == nil && id.Platform == "dingtalk" && id.AccountID == a.account, Reason: IngressWaitingAccount}
+	return im.IngressDeliveryReadiness{Ready: a.activated && !a.stopping && a.ctx.Err() == nil && id.Platform == "dingtalk" && id.AccountID == a.account, Reason: im.IngressWaitingAccount}
 }
-func (a *DingtalkAdapter) TextSendMetrics() IMTextMetricsSnapshot { return a.sender.TextSendMetrics() }
-func (a *DingtalkAdapter) TextSendTargetSnapshot(target string) IMTextTargetSnapshot {
+func (a *DingtalkAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {
+	return a.sender.TextSendMetrics()
+}
+func (a *DingtalkAdapter) TextSendTargetSnapshot(target string) im.IMTextTargetSnapshot {
 	return a.sender.TextSendTargetSnapshot(target)
 }

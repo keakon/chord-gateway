@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestQuestionFormInvalidShapeDoesNotConsumeSubmission(t *testing.T) {
@@ -18,7 +19,7 @@ func TestQuestionFormInvalidShapeDoesNotConsumeSubmission(t *testing.T) {
 	if err != nil || response == nil || response.Toast == nil || response.Toast.Type != "error" || response.Card != nil {
 		t.Fatalf("invalid shape response=%+v err=%v", response, err)
 	}
-	queue := feishuTestQueue(a, IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"})
+	queue := feishuTestQueue(a, im.IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"})
 	if len(queue) != 0 {
 		t.Fatal("invalid form dispatched a partial answer")
 	}

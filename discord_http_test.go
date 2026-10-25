@@ -18,6 +18,7 @@ import (
 	"github.com/disgoorg/disgo/rest"
 
 	"github.com/keakon/chord-gateway/internal/buildinfo"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type discordRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -208,8 +209,8 @@ func TestDiscordHTTPClientStopsPOSTRedirects(t *testing.T) {
 	if client.Timeout != discordRESTTimeout {
 		t.Fatalf("HTTP timeout changed: %s", client.Timeout)
 	}
-	if discordRESTTimeout >= IMControlSendTimeout {
-		t.Fatalf("REST timeout %s hides the control send budget %s", discordRESTTimeout, IMControlSendTimeout)
+	if discordRESTTimeout >= im.IMControlSendTimeout {
+		t.Fatalf("REST timeout %s hides the control send budget %s", discordRESTTimeout, im.IMControlSendTimeout)
 	}
 	request, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/channels/500/messages", strings.NewReader("sample task"))
 	response, err := client.Do(request)

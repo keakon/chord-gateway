@@ -9,7 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func ingressCounter(snapshot IMIngressMetricsSnapshot, event string) uint64 {
@@ -26,13 +27,13 @@ func TestIngressMetricsObserveCommittedTransitionsAndAdmission(t *testing.T) {
 	r := testIngressTask(t, s, "metrics")
 	got := mustAcceptIngress(t, s, r)
 	duplicate := s.AcceptRecord(context.Background(), r, nil)
-	if duplicate.Disposition != ReceiveDuplicate {
+	if duplicate.Disposition != im.ReceiveDuplicate {
 		t.Fatal(duplicate)
 	}
-	if err := s.UpdateRecord(context.Background(), got.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
+	if err := s.UpdateRecord(context.Background(), got.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateRecord(context.Background(), got.RecordID, []ingressState{"consumed"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
+	if err := s.UpdateRecord(context.Background(), got.RecordID, []im.IngressState{"consumed"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := s.MetricsSnapshot()
@@ -74,43 +75,6 @@ func TestIngressMetricsLabelsAndLogsNeverIncludeIdentityOrErrorText(t *testing.T
 		t.Fatal("bad metrics log", joined)
 	}
 }
-func TestIMTextSendMetricsAndBoundedTargetDiagnostics(t *testing.T) {
-	calls := 0
-	s := testIMTextSender(t, 5, func(context.Context, string, string) error {
-		calls++
-		if calls == 2 {
-			return &IMRateLimitError{RetryAfter: time.Millisecond}
-		}
-		if calls == 3 {
-			return errors.New("secret transport error")
-		}
-		return nil
-	})
-	if err := s.Send(context.Background(), nil, nil, "secret-chat", "aaaaabbbbb", false); err == nil {
-		t.Fatal("failure ignored")
-	}
-	snapshot := s.TextSendMetrics()
-	if snapshot.RateLimitWaits != 1 || snapshot.RateLimitWaitTotal <= 0 || snapshot.PartialFailures != 1 || snapshot.Failures != 1 {
-		t.Fatalf("missing send metrics: %+v", snapshot)
-	}
-	target := s.TextSendTargetSnapshot("secret-chat")
-	if target.LastAcceptedSegments != 1 || target.LastFailureCategory != "delivery_failed" || target.LastFailureAt.IsZero() {
-		t.Fatalf("missing target diagnostics: %+v", target)
-	}
-	raw, err := json.Marshal(snapshot)
-	if err != nil || strings.Contains(string(raw), "secret") {
-		t.Fatalf("private metrics: %s %v", raw, err)
-	}
-	for i := range 130 {
-		s.observeSendFailure(fmt.Sprint(i), 1, "private arbitrary error")
-	}
-	if len(s.metrics.targets) != 128 {
-		t.Fatal("target diagnostics unbounded")
-	}
-	if got := s.TextSendTargetSnapshot("129"); got.LastFailureCategory != "other" {
-		t.Fatalf("unfiltered diagnostic: %+v", got)
-	}
-}
 func TestIngressStoreControlSharesRouteCapacity(t *testing.T) {
 	s := testIngressStore(t)
 	r := testIngressTask(t, s, "control")
@@ -120,13 +84,13 @@ func TestIngressStoreControlSharesRouteCapacity(t *testing.T) {
 		mustAcceptIngress(t, s, r)
 	}
 	r.BusinessID = "overflow"
-	if result := s.AcceptRecord(context.Background(), r, nil); result.Disposition != ReceiveRetryable || result.Reason != "capacity" {
+	if result := s.AcceptRecord(context.Background(), r, nil); result.Disposition != im.ReceiveRetryable || result.Reason != "capacity" {
 		t.Fatalf("control bypassed route quota: %+v", result)
 	}
 }
 
 // ingressReasonLiteral matches the reason fields the ingress core fills in on
-// ReceiveResult, AdmissionResult and IngressRecord.
+// im.ReceiveResult, im.AdmissionResult and IngressRecord.
 var ingressReasonLiteral = regexp.MustCompile(`Reason:\s*"([a-z0-9_]+)"`)
 
 // ingressPositionalReason matches literal reasons passed positionally to the
@@ -221,7 +185,7 @@ func producedIngressLabels(t *testing.T) (reasons, events map[string]string) {
 func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 	reasons, events := producedIngressLabels(t)
 	for reason, file := range reasons {
-		if got := imMetricReason(reason); got != reason {
+		if got := im.MetricReason(reason); got != reason {
 			t.Errorf("%s emits reason %q, which the snapshot collapses to %q", file, reason, got)
 		}
 	}
@@ -234,7 +198,7 @@ func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 	// can return must round-trip, including one a future change adds.
 	for _, err := range []error{errIngressCaptureBusy, errIngressCapacity, errIngressClosed, errors.New("unclassified")} {
 		reason := ingressSubmitRefusalReason(err)
-		if got := imMetricReason(reason); got != reason {
+		if got := im.MetricReason(reason); got != reason {
 			t.Errorf("ingressSubmitRefusalReason(%v) = %q collapses to %q", err, reason, got)
 		}
 	}
@@ -244,20 +208,13 @@ func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 		errWecomInvalidCallback,
 	} {
 		reason := wecomCallbackRejectionReason(err)
-		if got := imMetricReason(reason); got != reason {
+		if got := im.MetricReason(reason); got != reason {
 			t.Errorf("wecomCallbackRejectionReason(%v) = %q collapses to %q", err, reason, got)
-		}
-	}
-	// Transport failure categories are metric labels too, so the bounded set a
-	// classifier may report and the metrics vocabulary must agree.
-	for _, category := range imTextFailureCategories {
-		if got := imMetricReason(category); got != category {
-			t.Errorf("failure category %q collapses to %q in send diagnostics", category, got)
 		}
 	}
 	// Dead labels from the removed identity-scoped paths must not reserve space.
 	for _, reason := range []string{"session_missing", "process_restarted", "pairing_reset", "local_discard", "stdin_failed"} {
-		if imMetricReason(reason) == reason {
+		if im.MetricReason(reason) == reason {
 			t.Fatalf("dead reason still reserving a label: %q", reason)
 		}
 	}

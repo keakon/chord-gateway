@@ -18,6 +18,7 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/buildinfo"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // ChordProcess manages a single chord headless child process.
@@ -26,8 +27,8 @@ type ChordProcess struct {
 	deliveryCtx    context.Context
 	deliveryCancel context.CancelFunc
 
-	lease *BindingLease
-	gate  *ChatGate
+	lease *im.BindingLease
+	gate  *im.ChatGate
 
 	waitDone chan struct{}
 
@@ -148,7 +149,7 @@ type ChordManager struct {
 
 	store *ConfigStore
 
-	onImage       func(string, *ReceivedImage)
+	onImage       func(string, *im.ReceivedImage)
 	mu            sync.RWMutex
 	lifecycleGate sync.RWMutex
 	shuttingDown  atomic.Bool
@@ -239,7 +240,7 @@ func (m *ChordManager) SetOnEvent(fn func(key, eventType string, state ControlSt
 	m.onEvent = fn
 }
 
-func (m *ChordManager) SetOnImage(fn func(string, *ReceivedImage)) {
+func (m *ChordManager) SetOnImage(fn func(string, *im.ReceivedImage)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onImage = fn
@@ -550,21 +551,21 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 		pgid:                pgid,
 	}
 	if m.admission != nil && imTypeForKey(key) != "console" {
-		im := m.Config().IMConfigByType(imTypeForKey(key))
-		owner := im.OwnerIdentity()
+		imCfg := m.Config().IMConfigByType(imTypeForKey(key))
+		owner := imCfg.OwnerIdentity()
 		_, _, chat := parseProcessKey(key)
 		if owner != nil {
-			id := ChatIdentity{imTypeForKey(key), owner.AccountID, chat}
+			id := im.ChatIdentity{Platform: imTypeForKey(key), AccountID: owner.AccountID, ChatID: chat}
 			m.admission.mu.Lock()
 			p.gate = m.admission.gates[id]
 			m.admission.mu.Unlock()
 			if p.gate != nil {
-				p.lease, _, _ = p.gate.snapshot()
+				p.lease, _, _ = p.gate.Snapshot()
 			}
 		}
 		original := p.onEvent
 		p.onEvent = func(k, e string, state ControlState) {
-			if p.lease == nil || p.lease.ctx.Err() != nil {
+			if p.lease == nil || p.lease.Context().Err() != nil {
 				return
 			}
 			if original != nil {
@@ -576,10 +577,10 @@ func (m *ChordManager) spawn(ws *config.Workspace, key string, onEvent func(key 
 	if m.admission != nil && imTypeForKey(key) == "console" {
 		_, platform, chat := parseProcessKey(key)
 		m.admission.mu.Lock()
-		p.gate = m.admission.gates[ChatIdentity{Platform: platform, ChatID: chat}]
+		p.gate = m.admission.gates[im.ChatIdentity{Platform: platform, ChatID: chat}]
 		m.admission.mu.Unlock()
 		if p.gate != nil {
-			p.lease, _, _ = p.gate.snapshot()
+			p.lease, _, _ = p.gate.Snapshot()
 		}
 	}
 	p.bindingGuard = m.transferBlocked(key)
@@ -863,7 +864,7 @@ func (p *ChordProcess) SendCommand(cmd map[string]any) error {
 // writeCommandLocked writes one complete JSONL command under p.mu, shared by
 // control commands and inputs that also register a consumption receipt.
 func (p *ChordProcess) writeCommandLocked(data []byte) error {
-	if p.lease != nil && p.lease.ctx.Err() != nil {
+	if p.lease != nil && p.lease.Context().Err() != nil {
 		return context.Canceled
 	}
 	if p.stdin == nil {

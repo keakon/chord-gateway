@@ -10,34 +10,17 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
 	imageResultEvent     = "image_result"
 	imageArtifactEvent   = "image_artifact"
-	maxGatewayImageBytes = 32 << 20
 	maxGatewayImageChunk = 384 << 10
 	maxGatewayImageSpool = 256 << 20
 	maxGatewayImageCount = 5
 )
-
-// Every receiver shares this process-wide spool budget. Tests that inspect or
-// replace its value must remain serial to avoid interfering with other receivers.
-var imageSpoolBytes atomic.Int64
-
-// ReceivedImage owns one validated temporary original until Close is called.
-type ReceivedImage struct {
-	BindingInstanceID                                         string
-	Path, Reference, CallID, AgentID, SessionID, MIME, SHA256 string
-	Size                                                      int64
-	Width, Height                                             int
-	closeOnce                                                 sync.Once
-}
-
-func (i *ReceivedImage) Close() {
-	i.closeOnce.Do(func() { _ = os.Remove(i.Path); imageSpoolBytes.Add(-i.Size) })
-}
 
 type receivedImageMetadata struct {
 	Reference string `json:"reference"`
@@ -98,7 +81,7 @@ func (*imageReceiver) discard(e *imageReceiveEntry) {
 	if e.file != nil {
 		_ = e.file.Close()
 		_ = os.Remove(e.file.Name())
-		imageSpoolBytes.Add(-e.meta.Size)
+		im.ImageSpoolBytes.Add(-e.meta.Size)
 		e.file = nil
 	}
 }
@@ -168,7 +151,7 @@ func (r *imageReceiver) result(raw json.RawMessage, session string) error {
 	newKeys := make(map[imageReceiveKey]bool)
 	for _, m := range summary.Images {
 		digest, err := hex.DecodeString(m.SHA256)
-		if err != nil || len(digest) != sha256.Size || m.Size <= 0 || m.Size > maxGatewayImageBytes || m.Width <= 0 || m.Height <= 0 || m.Width > maxGatewayImageDimension || m.Height > maxGatewayImageDimension || int64(m.Width)*int64(m.Height) > 36_000_000 || (m.MIME != "image/png" && m.MIME != "image/jpeg" && m.MIME != "image/webp") {
+		if err != nil || len(digest) != sha256.Size || m.Size <= 0 || m.Size > im.MaxGatewayImageBytes || m.Width <= 0 || m.Height <= 0 || m.Width > im.MaxGatewayImageDimension || m.Height > im.MaxGatewayImageDimension || int64(m.Width)*int64(m.Height) > 36_000_000 || (m.MIME != "image/png" && m.MIME != "image/jpeg" && m.MIME != "image/webp") {
 			return failCall(fmt.Errorf("invalid image metadata"))
 		}
 		if !strings.HasPrefix(m.Reference, "artifact:images/sha256-"+m.SHA256+".") {
@@ -194,7 +177,7 @@ func (r *imageReceiver) result(raw json.RawMessage, session string) error {
 	return nil
 }
 
-func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*ReceivedImage, error) {
+func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.ReceivedImage, error) {
 	// Chunks carry no digest of their own; integrity is checked against the
 	// summary's SHA-256 once the final chunk arrives.
 	var p struct {
@@ -223,7 +206,7 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*ReceivedIma
 		r.rememberTerminal(key)
 		return nil, fmt.Errorf("image chunk has no matching result")
 	}
-	fail := func(err error) (*ReceivedImage, error) {
+	fail := func(err error) (*im.ReceivedImage, error) {
 		r.discard(e)
 		delete(r.entries, key)
 		r.rememberTerminal(key)
@@ -238,17 +221,17 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*ReceivedIma
 	}
 	if e.file == nil {
 		for {
-			used := imageSpoolBytes.Load()
+			used := im.ImageSpoolBytes.Load()
 			if used+e.meta.Size > maxGatewayImageSpool {
 				return fail(fmt.Errorf("image delivery spool is full"))
 			}
-			if imageSpoolBytes.CompareAndSwap(used, used+e.meta.Size) {
+			if im.ImageSpoolBytes.CompareAndSwap(used, used+e.meta.Size) {
 				break
 			}
 		}
 		file, err := os.CreateTemp("", "chord-gateway-image-*")
 		if err != nil {
-			imageSpoolBytes.Add(-e.meta.Size)
+			im.ImageSpoolBytes.Add(-e.meta.Size)
 			return fail(fmt.Errorf("create image temporary file: %w", err))
 		}
 		e.file = file
@@ -272,7 +255,7 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*ReceivedIma
 	if err := e.file.Close(); err != nil {
 		return fail(fmt.Errorf("close received image: %w", err))
 	}
-	image := &ReceivedImage{Path: e.file.Name(), Reference: e.meta.Reference, CallID: p.CallID, AgentID: p.AgentID, SessionID: session, MIME: e.meta.MIME, SHA256: e.meta.SHA256, Size: e.meta.Size, Width: e.meta.Width, Height: e.meta.Height}
+	image := &im.ReceivedImage{Path: e.file.Name(), Reference: e.meta.Reference, CallID: p.CallID, AgentID: p.AgentID, SessionID: session, MIME: e.meta.MIME, SHA256: e.meta.SHA256, Size: e.meta.Size, Width: e.meta.Width, Height: e.meta.Height}
 	e.file = nil
 	delete(r.entries, key)
 	r.rememberTerminal(key)
@@ -283,7 +266,7 @@ func (p *ChordProcess) processImageEnvelope(env *HeadlessEnvelope) {
 	p.mu.RLock()
 	session := p.state.SessionID
 	p.mu.RUnlock()
-	var image *ReceivedImage
+	var image *im.ReceivedImage
 	var err error
 	if env.Type == imageResultEvent {
 		err = p.images.result(env.Payload, session)

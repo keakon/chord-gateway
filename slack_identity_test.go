@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/slack-go/slack"
 )
 
@@ -57,7 +59,7 @@ func TestSlackIdentityEvidenceChain(t *testing.T) {
 				if identity.BotName != "ExampleBot" {
 					t.Fatal("bot display name missing", identity.BotName)
 				}
-				parts, err := DecodeScopedID(identity.AccountID, "account-v1:", 2)
+				parts, err := im.DecodeScopedID(identity.AccountID, "account-v1:", 2)
 				if err != nil || parts[0] != "T1" || parts[1] != "UBOT" {
 					t.Fatalf("invalid account identity: %v %v", parts, err)
 				}

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type telegramPollingAPI struct {
@@ -58,7 +60,7 @@ func telegramTestPoller(t *testing.T) (*TelegramAdapter, *IngressStore, context.
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	a := &TelegramAdapter{accountID: "99", username: "test_bot", store: store, now: realTelegramClock, ctx: ctx, cancel: cancel}
-	accept := func(ctx context.Context, e IngressEnvelope, reason string) ReceiveResult {
+	accept := func(ctx context.Context, e im.IngressEnvelope, reason string) im.ReceiveResult {
 		msg := e.Message
 		rec := IngressRecord{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, SemanticID: e.SemanticID, InputDigest: e.InputDigest, Kind: "task", Text: msg.Text, SourceTime: e.SourceTime, ReceivedAt: e.ReceivedAt}
 		if reason != "" {
@@ -67,7 +69,7 @@ func telegramTestPoller(t *testing.T) (*TelegramAdapter, *IngressStore, context.
 		} else {
 			route, err := store.EnsureRoute(ctx, rec.Identity(), "auth", "workspace", "session")
 			if err != nil {
-				return ReceiveResult{Disposition: ReceiveRetryable}
+				return im.ReceiveResult{Disposition: im.ReceiveRetryable}
 			}
 			rec.RouteRevision = route.Revision
 			rec.AuthorizationDigest = route.AuthorizationDigest
@@ -76,7 +78,7 @@ func telegramTestPoller(t *testing.T) (*TelegramAdapter, *IngressStore, context.
 		}
 		return store.AcceptRecord(ctx, rec, e.Cursor)
 	}
-	a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult { return accept(ctx, e, "") }
+	a.receive = func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult { return accept(ctx, e, "") }
 	a.reject = accept
 	return a, store, ctx, cancel
 }
@@ -140,13 +142,13 @@ func TestTelegramPollingRetryableDoesNotConfirmPastFailedPrefix(t *testing.T) {
 	receive := a.receive
 	rejectedOnce := false
 	deliveries := map[string]int{}
-	a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	a.receive = func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		if e.Message.MessageID == "update:12" && !rejectedOnce {
 			rejectedOnce = true
-			return ReceiveResult{Disposition: ReceiveRetryable}
+			return im.ReceiveResult{Disposition: im.ReceiveRetryable}
 		}
 		r := receive(ctx, e)
-		if r.Disposition == ReceiveAccepted {
+		if r.Disposition == im.ReceiveAccepted {
 			deliveries[e.Message.MessageID]++
 		}
 		return r
@@ -185,12 +187,12 @@ func TestTelegramPollingUncertainCommitReconcilesBeforeConfirmation(t *testing.T
 	a, store, ctx, cancel := telegramTestPoller(t)
 	receive := a.receive
 	delivered := 0
-	a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	a.receive = func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		result := receive(ctx, e)
-		if result.Disposition == ReceiveAccepted {
+		if result.Disposition == im.ReceiveAccepted {
 			delivered++
 		}
-		return ReceiveResult{Disposition: ReceiveUncertain}
+		return im.ReceiveResult{Disposition: im.ReceiveUncertain}
 	}
 	a.api = &telegramPollingAPI{updates: func(_ context.Context, offset *int64, _ int) ([]telegramUpdate, error) {
 		telegramAssertOffset(t, offset, telegramOffset(11))
@@ -217,7 +219,7 @@ func TestTelegramCursorRestartFreshExpiredAndClockRollback(t *testing.T) {
 			a, store, ctx, _ := telegramTestPoller(t)
 			now := time.Now()
 			a.now = func() time.Time { return now }
-			next := IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &TelegramIngressCursor{BotID: "99", PendingOffset: telegramOffset(12345), PendingCreatedAt: now.Add(-age), ObservedAt: now.Add(-age), State: "pending"}}
+			next := im.IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &im.TelegramIngressCursor{BotID: "99", PendingOffset: telegramOffset(12345), PendingCreatedAt: now.Add(-age), ObservedAt: now.Add(-age), State: "pending"}}
 			if err := store.CommitCursor(ctx, "telegram", "99", 0, next); err != nil {
 				t.Fatal(err)
 			}
@@ -273,9 +275,9 @@ func TestTelegramPollingUnsupportedAndConflictAreDurable(t *testing.T) {
 	a, store, ctx, cancel := telegramTestPoller(t)
 	first := telegramWireUpdate(t, 10, "task 10")
 	duplicate := telegramWireUpdate(t, 10, "conflicting text")
-	results := []ReceiveResult{}
+	results := []im.ReceiveResult{}
 	receive := a.receive
-	a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	a.receive = func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		r := receive(ctx, e)
 		results = append(results, r)
 		return r
@@ -351,7 +353,7 @@ func TestTelegramPendingExpiresDuringNetworkRetryWithoutOffset(t *testing.T) {
 	a, store, ctx, _ := telegramTestPoller(t)
 	now := time.Now()
 	a.now = func() time.Time { return now }
-	stored := IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &TelegramIngressCursor{BotID: a.accountID, PendingOffset: telegramOffset(999999), PendingCreatedAt: now, ObservedAt: now, State: "pending"}}
+	stored := im.IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &im.TelegramIngressCursor{BotID: a.accountID, PendingOffset: telegramOffset(999999), PendingCreatedAt: now, ObservedAt: now, State: "pending"}}
 	if err := store.CommitCursor(ctx, "telegram", a.accountID, 0, stored); err != nil {
 		t.Fatal(err)
 	}
@@ -392,10 +394,10 @@ func TestTelegramUnorderedBatchSortsBeforePrefixAcknowledgment(t *testing.T) {
 	a, _, ctx, cancel := telegramTestPoller(t)
 	receive := a.receive
 	order := []string{}
-	a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	a.receive = func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		order = append(order, e.Message.MessageID)
 		if e.Message.MessageID == "update:12" {
-			return ReceiveResult{Disposition: ReceiveRetryable}
+			return im.ReceiveResult{Disposition: im.ReceiveRetryable}
 		}
 		return receive(ctx, e)
 	}
@@ -427,9 +429,9 @@ func TestTelegramUnorderedBatchSortsBeforePrefixAcknowledgment(t *testing.T) {
 func TestTelegramUnacknowledgedUpdateRetriesWithoutAdvancingOffset(t *testing.T) {
 	a, _, ctx, cancel := telegramTestPoller(t)
 	var attempts []string
-	a.receive = func(_ context.Context, e IngressEnvelope) ReceiveResult {
+	a.receive = func(_ context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		attempts = append(attempts, e.Message.MessageID)
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_busy"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "route_busy"}
 	}
 	var offsets []int64
 	a.api = &telegramPollingAPI{updates: func(_ context.Context, offset *int64, timeout int) ([]telegramUpdate, error) {
@@ -465,9 +467,9 @@ func TestTelegramUnacknowledgedUpdateRetriesWithoutAdvancingOffset(t *testing.T)
 func TestTelegramUnacknowledgedUpdateWarnsOnce(t *testing.T) {
 	a, _, ctx, cancel := telegramTestPoller(t)
 	attempts := 0
-	a.receive = func(_ context.Context, _ IngressEnvelope) ReceiveResult {
+	a.receive = func(_ context.Context, _ im.IngressEnvelope) im.ReceiveResult {
 		attempts++
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_busy"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "route_busy"}
 	}
 	a.api = &telegramPollingAPI{updates: func(_ context.Context, _ *int64, _ int) ([]telegramUpdate, error) {
 		if attempts >= 2 {

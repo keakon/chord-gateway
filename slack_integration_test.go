@@ -17,6 +17,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type slackIntegrationAdapter struct{ pairingTestAdapter }
@@ -44,7 +45,7 @@ func newSlackIntegrationHarness(t *testing.T) *slackIntegrationHarness {
 	router.admission = NewAdmission(pairing)
 	manager.admission = router.admission
 	router.SetAdapter(&slackIntegrationAdapter{})
-	if err := pairing.PlatformReadyWithPresentation("slack", "account", PlatformPresentation{Platform: "slack", BotMention: "<@UBOT>"}); err != nil {
+	if err := pairing.PlatformReadyWithPresentation("slack", "account", im.PlatformPresentation{Platform: "slack", BotMention: "<@UBOT>"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(terminal.String(), "/chord bind") {
@@ -87,7 +88,7 @@ func newSlackIntegrationHarness(t *testing.T) *slackIntegrationHarness {
 	return h
 }
 
-func (h *slackIntegrationHarness) receive(t *testing.T, kind string, payload json.RawMessage, delivery string) ReceiveResult {
+func (h *slackIntegrationHarness) receive(t *testing.T, kind string, payload json.RawMessage, delivery string) im.ReceiveResult {
 	t.Helper()
 	future, cancel, err := h.inbound.submit(t.Context(), kind, payload, delivery, time.Now())
 	if err != nil {
@@ -102,7 +103,7 @@ func (h *slackIntegrationHarness) receive(t *testing.T, kind string, payload jso
 func (h *slackIntegrationHarness) bindDM(t *testing.T) {
 	t.Helper()
 	result := h.receive(t, "slash_commands", slackTestSlash(fmt.Sprintf("bind %q %s", t.TempDir(), h.code), "PAIR1"), "ENVPAIR1")
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	waitIngressCondition(t, func() bool {
@@ -157,7 +158,7 @@ func TestSlackIntegrationPairingDMProofAndPersistence(t *testing.T) {
 	}
 	h.mu.Unlock()
 	result := h.receive(t, "slash_commands", slackTestSlash(fmt.Sprintf("bind %q %s", t.TempDir(), h.code), "BADPAIR"), "ENVBADPAIR")
-	if result.Disposition != ReceiveRejected || h.router.getConfig().IMConfigByType("slack").OwnerIdentity() != nil {
+	if result.Disposition != im.ReceiveRejected || h.router.getConfig().IMConfigByType("slack").OwnerIdentity() != nil {
 		t.Fatal("unverified DM paired owner", result)
 	}
 	record, err := h.service.store.Get(result.RecordID)
@@ -182,13 +183,13 @@ func TestSlackIntegrationBusinessAndSemanticDeduplication(t *testing.T) {
 	first := h.receive(t, "events_api", slackTestEvent(event, "E1"), "ENV1")
 	redelivery := h.receive(t, "events_api", slackTestEvent(event, "E1"), "ENV2")
 	semanticDuplicate := h.receive(t, "events_api", slackTestEvent(event, "E2"), "ENV3")
-	if first.Disposition != ReceiveAccepted || redelivery.Disposition != ReceiveDuplicate || semanticDuplicate.Disposition != ReceiveDuplicate || first.RecordID != redelivery.RecordID || first.RecordID != semanticDuplicate.RecordID {
+	if first.Disposition != im.ReceiveAccepted || redelivery.Disposition != im.ReceiveDuplicate || semanticDuplicate.Disposition != im.ReceiveDuplicate || first.RecordID != redelivery.RecordID || first.RecordID != semanticDuplicate.RecordID {
 		t.Fatal(first, redelivery, semanticDuplicate)
 	}
 	event.TS = fmt.Sprintf("%d.000002", time.Now().Unix())
 	event.Text = "second task"
 	second := h.receive(t, "events_api", slackTestEvent(event, "E3"), "ENV4")
-	if second.Disposition != ReceiveAccepted || second.RecordID == first.RecordID {
+	if second.Disposition != im.ReceiveAccepted || second.RecordID == first.RecordID {
 		t.Fatal(second)
 	}
 	waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
@@ -209,7 +210,7 @@ func TestSlackIntegrationThreadBindingDoesNotBindSlashRoot(t *testing.T) {
 	target, _ := slackTarget("C1", thread)
 	bind := slackIntegrationEvent("C1", thread, fmt.Sprintf("<@UBOT> /bind %q", t.TempDir()), "000001")
 	result := h.receive(t, "events_api", slackTestEvent(bind, "THREADBIND"), "ENVTHREADBIND")
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	waitIngressCondition(t, func() bool {
@@ -222,14 +223,14 @@ func TestSlackIntegrationThreadBindingDoesNotBindSlashRoot(t *testing.T) {
 	slash.ChannelID = "C1"
 	payload, _ := json.Marshal(slash)
 	root := h.receive(t, "slash_commands", payload, "ENVROOTSTATUS")
-	if root.Disposition != ReceiveRejected || root.Reason != "chat_unbound" {
+	if root.Disposition != im.ReceiveRejected || root.Reason != "chat_unbound" {
 		t.Fatal("slash inherited thread binding", root)
 	}
 	first := slackIntegrationEvent("C1", thread, "<@UBOT> first thread task", "000002")
 	one := h.receive(t, "events_api", slackTestEvent(first, "THREAD1"), "ENVTHREAD1")
 	first.Text, first.TS = "<@UBOT> second thread task", fmt.Sprintf("%d.000003", time.Now().Unix())
 	two := h.receive(t, "events_api", slackTestEvent(first, "THREAD2"), "ENVTHREAD2")
-	if one.Disposition != ReceiveAccepted || two.Disposition != ReceiveAccepted || one.RecordID == two.RecordID {
+	if one.Disposition != im.ReceiveAccepted || two.Disposition != im.ReceiveAccepted || one.RecordID == two.RecordID {
 		t.Fatal("different thread messages deduplicated", one, two)
 	}
 	waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
@@ -277,7 +278,7 @@ func TestSlackIntegrationFrozenAllowCannotApproveNewConfirmation(t *testing.T) {
 	process.mu.Unlock()
 	close(release)
 	result := WaitIngressNormalization(t.Context(), future)
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	waitIngressCondition(t, func() bool {

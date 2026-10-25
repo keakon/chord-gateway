@@ -7,26 +7,28 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func (r *NotificationRouter) ingressRouteIdentity(id ChatIdentity) (digest, workspace, session string, err error) {
+func (r *NotificationRouter) ingressRouteIdentity(id im.ChatIdentity) (digest, workspace, session string, err error) {
 	cfg := r.getConfig()
 	if cfg == nil {
-		return "", "", "", errPairingDenied
+		return "", "", "", im.ErrPairingDenied
 	}
-	im := cfg.IMConfigByType(id.Platform)
-	if im == nil || im.OwnerIdentity() == nil || im.OwnerIdentity().AccountID != id.AccountID {
-		return "", "", "", errPairingDenied
+	imCfg := cfg.IMConfigByType(id.Platform)
+	if imCfg == nil || imCfg.OwnerIdentity() == nil || imCfg.OwnerIdentity().AccountID != id.AccountID {
+		return "", "", "", im.ErrPairingDenied
 	}
 	ws, e := cfg.ResolveWorkspace(id.Platform, id.ChatID)
 	if e != nil || ws == nil {
-		return "", "", "", errPairingDenied
+		return "", "", "", im.ErrPairingDenied
 	}
 	path, _, e := canonicalBindingDirectory(ws.Path)
 	if e != nil {
 		return "", "", "", e
 	}
-	data, _ := json.Marshal([]string{id.Platform, id.AccountID, im.OwnerIdentity().UserID, id.ChatID, ws.ID, path})
+	data, _ := json.Marshal([]string{id.Platform, id.AccountID, imCfg.OwnerIdentity().UserID, id.ChatID, ws.ID, path})
 	sum := sha256.Sum256(data)
 	key := (processKey{workspaceID: ws.ID, imType: id.Platform, chatID: id.ChatID}).String()
 	if r.mgr.pins != nil {
@@ -38,7 +40,7 @@ func (r *NotificationRouter) ingressRouteIdentity(id ChatIdentity) (digest, work
 // beginIngressRouteChange runs under the same gate as config mutation and stdin.
 // Failed changes retain the new revision; a changing route refuses new tasks
 // until it settles.
-func (r *NotificationRouter) beginIngressRouteChange(ctx context.Context, id ChatIdentity) (func() error, error) {
+func (r *NotificationRouter) beginIngressRouteChange(ctx context.Context, id im.ChatIdentity) (func() error, error) {
 	if r.ingressStore == nil {
 		return func() error { return nil }, nil
 	}
@@ -59,8 +61,8 @@ func (r *NotificationRouter) beginIngressRouteChange(ctx context.Context, id Cha
 	return func() error {
 		digest, workspace, session, err := r.ingressRouteIdentity(id)
 		if err != nil {
-			im := r.getConfig().IMConfigByType(id.Platform)
-			if im == nil || im.Bindings()[id.ChatID] != "" || im.OwnerIdentity() != nil && im.OwnerIdentity().AccountID != id.AccountID {
+			imCfg := r.getConfig().IMConfigByType(id.Platform)
+			if imCfg == nil || imCfg.Bindings()[id.ChatID] != "" || imCfg.OwnerIdentity() != nil && imCfg.OwnerIdentity().AccountID != id.AccountID {
 				return err
 			}
 			// A failed first bind still has an authoritative unbound target.
@@ -70,7 +72,7 @@ func (r *NotificationRouter) beginIngressRouteChange(ctx context.Context, id Cha
 	}, nil
 }
 
-func (r *NotificationRouter) enqueueIngressReply(msg IncomingMessage, text string) outboundEnqueueResult {
+func (r *NotificationRouter) enqueueIngressReply(msg im.IncomingMessage, text string) outboundEnqueueResult {
 	recordDrop := func(reason string) {
 		if r.ingressStore != nil {
 			r.ingressStore.metrics.record(msg.IMType, "reply_dropped", reason)
@@ -80,18 +82,18 @@ func (r *NotificationRouter) enqueueIngressReply(msg IncomingMessage, text strin
 		recordDrop("outbound_closed")
 		return outboundClosed
 	}
-	if msg.ticket == nil || r.admission == nil || !r.admission.Valid(*msg.ticket) {
+	if msg.AdmissionTicket() == nil || r.admission == nil || !r.admission.Valid(*msg.AdmissionTicket()) {
 		recordDrop("authorization_changed")
 		return outboundClosed
 	}
 	// The producer may reuse its message/ticket after enqueue returns.
 	// Every deferred permission check uses this operation's frozen ticket.
-	ticketSnapshot := *msg.ticket
-	msg.ticket = &ticketSnapshot
-	deadline := time.Now().Add(IMControlSendTimeout)
+	ticketSnapshot := *msg.AdmissionTicket()
+	msg.SetAdmissionTicket(&ticketSnapshot)
+	deadline := time.Now().Add(im.IMControlSendTimeout)
 	var send func(context.Context) error
-	if msg.ticket.Kind == "owner_unbound" || msg.ticket.Kind == "paired_bind" || msg.ticket.IsPairingHint() {
-		ticket := *msg.ticket
+	if msg.AdmissionTicket().Kind == "owner_unbound" || msg.AdmissionTicket().Kind == "paired_bind" || msg.AdmissionTicket().IsPairingHint() {
+		ticket := *msg.AdmissionTicket()
 		expires := ticket.ReceivedAt.Add(30 * time.Second)
 		if expires.Before(deadline) {
 			deadline = expires
@@ -112,7 +114,7 @@ func (r *NotificationRouter) enqueueIngressReply(msg IncomingMessage, text strin
 		send = func(ctx context.Context) error { return r.SendBound(ctx, target, text) }
 	}
 	result := r.outbound.enqueue(compositeKey(msg.IMType, msg.AccountID, msg.ChatID), func() {
-		if !r.admission.Valid(*msg.ticket) {
+		if !r.admission.Valid(*msg.AdmissionTicket()) {
 			recordDrop("authorization_changed")
 			return
 		}

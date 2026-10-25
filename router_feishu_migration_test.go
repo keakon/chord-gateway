@@ -15,9 +15,10 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func migrationFeishuRouter(t *testing.T, handler http.HandlerFunc) (*NotificationRouter, *ChordProcess, IncomingMessage) {
+func migrationFeishuRouter(t *testing.T, handler http.HandlerFunc) (*NotificationRouter, *ChordProcess, im.IncomingMessage) {
 	t.Helper()
 	fc := &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "workspace"}}
 	cfg := &config.Config{IMs: []config.IMAdapterConfig{{Feishu: fc}}, Workspaces: []config.Workspace{{ID: "workspace", Path: t.TempDir()}}}
@@ -46,17 +47,17 @@ func migrationFeishuRouter(t *testing.T, handler http.HandlerFunc) (*Notificatio
 	if err := mgr.pins.Set(pinKeyForBinding(key), "session"); err != nil {
 		t.Fatal(err)
 	}
-	msg := IncomingMessage{IMType: "feishu", AccountID: "app", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "callback", InternalAction: &InternalAction{Type: "question", Action: "answer", RequestID: "q", Value: "option", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}}
+	msg := im.IncomingMessage{IMType: "feishu", AccountID: "app", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "callback", InternalAction: &im.InternalAction{Type: "question", Action: "answer", RequestID: "q", Value: "option", BindingInstanceID: "binding", Handle: im.InteractiveCardHandle{MessageID: "card"}}}
 	ticket, ok := r.admission.Authorize(msg)
 	if !ok {
 		t.Fatal("owner not authorized")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	t.Cleanup(func() { r.Close(); r.admission.Close(); server.Close(); feishuOpenBaseURL = originalURL })
 	return r, p, msg
 }
 
-func flushIngressPresentation(t *testing.T, r *NotificationRouter, msg IncomingMessage) {
+func flushIngressPresentation(t *testing.T, r *NotificationRouter, msg im.IncomingMessage) {
 	t.Helper()
 	ws, err := r.getConfig().ResolveWorkspace(msg.IMType, msg.ChatID)
 	if err != nil {
@@ -77,7 +78,7 @@ func flushIngressPresentation(t *testing.T, r *NotificationRouter, msg IncomingM
 }
 
 func TestFeishuIngressDiagnosticsResolveOriginalCardWithoutDuplicateText(t *testing.T) {
-	for _, state := range []ingressState{"rejected", "unknown"} {
+	for _, state := range []im.IngressState{"rejected", "unknown"} {
 		t.Run(string(state), func(t *testing.T) {
 			var mu sync.Mutex
 			var patches, texts int
@@ -95,7 +96,7 @@ func TestFeishuIngressDiagnosticsResolveOriginalCardWithoutDuplicateText(t *test
 				}
 				fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
 			})
-			r.recordCardHandle(p.key, "question", "q", &InteractiveCardHandle{MessageID: "card"})
+			r.recordCardHandle(p.key, "question", "q", &im.InteractiveCardHandle{MessageID: "card"})
 			r.enqueueIngressDispatchDiagnostic(msg, DispatchResult{state, "question_outcome_unknown"})
 			flushIngressPresentation(t, r, msg)
 			mu.Lock()
@@ -134,7 +135,7 @@ func TestFeishuIngressUnknownCardPatchDoesNotBlindlySendText(t *testing.T) {
 					fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
 				}
 			})
-			r.recordCardHandle(p.key, "question", "q", &InteractiveCardHandle{MessageID: "card"})
+			r.recordCardHandle(p.key, "question", "q", &im.InteractiveCardHandle{MessageID: "card"})
 			r.enqueueIngressInteractionResult(msg, "question", "q", "Question updated", "Question updated.", "green")
 			flushIngressPresentation(t, r, msg)
 			mu.Lock()
@@ -172,9 +173,9 @@ func TestFeishuIngressConfirmationWriteDoesNotClaimChordAcceptance(t *testing.T)
 		}
 		fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
 	})
-	msg.InternalAction = &InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}
+	msg.InternalAction = &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm", BindingInstanceID: "binding", Handle: im.InteractiveCardHandle{MessageID: "card"}}
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "confirm", ToolName: "Shell"}
-	r.recordCardHandle(p.key, "confirm", "confirm", &InteractiveCardHandle{MessageID: "card"})
+	r.recordCardHandle(p.key, "confirm", "confirm", &im.InteractiveCardHandle{MessageID: "card"})
 	_, target := r.CaptureIngress(msg)
 	result := r.DispatchAccepted(t.Context(), msg, target)
 	if result.State != "submitted" {
@@ -225,7 +226,7 @@ func TestFeishuConfirmResolutionWinsOverLateSubmissionFeedback(t *testing.T) {
 				}
 				fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
 			})
-			msg.InternalAction = &InternalAction{Type: "confirm", Action: "allow", RequestID: "req-1", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}
+			msg.InternalAction = &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "req-1", BindingInstanceID: "binding", Handle: im.InteractiveCardHandle{MessageID: "card"}}
 			if tc.cardSendQueued {
 				release := make(chan struct{})
 				released := false
@@ -244,7 +245,7 @@ func TestFeishuConfirmResolutionWinsOverLateSubmissionFeedback(t *testing.T) {
 				p.mu.Lock()
 				p.state.PendingConfirm = &ConfirmPayload{RequestID: "req-1", ToolName: "Read"}
 				p.mu.Unlock()
-				r.recordCardHandle(p.key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "card"})
+				r.recordCardHandle(p.key, "confirm", "req-1", &im.InteractiveCardHandle{MessageID: "card"})
 
 				queueFeedback := func() {
 					r.enqueueIngressInteractionPresentation(msg, "confirm", "req-1", "Approval submitted", "Chord acceptance is unconfirmed; check /status.", "grey", false, "binding")
@@ -285,7 +286,7 @@ func TestFeishuConfirmResolutionWinsOverLateSubmissionFeedback(t *testing.T) {
 			r.mu.RLock()
 			entry := r.cardHandles[cardHandleKey(p.key, "confirm", "req-1")]
 			r.mu.RUnlock()
-			if !entry.terminal || entry.handle != (InteractiveCardHandle{}) {
+			if !entry.terminal || entry.handle != (im.InteractiveCardHandle{}) {
 				t.Fatalf("terminal card guard not retained after patch: %+v", entry)
 			}
 		})
@@ -319,7 +320,7 @@ func TestFeishuConfirmResolutionDelivery(t *testing.T) {
 				fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
 			})
 			if name != "no handle" {
-				r.recordCardHandle(p.key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "card"})
+				r.recordCardHandle(p.key, "confirm", "req-1", &im.InteractiveCardHandle{MessageID: "card"})
 			}
 			p.processEnvelope(&HeadlessEnvelope{Type: "confirm_resolved", Seq: 1, Payload: confirmResolvedPayload("req-1", ConfirmOutcomeTimeout)})
 			flushIngressPresentation(t, r, msg)
@@ -346,7 +347,7 @@ func TestFeishuConfirmResolutionDelivery(t *testing.T) {
 			if !entry.terminal || entry.handle.MessageID != wantHandle {
 				t.Fatalf("unexpected terminal handle state: %+v", entry)
 			}
-			msg.InternalAction = &InternalAction{Type: "confirm", RequestID: "req-1", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}
+			msg.InternalAction = &im.InternalAction{Type: "confirm", RequestID: "req-1", BindingInstanceID: "binding", Handle: im.InteractiveCardHandle{MessageID: "card"}}
 			r.enqueueIngressInteractionFeedback(msg, "confirm", "req-1", "Request not applied", "Request was rejected.", "red", true, true, "binding")
 			flushIngressPresentation(t, r, msg)
 			mu.Lock()
@@ -421,7 +422,7 @@ func TestFeishuIngressStatusRestoresQuestionPresentationOnce(t *testing.T) {
 	}
 }
 
-func migrationFeishuIngress(t *testing.T, r *NotificationRouter, msg IncomingMessage) (*IngressService, ChatIdentity) {
+func migrationFeishuIngress(t *testing.T, r *NotificationRouter, msg im.IncomingMessage) (*IngressService, im.ChatIdentity) {
 	t.Helper()
 	store := NewIngressStore()
 	service := NewIngressService(store, r)
@@ -458,7 +459,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := WaitIngressNormalization(t.Context(), future)
-	if first.Disposition != ReceiveAccepted {
+	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
 	future, err = adapter.submitMessageEvent(t.Context(), &message, "delivery-2")
@@ -466,7 +467,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicate := WaitIngressNormalization(t.Context(), future)
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != first.RecordID {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != first.RecordID {
 		t.Fatal(duplicate)
 	}
 	var card larkcallback.CardActionTriggerEvent
@@ -478,7 +479,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 		t.Fatal(immediate, err)
 	}
 	second := WaitIngressNormalization(t.Context(), future)
-	if second.Disposition != ReceiveAccepted || second.RecordID == first.RecordID {
+	if second.Disposition != im.ReceiveAccepted || second.RecordID == first.RecordID {
 		t.Fatal(second)
 	}
 	future, _, err = adapter.submitCardActionEvent(t.Context(), &card, "card-delivery-2")
@@ -486,7 +487,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicate = WaitIngressNormalization(t.Context(), future)
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != second.RecordID {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != second.RecordID {
 		t.Fatal(duplicate)
 	}
 	records, err := service.store.ListRouteRecords(id)
@@ -526,20 +527,20 @@ func TestFeishuRealIngressRejectsAcceptedCardBehindUnknownOutcome(t *testing.T) 
 	task := msg
 	task.InternalAction = nil
 	task.Text, task.MessageID = "uncertain task", "message:old"
-	previous := service.Accept(t.Context(), IngressEnvelope{Message: task})
-	if previous.Disposition != ReceiveAccepted {
+	previous := service.Accept(t.Context(), im.IngressEnvelope{Message: task})
+	if previous.Disposition != im.ReceiveAccepted {
 		t.Fatal(previous)
 	}
-	if err := service.store.UpdateRecord(t.Context(), previous.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+	if err := service.store.UpdateRecord(t.Context(), previous.RecordID, []im.IngressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "confirm", ToolName: "Shell"}
 	p.mu.Unlock()
 	msg.MessageID = "card:new"
-	msg.InternalAction = &InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "card"}}
-	accepted := service.Accept(t.Context(), IngressEnvelope{Message: msg})
-	if accepted.Disposition != ReceiveAccepted {
+	msg.InternalAction = &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "confirm", BindingInstanceID: "binding", Handle: im.InteractiveCardHandle{MessageID: "card"}}
+	accepted := service.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+	if accepted.Disposition != im.ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	dispatchIngressTestRoute(service, id)
@@ -567,10 +568,10 @@ func TestFeishuRealIngressQueuedCardCannotAffectReplacementRequest(t *testing.T)
 	p.mu.Lock()
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "original", ToolName: "Shell"}
 	p.mu.Unlock()
-	msg.InternalAction = &InternalAction{Type: "confirm", Action: "allow", RequestID: "original", BindingInstanceID: "binding", Handle: InteractiveCardHandle{MessageID: "old-card"}}
+	msg.InternalAction = &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "original", BindingInstanceID: "binding", Handle: im.InteractiveCardHandle{MessageID: "old-card"}}
 	msg.MessageID = "card:approval"
-	accepted := service.Accept(t.Context(), IngressEnvelope{Message: msg})
-	if accepted.Disposition != ReceiveAccepted {
+	accepted := service.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+	if accepted.Disposition != im.ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	p.mu.Lock()
@@ -635,7 +636,7 @@ func TestFeishuIngressQuestionClosureBeforeReceiptKeepsAuthoritativeCard(t *test
 	p.stdin = ingressResolutionBeforeReceiptWriter{proc: p, patched: patched}
 	p.mu.Unlock()
 	msg.InternalAction.Version = 7
-	r.recordCardHandle(p.key, "question", "q", &InteractiveCardHandle{MessageID: "card"})
+	r.recordCardHandle(p.key, "question", "q", &im.InteractiveCardHandle{MessageID: "card"})
 	_, target := r.CaptureIngress(msg)
 	result := r.DispatchAccepted(t.Context(), msg, target)
 	if result.State != "completed" {
@@ -668,7 +669,7 @@ func TestFeishuIngressPresentationDoesNotAdoptReplacementRuntime(t *testing.T) {
 	p.bindingInstanceID = "replacement"
 	p.state.BindingInstanceID = "replacement"
 	p.mu.Unlock()
-	r.recordCardHandle(p.key, "confirm", "confirm", &InteractiveCardHandle{MessageID: "new-runtime-card"})
+	r.recordCardHandle(p.key, "confirm", "confirm", &im.InteractiveCardHandle{MessageID: "new-runtime-card"})
 	r.enqueueIngressInteractionPresentation(msg, "confirm", "confirm", "Approval submitted", "Old runtime submission.", "grey", false, "binding")
 	flushIngressPresentation(t, r, msg)
 	mu.Lock()
@@ -706,7 +707,7 @@ func TestFeishuIngressQuestionReceiptBeforeClosureRetainsOriginalHandle(t *testi
 	p.stdin = writer
 	p.mu.Unlock()
 	msg.InternalAction.Version = 7
-	r.recordCardHandle(p.key, "question", "q", &InteractiveCardHandle{MessageID: "card"})
+	r.recordCardHandle(p.key, "question", "q", &im.InteractiveCardHandle{MessageID: "card"})
 	_, target := r.CaptureIngress(msg)
 	if result := r.DispatchAccepted(t.Context(), msg, target); result.State != "completed" {
 		t.Fatal(result)
@@ -737,7 +738,7 @@ func TestFeishuIngressTrustedClosureUnknownPatchDoesNotDuplicateText(t *testing.
 			fmt.Fprint(w, `{"code":0,"data":{"message_id":"message"}}`)
 		}
 	})
-	r.recordCardHandle(p.key, "question", "q", &InteractiveCardHandle{MessageID: "card"})
+	r.recordCardHandle(p.key, "question", "q", &im.InteractiveCardHandle{MessageID: "card"})
 	state := p.State()
 	state.LastQuestionResolved = &QuestionPayload{RequestID: "q", Version: 8, Outcome: QuestionResolvedAnswered, Selected: []string{"Choice"}}
 	r.HandleChordEvent(p.key, "question_resolved", state)

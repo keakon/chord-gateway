@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	gateway "github.com/keakon/chord-gateway/internal/discordgateway"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // Fixture accounts must not contend on the production machine-wide account lock
@@ -146,7 +147,7 @@ func discordAdapterWaitReady(t *testing.T, a *DiscordAdapter, notifications <-ch
 	timeout := time.NewTimer(3 * time.Second)
 	defer timeout.Stop()
 	for {
-		if a.IngressDeliveryReadiness(ChatIdentity{"discord", discordAdapterAccountID(t), "500"}).Ready {
+		if a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500"}).Ready {
 			return
 		}
 		select {
@@ -256,10 +257,10 @@ func TestDiscordAdapterAuthenticatesAndRecoversBeforeReady(t *testing.T) {
 	if err := discordAdapterResult(t, result); err != nil {
 		t.Fatal(err)
 	}
-	if adapter.IngressDeliveryReadiness(ChatIdentity{"discord", discordAdapterAccountID(t), "500"}).Ready {
+	if adapter.IngressDeliveryReadiness(im.ChatIdentity{Platform: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500"}).Ready {
 		t.Fatal("disconnected adapter ready")
 	}
-	lock, err := AcquireIMAccountLock("discord", discordAdapterAccountID(t))
+	lock, err := im.AcquireIMAccountLock("discord", discordAdapterAccountID(t))
 	if err != nil {
 		t.Fatalf("account lock leaked: %v", err)
 	}
@@ -292,7 +293,7 @@ func TestDiscordAdapterRejectsRESTIdentityAndSharding(t *testing.T) {
 				t.Fatal("rejected identity became ready")
 			}
 			if adapter.accountID != "" {
-				lock, err := AcquireIMAccountLock("discord", discordAdapterAccountID(t))
+				lock, err := im.AcquireIMAccountLock("discord", discordAdapterAccountID(t))
 				if err != nil {
 					t.Fatalf("account lock leaked: %v", err)
 				}
@@ -314,7 +315,7 @@ func TestDiscordAdapterAccountLockCoversWorkerExit(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	adapter.SetIngressReadinessNotifier(func() {
-		if adapter.IngressDeliveryReadiness(ChatIdentity{"discord", discordAdapterAccountID(t), "500"}).Ready {
+		if adapter.IngressDeliveryReadiness(im.ChatIdentity{Platform: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500"}).Ready {
 			once.Do(func() { close(entered); <-release })
 		}
 	})
@@ -324,7 +325,7 @@ func TestDiscordAdapterAccountLockCoversWorkerExit(t *testing.T) {
 	disconnected := make(chan struct{})
 	go func() { adapter.Disconnect(); close(disconnected) }()
 	discordAdapterSignal(t, adapter.ctx.Done())
-	if lock, err := AcquireIMAccountLock("discord", discordAdapterAccountID(t)); err == nil {
+	if lock, err := im.AcquireIMAccountLock("discord", discordAdapterAccountID(t)); err == nil {
 		lock.Close()
 		t.Error("account lock released while gateway callback worker was active")
 	}
@@ -338,7 +339,7 @@ func TestDiscordAdapterAccountLockCoversWorkerExit(t *testing.T) {
 	if err := discordAdapterResult(t, result); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := AcquireIMAccountLock("discord", discordAdapterAccountID(t))
+	lock, err := im.AcquireIMAccountLock("discord", discordAdapterAccountID(t))
 	if err != nil {
 		t.Fatalf("account lock not released: %v", err)
 	}
@@ -385,7 +386,7 @@ func TestDiscordAdapterReadyMismatchAndFatalCloseStop(t *testing.T) {
 			if err := discordAdapterResult(t, result); err == nil {
 				t.Fatal("fatal identity/close returned nil")
 			}
-			if adapter.IngressDeliveryReadiness(ChatIdentity{"discord", discordAdapterAccountID(t), "500"}).Ready {
+			if adapter.IngressDeliveryReadiness(im.ChatIdentity{Platform: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500"}).Ready {
 				t.Fatal("fatal connection remained ready")
 			}
 			if count.Load() != 1 {
@@ -458,8 +459,8 @@ func TestDiscordAdapterReadinessScopeAndOldGeneration(t *testing.T) {
 	if !adapter.currentGeneration(2) {
 		t.Fatal("old generation invalidated current readiness")
 	}
-	for _, id := range []ChatIdentity{{"wechat", discordAdapterAccountID(t), "500"}, {"discord", "999", "500"}} {
-		if got := adapter.IngressDeliveryReadiness(id); got.Ready || got.Reason != IngressWaitingAccount {
+	for _, id := range []im.ChatIdentity{{Platform: "wechat", AccountID: discordAdapterAccountID(t), ChatID: "500"}, {Platform: "discord", AccountID: "999", ChatID: "500"}} {
+		if got := adapter.IngressDeliveryReadiness(id); got.Ready || got.Reason != im.IngressWaitingAccount {
 			t.Fatal(fmt.Sprint(got))
 		}
 	}

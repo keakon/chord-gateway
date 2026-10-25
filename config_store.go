@@ -40,7 +40,7 @@ type ConfigMutation struct {
 }
 
 func NewConfigStore(path string) (*ConfigStore, error) {
-	path, err := canonicalResource(path)
+	path, err := config.CanonicalResource(path)
 	if err != nil {
 		return nil, err
 	}

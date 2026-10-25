@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func dingtalkIdentityTestConfig() *config.DingtalkConfig {
@@ -57,7 +58,7 @@ func TestDingtalkTargetsRoundTripAndScope(t *testing.T) {
 		_, _, err = dingtalkDecodeTarget("other-corp", target)
 		assertDingtalkIdentityCategory(t, err, "invalid_target", false)
 	}
-	other, _ := EncodeScopedID("target-v1:", "slack-thread", "test-corp", "raw")
+	other, _ := im.EncodeScopedID("target-v1:", "slack-thread", "test-corp", "raw")
 	_, _, err := dingtalkDecodeTarget("test-corp", other)
 	assertDingtalkIdentityCategory(t, err, "invalid_target", false)
 }
@@ -119,7 +120,7 @@ func TestDingtalkNormalizeRejectionsAreSanitized(t *testing.T) {
 				if msg.MessageID == "" || msg.ChatID == "" || msg.AccountID == "" || msg.SenderID == "" {
 					t.Fatalf("rejection omitted authenticated business identity: %+v", msg)
 				}
-			} else if !reflect.DeepEqual(msg, IncomingMessage{}) {
+			} else if !reflect.DeepEqual(msg, im.IncomingMessage{}) {
 				t.Fatalf("identity rejection retained message: %+v", msg)
 			}
 		})
@@ -175,7 +176,7 @@ func TestDingtalkClientLockExcludesDifferentConfiguredIdentities(t *testing.T) {
 	}
 	independent.Close()
 	account, _ := dingtalkAccountID(cfg)
-	if duplicate, err := AcquireIMAccountLock("dingtalk", account); err == nil {
+	if duplicate, err := im.AcquireIMAccountLock("dingtalk", account); err == nil {
 		duplicate.Close()
 		t.Fatal("public account lock was not acquired")
 	}

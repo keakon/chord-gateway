@@ -9,11 +9,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type ingressControl struct {
-	message IncomingMessage
-	target  *IngressControlTarget
+	message im.IncomingMessage
+	target  *im.IngressControlTarget
 }
 
 // IngressService owns bounded dispatch concurrency. IngressStore owns process-local
@@ -24,9 +26,9 @@ type IngressService struct {
 	mu               sync.Mutex
 	prepared         map[string]bool
 	controls         map[string]ingressControl
-	accepting        map[ChatIdentity]int
-	active           map[ChatIdentity]bool
-	blocked          map[ChatIdentity]ingressBlocked
+	accepting        map[im.ChatIdentity]int
+	active           map[im.ChatIdentity]bool
+	blocked          map[im.ChatIdentity]ingressBlocked
 	ctx              context.Context
 	cancel           context.CancelFunc
 	wg               sync.WaitGroup
@@ -41,7 +43,7 @@ type IngressService struct {
 
 func NewIngressService(store *IngressStore, r *NotificationRouter) *IngressService {
 	r.ingressStore = store
-	service := &IngressService{store: store, router: r, prepared: make(map[string]bool), accepting: make(map[ChatIdentity]int), controls: make(map[string]ingressControl), active: make(map[ChatIdentity]bool), blocked: make(map[ChatIdentity]ingressBlocked), wake: make(chan struct{}, 1), slots: make(chan struct{}, 8)}
+	service := &IngressService{store: store, router: r, prepared: make(map[string]bool), accepting: make(map[im.ChatIdentity]int), controls: make(map[string]ingressControl), active: make(map[im.ChatIdentity]bool), blocked: make(map[im.ChatIdentity]ingressBlocked), wake: make(chan struct{}, 1), slots: make(chan struct{}, 8)}
 	r.ingress = service
 	return service
 }
@@ -63,7 +65,7 @@ type ingressBlocked struct {
 	reason string
 }
 
-func (s *IngressService) blockRoute(id ChatIdentity, reason string) {
+func (s *IngressService) blockRoute(id im.ChatIdentity, reason string) {
 	s.mu.Lock()
 	s.blocked[id] = ingressBlocked{since: time.Now(), reason: reason}
 	s.mu.Unlock()
@@ -73,7 +75,7 @@ func (s *IngressService) blockRoute(id ChatIdentity, reason string) {
 
 // routeBlockedLocked reports whether a chat is held and lazily clears the hold
 // once its bounded window passes. Callers must hold s.mu.
-func (s *IngressService) routeBlockedLocked(id ChatIdentity) bool {
+func (s *IngressService) routeBlockedLocked(id im.ChatIdentity) bool {
 	block, ok := s.blocked[id]
 	if !ok {
 		return false
@@ -132,7 +134,7 @@ func (s *IngressService) signal() {
 	default:
 	}
 }
-func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveResult {
+func (s *IngressService) Accept(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
 	defer cancel()
 	s.mu.Lock()
@@ -142,51 +144,51 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 	}
 	s.mu.Unlock()
 	if !ready {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	}
 	defer s.requests.Done()
 	e = s.router.CaptureIngressEnvelope(e)
-	if e.capture.err != nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "target_busy"}
+	if e.Capture.Err != nil {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "target_busy"}
 	}
 	msg := e.Message
 	if validateIngressCursor(msg.IMType, e.Cursor) != nil {
-		return ReceiveResult{Disposition: ReceiveRejected, Reason: "cursor_platform_invalid"}
+		return im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: "cursor_platform_invalid"}
 	}
 	if msg.AccountID == "" || msg.MessageID == "" || msg.ChatID == "" {
-		return ReceiveResult{Disposition: ReceiveRejected, Reason: "invalid_identity"}
+		return im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: "invalid_identity"}
 	}
 	invalidInteraction := ValidateIngressInteraction(msg) != nil
 	invalidInput := len(msg.Text) > 64<<10 || !utf8.ValidString(msg.Text)
-	var transportTicket *AdmissionTicket
+	var transportTicket *im.AdmissionTicket
 	valid := func() bool {
-		return (e.preparation == nil || e.preparation.valid == nil || e.preparation.valid()) && (transportTicket == nil || s.router.admission.Valid(*transportTicket))
+		return (e.Preparation == nil || e.Preparation.Valid == nil || e.Preparation.Valid()) && (transportTicket == nil || s.router.admission.Valid(*transportTicket))
 	}
 	if !valid() {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "transport_identity_changed"}
 	}
 	_, duplicateErr := s.store.lookupCommittedBusiness(msg.IMType, msg.AccountID, msg.MessageID)
 	// Rechecking a duplicate must not spend a second pairing attempt.
 	a := s.router.admission.authorizeClassified(msg, duplicateErr != nil)
-	if a.Disposition == AdmissionUnavailable {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: a.Reason}
+	if a.Disposition == im.AdmissionUnavailable {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: a.Reason}
 	}
-	if a.Disposition == AdmissionAllowed {
+	if a.Disposition == im.AdmissionAllowed {
 		if err := s.PrepareAccount(ctx, msg.IMType, msg.AccountID); err != nil {
-			return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+			return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 		}
 	}
-	msg.ticket = &a.Ticket
-	if e.preparation != nil && (a.Disposition == AdmissionAllowed || a.Ticket.Kind == "owner_unbound" || a.Ticket.IsPairingHint()) {
+	msg.SetAdmissionTicket(&a.Ticket)
+	if e.Preparation != nil && (a.Disposition == im.AdmissionAllowed || a.Ticket.Kind == "owner_unbound" || a.Ticket.IsPairingHint()) {
 		transportTicket = &a.Ticket
 	}
 	prepare := func() bool {
 		if !valid() {
 			return false
 		}
-		return e.preparation == nil || e.preparation.prepare == nil || e.preparation.prepare(a)
+		return e.Preparation == nil || e.Preparation.Prepare == nil || e.Preparation.Prepare(a)
 	}
-	rec := IngressRecord{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, SemanticID: e.SemanticID, DeliveryID: e.DeliveryID, InputDigest: e.InputDigest, SourceTime: e.SourceTime, ReceivedAt: e.ReceivedAt, Kind: "task", State: ingressReceived}
+	rec := IngressRecord{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: msg.MessageID, SemanticID: e.SemanticID, DeliveryID: e.DeliveryID, InputDigest: e.InputDigest, SourceTime: e.SourceTime, ReceivedAt: e.ReceivedAt, Kind: "task", State: im.IngressReceived}
 	if rec.ReceivedAt.IsZero() {
 		rec.ReceivedAt = time.Now()
 	}
@@ -200,19 +202,19 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 		rec.Kind, rec.State, rec.Reason = "control", "rejected", "invalid_interaction"
 		return s.store.acceptRecord(ctx, rec, e.Cursor, valid)
 	}
-	if a.Disposition == AdmissionRejected {
+	if a.Disposition == im.AdmissionRejected {
 		if (a.Ticket.Kind == "owner_unbound" || a.Ticket.IsPairingHint()) && !prepare() {
 			// The bounded refusal reply still needs the transport's inbound
 			// reply context; if the snapshot expired, retry instead of dropping.
-			return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
+			return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "transport_identity_changed"}
 		}
-		rec.State = ingressRejected
+		rec.State = im.IngressRejected
 		rec.Reason = a.Reason
 		result := s.store.acceptRecord(ctx, rec, e.Cursor, valid)
-		if a.Ticket.Kind == "owner_unbound" && (result.Disposition == ReceiveRejected || result.Disposition == ReceiveDuplicate) {
+		if a.Ticket.Kind == "owner_unbound" && (result.Disposition == im.ReceiveRejected || result.Disposition == im.ReceiveDuplicate) {
 			s.router.enqueueIngressReply(msg, "This chat is not bound. Send "+s.router.ingressCommandHint(msg, "/bind <directory>")+".")
 		}
-		if a.Ticket.IsPairingHint() && result.Disposition == ReceiveRejected {
+		if a.Ticket.IsPairingHint() && result.Disposition == im.ReceiveRejected {
 			// Only fresh messages reach here: duplicates never re-hint.
 			s.router.enqueueIngressReply(msg, pairingHintReply(s.router, msg, a.Ticket.Kind))
 		}
@@ -221,40 +223,40 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 	// A socket reader that could not freeze the original state must never
 	// acquire a replacement control target on a later worker. Record a refusal
 	// through normal business deduplication, without retaining the body.
-	if e.capture != nil && e.capture.unavailable {
+	if e.Capture != nil && e.Capture.Unavailable {
 		rec.Kind, rec.State, rec.Reason = "control", "rejected", "control_target_unavailable"
 		return s.store.acceptRecord(ctx, rec, e.Cursor, valid)
 	}
-	gate := a.Ticket.gate
-	if err := lockIngressMutex(ctx, &gate.opMu); err != nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_busy"}
+	gate := a.Ticket.Gate
+	if err := lockIngressMutex(ctx, &gate.OpMu); err != nil {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "route_busy"}
 	}
 	if !s.router.admission.Valid(a.Ticket) {
-		gate.opMu.Unlock()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "authorization_changed"}
+		gate.OpMu.Unlock()
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "authorization_changed"}
 	}
 	if !prepare() {
-		gate.opMu.Unlock()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
+		gate.OpMu.Unlock()
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "transport_identity_changed"}
 	}
-	rec.Kind, rec.ControlTarget = e.capture.kind, e.capture.target
+	rec.Kind, rec.ControlTarget = e.Capture.Kind, e.Capture.Target
 	digest, workspace, session, err := s.router.ingressRouteIdentity(rec.Identity())
 	if err != nil && a.Ticket.Kind != "paired_bind" {
-		gate.opMu.Unlock()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "binding_unavailable"}
+		gate.OpMu.Unlock()
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "binding_unavailable"}
 	}
 	route, err := s.store.GetRoute(rec.Identity())
 	if err == nil && route.Phase == "changing" {
 		if rec.Kind != "control" {
-			gate.opMu.Unlock()
-			return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_changing"}
+			gate.OpMu.Unlock()
+			return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "route_changing"}
 		}
 	} else {
 		route, err = s.store.EnsureRoute(ctx, rec.Identity(), digest, workspace, session)
 	}
 	if err != nil {
-		gate.opMu.Unlock()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "route_unavailable"}
+		gate.OpMu.Unlock()
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "route_unavailable"}
 	}
 	rec.AuthorizationDigest = digest
 	rec.WorkspaceID = workspace
@@ -275,11 +277,11 @@ func (s *IngressService) Accept(ctx context.Context, e IngressEnvelope) ReceiveR
 	if s.accepting[rec.Identity()] == 0 {
 		delete(s.accepting, rec.Identity())
 	}
-	if result.Disposition == ReceiveAccepted && rec.Kind == "control" {
+	if result.Disposition == im.ReceiveAccepted && rec.Kind == "control" {
 		s.controls[result.RecordID] = ingressControl{msg, rec.ControlTarget}
 	}
 	s.mu.Unlock()
-	gate.opMu.Unlock()
+	gate.OpMu.Unlock()
 	s.signal()
 	return result
 }
@@ -330,7 +332,7 @@ func (s *IngressService) run() {
 }
 
 // sweepControls drops retained control parameters whose record is no longer
-// pending, so a settled or pruned record cannot pin its IncomingMessage. Each
+// pending, so a settled or pruned record cannot pin its im.IncomingMessage. Each
 // id is re-checked against the store rather than a scheduler snapshot, so a
 // control accepted while the tick is running is never dropped.
 func (s *IngressService) sweepControls() {
@@ -362,21 +364,21 @@ func (s *IngressService) sweepControls() {
 // through the ticker. routeBlocked is evaluated by the caller for every route
 // with pending records, eligible or not, because reading it also expires the
 // block window.
-func (s *IngressService) visitRoute(id ChatIdentity, routeBlocked bool) bool {
+func (s *IngressService) visitRoute(id im.ChatIdentity, routeBlocked bool) bool {
 	records := s.store.ListRoutePendingMetadata(id)
 	s.settleStalledRecords(records)
 	blocked := false
 	quarantined := make(map[ingressRevision]bool)
 	for _, rec := range records {
-		if rec.State == ingressDispatching || rec.State == ingressUnknown {
+		if rec.State == im.IngressDispatching || rec.State == im.IngressUnknown {
 			blocked = true
 		}
-		if rec.State == ingressQuarantined {
+		if rec.State == im.IngressQuarantined {
 			quarantined[ingressRevision{id, rec.RouteRevision}] = true
 		}
 	}
 	for _, rec := range records {
-		if rec.State != ingressReceived {
+		if rec.State != im.IngressReceived {
 			continue
 		}
 		if rec.Kind == "task" && (blocked || routeBlocked || quarantined[ingressRevision{id, rec.RouteRevision}]) {
@@ -397,7 +399,7 @@ func (s *IngressService) settleStalledRecords(records []IngressRecord) {
 	}
 	now := s.store.now()
 	for _, rec := range records {
-		if rec.State != ingressDispatching && rec.State != ingressUnknown {
+		if rec.State != im.IngressDispatching && rec.State != im.IngressUnknown {
 			continue
 		}
 		if now.Sub(rec.UpdatedAt) < ingressStallDeadline {
@@ -408,11 +410,11 @@ func (s *IngressService) settleStalledRecords(records []IngressRecord) {
 }
 
 type ingressRevision struct {
-	identity ChatIdentity
+	identity im.ChatIdentity
 	revision string
 }
 
-func (s *IngressService) dispatchRoute(id ChatIdentity) {
+func (s *IngressService) dispatchRoute(id im.ChatIdentity) {
 	defer func() { s.mu.Lock(); delete(s.active, id); s.mu.Unlock(); <-s.slots; s.wg.Done() }()
 	records := s.store.ListRoutePendingMetadata(id)
 	s.mu.Lock()
@@ -421,19 +423,19 @@ func (s *IngressService) dispatchRoute(id ChatIdentity) {
 	unknown := blocked
 	quarantined := make(map[string]bool)
 	for _, rec := range records {
-		if rec.State == ingressUnknown {
+		if rec.State == im.IngressUnknown {
 			unknown = true
 		}
-		if rec.State == ingressUnknown || rec.State == ingressDispatching {
+		if rec.State == im.IngressUnknown || rec.State == im.IngressDispatching {
 			blocked = true
 		}
-		if rec.State == ingressQuarantined {
+		if rec.State == im.IngressQuarantined {
 			quarantined[rec.RouteRevision] = true
 		}
 	}
 	records = s.prioritizeControls(records)
 	for _, rec := range records {
-		if rec.State != ingressReceived {
+		if rec.State != im.IngressReceived {
 			continue
 		}
 		if rec.Kind == "control" {
@@ -473,9 +475,9 @@ func (s *IngressService) dispatchRoute(id ChatIdentity) {
 		return
 	}
 }
-func (s *IngressService) finish(rec IngressRecord, state ingressState, reason string) {
+func (s *IngressService) finish(rec IngressRecord, state im.IngressState, reason string) {
 	s.dropControl(rec.RecordID)
-	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []ingressState{ingressReceived, ingressDispatching, ingressUnknown}, func(r *IngressRecord) error { r.State = state; r.Reason = reason; return nil })
+	err := s.store.UpdateRecord(context.Background(), rec.RecordID, []im.IngressState{im.IngressReceived, im.IngressDispatching, im.IngressUnknown}, func(r *IngressRecord) error { r.State = state; r.Reason = reason; return nil })
 	if err != nil {
 		if current, getErr := s.store.Get(rec.RecordID); getErr == nil && current.Terminal() {
 			return
@@ -485,7 +487,7 @@ func (s *IngressService) finish(rec IngressRecord, state ingressState, reason st
 }
 func (s *IngressService) quarantine(ctx context.Context, rec IngressRecord, reason string) error {
 	s.dropControl(rec.RecordID)
-	return s.store.UpdateRecord(ctx, rec.RecordID, []ingressState{ingressReceived}, func(r *IngressRecord) error { r.State = ingressQuarantined; r.Reason = reason; return nil })
+	return s.store.UpdateRecord(ctx, rec.RecordID, []im.IngressState{im.IngressReceived}, func(r *IngressRecord) error { r.State = im.IngressQuarantined; r.Reason = reason; return nil })
 }
 
 // dropControl releases retained control parameters once their record can no
@@ -501,7 +503,7 @@ func (s *IngressService) dropControl(recordID string) {
 // benign and stays silent.
 func (s *IngressService) quarantineTask(rec IngressRecord, reason string) {
 	if err := s.quarantine(s.ctx, rec, reason); err != nil && !s.quarantineBenign(err) {
-		log.Warnf("ingress: quarantine failed platform=%v chat=%v reason=%v err=%v", imMetricPlatform(rec.Platform), rec.ChatID, reason, err)
+		log.Warnf("ingress: quarantine failed platform=%v chat=%v reason=%v err=%v", im.MetricPlatform(rec.Platform), rec.ChatID, reason, err)
 	}
 }
 func (s *IngressService) quarantineBenign(err error) bool {
@@ -514,28 +516,28 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 	// Scheduling only reads metadata. Load the body for this one delivery and
 	// recheck state in case cleanup or a route barrier changed it meanwhile.
 	rec, err := s.store.Get(rec.RecordID)
-	if err != nil || rec.Kind != "task" || rec.State != ingressReceived {
+	if err != nil || rec.Kind != "task" || rec.State != im.IngressReceived {
 		return
 	}
 	// Current authorization is reacquired; old tickets are never reused.
 	a := s.reauthorizeRecord(rec)
-	if a.Disposition != AdmissionAllowed {
+	if a.Disposition != im.AdmissionAllowed {
 		// A permanent refusal can never become deliverable, so settle the
 		// record instead of re-dispatching it every tick. A transient refusal
 		// keeps retrying until the delivery window closes.
-		if a.Disposition == AdmissionRejected {
+		if a.Disposition == im.AdmissionRejected {
 			s.quarantineTask(rec, "authorization_changed")
 		} else if ingressDeliveryExpired(rec.ReceivedAt, time.Now()) {
 			s.quarantineTask(rec, "received_expired")
 		}
 		return
 	}
-	gate := a.Ticket.gate
-	gate.opMu.Lock()
+	gate := a.Ticket.Gate
+	gate.OpMu.Lock()
 	locked := true
 	defer func() {
 		if locked {
-			gate.opMu.Unlock()
+			gate.OpMu.Unlock()
 		}
 	}()
 	if !s.router.admission.Valid(a.Ticket) {
@@ -564,7 +566,7 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		s.quarantineTask(rec, "session_restore_failed")
 		return
 	}
-	gate.opMu.Unlock()
+	gate.OpMu.Unlock()
 	locked = false
 	wait, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
@@ -573,12 +575,12 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		s.quarantineTask(rec, "session_ready_pin_unconfirmed")
 		return
 	}
-	gate.opMu.Lock()
+	gate.OpMu.Lock()
 	locked = true
 	current, readErr := s.store.Get(rec.RecordID)
 	currentRoute, routeErr := s.store.GetRoute(rec.Identity())
 	currentDigest, currentWorkspace, currentSession, identityErr := s.router.ingressRouteIdentity(rec.Identity())
-	if readErr != nil || current.State != ingressReceived || routeErr != nil || currentRoute.Phase != "active" || currentRoute.Revision != rec.RouteRevision || identityErr != nil || currentDigest != digest || currentWorkspace != workspace || currentSession != identity.SessionID || s.router.mgr.GetProcessForKey(key) != p || s.router.mgr.transferBlocked(key) {
+	if readErr != nil || current.State != im.IngressReceived || routeErr != nil || currentRoute.Phase != "active" || currentRoute.Revision != rec.RouteRevision || identityErr != nil || currentDigest != digest || currentWorkspace != workspace || currentSession != identity.SessionID || s.router.mgr.GetProcessForKey(key) != p || s.router.mgr.transferBlocked(key) {
 		s.quarantineTask(rec, "route_identity_changed")
 		return
 	}
@@ -603,11 +605,11 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		return
 	}
 	requestID := "im-" + rec.RecordID
-	err = s.store.UpdateRecord(s.ctx, rec.RecordID, []ingressState{ingressReceived}, func(r *IngressRecord) error {
+	err = s.store.UpdateRecord(s.ctx, rec.RecordID, []im.IngressState{im.IngressReceived}, func(r *IngressRecord) error {
 		if !s.router.admission.Valid(a.Ticket) || !checkIngressDeliveryReadiness(s.router.findAdapterByType(rec.Platform), rec.Identity()).Ready {
 			return errIngressTransportChanged
 		}
-		r.State = ingressDispatching
+		r.State = im.IngressDispatching
 		r.SessionID = identity.SessionID
 		r.RequestID = requestID
 		r.DispatchRuntimeID = identity.RuntimeID
@@ -621,8 +623,8 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 		// No observer or stdin write exists yet, so this delivery is known not
 		// to have started. If restoring received fails, leave the conservative
 		// dispatching evidence for the existing unknown-outcome handling.
-		_ = s.store.UpdateRecord(s.ctx, rec.RecordID, []ingressState{ingressDispatching}, func(r *IngressRecord) error {
-			r.State = ingressReceived
+		_ = s.store.UpdateRecord(s.ctx, rec.RecordID, []im.IngressState{im.IngressDispatching}, func(r *IngressRecord) error {
+			r.State = im.IngressReceived
 			return nil
 		})
 		return
@@ -635,12 +637,12 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 			// the whole process, and the record settles by its deadline anyway.
 			return nil
 		}
-		state := ingressUnknown
+		state := im.IngressUnknown
 		switch receipt.Status {
 		case "handled", "queued", "started":
-			state = ingressConsumed
+			state = im.IngressConsumed
 		case "rejected":
-			state = ingressRejected
+			state = im.IngressRejected
 		}
 		return s.commitInputReceipt(rec.RecordID, state, receipt)
 	}, identity)
@@ -663,8 +665,8 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 // record that no longer accepts transitions would leave the process unable to
 // accept new input until it restarts. Both the task and the control receipt
 // callbacks share this so neither can latch on a settled delivery.
-func (s *IngressService) commitInputReceipt(id string, state ingressState, receipt ProcessInputReceipt) error {
-	err := s.store.UpdateRecord(context.Background(), id, []ingressState{ingressDispatching, ingressUnknown}, func(r *IngressRecord) error {
+func (s *IngressService) commitInputReceipt(id string, state im.IngressState, receipt ProcessInputReceipt) error {
+	err := s.store.UpdateRecord(context.Background(), id, []im.IngressState{im.IngressDispatching, im.IngressUnknown}, func(r *IngressRecord) error {
 		r.State = state
 		r.ReceiptStatus = receipt.Status
 		return nil
@@ -684,35 +686,35 @@ func (s *IngressService) commitInputReceipt(id string, state ingressState, recei
 
 // Accepted records already passed transport chat-kind evidence. Rebuilding an
 // owner ticket here does not make an assertion that an opaque chat ID is a DM.
-func (s *IngressService) reauthorizeRecord(rec IngressRecord) AdmissionResult {
+func (s *IngressService) reauthorizeRecord(rec IngressRecord) im.AdmissionResult {
 	a := s.router.admission
 	cfg := s.router.getConfig()
-	im := cfg.IMConfigByType(rec.Platform)
-	if im == nil || im.OwnerIdentity() == nil {
-		return AdmissionResult{Disposition: AdmissionRejected}
+	imCfg := cfg.IMConfigByType(rec.Platform)
+	if imCfg == nil || imCfg.OwnerIdentity() == nil {
+		return im.AdmissionResult{Disposition: im.AdmissionRejected}
 	}
-	owner := im.OwnerIdentity()
-	if owner.AccountID != rec.AccountID || owner.UserID != rec.SenderID || im.Bindings()[rec.ChatID] != rec.WorkspaceID {
-		return AdmissionResult{Disposition: AdmissionRejected}
+	owner := imCfg.OwnerIdentity()
+	if owner.AccountID != rec.AccountID || owner.UserID != rec.SenderID || imCfg.Bindings()[rec.ChatID] != rec.WorkspaceID {
+		return im.AdmissionResult{Disposition: im.AdmissionRejected}
 	}
 	a.pairing.mu.Lock()
 	platform := a.pairing.platforms[rec.Platform]
 	if platform == nil || platform.changed || platform.account != rec.AccountID {
 		a.pairing.mu.Unlock()
-		return AdmissionResult{Disposition: AdmissionUnavailable}
+		return im.AdmissionResult{Disposition: im.AdmissionUnavailable}
 	}
 	epoch := platform.epoch
 	a.pairing.mu.Unlock()
 	gate := a.gate(rec.Identity(), rec.WorkspaceID, epoch)
 	if gate == nil {
-		return AdmissionResult{Disposition: AdmissionUnavailable}
+		return im.AdmissionResult{Disposition: im.AdmissionUnavailable}
 	}
-	_, generation, _ := gate.snapshot()
-	ticket := AdmissionTicket{Kind: "paired_task", Identity: rec.Identity(), SenderID: rec.SenderID, AccountEpoch: epoch, BindingGeneration: generation, ReceivedAt: rec.ReceivedAt, gate: gate}
+	_, generation, _ := gate.Snapshot()
+	ticket := im.AdmissionTicket{Kind: "paired_task", Identity: rec.Identity(), SenderID: rec.SenderID, AccountEpoch: epoch, BindingGeneration: generation, ReceivedAt: rec.ReceivedAt, Gate: gate}
 	if !a.Valid(ticket) {
-		return AdmissionResult{Disposition: AdmissionRejected}
+		return im.AdmissionResult{Disposition: im.AdmissionRejected}
 	}
-	return AdmissionResult{Ticket: ticket, Disposition: AdmissionAllowed}
+	return im.AdmissionResult{Ticket: ticket, Disposition: im.AdmissionAllowed}
 }
 
 // PrepareAccount enables this live account; no input is restored from disk.
@@ -737,7 +739,7 @@ func (s *IngressService) prioritizeControls(records []IngressRecord) []IngressRe
 	defer s.mu.Unlock()
 	for _, rec := range records {
 		urgent := false
-		if control, ok := s.controls[rec.RecordID]; ok && rec.State == ingressReceived && rec.Kind == "control" {
+		if control, ok := s.controls[rec.RecordID]; ok && rec.State == im.IngressReceived && rec.Kind == "control" {
 			cmd := commandForIncomingMessage(control.message)
 			switch cmd.Type {
 			case "status", "cancel", "confirm", "question", "handoff", "sessions", "todos":
@@ -793,7 +795,7 @@ func (s *IngressService) Available() bool {
 
 // pairingHintReply explains an unpaired refusal to a private sender. Hints
 // never dispatch work; they only tell the sender how pairing is meant to start.
-func pairingHintReply(r *NotificationRouter, msg IncomingMessage, kind string) string {
+func pairingHintReply(r *NotificationRouter, msg im.IncomingMessage, kind string) string {
 	bind := r.ingressCommandHint(msg, `/bind "<directory>" <code>`)
 	pairing := r.admission.pairing
 	switch kind {

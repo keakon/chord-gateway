@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type ingressInteractionWriter struct {
@@ -54,14 +56,14 @@ func (w *ingressInteractionWriter) Write(data []byte) (int, error) {
 }
 
 func TestIngressInteractionValidationAndCommandIdentity(t *testing.T) {
-	valid := IncomingMessage{IMType: "feishu", Text: "/new", InternalAction: &InternalAction{Type: "question", Action: "answer", BindingInstanceID: "binding", RequestID: "question", Values: []string{"1", "3"}}}
+	valid := im.IncomingMessage{IMType: "feishu", Text: "/new", InternalAction: &im.InternalAction{Type: "question", Action: "answer", BindingInstanceID: "binding", RequestID: "question", Values: []string{"1", "3"}}}
 	if err := ValidateIngressInteraction(valid); err != nil {
 		t.Fatal(err)
 	}
 	if got := commandForIncomingMessage(valid); got.Type != "question" || got.RequestID != "question" || !reflect.DeepEqual(got.Answers, []string{"1", "3"}) {
 		t.Fatal(got)
 	}
-	for _, change := range []func(*InternalAction){func(a *InternalAction) { a.BindingInstanceID = "" }, func(a *InternalAction) { a.Type = "send" }, func(a *InternalAction) { a.Action = "allow" }, func(a *InternalAction) { a.Value = "option" }, func(a *InternalAction) { a.Values = []string{strings.Repeat("a", 64*1024+1)} }} {
+	for _, change := range []func(*im.InternalAction){func(a *im.InternalAction) { a.BindingInstanceID = "" }, func(a *im.InternalAction) { a.Type = "send" }, func(a *im.InternalAction) { a.Action = "allow" }, func(a *im.InternalAction) { a.Value = "option" }, func(a *im.InternalAction) { a.Values = []string{strings.Repeat("a", 64*1024+1)} }} {
 		copyMessage := valid
 		copyAction := *valid.InternalAction
 		copyMessage.InternalAction = &copyAction
@@ -79,7 +81,7 @@ func TestIngressQuestionHistoricalTargetSynchronizesWithinFrozenSession(t *testi
 	if !ok {
 		t.Fatal("authorization")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	writer := &ingressInteractionWriter{proc: p, receipts: true, snapshot: StatusResponse{SessionID: "session", Questions: []*QuestionPayload{{RequestID: "historical", Version: 3, Outcome: QuestionResolvedAnswered}}}}
 	p.mu.Lock()
 	p.stdin = writer
@@ -111,8 +113,8 @@ func TestIngressQuestionTrustedFormAndStaleVersion(t *testing.T) {
 	writer := &ingressInteractionWriter{proc: p, receipts: true}
 	p.stdin = writer
 	r := &NotificationRouter{}
-	msg := IncomingMessage{IMType: "feishu", ChatID: "chat", SenderID: "owner", MessageID: "submit", InternalAction: &InternalAction{Type: "question", Action: "answer", BindingInstanceID: "binding", RequestID: "q", Values: []string{"3", "1"}}}
-	target := &IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", BindingInstanceID: "binding", RequestID: "q", Version: 2}
+	msg := im.IncomingMessage{IMType: "feishu", ChatID: "chat", SenderID: "owner", MessageID: "submit", InternalAction: &im.InternalAction{Type: "question", Action: "answer", BindingInstanceID: "binding", RequestID: "q", Values: []string{"3", "1"}}}
+	target := &im.IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", BindingInstanceID: "binding", RequestID: "q", Version: 2}
 	result := r.dispatchIngressQuestion(t.Context(), msg, p, commandForIncomingMessage(msg), target)
 	if result.State != "completed" {
 		t.Fatal(result)
@@ -135,7 +137,7 @@ func TestIngressQuestionExplicitRetryAndLateReceiptResolveOnlyRelatedRecords(t *
 	p := &ChordProcess{key: "workspace|telegram|chat", runtimeID: "runtime", sessionEpoch: 1, bindingInstanceID: "binding", state: ControlState{SessionID: "session", Questions: map[string]*QuestionPayload{"q": {RequestID: "q", Version: 1}}}}
 	writer := &ingressInteractionWriter{proc: p}
 	p.stdin = writer
-	target := &IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", BindingInstanceID: "binding", RequestID: "q", Version: 1}
+	target := &im.IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", BindingInstanceID: "binding", RequestID: "q", Version: 1}
 	rec := testIngressTask(t, store, "first")
 	rec.Kind = "control"
 	rec.Text = ""
@@ -147,7 +149,7 @@ func TestIngressQuestionExplicitRetryAndLateReceiptResolveOnlyRelatedRecords(t *
 	if _, err := r.waitQuestionOperationTarget(ctx, p.key, "owner", p, command, target, []string{first.RecordID}); err == nil {
 		t.Fatal("expected unknown result")
 	}
-	if err := store.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+	if err := store.UpdateRecord(t.Context(), first.RecordID, []im.IngressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
@@ -218,7 +220,7 @@ func TestIngressQuestionLateReceiptForExpiredRecordIsSkipped(t *testing.T) {
 	store := testIngressStore(t)
 	r := &NotificationRouter{ingressStore: store, questionOperations: map[string]pendingQuestionOperation{}}
 	p := &ChordProcess{key: "workspace|telegram|chat", runtimeID: "runtime", sessionEpoch: 1, bindingInstanceID: "binding", state: ControlState{SessionID: "session"}}
-	target := &IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", BindingInstanceID: "binding", RequestID: "q", Version: 1}
+	target := &im.IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", BindingInstanceID: "binding", RequestID: "q", Version: 1}
 	r.questionOperations["late"] = pendingQuestionOperation{
 		command:   map[string]any{"operation_id": "late-op"},
 		recordIDs: []string{"gc-missing-record"},
@@ -262,7 +264,7 @@ func TestIngressRoleCardNumericNameIsLiteral(t *testing.T) {
 
 func TestIngressQueryWithoutPinDoesNotSpawn(t *testing.T) {
 	r := newTestRouter()
-	p, target, result := r.restoreIngressQuery(t.Context(), "test|wechat|chat", &IngressControlTarget{})
+	p, target, result := r.restoreIngressQuery(t.Context(), "test|wechat|chat", &im.IngressControlTarget{})
 	if p != nil || target == nil || result.State != "" || len(r.mgr.procs) != 0 {
 		t.Fatal(p, target, result)
 	}
@@ -277,9 +279,9 @@ func TestIngressTrustedInteractionParametersRemainVolatile(t *testing.T) {
 	p.mu.Unlock()
 	msg.MessageID = "callback"
 	msg.Text = ""
-	msg.InternalAction = &InternalAction{BindingInstanceID: "binding", Type: "question", Action: "answer", RequestID: "q", Version: 7, Value: "sensitive-choice", Handle: InteractiveCardHandle{Token: "sensitive-card-token"}}
-	result := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-	if result.Disposition != ReceiveAccepted {
+	msg.InternalAction = &im.InternalAction{BindingInstanceID: "binding", Type: "question", Action: "answer", RequestID: "q", Version: 7, Value: "sensitive-choice", Handle: im.InteractiveCardHandle{Token: "sensitive-card-token"}}
+	result := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	rec, err := s.store.Get(result.RecordID)
@@ -312,7 +314,7 @@ func TestIngressReadOnlyCommandsWithoutActiveRuntime(t *testing.T) {
 		if !ok {
 			t.Fatal("authorization")
 		}
-		msg.ticket = &ticket
+		msg.SetAdmissionTicket(&ticket)
 		_, target := s.router.CaptureIngress(msg)
 		result := s.router.DispatchAccepted(t.Context(), msg, target)
 		if result.State != "completed" || s.router.mgr.GetProcessForKey(p.key) != nil {
@@ -337,7 +339,7 @@ func TestIngressExplicitCommandStartsOnlyFrozenFirstRuntime(t *testing.T) {
 			defer mgr.StopAll(time.Second)
 			r := &NotificationRouter{mgr: mgr}
 			key := (processKey{workspaceID: "test", imType: "wechat", chatID: "chat"}).String()
-			target := &IngressControlTarget{}
+			target := &im.IngressControlTarget{}
 			if pinned {
 				target.SessionID = "session"
 				if err := mgr.pins.Set(pinKeyForBinding(key), "session"); err != nil {
@@ -348,7 +350,7 @@ func TestIngressExplicitCommandStartsOnlyFrozenFirstRuntime(t *testing.T) {
 			if result.State != "" || p == nil || frozen.RuntimeID != "runtime" || frozen.SessionID != "session" {
 				t.Fatal(p, frozen, result)
 			}
-			if err := p.sendIngressControl(frozen, IMCommand{Type: "local_shell"}, map[string]any{"type": "local_shell", "command": "echo sample"}); err != nil {
+			if err := p.sendIngressControl(frozen, im.IMCommand{Type: "local_shell"}, map[string]any{"type": "local_shell", "command": "echo sample"}); err != nil {
 				t.Fatal(err)
 			}
 			// The original absence cannot be reused after a process has appeared.
@@ -387,13 +389,13 @@ func TestIngressControlCommandsPreserveUserOperations(t *testing.T) {
 			if !ok {
 				t.Fatal("authorization")
 			}
-			msg.ticket = &ticket
+			msg.SetAdmissionTicket(&ticket)
 			kind, target := s.router.CaptureIngress(msg)
 			if kind != "control" {
 				t.Fatal(kind, target)
 			}
-			accepted := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-			if accepted.Disposition != ReceiveAccepted {
+			accepted := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+			if accepted.Disposition != im.ReceiveAccepted {
 				t.Fatal(accepted)
 			}
 			result := s.router.DispatchAccepted(t.Context(), msg, target, accepted.RecordID)
@@ -443,7 +445,7 @@ func TestIngressQuestionActionsPreserveOriginalRequests(t *testing.T) {
 			if !ok {
 				t.Fatal("authorization")
 			}
-			msg.ticket = &ticket
+			msg.SetAdmissionTicket(&ticket)
 			_, target := s.router.CaptureIngress(msg)
 			result := s.router.DispatchAccepted(t.Context(), msg, target)
 			if result.State != "completed" {
@@ -468,9 +470,9 @@ func TestIngressQueuedTrustedInteractionCannotApproveReplacement(t *testing.T) {
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "original"}
 	p.mu.Unlock()
 	msg.MessageID, msg.Text = "callback", ""
-	msg.InternalAction = &InternalAction{BindingInstanceID: "binding", Type: "confirm", Action: "allow", RequestID: "original"}
-	accepted := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-	if accepted.Disposition != ReceiveAccepted {
+	msg.InternalAction = &im.InternalAction{BindingInstanceID: "binding", Type: "confirm", Action: "allow", RequestID: "original"}
+	accepted := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+	if accepted.Disposition != im.ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	s.mu.Lock()
@@ -496,8 +498,8 @@ func TestIngressDispatcherAllowsOnlyRelatedExplicitQuestionRetry(t *testing.T) {
 			p.state.Questions = map[string]*QuestionPayload{"q": {RequestID: "q", Version: 1}}
 			p.mu.Unlock()
 			msg.MessageID, msg.Text = "original-question", "/answer @q Answer"
-			first := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-			if first.Disposition != ReceiveAccepted {
+			first := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+			if first.Disposition != im.ReceiveAccepted {
 				t.Fatal(first)
 			}
 			s.mu.Lock()
@@ -514,12 +516,12 @@ func TestIngressDispatcherAllowsOnlyRelatedExplicitQuestionRetry(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected unknown")
 			}
-			if err := s.store.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+			if err := s.store.UpdateRecord(t.Context(), first.RecordID, []im.IngressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 				t.Fatal(err)
 			}
 			msg.MessageID = "explicit-retry"
-			retry := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-			if retry.Disposition != ReceiveAccepted {
+			retry := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+			if retry.Disposition != im.ReceiveAccepted {
 				t.Fatal(retry)
 			}
 			s.mu.Lock()
@@ -542,11 +544,11 @@ func TestIngressDispatcherAllowsOnlyRelatedExplicitQuestionRetry(t *testing.T) {
 			if foreignUnknown {
 				taskMsg := msg
 				taskMsg.MessageID, taskMsg.Text = "unrelated", "Unrelated task"
-				task := s.Accept(t.Context(), IngressEnvelope{Message: taskMsg})
-				if task.Disposition != ReceiveAccepted {
+				task := s.Accept(t.Context(), im.IngressEnvelope{Message: taskMsg})
+				if task.Disposition != im.ReceiveAccepted {
 					t.Fatal(task)
 				}
-				if err := s.store.UpdateRecord(t.Context(), task.RecordID, []ingressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
+				if err := s.store.UpdateRecord(t.Context(), task.RecordID, []im.IngressState{"received"}, func(rec *IngressRecord) error { rec.State = "unknown"; return nil }); err != nil {
 					t.Fatal(err)
 				}
 				records = s.store.ListRoutePendingMetadata(id)
@@ -599,10 +601,10 @@ func (w ingressStaleQuestionReceiptWriter) Write(data []byte) (int, error) {
 func TestIngressQuestionStaleReceiptDoesNotConfirmAcceptance(t *testing.T) {
 	p := &ChordProcess{runtimeID: "runtime", sessionEpoch: 1, state: ControlState{SessionID: "session", Questions: map[string]*QuestionPayload{"q": {RequestID: "q", Version: 5}}}}
 	p.stdin = ingressStaleQuestionReceiptWriter{proc: p}
-	target := &IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", RequestID: "q", Version: 5}
+	target := &im.IngressControlTarget{RuntimeID: "runtime", SessionEpoch: 1, SessionID: "session", RequestID: "q", Version: 5}
 
 	r := &NotificationRouter{}
-	if result := r.dispatchIngressQuestion(t.Context(), IncomingMessage{MessageID: "answer", Text: "/answer @q custom"}, p, IMCommand{Type: "question", RequestID: "q", Answers: []string{"custom"}}, target); result.State != "unknown" {
+	if result := r.dispatchIngressQuestion(t.Context(), im.IncomingMessage{MessageID: "answer", Text: "/answer @q custom"}, p, im.IMCommand{Type: "question", RequestID: "q", Answers: []string{"custom"}}, target); result.State != "unknown" {
 		t.Fatal(result)
 	}
 	p.mu.RLock()

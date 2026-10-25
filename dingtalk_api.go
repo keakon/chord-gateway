@@ -16,6 +16,7 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/buildinfo"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const dingtalkAPIMaxResponse = 1 << 20
@@ -78,7 +79,7 @@ type dingtalkAPI struct {
 }
 
 func newDingtalkAPI(lifecycle context.Context, cfg *config.DingtalkConfig, proxyFunc func(*http.Request) (*url.URL, error)) *dingtalkAPI {
-	transport := proxiedTransport(proxyFunc)
+	transport := im.ProxiedTransport(proxyFunc)
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 5 * time.Second
 	return &dingtalkAPI{

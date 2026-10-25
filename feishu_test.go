@@ -22,43 +22,44 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // testFeishuReceiver observes the adapter contract at the common receiver.
 // Durable deduplication itself is verified by the ingress store integration tests.
 type testFeishuReceiver struct {
 	router     *NotificationRouter
-	queue      chan IncomingMessage
+	queue      chan im.IncomingMessage
 	dispatched atomic.Int32
 	mu         sync.Mutex
 	seen       map[string]bool
-	envelopes  []IngressEnvelope
+	envelopes  []im.IngressEnvelope
 }
 
-func (r *testFeishuReceiver) Accept(_ context.Context, e IngressEnvelope) ReceiveResult {
+func (r *testFeishuReceiver) Accept(_ context.Context, e im.IngressEnvelope) im.ReceiveResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.envelopes = append(r.envelopes, e)
 	if _, ok := r.router.admission.Authorize(e.Message); !ok {
-		return ReceiveResult{Disposition: ReceiveRejected, Reason: "authorization_denied", State: "rejected"}
+		return im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: "authorization_denied", State: "rejected"}
 	}
 	if ValidateIngressInteraction(e.Message) != nil {
-		return ReceiveResult{Disposition: ReceiveRejected, Reason: "invalid_interaction", State: "rejected"}
+		return im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: "invalid_interaction", State: "rejected"}
 	}
 	if r.seen[e.Message.MessageID] {
-		return ReceiveResult{Disposition: ReceiveDuplicate, State: "received"}
+		return im.ReceiveResult{Disposition: im.ReceiveDuplicate, State: "received"}
 	}
 	r.seen[e.Message.MessageID] = true
 	r.queue <- e.Message
 	r.dispatched.Add(1)
-	return ReceiveResult{Disposition: ReceiveAccepted, State: "received"}
+	return im.ReceiveResult{Disposition: im.ReceiveAccepted, State: "received"}
 }
 
 var feishuTestReceivers sync.Map
 
 func installFeishuTestIngress(t *testing.T, a *FeishuAdapter, r *NotificationRouter) *testFeishuReceiver {
 	t.Helper()
-	receiver := &testFeishuReceiver{router: r, queue: make(chan IncomingMessage, 128), seen: make(map[string]bool)}
+	receiver := &testFeishuReceiver{router: r, queue: make(chan im.IncomingMessage, 128), seen: make(map[string]bool)}
 	service := NewIngressService(testIngressStore(t), r)
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -100,7 +101,7 @@ func testFeishuAdapterWithQueue(t *testing.T, fc *config.FeishuConfig) (*FeishuA
 	receiver := raw.(*testFeishuReceiver)
 	return a, &receiver.dispatched, func() {}
 }
-func feishuTestQueue(a *FeishuAdapter, _ IncomingMessage) chan IncomingMessage {
+func feishuTestQueue(a *FeishuAdapter, _ im.IncomingMessage) chan im.IncomingMessage {
 	raw, _ := feishuTestReceivers.Load(a)
 	return raw.(*testFeishuReceiver).queue
 }
@@ -341,15 +342,15 @@ func TestFeishuCardActionEvent_FormSubmitCarriesCheckedOptions(t *testing.T) {
 	if _, err := a.handleCardActionEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
-	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	queued := im.IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
 		action := msg.InternalAction
 		if action == nil || action.Type != "question" || action.Action != "answer" || action.RequestID != "req_q" {
-			t.Fatalf("InternalAction = %#v", action)
+			t.Fatalf("im.InternalAction = %#v", action)
 		}
 		if got := strings.Join(action.Values, ","); got != "1,2" {
-			t.Fatalf("InternalAction.Values = %v, want option order 1,2", action.Values)
+			t.Fatalf("im.InternalAction.Values = %v, want option order 1,2", action.Values)
 		}
 		if msg.MessageID != "card:"+event.EventV2Base.Header.EventID {
 			t.Fatalf("MessageID = %q, want callback event ID", msg.MessageID)
@@ -387,7 +388,7 @@ func TestFeishuCardActionEvent_DistinctFormSelectionsAreNotDuplicates(t *testing
 func TestFeishuCardActionEvent_SameAnswerNewClickCanRetry(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
 	a := testFeishuAdapter(t, fc)
-	queue := feishuTestQueue(a, IncomingMessage{})
+	queue := feishuTestQueue(a, im.IncomingMessage{})
 	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{"option_1": true})
 	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{"option_1": true})
 	for _, event := range []*larkcallback.CardActionTriggerEvent{first, first, second} {
@@ -414,7 +415,7 @@ func TestFeishuCardActionEvent_MissingEventIDCannotSubmit(t *testing.T) {
 	if err != nil || response == nil || response.Toast == nil || response.Toast.Type != "error" {
 		t.Fatalf("missing ID did not report an error: response=%+v err=%v", response, err)
 	}
-	for _, queue := range []chan IncomingMessage{feishuTestQueue(a, IncomingMessage{})} {
+	for _, queue := range []chan im.IncomingMessage{feishuTestQueue(a, im.IncomingMessage{})} {
 		if len(queue) != 0 {
 			t.Fatal("unidentified callback was submitted")
 		}
@@ -463,17 +464,17 @@ func TestFeishuCardActionEvent_UsesEventIDAsMessageID(t *testing.T) {
 	if _, err := a.handleCardActionEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
-	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	queued := im.IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
 		if msg.MessageID != "card:"+event.EventV2Base.Header.EventID {
 			t.Fatalf("MessageID = %q", msg.MessageID)
 		}
 		if msg.InternalAction == nil || msg.InternalAction.Type != "confirm" || msg.InternalAction.Action != "allow" || msg.InternalAction.RequestID != "req_9" {
-			t.Fatalf("InternalAction = %#v", msg.InternalAction)
+			t.Fatalf("im.InternalAction = %#v", msg.InternalAction)
 		}
 		if msg.InternalAction.Handle.MessageID != "om_req_9" || msg.InternalAction.Handle.Token != "token_req_9" {
-			t.Fatalf("InternalAction.Handle = %#v", msg.InternalAction.Handle)
+			t.Fatalf("im.InternalAction.Handle = %#v", msg.InternalAction.Handle)
 		}
 	default:
 		t.Fatal("expected card action to be enqueued")
@@ -488,7 +489,7 @@ func TestFeishuMessageEvent_ContentMatchesText(t *testing.T) {
 	if err := a.handleMessageEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
-	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	queued := im.IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
 		if msg.Text != "hello world" {
@@ -509,7 +510,7 @@ func TestFeishuMessageEvent_PostContentDispatchesPlainText(t *testing.T) {
 	if err := a.handleMessageEvent(context.Background(), event); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
-	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	queued := im.IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
 		if msg.Text != "/deny not safe" {
@@ -638,8 +639,8 @@ func TestUpdateFeishuCardStatusPrefersStoredMessageID(t *testing.T) {
 	defer func() { feishuOpenBaseURL = oldBaseURL }()
 	r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]cardHandleEntry)}
 	key := (processKey{workspaceID: "ws1", imType: "feishu", chatID: "chat-1"}).String()
-	r.recordCardHandle(key, "confirm", "req-1", &InteractiveCardHandle{MessageID: "om_sent_1"})
-	msg := IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", InternalAction: &InternalAction{Handle: InteractiveCardHandle{MessageID: "om_callback_1", Token: "token_1"}}}
+	r.recordCardHandle(key, "confirm", "req-1", &im.InteractiveCardHandle{MessageID: "om_sent_1"})
+	msg := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", InternalAction: &im.InternalAction{Handle: im.InteractiveCardHandle{MessageID: "om_callback_1", Token: "token_1"}}}
 	r.updateFeishuCardStatus(msg, key, "confirm", "req-1", buildFeishuResolvedCard("Done", "✅ Done", "green"))
 	if patchedPath != "/open-apis/im/v1/messages/om_sent_1" {
 		t.Fatalf("patched path = %q", patchedPath)
@@ -687,7 +688,7 @@ func TestFeishuCardActionFrameTypeCard_Dispatches(t *testing.T) {
 	if _, _, err := clientConn.ReadMessage(); err != nil {
 		t.Fatalf("read response frame: %v", err)
 	}
-	queued := IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
+	queued := im.IncomingMessage{AppID: fc.AppID, ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
 		if msg.InternalAction == nil || msg.InternalAction.Type != "confirm" || msg.InternalAction.Action != "allow" || msg.InternalAction.RequestID != "req_card" {
@@ -730,7 +731,7 @@ func TestFeishuAdapterConfigSnapshotAffectsOwner(t *testing.T) {
 	if err := a.handleMessageEvent(context.Background(), makeFeishuMessageEvent("ou_old", "oc_chat1", "msg_old", "old")); err != nil {
 		t.Fatalf("old owner handleMessageEvent() error = %v", err)
 	}
-	queued := IncomingMessage{AppID: "cli_test", ChatID: "oc_chat1"}
+	queued := im.IncomingMessage{AppID: "cli_test", ChatID: "oc_chat1"}
 	select {
 	case msg := <-feishuTestQueue(a, queued):
 		t.Fatalf("old owner should be rejected after config update, got %#v", msg)

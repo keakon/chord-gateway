@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"context"
@@ -309,11 +309,11 @@ func TestIMTextSendCancellationPreservesUnknownDelivery(t *testing.T) {
 	s := testIMTextSender(t, 10, func(context.Context, string, string) error {
 		calls++
 		cancel()
-		return errDeliveryOutcomeUnknown
+		return ErrDeliveryOutcomeUnknown
 	})
 	err := s.Send(ctx, nil, nil, "chat", "hello", false)
 	var sendErr *IMTextSendError
-	if !errors.Is(err, errDeliveryOutcomeUnknown) || !errors.Is(err, context.Canceled) || !errors.As(err, &sendErr) || sendErr.Category != "unknown_send" || sendErr.AcceptedSegments != 0 || calls != 1 {
+	if !errors.Is(err, ErrDeliveryOutcomeUnknown) || !errors.Is(err, context.Canceled) || !errors.As(err, &sendErr) || sendErr.Category != "unknown_send" || sendErr.AcceptedSegments != 0 || calls != 1 {
 		t.Fatalf("unknown outcome was replaced or replayed: calls=%d err=%+v", calls, err)
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func startWechatMonitorTest(t *testing.T, a *WechatAdapter) (context.CancelFunc, <-chan error) {
@@ -71,13 +73,13 @@ type wechatMonitorRetryReceiver struct {
 	ids     []string
 }
 
-func (r *wechatMonitorRetryReceiver) Accept(ctx context.Context, envelope IngressEnvelope) ReceiveResult {
+func (r *wechatMonitorRetryReceiver) Accept(ctx context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
 	r.mu.Lock()
 	r.ids = append(r.ids, envelope.Message.MessageID)
 	r.mu.Unlock()
 	if envelope.Message.MessageID == wechatIngressBusinessID("owner", "2") && !r.ready.Load() {
 		r.once.Do(func() { close(r.blocked) })
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "storage_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "storage_unavailable"}
 	}
 	return r.service.Accept(ctx, envelope)
 }
@@ -205,11 +207,11 @@ type wechatMonitorCancellingReceiver struct {
 	cancel  context.CancelFunc
 }
 
-func (r *wechatMonitorCancellingReceiver) Accept(ctx context.Context, envelope IngressEnvelope) ReceiveResult {
+func (r *wechatMonitorCancellingReceiver) Accept(ctx context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
 	if envelope.Message.MessageID == wechatIngressBusinessID("owner", "2") {
 		// The parent cancellation lands while the batch is in flight.
 		r.cancel()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "storage_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "storage_unavailable"}
 	}
 	return r.service.Accept(ctx, envelope)
 }
@@ -251,7 +253,7 @@ func TestWechatMonitorMalformedIDDoesNotBlockNextMessage(t *testing.T) {
 func TestWechatMonitorTokenRenewalReReadsCommittedCheckpoint(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, service, _, _ := newWechatIngressTest(t)
-		initial, _ := nextWechatCursor(IngressCursor{}, "bot", "committed")
+		initial, _ := nextWechatCursor(im.IngressCursor{}, "bot", "committed")
 		if err := service.store.CommitCursor(t.Context(), "wechat", "bot", 0, initial); err != nil {
 			t.Fatal(err)
 		}
@@ -341,7 +343,7 @@ func TestWechatMonitorCommittedRecordReReadDoesNotExecuteAgain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, service, _, writer := newWechatIngressTest(t)
 		message := wechatTextMessage("1", "owner", "only once", "context")
-		if result := a.receiveIncomingMessage(t.Context(), message, a.token.Load()); result.Disposition != ReceiveAccepted {
+		if result := a.receiveIncomingMessage(t.Context(), message, a.token.Load()); result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 		waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
@@ -429,7 +431,7 @@ func TestWechatMonitorCancellationKeepsSharedStoreAvailable(t *testing.T) {
 			}
 			stopWechatMonitorTest(t, cancel, done)
 			result := service.store.AcceptRecord(t.Context(), IngressRecord{Platform: "feishu", AccountID: "other-bot", ChatID: "chat", SenderID: "sender", BusinessID: "message", Kind: "task", State: "rejected", Reason: "authorization_denied", ReceivedAt: time.Now()}, nil)
-			if result.Disposition != ReceiveRejected || !service.Available() {
+			if result.Disposition != im.ReceiveRejected || !service.Available() {
 				t.Fatal("WeChat shutdown closed shared ingress", result)
 			}
 		})

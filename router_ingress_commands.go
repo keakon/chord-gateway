@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func (r *NotificationRouter) ingressStatus(msg IncomingMessage) string {
+func (r *NotificationRouter) ingressStatus(msg im.IncomingMessage) string {
 	if r.ingressStore == nil {
 		return ""
 	}
-	records, err := r.ingressStore.ListRouteRecords(ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID})
+	records, err := r.ingressStore.ListRouteRecords(im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID})
 	if err != nil {
 		return "\nIngress: storage unavailable."
 	}
@@ -21,7 +23,7 @@ func (r *NotificationRouter) ingressStatus(msg IncomingMessage) string {
 	var lastReasonAt time.Time
 	for _, rec := range records {
 		counts[string(rec.State)]++
-		if rec.State == ingressReceived && (oldest.IsZero() || rec.ReceivedAt.Before(oldest)) {
+		if rec.State == im.IngressReceived && (oldest.IsZero() || rec.ReceivedAt.Before(oldest)) {
 			oldest = rec.ReceivedAt
 		}
 		if rec.Reason != "" && (lastReasonAt.IsZero() || rec.UpdatedAt.After(lastReasonAt)) {
@@ -32,7 +34,7 @@ func (r *NotificationRouter) ingressStatus(msg IncomingMessage) string {
 	text := fmt.Sprintf("\nIngress: %d received, %d dispatching, %d unknown, %d quarantined.", counts["received"], counts["dispatching"], counts["unknown"], counts["quarantined"])
 	if !oldest.IsZero() {
 		text += fmt.Sprintf(" Oldest wait: %s.", time.Since(oldest).Round(time.Second))
-		readiness := checkIngressDeliveryReadiness(r.findAdapterByType(msg.IMType), ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID})
+		readiness := checkIngressDeliveryReadiness(r.findAdapterByType(msg.IMType), im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID})
 		if !readiness.Ready {
 			text += " Waiting: " + readiness.Reason + "."
 		}
@@ -40,7 +42,7 @@ func (r *NotificationRouter) ingressStatus(msg IncomingMessage) string {
 	if reason != "" {
 		text += " Last diagnostic: " + reason
 	}
-	if provider, ok := r.findAdapterByType(msg.IMType).(IMTextMetricsProvider); ok {
+	if provider, ok := r.findAdapterByType(msg.IMType).(im.IMTextMetricsProvider); ok {
 		last := provider.TextSendTargetSnapshot(msg.ChatID)
 		if !last.LastFailureAt.IsZero() {
 			text += fmt.Sprintf("\nLast outbound failure: %s after %d accepted segments.", last.LastFailureCategory, last.LastAcceptedSegments)
@@ -48,7 +50,7 @@ func (r *NotificationRouter) ingressStatus(msg IncomingMessage) string {
 	}
 	return text
 }
-func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg IncomingMessage, p *ChordProcess, cmd IMCommand, target *IngressControlTarget, id string) DispatchResult {
+func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg im.IncomingMessage, p *ChordProcess, cmd im.IMCommand, target *im.IngressControlTarget, id string) DispatchResult {
 	switch strings.ToLower(strings.TrimSpace(cmd.Content)) {
 	case "/model", "/export":
 		return DispatchResult{"rejected", "command_requires_local_tui"}
@@ -75,8 +77,8 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 		return DispatchResult{"rejected", "control_target_expired"}
 	}
 	request := "im-" + id
-	err := r.ingressStore.UpdateRecord(ctx, id, []ingressState{ingressReceived}, func(rec *IngressRecord) error {
-		rec.State = ingressDispatching
+	err := r.ingressStore.UpdateRecord(ctx, id, []im.IngressState{im.IngressReceived}, func(rec *IngressRecord) error {
+		rec.State = im.IngressDispatching
 		rec.RequestID = request
 		rec.SessionID = identity.SessionID
 		rec.DispatchRuntimeID = identity.RuntimeID
@@ -92,7 +94,7 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 			// backpressure for the rest of the process lifetime.
 			return nil
 		}
-		state := ingressUnknown
+		state := im.IngressUnknown
 		switch receipt.Status {
 		case "handled", "queued", "started":
 			state = "submitted"
@@ -109,7 +111,7 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg Incom
 	}
 	return DispatchResult{"awaiting_receipt", ""}
 }
-func (r *NotificationRouter) dispatchIngressRole(ctx context.Context, msg IncomingMessage, p *ChordProcess, cmd IMCommand, target *IngressControlTarget) DispatchResult {
+func (r *NotificationRouter) dispatchIngressRole(ctx context.Context, msg im.IncomingMessage, p *ChordProcess, cmd im.IMCommand, target *im.IngressControlTarget) DispatchResult {
 	wait, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	p.roleMu.Lock()
@@ -151,19 +153,19 @@ func (r *NotificationRouter) dispatchIngressRole(ctx context.Context, msg Incomi
 	r.enqueueIngressInteractionResult(msg, "role", interactionRequestID(msg), "Role switched", "✅ Switched role: "+name, "green", target.BindingInstanceID)
 	return DispatchResult{"completed", ""}
 }
-func (p *ChordProcess) waitIngressRole(ctx context.Context, target *IngressControlTarget, payload map[string]any) (RoleResponse, error) {
+func (p *ChordProcess) waitIngressRole(ctx context.Context, target *im.IngressControlTarget, payload map[string]any) (RoleResponse, error) {
 	ch := make(chan RoleResponse, 1)
 	p.mu.Lock()
 	p.roleWaiters.add(ch)
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.roleWaiters.remove(ch); p.mu.Unlock() }()
-	if err := p.sendIngressControl(target, IMCommand{Type: "role"}, payload); err != nil {
+	if err := p.sendIngressControl(target, im.IMCommand{Type: "role"}, payload); err != nil {
 		return RoleResponse{}, err
 	}
 	select {
 	case response := <-ch:
 		p.mu.RLock()
-		valid := p.ingressTargetMatchesLocked(target, IMCommand{Type: "role"})
+		valid := p.ingressTargetMatchesLocked(target, im.IMCommand{Type: "role"})
 		p.mu.RUnlock()
 		if !valid {
 			return RoleResponse{}, errIngressTargetExpired

@@ -16,6 +16,8 @@ import (
 	"github.com/disgoorg/disgo/rest"
 	"github.com/gorilla/websocket"
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestDiscordRESTErrorNeverRetainsSensitiveSDKObjects(t *testing.T) {
@@ -39,13 +41,13 @@ func TestDiscordRESTErrorNeverRetainsSensitiveSDKObjects(t *testing.T) {
 				}
 			}
 			if status == http.StatusTooManyRequests {
-				var limited *IMRateLimitError
+				var limited *im.IMRateLimitError
 				if !errors.As(safe, &limited) || limited.RetryAfter != 125*time.Millisecond {
 					t.Fatal("fractional safe retry delay lost", safe)
 				}
 			}
 			if status == http.StatusRequestTimeout || status >= 500 {
-				if !errors.Is(safe, errDeliveryOutcomeUnknown) {
+				if !errors.Is(safe, im.ErrDeliveryOutcomeUnknown) {
 					t.Fatal("unknown send outcome lost", safe)
 				}
 			}
@@ -54,7 +56,7 @@ func TestDiscordRESTErrorNeverRetainsSensitiveSDKObjects(t *testing.T) {
 	if got := discordRESTError(fmt.Errorf("sample-secret-token: %w", context.Canceled)); got != context.Canceled {
 		t.Fatal("cancel cause not sanitized", got)
 	}
-	if got := discordRESTError(errors.New("sample-secret-token sample-body")); !errors.Is(got, errDeliveryOutcomeUnknown) || strings.Contains(got.Error(), "sample-secret-token") {
+	if got := discordRESTError(errors.New("sample-secret-token sample-body")); !errors.Is(got, im.ErrDeliveryOutcomeUnknown) || strings.Contains(got.Error(), "sample-secret-token") {
 		t.Fatal("transport error leaked", got)
 	}
 	if got := discordGatewayError(&websocket.CloseError{Code: 4004, Text: "sample-secret-token sample-body"}); got.Error() != "discord gateway_closed code=4004" {

@@ -5,14 +5,16 @@ import (
 	"errors"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // ImageSender is implemented by adapters with an outbound media contract.
 type ImageSender interface {
-	SendImage(string, *ReceivedImage) error
+	SendImage(string, *im.ReceivedImage) error
 }
 
-func (r *NotificationRouter) HandleChordImage(key string, image *ReceivedImage) {
+func (r *NotificationRouter) HandleChordImage(key string, image *im.ReceivedImage) {
 	target, allowed := r.targetForKey(key)
 	if !allowed {
 		image.Close()
@@ -20,7 +22,7 @@ func (r *NotificationRouter) HandleChordImage(key string, image *ReceivedImage) 
 	}
 	ctx := context.Background()
 	if target.lease != nil {
-		ctx = target.lease.ctx
+		ctx = target.lease.Context()
 	}
 	_, imType, chatID := parseProcessKey(key)
 	adapter := r.findAdapterByType(imType)
@@ -41,7 +43,7 @@ func (r *NotificationRouter) HandleChordImage(key string, image *ReceivedImage) 
 		defer done()
 		send := func() error {
 			if contextual, ok := sender.(interface {
-				SendImageContext(context.Context, string, *ReceivedImage) error
+				SendImageContext(context.Context, string, *im.ReceivedImage) error
 			}); ok {
 				return contextual.SendImageContext(ctx, chatID, image)
 			}
@@ -53,7 +55,7 @@ func (r *NotificationRouter) HandleChordImage(key string, image *ReceivedImage) 
 		if err := send(); err != nil {
 			log.Errorf("image delivery failed session=%v call=%v reference=%v error=%v", image.SessionID, image.CallID, image.Reference, err)
 			notice := "Image delivery failed. The original is saved in the Chord session and can be viewed there; do not regenerate."
-			if errors.Is(err, errDeliveryOutcomeUnknown) {
+			if errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 				notice = "Image delivery is unconfirmed; check the chat first. The original is saved in the Chord session and is not resent or regenerated automatically."
 			}
 			if err := r.SendBound(ctx, target, notice); err != nil {

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -93,7 +95,7 @@ func (s queueMetricsSnapshot) active() bool {
 		s.BlockedWaitTotal != 0 || s.BlockedSlow != 0 || s.Depth != 0
 }
 
-func reportQueueMetrics(ctx context.Context, router *NotificationRouter, adapter IMAdapter, interval time.Duration, logf func(string, ...any)) {
+func reportQueueMetrics(ctx context.Context, router *NotificationRouter, adapter im.IMAdapter, interval time.Duration, logf func(string, ...any)) {
 	if interval <= 0 {
 		interval = queueMetricsLogInterval
 	}
@@ -114,7 +116,7 @@ func reportQueueMetrics(ctx context.Context, router *NotificationRouter, adapter
 	}
 }
 
-func logQueueMetrics(router *NotificationRouter, adapter IMAdapter, logf func(string, ...any), previousOutbound *queueMetricsSnapshot) {
+func logQueueMetrics(router *NotificationRouter, adapter im.IMAdapter, logf func(string, ...any), previousOutbound *queueMetricsSnapshot) {
 	if router != nil && router.outbound != nil {
 		snapshot := router.outbound.metricsSnapshot()
 		if snapshot.active() {

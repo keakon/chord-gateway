@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-// The caller owns g.opMu. Reserve retirement under the same lifecycle lock as
+// The caller owns g.OpMu. Reserve retirement under the same lifecycle lock as
 // outgoing takeover admission. No process or delivery waits may hold that lock:
 // the stdout reader needs it to finish processing events and record the exit.
-func (m *ChordManager) beginBindingSwitch(g *ChatGate, oldKey, newKey string) (*ChordProcess, *BindingLease, error) {
+func (m *ChordManager) beginBindingSwitch(g *im.ChatGate, oldKey, newKey string) (*ChordProcess, *im.BindingLease, error) {
 	m.lifecycleGate.RLock()
 	defer m.lifecycleGate.RUnlock()
 	release := m.acquireKeyLock(oldKey)
@@ -16,7 +18,7 @@ func (m *ChordManager) beginBindingSwitch(g *ChatGate, oldKey, newKey string) (*
 	if m.shuttingDown.Load() {
 		return nil, nil, ErrManagerShuttingDown
 	}
-	_, _, phase := g.snapshot()
+	_, _, phase := g.Snapshot()
 	if phase == "blocked" || phase == "switching" {
 		return nil, nil, errBindBlocked
 	}
@@ -40,12 +42,12 @@ func (m *ChordManager) beginBindingSwitch(g *ChatGate, oldKey, newKey string) (*
 		p.autoRestart = false
 		p.mu.Unlock()
 	}
-	return p, g.switching(), nil
+	return p, g.Switching(), nil
 }
 
 // Directory switches drain output and confirm process shutdown before
 // publishing new routing. Failure leaves the gate closed until local recovery.
-func (r *NotificationRouter) prepareBindingSwitch(ctx context.Context, g *ChatGate, oldKey, newKey string) error {
+func (r *NotificationRouter) prepareBindingSwitch(ctx context.Context, g *im.ChatGate, oldKey, newKey string) error {
 	if p := r.mgr.GetProcessForKey(oldKey); p != nil {
 		if err := p.refreshPendingInputStatus(ctx); err != nil {
 			return err
@@ -72,9 +74,7 @@ func (r *NotificationRouter) prepareBindingSwitch(ctx context.Context, g *ChatGa
 		}
 	}
 	if err != nil {
-		g.mu.Lock()
-		g.phase = "blocked"
-		g.mu.Unlock()
+		g.Block()
 		return errBindBlocked
 	}
 	return nil

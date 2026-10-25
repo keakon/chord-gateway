@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestSlackSocketDisconnectDuringIdentityPreservesFailure(t *testing.T) {
@@ -151,10 +153,10 @@ func TestSlackSocketHTTPQueryDoesNotBlockPingOrShutdown(t *testing.T) {
 }
 
 func TestSlackReceiptDoesNotACKUncertainOrRetryable(t *testing.T) {
-	for _, disposition := range []ReceiveDisposition{ReceiveUncertain, ReceiveRetryable} {
+	for _, disposition := range []im.ReceiveDisposition{im.ReceiveUncertain, im.ReceiveRetryable} {
 		t.Run(string(disposition), func(t *testing.T) {
-			future := make(chan ReceiveResult, 1)
-			future <- ReceiveResult{Disposition: disposition}
+			future := make(chan im.ReceiveResult, 1)
+			future <- im.ReceiveResult{Disposition: disposition}
 			queue := make(chan slackACK, 1)
 			receipt := slackReceipt{Frame: slackSocketFrame{Type: "slash_commands", EnvelopeID: "uncommitted", AcceptsResponsePayload: true}, ReceivedAt: time.Now(), Future: future}
 			(&SlackAdapter{}).slackReceiptACK(t.Context(), 1, receipt, queue)
@@ -168,18 +170,18 @@ func TestSlackReceiptDoesNotACKUncertainOrRetryable(t *testing.T) {
 func TestSlackReceiptAcceptanceHintMatchesIntakeDisposition(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		result   ReceiveResult
+		result   im.ReceiveResult
 		canReply bool
 		wantHint bool
 	}{
-		{"accepted with response", ReceiveResult{Disposition: ReceiveAccepted}, true, false},
-		{"accepted without response", ReceiveResult{Disposition: ReceiveAccepted}, false, false},
-		{"accepted duplicate", ReceiveResult{Disposition: ReceiveDuplicate, State: "received"}, true, false},
-		{"rejected duplicate", ReceiveResult{Disposition: ReceiveDuplicate, State: "rejected"}, true, false},
-		{"rejected", ReceiveResult{Disposition: ReceiveRejected, State: "rejected"}, true, false},
+		{"accepted with response", im.ReceiveResult{Disposition: im.ReceiveAccepted}, true, false},
+		{"accepted without response", im.ReceiveResult{Disposition: im.ReceiveAccepted}, false, false},
+		{"accepted duplicate", im.ReceiveResult{Disposition: im.ReceiveDuplicate, State: "received"}, true, false},
+		{"rejected duplicate", im.ReceiveResult{Disposition: im.ReceiveDuplicate, State: "rejected"}, true, false},
+		{"rejected", im.ReceiveResult{Disposition: im.ReceiveRejected, State: "rejected"}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			future := make(chan ReceiveResult, 1)
+			future := make(chan im.ReceiveResult, 1)
 			future <- tc.result
 			queue := make(chan slackACK, 1)
 			done := make(chan struct{})
@@ -209,8 +211,8 @@ func TestSlackReceiptAcceptanceHintMatchesIntakeDisposition(t *testing.T) {
 }
 
 func TestSlackReceiptShutdownInterruptsACKCompletionWait(t *testing.T) {
-	future := make(chan ReceiveResult, 1)
-	future <- ReceiveResult{Disposition: ReceiveAccepted}
+	future := make(chan im.ReceiveResult, 1)
+	future <- im.ReceiveResult{Disposition: im.ReceiveAccepted}
 	queue := make(chan slackACK, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -245,7 +247,7 @@ func TestSlackReceiptShutdownInterruptsACKCompletionWait(t *testing.T) {
 func TestSlackReceiptDeadlineDoesNotInventRetryableOutcome(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	future := make(chan ReceiveResult, 1)
+	future := make(chan im.ReceiveResult, 1)
 	queue := make(chan slackACK, 1)
 	receipt := slackReceipt{Frame: slackSocketFrame{Type: "events_api", EnvelopeID: "late-commit"}, ReceivedAt: time.Now(), Future: future}
 	(&SlackAdapter{}).slackReceiptACK(ctx, 1, receipt, queue)
@@ -253,8 +255,8 @@ func TestSlackReceiptDeadlineDoesNotInventRetryableOutcome(t *testing.T) {
 		t.Fatal("unconfirmed future received an ACK")
 	}
 	// Completion is still buffered for durable reconciliation after the waiter exits.
-	future <- ReceiveResult{Disposition: ReceiveAccepted, RecordID: "late-record"}
-	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != ReceiveAccepted {
+	future <- im.ReceiveResult{Disposition: im.ReceiveAccepted, RecordID: "late-record"}
+	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 }
@@ -268,9 +270,9 @@ func TestSlackSocketSubmitFailureRecordsLostIntake(t *testing.T) {
 	gate := make(chan struct{})
 	defer close(gate)
 	for i := range ingressNormalizationCapacity {
-		if _, err := router.ingress.normalizer.Submit(fmt.Sprintf("key-%d", i), func(context.Context) (IngressEnvelope, error) {
+		if _, err := router.ingress.normalizer.Submit(fmt.Sprintf("key-%d", i), func(context.Context) (im.IngressEnvelope, error) {
 			<-gate
-			return IngressEnvelope{}, errors.New("sample normalization failure")
+			return im.IngressEnvelope{}, errors.New("sample normalization failure")
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -308,7 +310,7 @@ func TestSlackReceiptTimeoutIsObservableBeforeACKDeadline(t *testing.T) {
 		start := time.Now()
 		adapter.slackReceiptACK(t.Context(), 1, slackReceipt{
 			Frame: slackSocketFrame{EnvelopeID: "slow-normalization"}, ReceivedAt: start,
-			Future: make(chan ReceiveResult),
+			Future: make(chan im.ReceiveResult),
 		}, acks)
 		if elapsed := time.Since(start); elapsed != 2*time.Second {
 			t.Fatalf("intake wait: %v", elapsed)

@@ -12,6 +12,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/internal/buildinfo"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func resolveTakeoverWorkDir(path string) (string, error) {
@@ -320,7 +321,7 @@ func (m *ChordManager) publishGuardedBinding(p *ChordProcess, record sessionTran
 	return nil
 }
 
-func transferCommandBlocked(cmd IMCommand) bool {
+func transferCommandBlocked(cmd im.IMCommand) bool {
 	switch cmd.Type {
 	case "status", "takeover", "new", "resume", "cancel", "question":
 		return false

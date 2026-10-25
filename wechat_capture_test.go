@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatRetainedBatchKeepsOriginalControlTarget(t *testing.T) {
@@ -20,13 +22,13 @@ func TestWechatRetainedBatchKeepsOriginalControlTarget(t *testing.T) {
 			a.capturePollingMessages(response, token)
 			batch := wechatPollingBatch{response: response}
 			blocked := true
-			var accepted ReceiveResult
-			receive := func(ctx context.Context, msg ilinkMessage, _ ReceiveResult) ReceiveResult {
+			var accepted im.ReceiveResult
+			receive := func(ctx context.Context, msg ilinkMessage, _ im.ReceiveResult) im.ReceiveResult {
 				if blocked && batch.position == blockedPosition {
-					return ReceiveResult{Disposition: ReceiveRetryable}
+					return im.ReceiveResult{Disposition: im.ReceiveRetryable}
 				}
 				if msg.MessageID == "801" {
-					return ReceiveResult{Disposition: ReceiveTransportIgnored}
+					return im.ReceiveResult{Disposition: im.ReceiveTransportIgnored}
 				}
 				accepted = a.receiveIncomingMessage(ctx, msg, token)
 				return accepted
@@ -38,7 +40,7 @@ func TestWechatRetainedBatchKeepsOriginalControlTarget(t *testing.T) {
 			process.state.PendingConfirm = &ConfirmPayload{RequestID: "replacement"}
 			process.mu.Unlock()
 			blocked = false
-			if !batch.advance(t.Context(), receive, receive) || accepted.Disposition != ReceiveAccepted {
+			if !batch.advance(t.Context(), receive, receive) || accepted.Disposition != im.ReceiveAccepted {
 				t.Fatalf("retained control was not admitted: %+v", accepted)
 			}
 			waitIngressCondition(t, func() bool {

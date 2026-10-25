@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func testChatOperation(t *testing.T, m *ChordManager, key string) *chatOperation {
@@ -23,9 +24,9 @@ func testChatOperation(t *testing.T, m *ChordManager, key string) *chatOperation
 	return operation
 }
 
-func bindTestOwner(t *testing.T, r *NotificationRouter, code, directory string) (IncomingMessage, string) {
+func bindTestOwner(t *testing.T, r *NotificationRouter, code, directory string) (im.IncomingMessage, string) {
 	t.Helper()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "pair", Text: fmt.Sprintf("/bind %q %s", directory, code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "pair", Text: fmt.Sprintf("/bind %q %s", directory, code)}
 	if !dispatchPairingTest(r, msg) {
 		t.Fatal("owner not admitted")
 	}
@@ -152,7 +153,7 @@ func TestConsoleRepliesWithAdmissionAndMultipleAdapters(t *testing.T) {
 			}
 			feishu := &stubIMAdapter{typ: "feishu"}
 			if multi {
-				r.SetAdapter(&MultiAdapter{adapters: []IMAdapter{feishu, a}, router: r})
+				r.SetAdapter(&MultiAdapter{adapters: []im.IMAdapter{feishu, a}, router: r})
 			} else {
 				r.SetAdapter(a)
 			}
@@ -163,7 +164,7 @@ func TestConsoleRepliesWithAdmissionAndMultipleAdapters(t *testing.T) {
 			original := os.Stdout
 			os.Stdout = writer
 			defer func() { os.Stdout = original; reader.Close(); writer.Close() }()
-			r.HandleIncomingMessage(IncomingMessage{IMType: "console", ChatID: "console", SenderID: "console", Text: "/sessions"})
+			r.HandleIncomingMessage(im.IncomingMessage{IMType: "console", ChatID: "console", SenderID: "console", Text: "/sessions"})
 			// An IM login cannot redirect output from an existing console session.
 			a.token.Store(&TokenData{AccountID: "bot", BaseURL: "https://example.invalid"})
 			key := (processKey{workspaceID: "main", imType: "console", chatID: "console"}).String()

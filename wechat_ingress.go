@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-// ReceiveTransportIgnored is local to the WeChat transport. It provides no
-// in-memory refusal and is never an admission result for a business message.
-const ReceiveTransportIgnored ReceiveDisposition = "transport_ignored"
-
 type wechatIngressPending struct {
-	future <-chan ReceiveResult
-	result ReceiveResult
+	future <-chan im.ReceiveResult
+	result im.ReceiveResult
 	// Protected by the adapter mutex. A prepared replacement must not revoke
 	// the reply context of work that was already durably accepted.
 	prepared     bool
@@ -28,13 +26,13 @@ func wechatIngressBusinessID(sender, id string) string {
 	return "message:" + string(encoded)
 }
 
-func normalizeWechatIncoming(msg ilinkMessage, token *TokenData) (IncomingMessage, bool) {
+func normalizeWechatIncoming(msg ilinkMessage, token *TokenData) (im.IncomingMessage, bool) {
 	if token == nil || token.AccountID == "" || msg.MessageType != ilinkMessageTypeUser || msg.FromUserID == "" {
-		return IncomingMessage{}, false
+		return im.IncomingMessage{}, false
 	}
 	id := msg.inboundMessageID()
 	if id == "" {
-		return IncomingMessage{}, false
+		return im.IncomingMessage{}, false
 	}
 	var parts []string
 	for _, item := range msg.ItemList {
@@ -43,31 +41,31 @@ func normalizeWechatIncoming(msg ilinkMessage, token *TokenData) (IncomingMessag
 		}
 	}
 	if len(parts) == 0 {
-		return IncomingMessage{}, false
+		return im.IncomingMessage{}, false
 	}
-	incoming := IncomingMessage{IMType: "wechat", AccountID: token.AccountID, ChatKind: "private", ChatID: msg.FromUserID, SenderID: msg.FromUserID, MessageID: wechatIngressBusinessID(msg.FromUserID, id), Text: strings.Join(parts, "\n")}
+	incoming := im.IncomingMessage{IMType: "wechat", AccountID: token.AccountID, ChatKind: "private", ChatID: msg.FromUserID, SenderID: msg.FromUserID, MessageID: wechatIngressBusinessID(msg.FromUserID, id), Text: strings.Join(parts, "\n")}
 	for _, value := range []string{incoming.AccountID, incoming.ChatID, incoming.MessageID} {
-		if len(value) > maxScopedIDBytes || !utf8.ValidString(value) {
-			return IncomingMessage{}, false
+		if len(value) > im.MaxScopedIDBytes || !utf8.ValidString(value) {
+			return im.IncomingMessage{}, false
 		}
 	}
 	return incoming, true
 }
 
-func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMessage, token *TokenData) ReceiveResult {
+func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMessage, token *TokenData) im.ReceiveResult {
 	if token == nil || a.token.Load() != token {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_identity_changed"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "transport_identity_changed"}
 	}
 	incoming, supported := normalizeWechatIncoming(msg, token)
 	if !supported {
-		return ReceiveResult{Disposition: ReceiveTransportIgnored, Reason: "transport_ignored"}
+		return im.ReceiveResult{Disposition: im.ReceiveTransportIgnored, Reason: "transport_ignored"}
 	}
 	key := compositeKey(token.AccountID, incoming.MessageID)
 	a.mu.Lock()
 	connection := a.ctx
 	if !a.ingressConnectionCurrentLocked(connection) {
 		a.mu.Unlock()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "transport_stopped"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "transport_stopped"}
 	}
 	pendingPrior := a.ingressPending[key]
 	if pendingPrior != nil {
@@ -77,27 +75,27 @@ func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMes
 	}
 	if len(a.ingressPending) >= 1024 {
 		a.mu.Unlock()
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "capacity"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "capacity"}
 	}
 	a.mu.Unlock()
 	r := a.pairingRouter()
 	if r == nil || r.admission == nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	}
 	pending := &wechatIngressPending{connection: connection}
-	preparation := &ingressPreparation{
-		valid: func() bool {
+	preparation := &im.IngressPreparation{
+		Valid: func() bool {
 			a.mu.Lock()
 			defer a.mu.Unlock()
 			return a.ingressConnectionCurrentLocked(connection) && a.token.Load() == token
 		},
-		prepare: func(auth AdmissionResult) bool {
+		Prepare: func(auth im.AdmissionResult) bool {
 			if !r.admission.Valid(auth.Ticket) {
 				return false
 			}
-			im := r.getConfig().IMConfigByType("wechat")
-			owner := im.OwnerIdentity()
-			bound := owner != nil && owner.AccountID == token.AccountID && owner.UserID == incoming.SenderID && im.Bindings()[incoming.ChatID] != ""
+			imCfg := r.getConfig().IMConfigByType("wechat")
+			owner := imCfg.OwnerIdentity()
+			bound := owner != nil && owner.AccountID == token.AccountID && owner.UserID == incoming.SenderID && imCfg.Bindings()[incoming.ChatID] != ""
 			a.mu.Lock()
 			defer a.mu.Unlock()
 			if !a.ingressConnectionCurrentLocked(connection) || a.token.Load() != token {
@@ -121,9 +119,9 @@ func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMes
 	}
 	wait, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
 	defer cancel()
-	future, err := r.SubmitIngress(wait, IngressEnvelope{Message: incoming, capture: msg.ingressCapture, preparation: preparation, ReceivedAt: msg.receivedAt})
+	future, err := r.SubmitIngress(wait, im.IngressEnvelope{Message: incoming, Capture: msg.captureRef, Preparation: preparation, ReceivedAt: msg.receivedAt})
 	if err != nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	}
 	a.mu.Lock()
 	pending.future = future
@@ -137,7 +135,7 @@ func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMes
 	result := WaitIngressNormalization(wait, future)
 	a.mu.Lock()
 	pending.result = result
-	if result.Disposition != ReceiveUncertain && a.ingressPending[key] == pending {
+	if result.Disposition != im.ReceiveUncertain && a.ingressPending[key] == pending {
 		delete(a.ingressPending, key)
 	}
 	a.mu.Unlock()
@@ -146,14 +144,14 @@ func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMes
 }
 
 // An uncommitted refusal must never let the transport advance its checkpoint.
-func committedWechatReceiveResult(result ReceiveResult) ReceiveResult {
-	if result.Disposition == ReceiveRejected && result.RecordID == "" {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "rejection_not_committed"}
+func committedWechatReceiveResult(result im.ReceiveResult) im.ReceiveResult {
+	if result.Disposition == im.ReceiveRejected && result.RecordID == "" {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "rejection_not_committed"}
 	}
 	return result
 }
 
-func (a *WechatAdapter) resolveIncomingMessage(ctx context.Context, msg ilinkMessage, token *TokenData, previous ReceiveResult) ReceiveResult {
+func (a *WechatAdapter) resolveIncomingMessage(ctx context.Context, msg ilinkMessage, token *TokenData, previous im.ReceiveResult) im.ReceiveResult {
 	incoming, supported := normalizeWechatIncoming(msg, token)
 	if !supported {
 		return previous
@@ -172,7 +170,7 @@ func (a *WechatAdapter) resolveIncomingMessage(ctx context.Context, msg ilinkMes
 		previous = pending.result
 	}
 	a.mu.Unlock()
-	if previous.Disposition != ReceiveUncertain {
+	if previous.Disposition != im.ReceiveUncertain {
 		a.mu.Lock()
 		if a.ingressPending[key] == pending {
 			delete(a.ingressPending, key)
@@ -183,8 +181,8 @@ func (a *WechatAdapter) resolveIncomingMessage(ctx context.Context, msg ilinkMes
 	return committedWechatReceiveResult(previous)
 }
 
-func (a *WechatAdapter) confirmIncomingContext(msg ilinkMessage, token *TokenData, result ReceiveResult, pending *wechatIngressPending) {
-	if token == nil || pending == nil || msg.ContextToken == "" || (result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate) || result.State == ingressRejected || result.State == ingressExpired {
+func (a *WechatAdapter) confirmIncomingContext(msg ilinkMessage, token *TokenData, result im.ReceiveResult, pending *wechatIngressPending) {
+	if token == nil || pending == nil || msg.ContextToken == "" || (result.Disposition != im.ReceiveAccepted && result.Disposition != im.ReceiveDuplicate) || result.State == im.IngressRejected || result.State == im.IngressExpired {
 		return
 	}
 	r := a.pairingRouter()
@@ -221,20 +219,20 @@ func (a *WechatAdapter) ingressConnectionCurrentLocked(connection context.Contex
 	return !a.stopped && a.ctx == connection && (connection == nil || connection.Err() == nil)
 }
 
-func (a *WechatAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *WechatAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	token := a.token.Load()
 	if id.Platform != "wechat" || token == nil || token.AccountID != id.AccountID {
-		return IngressDeliveryReadiness{Reason: IngressWaitingAccount}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingAccount}
 	}
 	a.mu.Lock()
 	stopped := !a.ingressConnectionCurrentLocked(a.ctx)
 	reply, exists := a.replyContexts[compositeKey(id.AccountID, id.ChatID)]
 	a.mu.Unlock()
 	if stopped {
-		return IngressDeliveryReadiness{Reason: IngressWaitingAccount}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingAccount}
 	}
 	if !exists || reply.token == "" || !reply.bound || !reply.committed {
-		return IngressDeliveryReadiness{Reason: IngressWaitingReplyContext}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingReplyContext}
 	}
 	if r := a.pairingRouter(); r != nil && r.admission != nil {
 		p := r.admission.pairing
@@ -243,11 +241,11 @@ func (a *WechatAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliver
 		valid := state != nil && !state.changed && state.account == id.AccountID && state.epoch == reply.accountEpoch
 		p.mu.Unlock()
 		if !valid {
-			return IngressDeliveryReadiness{Reason: IngressWaitingReplyContext}
+			return im.IngressDeliveryReadiness{Reason: im.IngressWaitingReplyContext}
 		}
 	}
-	return IngressDeliveryReadiness{Ready: true}
+	return im.IngressDeliveryReadiness{Ready: true}
 }
 
-var _ IngressDeliveryReadinessProvider = (*WechatAdapter)(nil)
-var _ IngressDeliveryReadinessNotifier = (*WechatAdapter)(nil)
+var _ im.IngressDeliveryReadinessProvider = (*WechatAdapter)(nil)
+var _ im.IngressDeliveryReadinessNotifier = (*WechatAdapter)(nil)

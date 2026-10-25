@@ -7,10 +7,11 @@ import (
 	"fmt"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // NewIMAdapter creates the appropriate IM adapter based on config.
-func NewIMAdapter(cfg *config.Config, paths *config.Paths, router *NotificationRouter) (IMAdapter, error) {
+func NewIMAdapter(cfg *config.Config, paths *config.Paths, router *NotificationRouter) (im.IMAdapter, error) {
 	activeIMs := cfg.ActiveIMs()
 	if len(activeIMs) != 1 {
 		return nil, fmt.Errorf("expected exactly one IM adapter, got %d", len(activeIMs))
@@ -19,7 +20,7 @@ func NewIMAdapter(cfg *config.Config, paths *config.Paths, router *NotificationR
 }
 
 // newAdapterFromConfig creates an adapter from an IMAdapterConfig.
-func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, paths *config.Paths, router *NotificationRouter) (IMAdapter, error) {
+func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, paths *config.Paths, router *NotificationRouter) (im.IMAdapter, error) {
 	switch imCfg.Type() {
 	case "wechat":
 		return NewWechatAdapter(cfg, imCfg, paths, router)

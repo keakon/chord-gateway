@@ -5,23 +5,25 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestIngressObservedReportsAuthoritativeResultOnce(t *testing.T) {
 	receiver := &orderedIngressReceiver{}
 	n := NewIngressNormalizer(context.Background(), receiver)
 	defer n.Close()
-	observed := make(chan ReceiveResult, 1)
-	result, err := n.submitObserved(context.Background(), "chat", func(context.Context) (IngressEnvelope, error) {
-		return IngressEnvelope{Message: IncomingMessage{MessageID: "message"}}, nil
-	}, func(result ReceiveResult) { observed <- result })
+	observed := make(chan im.ReceiveResult, 1)
+	result, err := n.submitObserved(context.Background(), "chat", func(context.Context) (im.IngressEnvelope, error) {
+		return im.IngressEnvelope{Message: im.IncomingMessage{MessageID: "message"}}, nil
+	}, func(result im.ReceiveResult) { observed <- result })
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := <-result
 	select {
 	case got := <-observed:
-		if got != want || got.Disposition != ReceiveAccepted {
+		if got != want || got.Disposition != im.ReceiveAccepted {
 			t.Fatalf("observer=%+v result=%+v", got, want)
 		}
 	case <-time.After(time.Second):
@@ -40,29 +42,29 @@ func TestIngressObservedShutdownDrainsWithoutHoldingQueueLock(t *testing.T) {
 	started := make(chan struct{})
 	var mu sync.Mutex
 	count := 0
-	observe := func(r ReceiveResult) {
+	observe := func(r im.ReceiveResult) {
 		// Observers may inspect queue state or enqueue a bounded diagnostic.
 		_ = n.Snapshot()
-		if r.Disposition != ReceiveRetryable {
+		if r.Disposition != im.ReceiveRetryable {
 			t.Errorf("unexpected result: %+v", r)
 		}
 		mu.Lock()
 		count++
 		mu.Unlock()
 	}
-	_, err := n.submitObserved(context.Background(), "chat", func(ctx context.Context) (IngressEnvelope, error) {
+	_, err := n.submitObserved(context.Background(), "chat", func(ctx context.Context) (im.IngressEnvelope, error) {
 		close(started)
 		<-ctx.Done()
-		return IngressEnvelope{}, ctx.Err()
+		return im.IngressEnvelope{}, ctx.Err()
 	}, observe)
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
 	for range 12 {
-		if _, err = n.submitObserved(context.Background(), "chat", func(context.Context) (IngressEnvelope, error) {
+		if _, err = n.submitObserved(context.Background(), "chat", func(context.Context) (im.IngressEnvelope, error) {
 			t.Error("queued input executed during shutdown")
-			return IngressEnvelope{}, nil
+			return im.IngressEnvelope{}, nil
 		}, observe); err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +75,7 @@ func TestIngressObservedShutdownDrainsWithoutHoldingQueueLock(t *testing.T) {
 	if count != 13 {
 		t.Fatalf("observations=%d, want 13", count)
 	}
-	if _, err = n.submitObserved(context.Background(), "chat", func(context.Context) (IngressEnvelope, error) { return IngressEnvelope{}, nil }, observe); err == nil {
+	if _, err = n.submitObserved(context.Background(), "chat", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }, observe); err == nil {
 		t.Fatal("closed queue accepted input")
 	}
 }

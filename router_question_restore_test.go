@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type questionSnapshotWriter struct {
@@ -55,7 +56,7 @@ func TestHistoricalAnswerSynchronizesBeforeSubmission(t *testing.T) {
 			p.stdin = w
 			sender := &stubIMAdapter{typ: "wechat"}
 			r := &NotificationRouter{adapter: sender}
-			r.handleQuestionCommand(&config.Workspace{ID: "workspace"}, "chat", IMCommand{Type: "question", RequestID: "old", Answers: []string{"Revised"}}, IncomingMessage{IMType: "wechat", ChatID: "chat", MessageID: "reply"}, "binding", p)
+			r.handleQuestionCommand(&config.Workspace{ID: "workspace"}, "chat", im.IMCommand{Type: "question", RequestID: "old", Answers: []string{"Revised"}}, im.IncomingMessage{IMType: "wechat", ChatID: "chat", MessageID: "reply"}, "binding", p)
 			if !strings.Contains(sender.lastMessage().text, tc.want) {
 				t.Fatalf("response=%q", sender.lastMessage().text)
 			}

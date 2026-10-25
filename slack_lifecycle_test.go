@@ -15,6 +15,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func slackLifecycleAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
@@ -27,7 +29,7 @@ func slackLifecycleAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
 	installation := strings.ToUpper(hex.EncodeToString(random[:]))
 	identity.AppID = "ALIFECYCLE" + installation
 	identity.BotUserID = "ULIFECYCLE" + installation
-	identity.AccountID, _ = EncodeScopedID("account-v1:", identity.TeamID, identity.BotUserID)
+	identity.AccountID, _ = im.EncodeScopedID("account-v1:", identity.TeamID, identity.BotUserID)
 	a.identity = identity
 	a.verifyIdentity = func(context.Context) (slackIdentity, error) { return identity, nil }
 	return a, identity
@@ -83,7 +85,7 @@ func TestSlackLifecycleReceiveLocksAcrossAccountsAndStateDirectories(t *testing.
 				secondIdentity = identity
 			} else {
 				secondIdentity.TeamID = "TOTHER"
-				secondIdentity.AccountID, _ = EncodeScopedID("account-v1:", secondIdentity.TeamID, secondIdentity.BotUserID)
+				secondIdentity.AccountID, _ = im.EncodeScopedID("account-v1:", secondIdentity.TeamID, secondIdentity.BotUserID)
 			}
 			second.identity = secondIdentity
 			second.verifyIdentity = func(context.Context) (slackIdentity, error) { return secondIdentity, nil }
@@ -94,7 +96,7 @@ func TestSlackLifecycleReceiveLocksAcrossAccountsAndStateDirectories(t *testing.
 			if first.router.(*NotificationRouter).mgr.pins.path == second.router.(*NotificationRouter).mgr.pins.path {
 				t.Fatal("fixture reused state directory")
 			}
-			if err := second.Connect(); !errors.Is(err, errInstanceRunning) {
+			if err := second.Connect(); !errors.Is(err, im.ErrInstanceRunning) {
 				t.Fatal("second supervisor did not reject account/app contention", err)
 			}
 			disconnectSlackLifecycle(t, first, firstDone)

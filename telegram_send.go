@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const telegramTextBudget = 3500
@@ -79,13 +81,13 @@ func (l *telegramSendLimiter) pause(delay time.Duration) {
 		l.blockedUntil = until
 	}
 }
-func newTelegramTextSender(api telegramAPI) (*IMTextSender, error) {
+func newTelegramTextSender(api telegramAPI) (*im.IMTextSender, error) {
 	if api == nil {
 		return nil, errors.New("telegram text sender requires API")
 	}
 	limiter := &telegramSendLimiter{}
-	return NewIMTextSender(IMTextSendOptions{
-		Platform: "telegram", Budget: telegramTextBudget, Measure: imUTF16Units,
+	return im.NewIMTextSender(im.IMTextSendOptions{
+		Platform: "telegram", Budget: telegramTextBudget, Measure: im.UTF16Units,
 		SendSegment: func(ctx context.Context, target, text string) error {
 			chat, err := strconv.ParseInt(target, 10, 64)
 			if err != nil || chat == 0 {
@@ -98,7 +100,7 @@ func newTelegramTextSender(api telegramAPI) (*IMTextSender, error) {
 			var apiErr *telegramAPIError
 			if errors.As(err, &apiErr) && apiErr.Category == "rate_limited" && apiErr.RetryAfter > 0 {
 				limiter.pause(apiErr.RetryAfter)
-				return &IMRateLimitError{RetryAfter: apiErr.RetryAfter}
+				return &im.IMRateLimitError{RetryAfter: apiErr.RetryAfter}
 			}
 			if apiErr != nil {
 				log.Warnf("telegram: sendMessage failed category=%v HTTP=%v API=%v", apiErr.Category, apiErr.Status, apiErr.Code)

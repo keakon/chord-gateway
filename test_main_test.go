@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // One root per test process isolates machine-wide locks and immutable fixtures
@@ -18,7 +20,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	testProcessRoot = root
-	instanceLockCacheDir = func() (string, error) { return root, nil }
+	im.InstanceLockCacheDir = func() (string, error) { return root, nil }
 	code := m.Run()
 	if err := os.RemoveAll(root); err != nil {
 		fmt.Fprintln(os.Stderr, err)

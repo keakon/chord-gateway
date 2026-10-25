@@ -5,29 +5,24 @@ import (
 	"errors"
 	"os"
 	"time"
-)
 
-// BindingProbeTarget authorizes only the adapter's fixed diagnostic text. It
-// deliberately cannot carry content, a URL, or a workspace operation.
-type BindingProbeTarget struct{ Platform, AccountID, ChatID string }
-type BindingTargetValidator interface {
-	ValidateBindingTarget(context.Context, BindingProbeTarget) error
-}
+	"github.com/keakon/chord-gateway/internal/im"
+)
 
 // probeBindingLocked is called after identity, nonce and directory validation.
 // The gate is released during network I/O, then all captured authority is checked
 // again before the caller can mutate persistent routes or configuration.
-func (b *BindingService) probeBindingLocked(ctx context.Context, t AdmissionTicket, path string, info os.FileInfo) error {
+func (b *BindingService) probeBindingLocked(ctx context.Context, t im.AdmissionTicket, path string, info os.FileInfo) error {
 	if t.Identity.Platform != "wecom" && t.Identity.Platform != "dingtalk" {
 		return nil
 	}
 	r := b.router
-	validator, ok := r.findAdapterByType(t.Identity.Platform).(BindingTargetValidator)
+	validator, ok := r.findAdapterByType(t.Identity.Platform).(im.BindingTargetValidator)
 	if !ok {
 		return errors.New("platform binding probe is unavailable")
 	}
 	cfg := r.getConfig()
-	_, generation, phase := t.gate.snapshot()
+	_, generation, phase := t.Gate.Snapshot()
 	revision := ""
 	if r.ingressStore != nil {
 		route, err := r.ingressStore.GetRoute(t.Identity)
@@ -38,18 +33,18 @@ func (b *BindingService) probeBindingLocked(ctx context.Context, t AdmissionTick
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	t.gate.opMu.Unlock()
-	err := validator.ValidateBindingTarget(probeCtx, BindingProbeTarget{t.Identity.Platform, t.Identity.AccountID, t.Identity.ChatID})
-	t.gate.opMu.Lock()
+	t.Gate.OpMu.Unlock()
+	err := validator.ValidateBindingTarget(probeCtx, im.BindingProbeTarget{Platform: t.Identity.Platform, AccountID: t.Identity.AccountID, ChatID: t.Identity.ChatID})
+	t.Gate.OpMu.Lock()
 	if err != nil {
 		return errors.New("binding probe was not accepted; binding unchanged")
 	}
 	if probeCtx.Err() != nil {
 		return probeCtx.Err()
 	}
-	_, currentGeneration, currentPhase := t.gate.snapshot()
+	_, currentGeneration, currentPhase := t.Gate.Snapshot()
 	if cfg != r.getConfig() || generation != currentGeneration || phase != currentPhase || !r.admission.Valid(t) {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	if r.ingressStore != nil {
 		route, e := r.ingressStore.GetRoute(t.Identity)
@@ -57,7 +52,7 @@ func (b *BindingService) probeBindingLocked(ctx context.Context, t AdmissionTick
 			return e
 		}
 		if route.Revision != revision {
-			return errPairingDenied
+			return im.ErrPairingDenied
 		}
 	}
 	canonical, currentInfo, e := canonicalBindingDirectory(path)

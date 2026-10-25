@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // Presentation is queued separately from execution. Its target and deadline
 // are frozen before enqueue so a later binding cannot receive the response.
-func (r *NotificationRouter) enqueueIngressPresentation(msg IncomingMessage, present func(context.Context, DeliveryTarget) error, expectedBindings ...string) outboundEnqueueResult {
+func (r *NotificationRouter) enqueueIngressPresentation(msg im.IncomingMessage, present func(context.Context, DeliveryTarget) error, expectedBindings ...string) outboundEnqueueResult {
 	if r.outbound == nil {
 		return outboundClosed
 	}
-	if msg.ticket != nil {
-		ticketSnapshot := *msg.ticket
-		msg.ticket = &ticketSnapshot
+	if msg.AdmissionTicket() != nil {
+		ticketSnapshot := *msg.AdmissionTicket()
+		msg.SetAdmissionTicket(&ticketSnapshot)
 	}
 	ws, err := r.getConfig().ResolveWorkspace(msg.IMType, msg.ChatID)
 	if err != nil || ws == nil {
@@ -34,14 +36,14 @@ func (r *NotificationRouter) enqueueIngressPresentation(msg IncomingMessage, pre
 	if expectedBinding != "" && target.RuntimeInstanceID != expectedBinding {
 		return outboundClosed
 	}
-	deadline := time.Now().Add(IMControlSendTimeout)
+	deadline := time.Now().Add(im.IMControlSendTimeout)
 	recordDrop := func(reason string) {
 		if r.ingressStore != nil {
 			r.ingressStore.metrics.record(msg.IMType, "reply_dropped", reason)
 		}
 	}
 	result := r.outbound.enqueue(target.ProcessKey, func() {
-		if msg.ticket == nil || r.admission == nil || !r.admission.Valid(*msg.ticket) {
+		if msg.AdmissionTicket() == nil || r.admission == nil || !r.admission.Valid(*msg.AdmissionTicket()) {
 			recordDrop("authorization_changed")
 			return
 		}
@@ -63,15 +65,15 @@ func (r *NotificationRouter) enqueueIngressPresentation(msg IncomingMessage, pre
 	return result
 }
 
-func (r *NotificationRouter) enqueueIngressInteractionResult(msg IncomingMessage, kind, request, title, text, template string, expectedBindings ...string) {
+func (r *NotificationRouter) enqueueIngressInteractionResult(msg im.IncomingMessage, kind, request, title, text, template string, expectedBindings ...string) {
 	r.enqueueIngressInteractionPresentation(msg, kind, request, title, text, template, true, expectedBindings...)
 }
 
-func (r *NotificationRouter) enqueueIngressInteractionPresentation(msg IncomingMessage, kind, request, title, text, template string, terminal bool, expectedBindings ...string) {
+func (r *NotificationRouter) enqueueIngressInteractionPresentation(msg im.IncomingMessage, kind, request, title, text, template string, terminal bool, expectedBindings ...string) {
 	r.enqueueIngressInteractionFeedback(msg, kind, request, title, text, template, terminal, false, expectedBindings...)
 }
 
-func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg IncomingMessage, kind, request, title, text, template string, terminal, diagnostic bool, expectedBindings ...string) {
+func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg im.IncomingMessage, kind, request, title, text, template string, terminal, diagnostic bool, expectedBindings ...string) {
 	r.enqueueIngressPresentation(msg, func(ctx context.Context, target DeliveryTarget) error {
 		if msg.IMType == "feishu" {
 			if kind == "confirm" && r.confirmCardIsTerminal(target.ProcessKey, request) {
@@ -104,7 +106,7 @@ func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg IncomingMessa
 			if updated {
 				return nil
 			}
-			if errors.Is(err, errDeliveryOutcomeUnknown) || ctx.Err() != nil {
+			if errors.Is(err, im.ErrDeliveryOutcomeUnknown) || ctx.Err() != nil {
 				return err
 			}
 		}
@@ -121,8 +123,8 @@ func (r *NotificationRouter) confirmCardIsTerminal(processKey, requestID string)
 // Role dispatch renders its own detailed errors. All other controls share one
 // diagnostic, so callbacks update their original card without duplicate chat
 // messages. Unknown is a checkable interim state, never an invented success.
-func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg IncomingMessage, result DispatchResult) {
-	if result.State != ingressRejected && result.State != ingressUnknown {
+func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg im.IncomingMessage, result DispatchResult) {
+	if result.State != im.IngressRejected && result.State != im.IngressUnknown {
 		return
 	}
 	switch result.Reason {
@@ -144,17 +146,17 @@ func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg IncomingMessag
 	if result.Reason == "undelivered_inputs" {
 		text = "Request was not applied: undelivered inputs. Check " + r.ingressCommandHint(msg, "/status") + " and resolve pending input before changing the session; do not resend blindly."
 	}
-	if result.State == ingressUnknown {
+	if result.State == im.IngressUnknown {
 		title, text = "Outcome unconfirmed", "Execution outcome unknown. Check "+r.ingressCommandHint(msg, "/status")+" and the original session before sending another request."
 	}
 	if msg.InternalAction != nil {
-		r.enqueueIngressInteractionFeedback(msg, msg.InternalAction.Type, msg.InternalAction.RequestID, title, text, template, result.State == ingressRejected, true)
+		r.enqueueIngressInteractionFeedback(msg, msg.InternalAction.Type, msg.InternalAction.RequestID, title, text, template, result.State == im.IngressRejected, true)
 		return
 	}
 	r.enqueueIngressReply(msg, text)
 }
 
-func (r *NotificationRouter) enqueueIngressRoleMenu(msg IncomingMessage, current string, roles []RoleInfo, expectedBindings ...string) {
+func (r *NotificationRouter) enqueueIngressRoleMenu(msg im.IncomingMessage, current string, roles []RoleInfo, expectedBindings ...string) {
 	r.enqueueIngressPresentation(msg, func(ctx context.Context, target DeliveryTarget) error {
 		text := buildRoleMenuText(current, roles, func(command string) string { return r.ingressCommandHint(msg, command) })
 		if msg.IMType != "feishu" || r.findFeishuAdapter() == nil {

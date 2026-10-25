@@ -18,6 +18,7 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/buildinfo"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func main() {
@@ -62,16 +63,16 @@ func newRootCmd(paths *config.Paths, flagConfig *string) *cobra.Command {
 // --pair the gateway can start and complete pairing; without --pair those
 // bindings could never activate and the user gets actionable guidance instead.
 func checkPairedOwnerRequirement(cfg *config.Config, pair bool) error {
-	for _, im := range cfg.ActiveIMs() {
+	for _, imCfg := range cfg.ActiveIMs() {
 		switch {
-		case im.OwnerIdentity() != nil:
+		case imCfg.OwnerIdentity() != nil:
 			// Paired; bindings are live.
-		case len(im.Bindings()) > 0 && pair:
-			log.Warnf("ims.%s: chat_bindings stay inactive until an owner is paired", im.Type())
-		case len(im.Bindings()) > 0:
-			return fmt.Errorf("ims.%s: chat_bindings requires a paired owner; restart with --pair, then send /bind \"<directory>\" <pairing_code> in a private chat (the pairing code is shown on the terminal), or set owner: {account_id: <bot account id>, user_id: <your user id>} in the config", im.Type())
+		case len(imCfg.Bindings()) > 0 && pair:
+			log.Warnf("ims.%s: chat_bindings stay inactive until an owner is paired", imCfg.Type())
+		case len(imCfg.Bindings()) > 0:
+			return fmt.Errorf("ims.%s: chat_bindings requires a paired owner; restart with --pair, then send /bind \"<directory>\" <pairing_code> in a private chat (the pairing code is shown on the terminal), or set owner: {account_id: <bot account id>, user_id: <your user id>} in the config", imCfg.Type())
 		case !pair:
-			log.Warnf("ims.%s: no paired owner; start with --pair to pair this platform", im.Type())
+			log.Warnf("ims.%s: no paired owner; start with --pair to pair this platform", imCfg.Type())
 		}
 	}
 	return nil
@@ -101,8 +102,8 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		pair, _ := cmd.Flags().GetBool("pair")
 		var terminal *os.File
 		needsTerminal := false
-		for _, im := range cfg.ActiveIMs() {
-			if im.OwnerIdentity() == nil {
+		for _, imCfg := range cfg.ActiveIMs() {
+			if imCfg.OwnerIdentity() == nil {
 				needsTerminal = true
 			}
 		}
@@ -114,10 +115,10 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			defer terminal.Close()
 		}
 
-		if err := os.MkdirAll(paths.StateDir, privateDirMode); err != nil {
+		if err := os.MkdirAll(paths.StateDir, im.PrivateDirMode); err != nil {
 			return fmt.Errorf("create state dir: %w", err)
 		}
-		if err := os.Chmod(paths.StateDir, privateDirMode); err != nil {
+		if err := os.Chmod(paths.StateDir, im.PrivateDirMode); err != nil {
 			return fmt.Errorf("restrict state dir permissions: %w", err)
 		}
 
@@ -151,7 +152,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 			log.Infof("no platform requires pairing; existing owners are unchanged")
 		}
 
-		logEffectiveProxies(cfg)
+		im.LogEffectiveProxies(cfg)
 
 		activeIMs := cfg.ActiveIMs()
 		log.Infof("chord-gateway starting %s config=%v state_dir=%v ims=%v workspaces=%v idle_timeout=%v", buildinfo.Current().LogString(), *flagConfig,
@@ -186,7 +187,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 		}
 
 		// Create and start the IM adapter(s)
-		var adapter IMAdapter
+		var adapter im.IMAdapter
 		if console {
 			adapter = newConsoleAdapter(router)
 		} else if len(activeIMs) > 1 {
@@ -255,7 +256,7 @@ func runGateway(paths *config.Paths, flagConfig *string) func(*cobra.Command, []
 	}
 }
 
-func shutdownGateway(adapter IMAdapter, mgr *ChordManager, router *NotificationRouter, grace time.Duration) {
+func shutdownGateway(adapter im.IMAdapter, mgr *ChordManager, router *NotificationRouter, grace time.Duration) {
 	if mgr != nil && mgr.store != nil {
 		mgr.store.closing.Store(true)
 	}

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func slackTestInbound() *slackInbound {
@@ -134,11 +136,11 @@ func TestSlackInboundRejectsEnterpriseInstallations(t *testing.T) {
 	}
 }
 
-type slackCaptureReceiver struct{ envelopes chan IngressEnvelope }
+type slackCaptureReceiver struct{ envelopes chan im.IngressEnvelope }
 
-func (s slackCaptureReceiver) Accept(_ context.Context, envelope IngressEnvelope) ReceiveResult {
+func (s slackCaptureReceiver) Accept(_ context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
 	s.envelopes <- envelope
-	return ReceiveResult{Disposition: ReceiveAccepted}
+	return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 }
 
 func TestSlackInboundConversationClassificationAndCache(t *testing.T) {
@@ -226,7 +228,7 @@ func TestSlackInboundAsyncOrderingKindAndFreeze(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": map[string]any{"id": "D1", "is_im": true, "user": "U1"}})
 	}))
 	defer server.Close()
-	receiver := slackCaptureReceiver{make(chan IngressEnvelope, 4)}
+	receiver := slackCaptureReceiver{make(chan im.IngressEnvelope, 4)}
 	n := NewIngressNormalizer(t.Context(), receiver)
 	defer n.Close()
 	router := &NotificationRouter{ingress: &IngressService{started: true, normalizer: n}}
@@ -250,11 +252,11 @@ func TestSlackInboundAsyncOrderingKindAndFreeze(t *testing.T) {
 	default:
 	}
 	close(release)
-	if WaitIngressNormalization(t.Context(), first).Disposition != ReceiveAccepted || WaitIngressNormalization(t.Context(), second).Disposition != ReceiveAccepted {
+	if WaitIngressNormalization(t.Context(), first).Disposition != im.ReceiveAccepted || WaitIngressNormalization(t.Context(), second).Disposition != im.ReceiveAccepted {
 		t.Fatal("normalization failed")
 	}
 	a, b := <-receiver.envelopes, <-receiver.envelopes
-	if a.Message.ChatKind != "private" || b.Message.ChatKind != "group" || a.capture == nil || a.capture.kind != "control" || b.capture == nil || b.capture.kind != "task" {
+	if a.Message.ChatKind != "private" || b.Message.ChatKind != "group" || a.Capture == nil || a.Capture.Kind != "control" || b.Capture == nil || b.Capture.Kind != "task" {
 		t.Fatal(a, b)
 	}
 }
@@ -266,7 +268,7 @@ func TestSlackNormalizationDeadlineIncludesQueueWait(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}))
 	defer server.Close()
-	receiver := slackCaptureReceiver{make(chan IngressEnvelope, 1)}
+	receiver := slackCaptureReceiver{make(chan im.IngressEnvelope, 1)}
 	n := NewIngressNormalizer(t.Context(), receiver)
 	defer n.Close()
 	s := slackTestInbound()
@@ -283,7 +285,7 @@ func TestSlackInboundSharedConversationProducesAdmissionRejection(t *testing.T) 
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": map[string]any{"id": "C1", "is_channel": true, "is_shared": true}})
 	}))
 	defer server.Close()
-	receiver := slackCaptureReceiver{make(chan IngressEnvelope, 1)}
+	receiver := slackCaptureReceiver{make(chan im.IngressEnvelope, 1)}
 	n := NewIngressNormalizer(t.Context(), receiver)
 	defer n.Close()
 	s := slackTestInbound()
@@ -295,7 +297,7 @@ func TestSlackInboundSharedConversationProducesAdmissionRejection(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer cancel()
-	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != ReceiveAccepted {
+	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	envelope := <-receiver.envelopes
@@ -310,7 +312,7 @@ func TestSlackNormalizationOutlivesACKWait(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				receiver := slackCaptureReceiver{make(chan IngressEnvelope, 1)}
+				receiver := slackCaptureReceiver{make(chan im.IngressEnvelope, 1)}
 				n := NewIngressNormalizer(ctx, receiver)
 				defer n.Close()
 				s := slackTestInbound()
@@ -346,10 +348,10 @@ func TestSlackNormalizationOutlivesACKWait(t *testing.T) {
 				}
 				result := <-future
 				if stop == "complete" {
-					if result.Disposition != ReceiveAccepted || len(receiver.envelopes) != 1 {
+					if result.Disposition != im.ReceiveAccepted || len(receiver.envelopes) != 1 {
 						t.Fatal("ACK wait cancelled admission", result)
 					}
-				} else if result.Disposition == ReceiveAccepted || len(receiver.envelopes) != 0 {
+				} else if result.Disposition == im.ReceiveAccepted || len(receiver.envelopes) != 0 {
 					t.Fatal("cancelled lookup was accepted", result)
 				}
 				if stop == "deadline" && time.Since(start) != 30*time.Second {

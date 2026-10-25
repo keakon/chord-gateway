@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type wechatReplyContext struct {
@@ -71,7 +73,7 @@ func (a *WechatAdapter) publishToken(token *TokenData) {
 		r.admission.mu.Lock()
 		for id, g := range r.admission.gates {
 			if id.Platform == "wechat" {
-				lease, _, _ := g.snapshot()
+				lease, _, _ := g.Snapshot()
 				if lease != nil {
 					lease.Close()
 				}
@@ -93,7 +95,7 @@ func (a *WechatAdapter) publishToken(token *TokenData) {
 
 func (r *NotificationRouter) stopPairedPlatform(platform string) {
 	r.admission.mu.Lock()
-	var gates []*ChatGate
+	var gates []*im.ChatGate
 	for id, g := range r.admission.gates {
 		if id.Platform == platform {
 			gates = append(gates, g)
@@ -101,8 +103,8 @@ func (r *NotificationRouter) stopPairedPlatform(platform string) {
 	}
 	r.admission.mu.Unlock()
 	for _, g := range gates {
-		g.opMu.Lock()
-		lease, _, _ := g.snapshot()
+		g.OpMu.Lock()
+		lease, _, _ := g.Snapshot()
 		if lease != nil {
 			key := (processKey{workspaceID: lease.WorkspaceID, imType: platform, chatID: lease.Identity.ChatID}).String()
 			r.stopReminder(key)
@@ -112,10 +114,8 @@ func (r *NotificationRouter) stopPairedPlatform(platform string) {
 				cancel()
 			}
 		}
-		g.mu.Lock()
-		g.phase = "blocked"
-		g.mu.Unlock()
-		g.opMu.Unlock()
+		g.Block()
+		g.OpMu.Unlock()
 	}
 }
 
@@ -148,7 +148,7 @@ func (a *WechatAdapter) apiPostSnapshot(ctx context.Context, token *TokenData, p
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 	}
 	if path == "ilink/bot/sendmessage" {
-		return messageHTTPClient(a.httpClient).Do(req)
+		return im.MessageHTTPClient(a.httpClient).Do(req)
 	}
 	return a.httpClient.Do(req)
 }

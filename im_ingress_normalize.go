@@ -5,6 +5,8 @@ import (
 	"errors"
 	"slices"
 	"sync"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -12,16 +14,9 @@ const (
 	ingressNormalizationCapacity = 128
 )
 
-type ingressCapture struct {
-	unavailable bool
-	kind        string
-	target      *IngressControlTarget
-	err         error
-}
-
 // CaptureIngressEnvelope freezes controls on the transport reader before slow
 // identity lookups. The resulting message still requires normal admission.
-func (r *NotificationRouter) CaptureIngressEnvelope(e IngressEnvelope) IngressEnvelope {
+func (r *NotificationRouter) CaptureIngressEnvelope(e im.IngressEnvelope) im.IngressEnvelope {
 	// Callback decoders may reuse their buffers after the reader returns. Values
 	// and the action must remain the operation observed at receive time.
 	e.Cursor = cloneIngressCursor(e.Cursor)
@@ -30,23 +25,23 @@ func (r *NotificationRouter) CaptureIngressEnvelope(e IngressEnvelope) IngressEn
 		action.Values = slices.Clone(action.Values)
 		e.Message.InternalAction = &action
 	}
-	if e.capture != nil {
+	if e.Capture != nil {
 		return e
 	}
 	kind, target, ok := r.tryCaptureIngress(e.Message)
-	e.capture = &ingressCapture{kind: kind, target: target}
+	e.Capture = &im.IngressCapture{Kind: kind, Target: target}
 	if !ok {
-		e.capture.err = errIngressCaptureBusy
+		e.Capture.Err = errIngressCaptureBusy
 	}
 	return e
 }
 
 type ingressNormalization struct {
 	ctx       context.Context
-	normalize func(context.Context) (IngressEnvelope, error)
-	protocol  func(context.Context) ReceiveResult
-	result    chan ReceiveResult
-	observe   func(ReceiveResult)
+	normalize func(context.Context) (im.IngressEnvelope, error)
+	protocol  func(context.Context) im.ReceiveResult
+	result    chan im.ReceiveResult
+	observe   func(im.ReceiveResult)
 }
 
 // IngressNormalizer separates socket readers from network lookups and admission.
@@ -57,7 +52,7 @@ type ingressNormalization struct {
 type IngressNormalizer struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	receiver IngressReceiver
+	receiver im.IngressReceiver
 	mu       sync.Mutex
 	queues   map[string][]ingressNormalization
 	ready    chan string
@@ -67,7 +62,7 @@ type IngressNormalizer struct {
 	done     chan struct{}
 }
 
-func NewIngressNormalizer(ctx context.Context, receiver IngressReceiver) *IngressNormalizer {
+func NewIngressNormalizer(ctx context.Context, receiver im.IngressReceiver) *IngressNormalizer {
 	ctx, cancel := context.WithCancel(ctx)
 	n := &IngressNormalizer{ctx: ctx, cancel: cancel, receiver: receiver, queues: make(map[string][]ingressNormalization), ready: make(chan string, ingressNormalizationCapacity), done: make(chan struct{})}
 	for range ingressNormalizationWorkers {
@@ -81,30 +76,30 @@ func NewIngressNormalizer(ctx context.Context, receiver IngressReceiver) *Ingres
 
 // Submit never blocks the reader or a heartbeat. A full queue is uncommitted;
 // the transport decides whether to withhold ACK or explicitly reject.
-func (n *IngressNormalizer) Submit(key string, normalize func(context.Context) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+func (n *IngressNormalizer) Submit(key string, normalize func(context.Context) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 	return n.SubmitContext(n.ctx, key, normalize)
 }
 
 // SubmitContext cancels an individual lookup without cancelling other routes.
 // Already-running admission retains its actual result, including uncertainty.
-func (n *IngressNormalizer) SubmitContext(ctx context.Context, key string, normalize func(context.Context) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+func (n *IngressNormalizer) SubmitContext(ctx context.Context, key string, normalize func(context.Context) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 	return n.submitObserved(ctx, key, normalize, nil)
 }
 
 // submitObserved reports the authoritative outcome on an existing worker. The
 // observer must not block or perform network I/O. It also receives the definite
 // cancellation of queued work during shutdown, without an unbounded waiter.
-func (n *IngressNormalizer) submitObserved(ctx context.Context, key string, normalize func(context.Context) (IngressEnvelope, error), observe func(ReceiveResult)) (<-chan ReceiveResult, error) {
+func (n *IngressNormalizer) submitObserved(ctx context.Context, key string, normalize func(context.Context) (im.IngressEnvelope, error), observe func(im.ReceiveResult)) (<-chan im.ReceiveResult, error) {
 	return n.submit(ctx, key, normalize, nil, observe)
 }
 
 // submitProtocol shares the Gateway's bounded worker budget for identity probes
 // and permanent transport refusals. These operations never dispatch business input.
-func (n *IngressNormalizer) submitProtocol(ctx context.Context, key string, protocol func(context.Context) ReceiveResult) (<-chan ReceiveResult, error) {
+func (n *IngressNormalizer) submitProtocol(ctx context.Context, key string, protocol func(context.Context) im.ReceiveResult) (<-chan im.ReceiveResult, error) {
 	return n.submit(ctx, key, nil, protocol, nil)
 }
 
-func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize func(context.Context) (IngressEnvelope, error), protocol func(context.Context) ReceiveResult, observe func(ReceiveResult)) (<-chan ReceiveResult, error) {
+func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize func(context.Context) (im.IngressEnvelope, error), protocol func(context.Context) im.ReceiveResult, observe func(im.ReceiveResult)) (<-chan im.ReceiveResult, error) {
 	n.mu.Lock()
 	if n.closed || n.ctx.Err() != nil {
 		n.mu.Unlock()
@@ -122,7 +117,7 @@ func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize fu
 		n.mu.Unlock()
 		return nil, errIngressCapacity
 	}
-	result := make(chan ReceiveResult, 1)
+	result := make(chan im.ReceiveResult, 1)
 	_, exists := n.queues[key]
 	n.queues[key] = append(n.queues[key], ingressNormalization{ctx: ctx, normalize: normalize, protocol: protocol, result: result, observe: observe})
 	n.count++
@@ -139,9 +134,9 @@ func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize fu
 // the wait cannot establish whether the writer committed: report uncertain,
 // never retryable. The buffered channel still receives the authoritative result
 // and transport redelivery is safe through in-memory business-ID deduplication.
-func WaitIngressNormalization(ctx context.Context, result <-chan ReceiveResult) ReceiveResult {
+func WaitIngressNormalization(ctx context.Context, result <-chan im.ReceiveResult) im.ReceiveResult {
 	if result == nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "normalization_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "normalization_unavailable"}
 	}
 	// Prefer an already-completed result over a simultaneous cancellation.
 	select {
@@ -157,14 +152,14 @@ func WaitIngressNormalization(ctx context.Context, result <-chan ReceiveResult) 
 		case value, ok := <-result:
 			return ingressNormalizationResult(value, ok)
 		default:
-			return ReceiveResult{Disposition: ReceiveUncertain, Reason: "normalization_wait_cancelled"}
+			return im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "normalization_wait_cancelled"}
 		}
 	}
 }
 
-func ingressNormalizationResult(value ReceiveResult, ok bool) ReceiveResult {
+func ingressNormalizationResult(value im.ReceiveResult, ok bool) im.ReceiveResult {
 	if !ok {
-		return ReceiveResult{Disposition: ReceiveUncertain, Reason: "normalization_result_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "normalization_result_unavailable"}
 	}
 	return value
 }
@@ -207,7 +202,7 @@ func (n *IngressNormalizer) worker() {
 	}
 }
 
-func (n *IngressNormalizer) normalize(item ingressNormalization) ReceiveResult {
+func (n *IngressNormalizer) normalize(item ingressNormalization) im.ReceiveResult {
 	ctx, cancel := context.WithCancel(item.ctx)
 	stop := context.AfterFunc(n.ctx, cancel)
 	defer stop()
@@ -215,7 +210,7 @@ func (n *IngressNormalizer) normalize(item ingressNormalization) ReceiveResult {
 	if n.ctx.Err() != nil {
 		cancel()
 	}
-	cancelled := ReceiveResult{Disposition: ReceiveRetryable, Reason: "normalization_cancelled"}
+	cancelled := im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "normalization_cancelled"}
 	if ctx.Err() != nil {
 		return cancelled
 	}
@@ -229,7 +224,7 @@ func (n *IngressNormalizer) normalize(item ingressNormalization) ReceiveResult {
 		return cancelled
 	}
 	if err != nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "normalization_failed"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "normalization_failed"}
 	}
 	// Once admission begins, its result is authoritative. Cancelling ctx must
 	// not overwrite a possible in-memory accepted/uncertain result.
@@ -249,7 +244,7 @@ func (n *IngressNormalizer) shutdown() {
 	n.mu.Unlock()
 	for _, queue := range queues {
 		for _, item := range queue {
-			result := ReceiveResult{Disposition: ReceiveRetryable, Reason: "normalization_cancelled"}
+			result := im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "normalization_cancelled"}
 			item.result <- result
 			close(item.result)
 			if item.observe != nil {

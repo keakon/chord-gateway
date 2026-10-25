@@ -16,6 +16,8 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestDiscordWrittenPOSTCancellationPreservesUnknownOutcome(t *testing.T) {
@@ -60,8 +62,8 @@ func TestDiscordWrittenPOSTCancellationPreservesUnknownOutcome(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				var partial *IMTextSendError
-				if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, errDeliveryOutcomeUnknown) || requests.Load() != 2 {
+				var partial *im.IMTextSendError
+				if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || requests.Load() != 2 {
 					t.Fatalf("written POST uncertainty lost or later output sent: requests=%d err=%v", requests.Load(), err)
 				}
 				if cancellation == "caller" && !errors.Is(err, context.Canceled) {
@@ -115,7 +117,7 @@ func TestDiscordCancelledBeforePOSTDoesNotClaimUnknownOutcome(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				if !errors.Is(err, context.Canceled) || errors.Is(err, errDeliveryOutcomeUnknown) {
+				if !errors.Is(err, context.Canceled) || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 					t.Fatal("unsent or explicitly rejected message classified as unknown", err)
 				}
 			case <-time.After(time.Second):
@@ -162,12 +164,12 @@ func TestDiscordExplicitReceiptClearsCancellationUncertainty(t *testing.T) {
 			defer cancel()
 			adapter.rest = discordCancelAfterReceiptREST{Rest: adapter.rest, cancel: cancel}
 			err := adapter.SendTextContext(ctx, "500", strings.Repeat("a", 3800))
-			var partial *IMTextSendError
+			var partial *im.IMTextSendError
 			wantAccepted := 0
 			if status == http.StatusOK {
 				wantAccepted = 1
 			}
-			if !errors.As(err, &partial) || partial.AcceptedSegments != wantAccepted || !errors.Is(err, context.Canceled) || errors.Is(err, errDeliveryOutcomeUnknown) || requests.Load() != 1 {
+			if !errors.As(err, &partial) || partial.AcceptedSegments != wantAccepted || !errors.Is(err, context.Canceled) || errors.Is(err, im.ErrDeliveryOutcomeUnknown) || requests.Load() != 1 {
 				t.Fatal("explicit receipt became unknown or cancellation continued output", requests.Load(), err)
 			}
 		})
@@ -205,7 +207,7 @@ func TestDiscordRetryAttemptClearsPrior429Evidence(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if !errors.Is(err, errDeliveryOutcomeUnknown) || requests.Load() != 2 {
+		if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || requests.Load() != 2 {
 			t.Fatal("prior rejected attempt hid new unconfirmed POST", requests.Load(), err)
 		}
 	case <-time.After(time.Second):
@@ -237,8 +239,8 @@ func TestDiscordDeletedAndLockedChannelsFailWithExplicitSafeCategory(t *testing.
 			defer server.Close()
 			adapter := discordRESTTestAdapter(t, server)
 			err := adapter.SendTextContext(t.Context(), "501", "sample task")
-			var partial *IMTextSendError
-			if !errors.As(err, &partial) || partial.Cause.Error() != tc.want || errors.Is(err, errDeliveryOutcomeUnknown) || requests.Load() != 1 {
+			var partial *im.IMTextSendError
+			if !errors.As(err, &partial) || partial.Cause.Error() != tc.want || errors.Is(err, im.ErrDeliveryOutcomeUnknown) || requests.Load() != 1 {
 				t.Fatal("channel failure ambiguous or destination changed", requests.Load(), err)
 			}
 		})

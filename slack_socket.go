@@ -13,6 +13,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -47,7 +49,7 @@ type slackACK struct {
 type slackReceipt struct {
 	Frame      slackSocketFrame
 	ReceivedAt time.Time
-	Future     <-chan ReceiveResult
+	Future     <-chan im.ReceiveResult
 }
 
 func validSlackSocketURL(address string) bool {
@@ -61,7 +63,7 @@ func validSlackSocketURL(address string) bool {
 }
 func dialSlackSocketWithProxy(ctx context.Context, address string, proxyFunc func(*http.Request) (*url.URL, error)) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, WriteBufferSize: 32 << 10}
-	dialer.Proxy = websocketProxyFunc(proxyFunc)
+	dialer.Proxy = im.WebsocketProxyFunc(proxyFunc)
 	conn, response, err := dialer.DialContext(ctx, address, http.Header{"Origin": []string{"https://api.slack.com"}})
 	if response != nil && err != nil {
 		_ = response.Body.Close()
@@ -265,7 +267,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 				}
 				// Join the authoritative admission even when an ACK wait expires.
 				// Cancellation cannot establish whether in-flight acceptance completed.
-				relay := make(chan ReceiveResult, 1)
+				relay := make(chan im.ReceiveResult, 1)
 				workers.Go(func() {
 					defer cleanup()
 					result, ok := <-future
@@ -310,7 +312,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 	}
 	if !verified.sameInstallation(identity) {
 		if a.router != nil {
-			_ = a.router.PlatformReady("slack", verified.AccountID, PlatformPresentation{Platform: "slack", BotUsername: verified.BotName})
+			_ = a.router.PlatformReady("slack", verified.AccountID, im.PlatformPresentation{Platform: "slack", BotUsername: verified.BotName})
 		}
 		return slackConnectionError{"identity_changed", true}
 	}
@@ -323,7 +325,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 	if ctx.Err() != nil {
 		return slackSocketResult(parent, failures)
 	}
-	if err = a.router.PlatformReady("slack", identity.AccountID, PlatformPresentation{Platform: "slack", BotUsername: verified.BotName}); err != nil {
+	if err = a.router.PlatformReady("slack", identity.AccountID, im.PlatformPresentation{Platform: "slack", BotUsername: verified.BotName}); err != nil {
 		return slackConnectionError{"pairing_unavailable", true}
 	}
 	a.mu.Lock()
@@ -365,7 +367,7 @@ func (a *SlackAdapter) slackReceiptACK(ctx context.Context, generation uint64, r
 	defer cancel()
 	result := WaitIngressNormalization(waitCtx, receipt.Future)
 	switch result.Disposition {
-	case ReceiveAccepted, ReceiveDuplicate, ReceiveRejected:
+	case im.ReceiveAccepted, im.ReceiveDuplicate, im.ReceiveRejected:
 		done := a.queueSlackACK(ctx, generation, receipt.Frame, receipt.ReceivedAt, slackAcceptanceHint(result), acks)
 		if done != nil {
 			select {
@@ -386,11 +388,11 @@ func (a *SlackAdapter) slackReceiptACK(ctx context.Context, generation uint64, r
 // retain the original outcome, especially controls abandoned during acceptance.
 // Only non-accepted outcomes carry an ephemeral hint; a plain acceptance stays
 // a bare ACK so every /chord invocation does not push visible chatter.
-func slackAcceptanceHint(result ReceiveResult) string {
-	if result.Disposition == ReceiveRejected || result.State == ingressRejected {
+func slackAcceptanceHint(result im.ReceiveResult) string {
+	if result.Disposition == im.ReceiveRejected || result.State == im.IngressRejected {
 		return ""
 	}
-	if result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate {
+	if result.Disposition != im.ReceiveAccepted && result.Disposition != im.ReceiveDuplicate {
 		return ""
 	}
 	switch result.State {

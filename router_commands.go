@@ -10,14 +10,15 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // handleChordCommand dispatches a command to the chord process.
-// msg may be nil; in that case a synthetic IncomingMessage is built from the
+// msg may be nil; in that case a synthetic im.IncomingMessage is built from the
 // command's IM type and chat ID (used for command paths like /cancel that
 // don't carry the original message context).
-func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd IMCommand, imType string, msg *IncomingMessage) {
-	incoming := IncomingMessage{IMType: imType, ChatID: chatID, SenderID: chatID}
+func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, imType string, msg *im.IncomingMessage) {
+	incoming := im.IncomingMessage{IMType: imType, ChatID: chatID, SenderID: chatID}
 	if msg != nil {
 		incoming = *msg
 	}
@@ -93,7 +94,7 @@ func (r *NotificationRouter) handleCancelCommand(ws *config.Workspace, chatID, p
 	r.sendTextForKey(procKey, chatID, "🛑 Cancel requested.")
 }
 
-func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, msg im.IncomingMessage, procKey string, proc *ChordProcess) {
 	state := proc.State()
 	pc := state.PendingConfirm
 	if pc == nil || strings.TrimSpace(pc.RequestID) == "" {
@@ -154,7 +155,7 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 	r.sendTextForKey(procKey, chatID, "✅ allowed")
 }
 
-func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, msg im.IncomingMessage, procKey string, proc *ChordProcess) {
 	if cmd.Invalid {
 		r.sendTextForKey(procKey, chatID, "⚠️ Use /question-replace <old-id> <new-id>.")
 		return
@@ -188,7 +189,7 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 		return
 	}
 	if cmd.Action == "interact" || cmd.Action == "withdraw_requirement" || cmd.Action == "replace_requirement" {
-		action, err := questionOperationCommand(msg, q, cmd, &IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
+		action, err := questionOperationCommand(msg, q, cmd, &im.IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
 		if err != nil {
 			r.sendTextForKey(procKey, chatID, "⚠️ Invalid question action.")
 			return
@@ -211,7 +212,7 @@ func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID 
 	r.submitQuestionAnswer(chatID, msg, procKey, proc, q, cmd.Answers)
 }
 
-func questionUserOperationID(msg IncomingMessage, id, action string) string {
+func questionUserOperationID(msg im.IncomingMessage, id, action string) string {
 	source := msg.MessageID
 	if source == "" {
 		source = fmt.Sprint(time.Now().UnixNano())
@@ -219,7 +220,7 @@ func questionUserOperationID(msg IncomingMessage, id, action string) string {
 	return "gateway:" + msg.IMType + ":" + msg.ChatID + ":" + source + ":" + id + ":" + action
 }
 
-func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, procKey string, proc *ChordProcess) {
 	if cmd.Invalid {
 		r.sendTextForKey(procKey, chatID, "⚠️ Usage: /handoff <agent> [model_pool] or /handoff-deny <reason>.")
 		return
@@ -283,7 +284,7 @@ func defaultHandoffAgentName(options []HandoffAgentOption) string {
 	return "builder"
 }
 
-func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd IMCommand, msg IncomingMessage, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, msg im.IncomingMessage, procKey string, proc *ChordProcess) {
 	if action, ok := remoteMCPCommand(cmd.Content); ok {
 		if action == "status" {
 			text := formatMCPStatus(proc.State().MCP)
@@ -298,7 +299,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	}
 	state := proc.State()
 	if state.PendingConfirm != nil && isDoneTool(state.PendingConfirm.ToolName) && !strings.HasPrefix(strings.TrimSpace(cmd.Content), "/") {
-		r.handleConfirmCommand(ws, chatID, IMCommand{Type: "confirm", Action: "deny", Reason: cmd.Content}, msg, procKey, proc)
+		r.handleConfirmCommand(ws, chatID, im.IMCommand{Type: "confirm", Action: "deny", Reason: cmd.Content}, msg, procKey, proc)
 		return
 	}
 	// Filter slash commands that are only supported in local TUI.
@@ -318,7 +319,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	}
 }
 
-func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatID string, cmd IMCommand, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleLocalShellCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, procKey string, proc *ChordProcess) {
 	command := strings.TrimSpace(cmd.Content)
 	if command == "" {
 		r.sendTextForKey(procKey, chatID, "⚠️ Empty command after !")
@@ -354,7 +355,7 @@ func (r *NotificationRouter) retrySendInFreshSession(ws *config.Workspace, chatI
 }
 
 // submitQuestionAnswer reports acceptance only after a correlated Core receipt.
-func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg IncomingMessage, procKey string, proc *ChordProcess, q *QuestionPayload, answers []string) bool {
+func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg im.IncomingMessage, procKey string, proc *ChordProcess, q *QuestionPayload, answers []string) bool {
 	// User text is always custom, even if it matches an option ID or label.
 	// Only numeric selections or trusted option/form callbacks select IDs.
 	answer := parseQuestionAnswer(answers, q, msg.InternalAction)
@@ -362,7 +363,7 @@ func (r *NotificationRouter) submitQuestionAnswer(chatID string, msg IncomingMes
 		r.sendTextForKey(procKey, chatID, "⚠️ This selection no longer matches the question. Check /status and try again.")
 		return false
 	}
-	cmd, err := questionOperationCommand(msg, q, IMCommand{Type: "question", Answers: answers}, &IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
+	cmd, err := questionOperationCommand(msg, q, im.IMCommand{Type: "question", Answers: answers}, &im.IngressControlTarget{RequestID: q.RequestID, Version: q.Version})
 	if err != nil {
 		return false
 	}
@@ -392,11 +393,11 @@ var (
 
 // handleRoleCommand lists the switchable main-agent roles or switches to one.
 // The target comes from a plain /role reply (number or name) or from a Feishu
-// role-card button (InternalAction.Value carries the role name, matched by
+// role-card button (im.InternalAction.Value carries the role name, matched by
 // exact name and never as a menu number). Every switch
 // refetches the role list from chord so menu numbers and the current-role
 // check reflect the live configuration instead of a stale menu snapshot.
-func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID string, cmd IMCommand, incoming IncomingMessage, procKey string, proc *ChordProcess) {
+func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, incoming im.IncomingMessage, procKey string, proc *ChordProcess) {
 	listCtx, listCancel := context.WithTimeout(context.Background(), roleListTimeout)
 	defer listCancel()
 
@@ -456,7 +457,7 @@ func (r *NotificationRouter) handleRoleCommand(ws *config.Workspace, chatID stri
 // and falling back to a numbered text menu. When a Feishu card send fails the
 // router's sendCardToTarget has already emitted the text fallback, so the
 // handler only falls through to sendText when no Feishu adapter is attached.
-func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles []RoleInfo, incoming IncomingMessage, instance ...string) {
+func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles []RoleInfo, incoming im.IncomingMessage, instance ...string) {
 	if config.NormalizeIMType(incoming.IMType) == "feishu" {
 		if r.sendFeishuRoleMenu(chatID, procKey, current, roles, instance...) {
 			return
@@ -471,7 +472,7 @@ func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles
 // replyRoleResult reports a /role outcome. A Feishu card click is patched in
 // place and does not also send a duplicate chat line; text platforms (and
 // Feishu when the card cannot be patched) still get sendText.
-func (r *NotificationRouter) replyRoleResult(chatID string, incoming IncomingMessage, procKey, title, message, template string) {
+func (r *NotificationRouter) replyRoleResult(chatID string, incoming im.IncomingMessage, procKey, title, message, template string) {
 	if r.resolveRoleCard(incoming, procKey, title, message, template) {
 		return
 	}
@@ -482,7 +483,7 @@ func (r *NotificationRouter) replyRoleResult(chatID string, incoming IncomingMes
 // triggered by a card button. It is a no-op for text replies, and reports
 // whether a card was actually patched so callers can skip a duplicate chat
 // message.
-func (r *NotificationRouter) resolveRoleCard(incoming IncomingMessage, procKey, title, message, template string) bool {
+func (r *NotificationRouter) resolveRoleCard(incoming im.IncomingMessage, procKey, title, message, template string) bool {
 	if incoming.InternalAction == nil || incoming.InternalAction.RequestID == "" {
 		return false
 	}

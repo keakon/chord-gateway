@@ -6,12 +6,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // No callback is ever submitted in this fixture. These tests verify proactive
 // delivery independently of callback lifetime, not a real-account ten-minute
 // task or the platform's actual quota and product permissions.
-func wecomBackgroundTarget(t *testing.T, a *WecomAdapter, msg IncomingMessage, kind string) (key, rawTarget string) {
+func wecomBackgroundTarget(t *testing.T, a *WecomAdapter, msg im.IncomingMessage, kind string) (key, rawTarget string) {
 	t.Helper()
 	chat := msg.ChatID
 	rawTarget = "owner"
@@ -65,7 +67,7 @@ func TestWecomFinalAndBackgroundResultsWithoutAnyCallback(t *testing.T) {
 			a.router.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: final})
 			a.router.HandleChordEvent(key, "background_result", background)
 			a.router.Close() // Drain both notifications and their explicit send ACKs.
-			expected, err := a.textSender.segments(final)
+			expected, err := a.textSender.Segments(final)
 			if err != nil {
 				t.Fatal(err)
 			}

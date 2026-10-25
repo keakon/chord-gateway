@@ -6,13 +6,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func (a *FeishuAdapter) feishuTextSender() (*IMTextSender, error) {
+func (a *FeishuAdapter) feishuTextSender() (*im.IMTextSender, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.textSender == nil {
-		sender, err := NewIMTextSender(IMTextSendOptions{
+		sender, err := im.NewIMTextSender(im.IMTextSendOptions{
 			Platform: "feishu",
 			Budget:   feishuMaxTextLen,
 			SendSegment: func(ctx context.Context, chat, text string) error {
@@ -28,22 +30,22 @@ func (a *FeishuAdapter) feishuTextSender() (*IMTextSender, error) {
 	return a.textSender, nil
 }
 
-func (a *FeishuAdapter) TextSendMetrics() IMTextMetricsSnapshot {
+func (a *FeishuAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {
 	a.mu.Lock()
 	sender := a.textSender
 	a.mu.Unlock()
 	if sender == nil {
-		return IMTextMetricsSnapshot{Platform: "feishu"}
+		return im.IMTextMetricsSnapshot{Platform: "feishu"}
 	}
 	return sender.TextSendMetrics()
 }
 
-func (a *FeishuAdapter) TextSendTargetSnapshot(chat string) IMTextTargetSnapshot {
+func (a *FeishuAdapter) TextSendTargetSnapshot(chat string) im.IMTextTargetSnapshot {
 	a.mu.Lock()
 	sender := a.textSender
 	a.mu.Unlock()
 	if sender == nil {
-		return IMTextTargetSnapshot{}
+		return im.IMTextTargetSnapshot{}
 	}
 	return sender.TextSendTargetSnapshot(chat)
 }
@@ -58,13 +60,13 @@ func feishuTextRetryAfter(value string, now time.Time) time.Duration {
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 {
 		// Waiting beyond the output deadline cannot succeed, and capping here
 		// prevents hostile or malformed headers from overflowing Duration.
-		if seconds >= int64(IMTextSendTimeout/time.Second) {
-			return IMTextSendTimeout
+		if seconds >= int64(im.IMTextSendTimeout/time.Second) {
+			return im.IMTextSendTimeout
 		}
 		return time.Duration(seconds) * time.Second
 	}
 	if next, err := http.ParseTime(value); err == nil && next.After(now) {
-		return min(next.Sub(now), IMTextSendTimeout)
+		return min(next.Sub(now), im.IMTextSendTimeout)
 	}
 	return time.Second
 }

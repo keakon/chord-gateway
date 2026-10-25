@@ -9,14 +9,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type imageTestAdapter struct {
 	stubIMAdapter
-	sendImage func(string, *ReceivedImage) error
+	sendImage func(string, *im.ReceivedImage) error
 }
 
-func (a *imageTestAdapter) SendImage(chat string, img *ReceivedImage) error {
+func (a *imageTestAdapter) SendImage(chat string, img *im.ReceivedImage) error {
 	return a.sendImage(chat, img)
 }
 
@@ -25,7 +27,7 @@ func TestImageRouterOrderingFailureAndCleanup(t *testing.T) {
 	var mu sync.Mutex
 	var sent []string
 	a := &imageTestAdapter{stubIMAdapter: stubIMAdapter{typ: "wechat"}}
-	a.sendImage = func(chat string, img *ReceivedImage) error {
+	a.sendImage = func(chat string, img *im.ReceivedImage) error {
 		mu.Lock()
 		sent = append(sent, img.CallID)
 		mu.Unlock()
@@ -42,7 +44,7 @@ func TestImageRouterOrderingFailureAndCleanup(t *testing.T) {
 	first, second := imageForUpload(t), imageForUpload(t)
 	first.CallID = "first"
 	second.CallID = "second"
-	imageSpoolBytes.Add(first.Size + second.Size)
+	im.ImageSpoolBytes.Add(first.Size + second.Size)
 	r.HandleChordImage(key, first)
 	r.HandleChordImage(key, second)
 	r.outbound.close()
@@ -52,7 +54,7 @@ func TestImageRouterOrderingFailureAndCleanup(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"first", "second"}) {
 		t.Fatalf("order=%v", got)
 	}
-	for _, img := range []*ReceivedImage{first, second} {
+	for _, img := range []*im.ReceivedImage{first, second} {
 		if _, err := os.Stat(img.Path); !os.IsNotExist(err) {
 			t.Fatal("image temp file leaked")
 		}
@@ -64,7 +66,7 @@ func TestImageRouterOrderingFailureAndCleanup(t *testing.T) {
 		t.Fatal("delivery failure did not reach source chat")
 	}
 	rejected := imageForUpload(t)
-	imageSpoolBytes.Add(rejected.Size)
+	im.ImageSpoolBytes.Add(rejected.Size)
 	r.HandleChordImage(key, rejected)
 	if _, err := os.Stat(rejected.Path); !os.IsNotExist(err) {
 		t.Fatal("closed queue leaked image")
@@ -80,8 +82,8 @@ func TestImageRouterMarksOnlyConfirmedVisibleOutput(t *testing.T) {
 	}{
 		{name: "image", visible: true},
 		{name: "failure_notice", imageErr: errors.New("upload rejected"), visible: true, text: "Image delivery failed"},
-		{name: "unknown_notice", imageErr: fmt.Errorf("send image: %w", errDeliveryOutcomeUnknown), visible: true, text: "Image delivery is unconfirmed"},
-		{name: "undelivered_notice", imageErr: errDeliveryOutcomeUnknown, noticeErr: errors.New("text rejected"), visible: false, text: "Image delivery is unconfirmed"},
+		{name: "unknown_notice", imageErr: fmt.Errorf("send image: %w", im.ErrDeliveryOutcomeUnknown), visible: true, text: "Image delivery is unconfirmed"},
+		{name: "undelivered_notice", imageErr: im.ErrDeliveryOutcomeUnknown, noticeErr: errors.New("text rejected"), visible: false, text: "Image delivery is unconfirmed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mgr := newTestChordManager(testConfig())
@@ -92,11 +94,11 @@ func TestImageRouterMarksOnlyConfirmedVisibleOutput(t *testing.T) {
 			r := NewNotificationRouter(mgr)
 			defer r.outbound.close()
 			sends := 0
-			a := &imageTestAdapter{stubIMAdapter: stubIMAdapter{typ: "wechat", sendFunc: func(_, _ string) error { return tc.noticeErr }}, sendImage: func(_ string, _ *ReceivedImage) error { sends++; return tc.imageErr }}
+			a := &imageTestAdapter{stubIMAdapter: stubIMAdapter{typ: "wechat", sendFunc: func(_, _ string) error { return tc.noticeErr }}, sendImage: func(_ string, _ *im.ReceivedImage) error { sends++; return tc.imageErr }}
 			r.SetAdapter(a)
 			img := imageForUpload(t)
-			initial := imageSpoolBytes.Load()
-			imageSpoolBytes.Add(img.Size)
+			initial := im.ImageSpoolBytes.Load()
+			im.ImageSpoolBytes.Add(img.Size)
 			r.HandleChordImage(key, img)
 			r.outbound.close()
 			state := proc.State()
@@ -107,7 +109,7 @@ func TestImageRouterMarksOnlyConfirmedVisibleOutput(t *testing.T) {
 			} else if !state.LastPushAt.Equal(before) || state.InternalEventsSinceLastPush != 5 {
 				t.Fatal("failed output reset reminder state")
 			}
-			if sends != 1 || imageSpoolBytes.Load() != initial {
+			if sends != 1 || im.ImageSpoolBytes.Load() != initial {
 				t.Fatal("send replay or image budget leak")
 			}
 			a.mu.Lock()

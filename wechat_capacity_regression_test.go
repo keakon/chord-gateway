@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatFullWaitingQueueAcceptsStatusAndWakesFIFO(t *testing.T) {
 	a, service, process, writer := newWechatIngressTest(t)
-	var first ReceiveResult
+	var first im.ReceiveResult
 	for i := range 64 {
 		result := a.receiveIncomingMessage(t.Context(), wechatTextMessage(fmt.Sprint(i+1), "owner", fmt.Sprintf("waiting task %d", i), ""), a.token.Load())
-		if result.Disposition != ReceiveAccepted {
+		if result.Disposition != im.ReceiveAccepted {
 			t.Fatalf("input %d: %+v", i, result)
 		}
 		if i == 0 {
@@ -24,7 +26,7 @@ func TestWechatFullWaitingQueueAcceptsStatusAndWakesFIFO(t *testing.T) {
 		t.Fatal("waiting inputs executed without reply context", writes)
 	}
 	status := a.receiveIncomingMessage(t.Context(), wechatTextMessage("65", "owner", "/status", "fresh-context"), a.token.Load())
-	if status.Disposition != ReceiveAccepted {
+	if status.Disposition != im.ReceiveAccepted {
 		t.Fatalf("full queue prevented context recovery: %+v", status)
 	}
 	waitIngressCondition(t, func() bool { return len(wechatTaskWrites(writer)) == 1 })
@@ -63,17 +65,17 @@ func TestIngressStatusCountReserveIsBounded(t *testing.T) {
 
 			}
 			r.BusinessID = "ordinary-overflow"
-			if got := s.AcceptRecord(t.Context(), r, nil); got.Disposition != ReceiveRetryable || got.Reason != "capacity" {
+			if got := s.AcceptRecord(t.Context(), r, nil); got.Disposition != im.ReceiveRetryable || got.Reason != "capacity" {
 				t.Fatalf("ordinary input used reserve: %+v", got)
 			}
 			r.Kind, r.BusinessID = "control", "other-control"
-			if got := s.AcceptRecord(t.Context(), r, nil); got.Disposition != ReceiveRetryable || got.Reason != "capacity" {
+			if got := s.AcceptRecord(t.Context(), r, nil); got.Disposition != im.ReceiveRetryable || got.Reason != "capacity" {
 				t.Fatalf("unprivileged control used reserve: %+v", got)
 			}
 			r.statusQuery, r.BusinessID = true, "status-query"
 			accepted := mustAcceptIngress(t, s, r)
 			r.BusinessID = "second-status-query"
-			if got := s.AcceptRecord(t.Context(), r, nil); got.Disposition != ReceiveRetryable || got.Reason != "capacity" {
+			if got := s.AcceptRecord(t.Context(), r, nil); got.Disposition != im.ReceiveRetryable || got.Reason != "capacity" {
 				t.Fatalf("second status exceeded bounded reserve: %+v", got)
 			}
 			if err := s.Discard(t.Context(), accepted.RecordID); err != nil {
@@ -104,7 +106,7 @@ func TestIngressStatusReservePreservesStorageLimits(t *testing.T) {
 				s.counts[compositeKey(r.Platform, r.AccountID)] = tc.counts
 			}
 			result := s.AcceptRecord(context.Background(), r, nil)
-			if result.Disposition != ReceiveRetryable || result.Reason != "capacity" {
+			if result.Disposition != im.ReceiveRetryable || result.Reason != "capacity" {
 				t.Fatalf("status bypassed storage limit: %+v", result)
 			}
 		})

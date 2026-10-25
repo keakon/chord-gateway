@@ -1,9 +1,11 @@
-package main
+package im
 
 import (
 	"bytes"
 	"context"
 	"crypto/aes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"image"
 	"image/color"
@@ -15,8 +17,29 @@ import (
 	"golang.org/x/image/draw"
 )
 
+func testImageForUpload(t *testing.T) *ReceivedImage {
+	t.Helper()
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	data := b.Bytes()
+	digest := sha256.Sum256(data)
+	f, err := os.CreateTemp(t.TempDir(), "image-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &ReceivedImage{Path: f.Name(), Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:]), MIME: "image/png", Width: 2, Height: 2}
+}
+
 func TestImageUploadAdmissionCancellation(t *testing.T) {
-	release, err := acquireImageUpload(t.Context())
+	release, err := AcquireImageUpload(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +47,7 @@ func TestImageUploadAdmissionCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		release, err := acquireImageUpload(ctx)
+		release, err := AcquireImageUpload(ctx)
 		if release != nil {
 			release()
 		}
@@ -39,22 +62,9 @@ func TestImageUploadAdmissionCancellation(t *testing.T) {
 	}
 }
 
-func TestWechatImageCancellationBeforeReading(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	a := newTestWechatAdapter(t)
-	a.ctx = ctx
-	if err := a.SendImage("sample-chat", &ReceivedImage{Path: "missing-image"}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled upload = %v", err)
-	}
-	if len(imageUploadSlot) != 0 {
-		t.Fatal("cancelled upload retained capacity")
-	}
-}
-
 func TestOpenReceivedImageValidatesAndRewinds(t *testing.T) {
-	i := imageForUpload(t)
-	f, err := openReceivedImage(i)
+	i := testImageForUpload(t)
+	f, err := OpenReceivedImage(i)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +76,7 @@ func TestOpenReceivedImageValidatesAndRewinds(t *testing.T) {
 	}
 	for _, field := range []string{"digest", "size", "dimensions", "mime"} {
 		t.Run(field, func(t *testing.T) {
-			i := imageForUpload(t)
+			i := testImageForUpload(t)
 			switch field {
 			case "digest":
 				i.SHA256 = "invalid"
@@ -77,7 +87,7 @@ func TestOpenReceivedImageValidatesAndRewinds(t *testing.T) {
 			case "mime":
 				i.MIME = "image/jpeg"
 			}
-			if f, err := openReceivedImage(i); err == nil {
+			if f, err := OpenReceivedImage(i); err == nil {
 				f.Close()
 				t.Fatal("changed image accepted")
 			}
@@ -96,7 +106,7 @@ func TestImageUploadPreviewDownscaleAndAlpha(t *testing.T) {
 	if err := png.Encode(&encoded, src); err != nil {
 		t.Fatal(err)
 	}
-	data, err := imageUploadPreview(t.Context(), bytes.NewReader(encoded.Bytes()), 1024)
+	data, err := ImageUploadPreview(t.Context(), bytes.NewReader(encoded.Bytes()), 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,30 +118,26 @@ func TestImageUploadPreviewDownscaleAndAlpha(t *testing.T) {
 	if alpha == 0 || alpha >= 65535 {
 		t.Fatal("downscale lost transparency")
 	}
-	if _, err := imageUploadPreview(t.Context(), bytes.NewReader(encoded.Bytes()), 1); err == nil {
+	if _, err := ImageUploadPreview(t.Context(), bytes.NewReader(encoded.Bytes()), 1); err == nil {
 		t.Fatal("impossible output limit accepted")
 	}
 }
 
 func TestReadReceivedImageReusesBufferForEncryption(t *testing.T) {
-	i := imageForUpload(t)
-	data, err := readReceivedImage(i)
+	i := testImageForUpload(t)
+	data, err := ReadReceivedImage(i)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cap(data)-len(data) < aes.BlockSize {
 		t.Fatal("received image does not reserve a full padding block")
 	}
-	ciphertext, err := encryptILinkImage(data, make([]byte, aes.BlockSize))
-	if err != nil || &ciphertext[0] != &data[0] {
-		t.Fatalf("image encryption allocated another image buffer: %v", err)
-	}
 }
 
 func TestReadReceivedImageRejectsChangedFiles(t *testing.T) {
 	for _, change := range []string{"growth", "truncation", "content"} {
 		t.Run(change, func(t *testing.T) {
-			i := imageForUpload(t)
+			i := testImageForUpload(t)
 			data, err := os.ReadFile(i.Path)
 			if err != nil {
 				t.Fatal(err)
@@ -147,7 +153,7 @@ func TestReadReceivedImageRejectsChangedFiles(t *testing.T) {
 			if err := os.WriteFile(i.Path, data, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := readReceivedImage(i); err == nil {
+			if _, err := ReadReceivedImage(i); err == nil {
 				t.Fatal("changed image accepted")
 			}
 		})
@@ -165,18 +171,23 @@ func (r *cancellingImageReader) Read(p []byte) (int, error) {
 }
 
 func TestImageUploadPreviewCancellation(t *testing.T) {
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewNRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+		t.Fatal(err)
+	}
+	payload := b.Bytes()
 	for _, phase := range []string{"before_decode", "during_decode"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			var source io.Reader = bytes.NewReader(testImageBytes(t))
+			var source io.Reader = bytes.NewReader(payload)
 			if phase == "before_decode" {
 				cancel()
 				source = bytes.NewReader(nil)
 			} else {
 				source = &cancellingImageReader{Reader: source, cancel: cancel}
 			}
-			if _, err := imageUploadPreview(ctx, source, 1024); !errors.Is(err, context.Canceled) {
+			if _, err := ImageUploadPreview(ctx, source, 1024); !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancelled preview = %v", err)
 			}
 		})

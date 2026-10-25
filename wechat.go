@@ -19,6 +19,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // iLink protocol constants
@@ -112,16 +113,16 @@ func (r *ilinkGetUpdatesResponse) statusKind() ilinkGetUpdatesStatus {
 
 // ilinkMessage represents a single WeChat iLink message.
 type ilinkMessage struct {
-	ingressCapture *ingressCapture `json:"-"` // control target frozen at polling receipt
-	receivedAt     time.Time       `json:"-"` // first observation in its retained polling batch
-	MessageID      json.Number     `json:"message_id,omitempty"`
-	FromUserID     string          `json:"from_user_id,omitempty"`
-	ToUserID       string          `json:"to_user_id,omitempty"`
-	ClientID       string          `json:"client_id,omitempty"`
-	MessageType    int             `json:"message_type,omitempty"`
-	MessageState   int             `json:"message_state,omitempty"`
-	ContextToken   string          `json:"context_token,omitempty"`
-	ItemList       []ilinkItem     `json:"item_list,omitempty"`
+	captureRef   *im.IngressCapture `json:"-"` // control target frozen at polling receipt
+	receivedAt   time.Time          `json:"-"` // first observation in its retained polling batch
+	MessageID    json.Number        `json:"message_id,omitempty"`
+	FromUserID   string             `json:"from_user_id,omitempty"`
+	ToUserID     string             `json:"to_user_id,omitempty"`
+	ClientID     string             `json:"client_id,omitempty"`
+	MessageType  int                `json:"message_type,omitempty"`
+	MessageState int                `json:"message_state,omitempty"`
+	ContextToken string             `json:"context_token,omitempty"`
+	ItemList     []ilinkItem        `json:"item_list,omitempty"`
 }
 
 // ilinkItem represents an item in a message.
@@ -158,7 +159,7 @@ type TokenData struct {
 	SavedAt   string `json:"savedAt"`
 }
 
-// WechatAdapter implements IMAdapter for WeChat iLink Bot (personal WeChat).
+// WechatAdapter implements im.IMAdapter for WeChat iLink Bot (personal WeChat).
 type WechatAdapter struct {
 	replyContexts  map[string]wechatReplyContext
 	ingressPending map[string]*wechatIngressPending
@@ -166,8 +167,8 @@ type WechatAdapter struct {
 	ingressReadinessNotifier
 
 	imCfg         config.IMAdapterConfig
-	msgRouter     MessageRouter
-	notifier      SessionLoginNotifier
+	msgRouter     im.MessageRouter
+	notifier      im.SessionLoginNotifier
 	token         atomic.Pointer[TokenData]
 	syncAccount   string
 	syncBuf       string // monitorLoop-only: written/read from a single goroutine
@@ -179,7 +180,7 @@ type WechatAdapter struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	storageDir    string
-	accountLock   *instanceLocks // owned by the single polling supervisor
+	accountLock   *im.InstanceLocks // owned by the single polling supervisor
 	accountLockID string
 	tokenFile     string
 	httpClient    *http.Client
@@ -193,7 +194,7 @@ func NewWechatAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 	if imCfg.Wechat != nil && imCfg.Wechat.TokenPath != "" {
 		tokenFile = imCfg.Wechat.TokenPath
 	}
-	proxyFunc, err := proxyFuncFor(cfg, imCfg)
+	proxyFunc, err := im.ProxyFuncFor(cfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +205,7 @@ func NewWechatAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 		notifier:   router,
 		storageDir: storageDir,
 		tokenFile:  tokenFile,
-		httpClient: &http.Client{Timeout: 40 * time.Second, Transport: proxiedTransport(proxyFunc)},
+		httpClient: &http.Client{Timeout: 40 * time.Second, Transport: im.ProxiedTransport(proxyFunc)},
 		proxyFunc:  proxyFunc,
 	}
 
@@ -608,24 +609,24 @@ func (a *WechatAdapter) sendMessage(ctx context.Context, account *TokenData, bod
 // Only an explicit rejection proves the platform did not accept the message.
 func checkILinkSendResponse(resp *http.Response, err error) error {
 	if err != nil {
-		return fmt.Errorf("%w: HTTP request: %w", errDeliveryOutcomeUnknown, err)
+		return fmt.Errorf("%w: HTTP request: %w", im.ErrDeliveryOutcomeUnknown, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if !isAmbiguousDeliveryStatus(resp.StatusCode) {
+		if !im.IsAmbiguousDeliveryStatus(resp.StatusCode) {
 			return fmt.Errorf("wechat ilink send rejected: HTTP %d", resp.StatusCode)
 		}
-		return fmt.Errorf("%w: HTTP %d", errDeliveryOutcomeUnknown, resp.StatusCode)
+		return fmt.Errorf("%w: HTTP %d", im.ErrDeliveryOutcomeUnknown, resp.StatusCode)
 	}
 
 	var result ilinkAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("%w: decode send response: %w", errDeliveryOutcomeUnknown, err)
+		return fmt.Errorf("%w: decode send response: %w", im.ErrDeliveryOutcomeUnknown, err)
 	}
 
 	if result.ErrCode == nil && result.Ret == nil {
-		return fmt.Errorf("%w: send response is missing status", errDeliveryOutcomeUnknown)
+		return fmt.Errorf("%w: send response is missing status", im.ErrDeliveryOutcomeUnknown)
 	}
 	ret := 0
 	if result.Ret != nil {
@@ -681,7 +682,7 @@ func (a *WechatAdapter) saveToken() {
 		log.Errorf("wechat ilink: failed to marshal token error=%v", err)
 		return
 	}
-	if err := writePrivateFileAtomically(a.tokenFile, data); err != nil {
+	if err := im.WritePrivateFileAtomically(a.tokenFile, data); err != nil {
 		log.Errorf("wechat ilink: failed to save token error=%v", err)
 	}
 }

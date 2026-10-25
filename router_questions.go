@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"maps"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -20,14 +22,14 @@ type pendingQuestionOperation struct {
 	command   map[string]any
 	expiresAt time.Time
 	recordIDs []string
-	target    *IngressControlTarget
+	target    *im.IngressControlTarget
 }
 
 func (r *NotificationRouter) waitQuestionOperation(ctx context.Context, key, sender string, proc *ChordProcess, command map[string]any) (QuestionReceipt, error) {
 	return r.waitQuestionOperationTarget(ctx, key, sender, proc, command, nil, nil)
 }
 
-func questionOperationIdentity(key, sender string, command map[string]any, target *IngressControlTarget) (string, error) {
+func questionOperationIdentity(key, sender string, command map[string]any, target *im.IngressControlTarget) (string, error) {
 	identity := maps.Clone(command)
 	delete(identity, "operation_id")
 	delete(identity, "version")
@@ -44,7 +46,7 @@ func questionOperationIdentity(key, sender string, command map[string]any, targe
 	return compositeKey(key, sender, string(data)), nil
 }
 
-func (r *NotificationRouter) waitQuestionOperationTarget(ctx context.Context, key, sender string, proc *ChordProcess, command map[string]any, target *IngressControlTarget, recordIDs []string) (QuestionReceipt, error) {
+func (r *NotificationRouter) waitQuestionOperationTarget(ctx context.Context, key, sender string, proc *ChordProcess, command map[string]any, target *im.IngressControlTarget, recordIDs []string) (QuestionReceipt, error) {
 	operationKey, err := questionOperationIdentity(key, sender, command, target)
 	if err != nil {
 		return QuestionReceipt{}, err
@@ -67,7 +69,7 @@ func (r *NotificationRouter) waitQuestionOperationTarget(ctx context.Context, ke
 		if len(r.questionOperations) >= maxQuestionOperations {
 			r.mu.Unlock()
 			_, platform, chat := parseProcessKey(key)
-			return QuestionReceipt{}, fmt.Errorf("too many unconfirmed question operations; check %s before retrying", r.commandHint(platform, commandTargetForChat(platform, chat), "/status"))
+			return QuestionReceipt{}, fmt.Errorf("too many unconfirmed question operations; check %s before retrying", r.commandHint(platform, im.CommandTargetForChat(platform, chat), "/status"))
 		}
 		command = maps.Clone(command)
 		r.questionOperations[operationKey] = pendingQuestionOperation{command: command, expiresAt: now.Add(questionOperationTTL), recordIDs: recordIDs, target: target}

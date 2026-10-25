@@ -4,19 +4,21 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // SubmitIngress captures the operation before asynchronous normalization and
 // uses the Gateway's single bounded queue. Adapters map its result to their
 // protocol acknowledgment; submitting a future is not in-memory acceptance.
-func (r *NotificationRouter) SubmitIngress(ctx context.Context, envelope IngressEnvelope) (<-chan ReceiveResult, error) {
+func (r *NotificationRouter) SubmitIngress(ctx context.Context, envelope im.IngressEnvelope) (<-chan im.ReceiveResult, error) {
 	return r.SubmitIngressNormalization(ctx, envelope.Message.ChatID, envelope, nil)
 }
 
 // SubmitIngressObserved keeps socket acceptance observation on the Gateway's
 // bounded workers. observe must only record diagnostics or enqueue a reply;
 // it must never wait for network I/O. No observer runs when submission fails.
-func (r *NotificationRouter) SubmitIngressObserved(ctx context.Context, envelope IngressEnvelope, observe func(ReceiveResult)) (<-chan ReceiveResult, error) {
+func (r *NotificationRouter) SubmitIngressObserved(ctx context.Context, envelope im.IngressEnvelope, observe func(im.ReceiveResult)) (<-chan im.ReceiveResult, error) {
 	return r.submitIngressNormalization(ctx, envelope.Message.ChatID, envelope, nil, observe)
 }
 
@@ -25,11 +27,11 @@ func (r *NotificationRouter) SubmitIngressObserved(ctx context.Context, envelope
 // transport receive order, before any network lookup. Normalization may enrich
 // missing identity fields and display metadata, but never replace the received
 // operation, its known identity, or its platform checkpoint.
-func (r *NotificationRouter) SubmitIngressNormalization(ctx context.Context, key string, envelope IngressEnvelope, normalize func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+func (r *NotificationRouter) SubmitIngressNormalization(ctx context.Context, key string, envelope im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 	return r.submitIngressNormalization(ctx, key, envelope, normalize, nil)
 }
 
-func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key string, envelope IngressEnvelope, normalize func(context.Context, IngressEnvelope) (IngressEnvelope, error), observe func(ReceiveResult)) (<-chan ReceiveResult, error) {
+func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key string, envelope im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error), observe func(im.ReceiveResult)) (<-chan im.ReceiveResult, error) {
 	if r.ingress == nil {
 		return nil, errIngressClosed
 	}
@@ -41,8 +43,8 @@ func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key
 		envelope.ReceivedAt = time.Now()
 	}
 	envelope = r.CaptureIngressEnvelope(envelope)
-	if envelope.capture.err != nil {
-		return nil, envelope.capture.err
+	if envelope.Capture.Err != nil {
+		return nil, envelope.Capture.Err
 	}
 	r.ingress.mu.Lock()
 	normalizer := r.ingress.normalizer
@@ -51,18 +53,18 @@ func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key
 	if !available || normalizer == nil {
 		return nil, errIngressClosed
 	}
-	return normalizer.submitObserved(ctx, key, func(ctx context.Context) (IngressEnvelope, error) {
+	return normalizer.submitObserved(ctx, key, func(ctx context.Context) (im.IngressEnvelope, error) {
 		if normalize == nil {
 			return envelope, nil
 		}
 		result, err := normalize(ctx, r.CaptureIngressEnvelope(envelope))
 		if err != nil {
-			return IngressEnvelope{}, err
+			return im.IngressEnvelope{}, err
 		}
 		before, after := envelope.Message, result.Message
 		for _, pair := range [][2]string{{before.IMType, after.IMType}, {before.AccountID, after.AccountID}, {before.ChatID, after.ChatID}, {before.SenderID, after.SenderID}, {before.MessageID, after.MessageID}, {before.ChatKind, after.ChatKind}, {before.AppID, after.AppID}} {
 			if pair[0] != "" && pair[0] != pair[1] {
-				return IngressEnvelope{}, errors.New("normalization changed received identity")
+				return im.IngressEnvelope{}, errors.New("normalization changed received identity")
 			}
 		}
 		result.Message.Text = envelope.Message.Text
@@ -72,8 +74,8 @@ func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key
 		result.DeliveryID, result.SemanticID = envelope.DeliveryID, envelope.SemanticID
 		result.InputDigest = envelope.InputDigest
 		result.SourceTime = envelope.SourceTime
-		result.capture = envelope.capture
-		result.preparation = envelope.preparation
+		result.Capture = envelope.Capture
+		result.Preparation = envelope.Preparation
 		result.ReceivedAt = envelope.ReceivedAt
 		return result, err
 	}, observe)
@@ -81,9 +83,9 @@ func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key
 
 // RejectIngressEnvelope persists a transport refusal and its checkpoint together.
 // It grants no authority and never dispatches the rejected input.
-func (r *NotificationRouter) RejectIngressEnvelope(ctx context.Context, e IngressEnvelope, reason string) ReceiveResult {
+func (r *NotificationRouter) RejectIngressEnvelope(ctx context.Context, e im.IngressEnvelope, reason string) im.ReceiveResult {
 	if r.ingress == nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	}
 	s := r.ingress
 	s.mu.Lock()
@@ -93,7 +95,7 @@ func (r *NotificationRouter) RejectIngressEnvelope(ctx context.Context, e Ingres
 	}
 	s.mu.Unlock()
 	if !ready {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	}
 	defer s.requests.Done()
 	m := e.Message
@@ -101,19 +103,19 @@ func (r *NotificationRouter) RejectIngressEnvelope(ctx context.Context, e Ingres
 		Platform: m.IMType, AccountID: m.AccountID, ChatID: m.ChatID,
 		SenderID: m.SenderID, BusinessID: m.MessageID, SemanticID: e.SemanticID,
 		DeliveryID: e.DeliveryID, InputDigest: e.InputDigest, SourceTime: e.SourceTime,
-		ReceivedAt: e.ReceivedAt, Kind: "task", State: ingressRejected, Reason: reason,
+		ReceivedAt: e.ReceivedAt, Kind: "task", State: im.IngressRejected, Reason: reason,
 	}, e.Cursor)
 }
 
 // ReceiveIngress is the result-returning common entry point for transports that
 // can wait. Socket readers should use SubmitIngress and handle its future away
 // from heartbeats. Cancellation cannot certify that an in-flight commit failed.
-func (r *NotificationRouter) ReceiveIngress(ctx context.Context, envelope IngressEnvelope) ReceiveResult {
+func (r *NotificationRouter) ReceiveIngress(ctx context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
 	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
 	defer cancel()
 	future, err := r.SubmitIngress(ctx, envelope)
 	if err != nil {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)}
 	}
 	return WaitIngressNormalization(ctx, future)
 }
@@ -148,11 +150,11 @@ func (r *NotificationRouter) PrepareIngressAccount(ctx context.Context, platform
 	return s.PrepareAccount(ctx, platform, account)
 }
 
-func (r *NotificationRouter) installIngressReadinessNotifier(adapter IMAdapter) {
+func (r *NotificationRouter) installIngressReadinessNotifier(adapter im.IMAdapter) {
 	if r.ingress == nil || adapter == nil {
 		return
 	}
-	if notifier, ok := adapter.(IngressDeliveryReadinessNotifier); ok {
+	if notifier, ok := adapter.(im.IngressDeliveryReadinessNotifier); ok {
 		notifier.SetIngressReadinessNotifier(r.ingress.signal)
 	}
 	if multi, ok := adapter.(*MultiAdapter); ok {
@@ -162,8 +164,8 @@ func (r *NotificationRouter) installIngressReadinessNotifier(adapter IMAdapter) 
 	}
 }
 
-func (r *NotificationRouter) detachIngressReadinessNotifier(adapter IMAdapter) {
-	if notifier, ok := adapter.(IngressDeliveryReadinessNotifier); ok {
+func (r *NotificationRouter) detachIngressReadinessNotifier(adapter im.IMAdapter) {
+	if notifier, ok := adapter.(im.IngressDeliveryReadinessNotifier); ok {
 		notifier.SetIngressReadinessNotifier(nil)
 	}
 	if multi, ok := adapter.(*MultiAdapter); ok {

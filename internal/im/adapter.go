@@ -1,5 +1,7 @@
-// Package main defines the IM adapter interface.
-package main
+// Package im defines the IM transport contract shared by the gateway core and
+// the platform adapters: the adapter and host interfaces, the inbound message
+// and ingress envelope models, and the small helpers every transport needs.
+package im
 
 import "errors"
 

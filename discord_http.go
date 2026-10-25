@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // Preserve Discord's fractional retry delay for the owned REST rate limiter,
@@ -25,14 +27,14 @@ type discordRateLimitTransport struct{ base http.RoundTripper }
 const discordRESTTimeout = 10 * time.Second
 
 func newDiscordHTTPClient(proxyFunc func(*http.Request) (*url.URL, error)) *http.Client {
-	return messageHTTPClient(&http.Client{Timeout: discordRESTTimeout, Transport: discordRateLimitTransport{base: proxiedTransport(proxyFunc)}})
+	return im.MessageHTTPClient(&http.Client{Timeout: discordRESTTimeout, Transport: discordRateLimitTransport{base: im.ProxiedTransport(proxyFunc)}})
 }
 
 func discordProxyDialer(proxyFunc func(*http.Request) (*url.URL, error)) *websocket.Dialer {
 	dialer := *websocket.DefaultDialer
 	// gorilla/websocket rejects socks5h; the shared wrapper rewrites it to
 	// socks5 (identical remote-DNS behavior) and keeps nil as direct.
-	dialer.Proxy = websocketProxyFunc(proxyFunc)
+	dialer.Proxy = im.WebsocketProxyFunc(proxyFunc)
 	return &dialer
 }
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type failedPairingWriter struct{}
@@ -33,7 +35,7 @@ func TestPairingExpiryAndAdmission(t *testing.T) {
 	if len(code) != 26 {
 		t.Fatal("invalid terminal instruction")
 	}
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "user", MessageID: "message", Text: "/bind /tmp/project " + code}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "user", MessageID: "message", Text: "/bind /tmp/project " + code}
 	ticket, ok := a.Authorize(msg)
 	if !ok || ticket.Kind != "paired_bind" {
 		t.Fatal("valid code rejected")
@@ -151,7 +153,7 @@ func TestUniversalPairingCodeIsImmediateAndCrossPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	pairing := NewAdmission(p)
-	msg := IncomingMessage{IMType: "wechat", AccountID: "wechat-bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind /tmp/project %s", code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "wechat-bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind /tmp/project %s", code)}
 	ticket, ok := pairing.Authorize(msg)
 	if !ok || ticket.Kind != "paired_bind" {
 		t.Fatal("valid universal code rejected")
@@ -171,7 +173,7 @@ func TestPairingReadyDoesNotRefillBindAttempts(t *testing.T) {
 	p := NewPairingService(s, true, &terminal)
 	p.now = func() time.Time { return time.Unix(1000, 0) }
 	for range 2 {
-		if err := p.PlatformReadyWithPresentation("wechat", "bot", PlatformPresentation{}); err != nil {
+		if err := p.PlatformReadyWithPresentation("wechat", "bot", im.PlatformPresentation{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +186,7 @@ func TestPairingReadyDoesNotRefillBindAttempts(t *testing.T) {
 	p.mu.Lock()
 	p.platforms["wechat"].tokens = 4
 	p.mu.Unlock()
-	if err := p.PlatformReadyWithPresentation("wechat", "bot", PlatformPresentation{}); err != nil {
+	if err := p.PlatformReadyWithPresentation("wechat", "bot", im.PlatformPresentation{}); err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()

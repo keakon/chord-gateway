@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type dingtalkTestACK struct {
@@ -93,7 +95,7 @@ func TestDingtalkStreamEndpointValidation(t *testing.T) {
 func TestDingtalkStreamProtocolAndPersistenceACK(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	result := make(chan ReceiveResult, 1)
+	result := make(chan im.ReceiveResult, 1)
 	received := make(chan dingtalkFrame, 1)
 	serverResult := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
@@ -140,7 +142,7 @@ func TestDingtalkStreamProtocolAndPersistenceACK(t *testing.T) {
 				return
 			}
 		}
-		result <- ReceiveResult{Disposition: ReceiveRetryable, Reason: "sensitive-body-should-not-be-echoed"}
+		result <- im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "sensitive-body-should-not-be-echoed"}
 		ack, err := dingtalkReadTestACK(conn)
 		if err != nil || ack.Code != 500 || ack.Message != "internal_error" || ack.Data != `{"response":null}` || ack.Headers["messageId"] != "delivery-1" {
 			serverResult <- fmt.Errorf("persistence ACK: %+v error=%v", ack, err)
@@ -150,7 +152,7 @@ func TestDingtalkStreamProtocolAndPersistenceACK(t *testing.T) {
 		<-ctx.Done()
 	}))
 	defer server.Close()
-	s := dingtalkTestStream(dingtalkStreamCallbacks{OnCallback: func(_ context.Context, frame dingtalkFrame) (<-chan ReceiveResult, error) {
+	s := dingtalkTestStream(dingtalkStreamCallbacks{OnCallback: func(_ context.Context, frame dingtalkFrame) (<-chan im.ReceiveResult, error) {
 		received <- frame
 		return result, nil
 	}}, "ws"+strings.TrimPrefix(server.URL, "http"))
@@ -171,9 +173,9 @@ func TestDingtalkStreamProtocolAndPersistenceACK(t *testing.T) {
 
 func TestDingtalkStreamAdmissionResultCodes(t *testing.T) {
 	for _, test := range []struct {
-		disposition ReceiveDisposition
+		disposition im.ReceiveDisposition
 		code        int
-	}{{ReceiveAccepted, 200}, {ReceiveDuplicate, 200}, {ReceiveRejected, 200}, {ReceiveRetryable, 500}, {ReceiveUncertain, 500}, {"", 500}} {
+	}{{im.ReceiveAccepted, 200}, {im.ReceiveDuplicate, 200}, {im.ReceiveRejected, 200}, {im.ReceiveRetryable, 500}, {im.ReceiveUncertain, 500}, {"", 500}} {
 		t.Run(string(test.disposition), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -197,9 +199,9 @@ func TestDingtalkStreamAdmissionResultCodes(t *testing.T) {
 				<-ctx.Done()
 			}))
 			defer server.Close()
-			s := dingtalkTestStream(dingtalkStreamCallbacks{OnCallback: func(context.Context, dingtalkFrame) (<-chan ReceiveResult, error) {
-				result := make(chan ReceiveResult, 1)
-				result <- ReceiveResult{Disposition: test.disposition}
+			s := dingtalkTestStream(dingtalkStreamCallbacks{OnCallback: func(context.Context, dingtalkFrame) (<-chan im.ReceiveResult, error) {
+				result := make(chan im.ReceiveResult, 1)
+				result <- im.ReceiveResult{Disposition: test.disposition}
 				return result, nil
 			}}, "ws"+strings.TrimPrefix(server.URL, "http"))
 			done := make(chan error, 1)
@@ -383,7 +385,7 @@ func TestDingtalkStreamCancelJoinsAdmissionWaiters(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	captured := make(chan context.Context, 1)
-	observed := make(chan ReceiveResult, 1)
+	observed := make(chan im.ReceiveResult, 1)
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -395,9 +397,9 @@ func TestDingtalkStreamCancelJoinsAdmissionWaiters(t *testing.T) {
 		<-ctx.Done()
 	}))
 	defer server.Close()
-	s := dingtalkTestStream(dingtalkStreamCallbacks{OnReceiveResult: func(result ReceiveResult) { observed <- result }, OnCallback: func(ctx context.Context, _ dingtalkFrame) (<-chan ReceiveResult, error) {
+	s := dingtalkTestStream(dingtalkStreamCallbacks{OnReceiveResult: func(result im.ReceiveResult) { observed <- result }, OnCallback: func(ctx context.Context, _ dingtalkFrame) (<-chan im.ReceiveResult, error) {
 		captured <- ctx
-		return make(chan ReceiveResult), nil
+		return make(chan im.ReceiveResult), nil
 	}}, "ws"+strings.TrimPrefix(server.URL, "http"))
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -407,7 +409,7 @@ func TestDingtalkStreamCancelJoinsAdmissionWaiters(t *testing.T) {
 	if workerCtx.Err() == nil {
 		t.Fatal("admission waiter context survives disconnect")
 	}
-	if outcome := dingtalkWaitTest(t, observed); outcome.Disposition != ReceiveUncertain {
+	if outcome := dingtalkWaitTest(t, observed); outcome.Disposition != im.ReceiveUncertain {
 		t.Fatalf("cancellation fabricated a known rejection: %+v", outcome)
 	}
 }
@@ -472,7 +474,7 @@ func TestDingtalkStreamTerminalCallbackStopsRetry(t *testing.T) {
 		_, _, _ = conn.ReadMessage()
 	}))
 	defer server.Close()
-	s := dingtalkTestStream(dingtalkStreamCallbacks{OnCallback: func(context.Context, dingtalkFrame) (<-chan ReceiveResult, error) {
+	s := dingtalkTestStream(dingtalkStreamCallbacks{OnCallback: func(context.Context, dingtalkFrame) (<-chan im.ReceiveResult, error) {
 		callbacks.Add(1)
 		return nil, &dingtalkStreamTerminalError{category: "tenant_mismatch"}
 	}}, "ws"+strings.TrimPrefix(server.URL, "http"))
@@ -505,17 +507,17 @@ func TestDingtalkStreamAdmissionBackpressureIsBounded(t *testing.T) {
 		<-ctx.Done()
 	}))
 	defer server.Close()
-	s := dingtalkTestStream(dingtalkStreamCallbacks{OnReceiveResult: func(result ReceiveResult) {
-		if result.Disposition == ReceiveRetryable && result.Reason == "stream_capacity" {
+	s := dingtalkTestStream(dingtalkStreamCallbacks{OnReceiveResult: func(result im.ReceiveResult) {
+		if result.Disposition == im.ReceiveRetryable && result.Reason == "stream_capacity" {
 			lost.Add(1)
 		}
 	}, OnDiagnostic: func(category string) {
 		if category != "connected" {
 			diagnostic <- category
 		}
-	}, OnCallback: func(context.Context, dingtalkFrame) (<-chan ReceiveResult, error) {
+	}, OnCallback: func(context.Context, dingtalkFrame) (<-chan im.ReceiveResult, error) {
 		captured.Add(1)
-		return make(chan ReceiveResult), nil
+		return make(chan im.ReceiveResult), nil
 	}}, "ws"+strings.TrimPrefix(server.URL, "http"))
 	// Avoid a second admission batch while the test examines the first one.
 	s.backoff = func(int) time.Duration { return time.Hour }

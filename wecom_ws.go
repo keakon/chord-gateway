@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const wecomWSEndpoint = "wss://openws.work.weixin.qq.com"
@@ -155,12 +157,12 @@ func newWecomWS(botID, secret string, callbacks wecomWSCallbacks) *wecomWS {
 func newWecomWSWithProxy(botID, secret string, callbacks wecomWSCallbacks, proxyFunc func(*http.Request) (*url.URL, error)) *wecomWS {
 	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = 10 * time.Second
-	dialer.Proxy = websocketProxyFunc(proxyFunc)
+	dialer.Proxy = im.WebsocketProxyFunc(proxyFunc)
 	return &wecomWS{
 		botID: botID, secret: secret, callbacks: callbacks,
 		endpoint: wecomWSEndpoint, dialer: &dialer, done: make(chan struct{}),
 		stableAfter: time.Minute,
-		jitter:      jitterBackoff,
+		jitter:      im.JitterBackoff,
 		timing: wecomWSTiming{10 * time.Second, 10 * time.Second, 10 * time.Second,
 			30 * time.Second, 10 * time.Second, 5 * time.Second, time.Second, 30 * time.Second},
 	}

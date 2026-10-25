@@ -21,6 +21,7 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -70,11 +71,11 @@ type feishuFragmentBuffer struct {
 
 // --- Adapter ---
 
-// FeishuAdapter implements IMAdapter for Feishu.
+// FeishuAdapter implements im.IMAdapter for Feishu.
 type FeishuAdapter struct {
 	imCfg     config.IMAdapterConfig
-	msgRouter MessageRouter        // dispatches incoming messages to the router
-	notifier  SessionLoginNotifier // delivers async session/login notices
+	msgRouter im.MessageRouter        // dispatches incoming messages to the router
+	notifier  im.SessionLoginNotifier // delivers async session/login notices
 
 	// Outbound HTTP keeps receipt validation, error classification and media
 	// deadlines under the adapter's control. Inbound events use shared ingress;
@@ -86,7 +87,7 @@ type FeishuAdapter struct {
 	tokenExpireAt time.Time
 	mu            sync.Mutex
 	tokenRefresh  *feishuTokenRefresh
-	textSender    *IMTextSender
+	textSender    *im.IMTextSender
 	ctx           context.Context
 	cancel        context.CancelFunc
 
@@ -123,16 +124,16 @@ func NewFeishuAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, paths *c
 	if imCfg.Feishu == nil {
 		return nil, fmt.Errorf("feishu: feishu config is required when im type is feishu")
 	}
-	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	proxyFunc, err := im.WebsocketProxyFuncFor(cfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
 
 	a := &FeishuAdapter{
 		imCfg:             imCfg,
-		msgRouter:         router, // NotificationRouter satisfies MessageRouter
-		notifier:          router, // ... and SessionLoginNotifier
-		httpClient:        &http.Client{Timeout: 10 * time.Second, Transport: proxiedTransport(proxyFunc)},
+		msgRouter:         router, // NotificationRouter satisfies im.MessageRouter
+		notifier:          router, // ... and im.SessionLoginNotifier
+		httpClient:        &http.Client{Timeout: 10 * time.Second, Transport: im.ProxiedTransport(proxyFunc)},
 		fragments:         make(map[string]feishuFragmentBuffer),
 		pingInterval:      feishuDefaultPing,
 		reconnectInterval: feishuDefaultReconnect,
@@ -149,15 +150,15 @@ func (a *FeishuAdapter) SupportsLoginRenewal() bool { return false }
 
 func (a *FeishuAdapter) feishuConfig() *config.FeishuConfig {
 	if r, ok := a.msgRouter.(*NotificationRouter); ok && r.mgr != nil && r.mgr.store != nil {
-		if im := r.getConfig().IMConfigByType("feishu"); im != nil {
-			return im.Feishu
+		if imCfg := r.getConfig().IMConfigByType("feishu"); imCfg != nil {
+			return imCfg.Feishu
 		}
 	}
 	return a.imCfg.Feishu
 }
 
 func (a *FeishuAdapter) StartLogin() (string, error) {
-	return "", ErrLoginNotSupported
+	return "", im.ErrLoginNotSupported
 }
 
 // Connect validates credentials, locks and prepares the account, and supervises
@@ -178,7 +179,7 @@ func (a *FeishuAdapter) Connect() error {
 	done := make(chan struct{})
 	a.connectDone = done
 	a.mu.Unlock()
-	var accountLocks *instanceLocks
+	var accountLocks *im.InstanceLocks
 	defer close(done)
 	defer func() {
 		cancel()
@@ -208,7 +209,7 @@ func (a *FeishuAdapter) Connect() error {
 		return fmt.Errorf("feishu: initial access token: %w", err)
 	}
 	var err error
-	accountLocks, err = AcquireIMAccountLock("feishu", account)
+	accountLocks, err = im.AcquireIMAccountLock("feishu", account)
 	if err != nil {
 		return fmt.Errorf("feishu: account lock: %w", err)
 	}
@@ -249,7 +250,7 @@ func (a *FeishuAdapter) runLongConnection(ctx context.Context) error {
 	serviceID, _ := strconv.ParseInt(u.Query().Get(larkws.ServiceID), 10, 32)
 
 	dialer := *websocket.DefaultDialer
-	dialer.Proxy = websocketProxyFunc(a.proxyFunc)
+	dialer.Proxy = im.WebsocketProxyFunc(a.proxyFunc)
 	conn, resp, err := dialer.DialContext(ctx, connURL, nil)
 	if err != nil {
 		if resp != nil {
@@ -760,26 +761,26 @@ func (a *FeishuAdapter) doFeishuJSONRequest(ctx context.Context, method, url str
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := messageHTTPClient(a.httpClient).Do(req)
+	resp, err := im.MessageHTTPClient(a.httpClient).Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: HTTP request: %w", errDeliveryOutcomeUnknown, err)
+		return fmt.Errorf("%w: HTTP request: %w", im.ErrDeliveryOutcomeUnknown, err)
 	}
 	defer resp.Body.Close()
 
 	// Only the shared text sender retries explicit rate-limit rejections. Card
 	// and image outcomes keep their existing conservative classification.
 	if resp.StatusCode == http.StatusTooManyRequests && isFeishuTextRequest(reqBody) {
-		return &IMRateLimitError{RetryAfter: feishuTextRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		return &im.IMRateLimitError{RetryAfter: feishuTextRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	}
-	if isAmbiguousDeliveryStatus(resp.StatusCode) {
-		return fmt.Errorf("%w: feishu HTTP %d", errDeliveryOutcomeUnknown, resp.StatusCode)
+	if im.IsAmbiguousDeliveryStatus(resp.StatusCode) {
+		return fmt.Errorf("%w: feishu HTTP %d", im.ErrDeliveryOutcomeUnknown, resp.StatusCode)
 	}
 	*result = FeishuSendResponse{}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(result); err != nil {
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("feishu HTTP %d: request rejected: %w", resp.StatusCode, err)
 		}
-		return fmt.Errorf("%w: decode response: %w", errDeliveryOutcomeUnknown, err)
+		return fmt.Errorf("%w: decode response: %w", im.ErrDeliveryOutcomeUnknown, err)
 	}
 	// Ordinary 4xx responses can carry the same explicit expired-token code
 	// as HTTP 200. Only a definite rejection permits replaying a message.
@@ -794,7 +795,7 @@ func (a *FeishuAdapter) doFeishuJSONRequest(ctx context.Context, method, url str
 	}
 
 	if result.Code == nil {
-		return fmt.Errorf("%w: feishu response is missing code", errDeliveryOutcomeUnknown)
+		return fmt.Errorf("%w: feishu response is missing code", im.ErrDeliveryOutcomeUnknown)
 	}
 	if *result.Code != 0 {
 		return fmt.Errorf("feishu API error: code=%d", *result.Code)
@@ -802,7 +803,7 @@ func (a *FeishuAdapter) doFeishuJSONRequest(ctx context.Context, method, url str
 	return nil
 }
 
-func (a *FeishuAdapter) sendMessageContext(ctx context.Context, chatID, msgType string, content any, retry bool) (*InteractiveCardHandle, error) {
+func (a *FeishuAdapter) sendMessageContext(ctx context.Context, chatID, msgType string, content any, retry bool) (*im.InteractiveCardHandle, error) {
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("marshal message content: %w", err)
@@ -818,9 +819,9 @@ func (a *FeishuAdapter) sendMessageContext(ctx context.Context, chatID, msgType 
 		return nil, err
 	}
 	if strings.TrimSpace(result.Data.MessageID) == "" {
-		return nil, fmt.Errorf("%w: feishu send response is missing message_id", errDeliveryOutcomeUnknown)
+		return nil, fmt.Errorf("%w: feishu send response is missing message_id", im.ErrDeliveryOutcomeUnknown)
 	}
-	return &InteractiveCardHandle{MessageID: result.Data.MessageID}, nil
+	return &im.InteractiveCardHandle{MessageID: result.Data.MessageID}, nil
 }
 
 func (a *FeishuAdapter) updateInteractiveMessageContext(ctx context.Context, messageID string, card map[string]any, retry bool) error {
@@ -837,4 +838,4 @@ func (a *FeishuAdapter) updateInteractiveMessageContext(ctx context.Context, mes
 	return a.doFeishuJSONRequest(ctx, http.MethodPatch, requestURL, reqBody, &result, retry)
 }
 
-var _ IMTextMetricsProvider = (*FeishuAdapter)(nil)
+var _ im.IMTextMetricsProvider = (*FeishuAdapter)(nil)

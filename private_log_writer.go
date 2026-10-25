@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/keakon/golog"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type privateRotatingLogWriter struct {
@@ -20,10 +22,10 @@ type privateRotatingLogWriter struct {
 
 func newPrivateRotatingLogWriter(path string, maxSize uint64, backupCount uint8) (*privateRotatingLogWriter, error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, privateDirMode); err != nil {
+	if err := os.MkdirAll(dir, im.PrivateDirMode); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, privateFileMode)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, im.PrivateFileMode)
 	if err != nil {
 		return nil, fmt.Errorf("create log file: %w", err)
 	}
@@ -35,7 +37,7 @@ func newPrivateRotatingLogWriter(path string, maxSize uint64, backupCount uint8)
 	if closeErr != nil {
 		return nil, fmt.Errorf("close log file: %w", closeErr)
 	}
-	if err := os.Chmod(path, privateFileMode); err != nil {
+	if err := os.Chmod(path, im.PrivateFileMode); err != nil {
 		return nil, fmt.Errorf("restrict log file permissions: %w", err)
 	}
 
@@ -59,7 +61,7 @@ func (w *privateRotatingLogWriter) Write(p []byte) (int, error) {
 	w.pos += uint64(n)
 	if w.pos >= w.maxSize {
 		w.pos = 0
-		if chmodErr := os.Chmod(w.path, privateFileMode); err == nil && chmodErr != nil {
+		if chmodErr := os.Chmod(w.path, im.PrivateFileMode); err == nil && chmodErr != nil {
 			err = fmt.Errorf("restrict rotated log file permissions: %w", chmodErr)
 		}
 	}

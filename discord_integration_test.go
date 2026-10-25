@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // This exercises the actual local Gateway, adapter, REST channel lookup,
@@ -129,10 +131,10 @@ func discordIntegrationMessageContent(t *testing.T, conn *websocket.Conn, sequen
 	}})
 }
 
-func discordIntegrationProcess(t *testing.T, adapter *DiscordAdapter, service *IngressService) (*ingressTestWriter, *ChordProcess, ChatIdentity) {
+func discordIntegrationProcess(t *testing.T, adapter *DiscordAdapter, service *IngressService) (*ingressTestWriter, *ChordProcess, im.ChatIdentity) {
 	t.Helper()
 	router := adapter.router
-	message := IncomingMessage{IMType: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500", SenderID: "789", ChatKind: "group", MessageID: "integration-bind", Text: fmt.Sprintf("/bind %q", t.TempDir())}
+	message := im.IncomingMessage{IMType: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500", SenderID: "789", ChatKind: "group", MessageID: "integration-bind", Text: fmt.Sprintf("/bind %q", t.TempDir())}
 	if !dispatchPairingTest(router, message) {
 		t.Fatal("thread binding failed")
 	}
@@ -162,7 +164,7 @@ func discordIntegrationProcess(t *testing.T, adapter *DiscordAdapter, service *I
 		}
 		process.mu.Unlock()
 	})
-	return writer, process, ChatIdentity{"discord", discordAdapterAccountID(t), "500"}
+	return writer, process, im.ChatIdentity{Platform: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500"}
 }
 
 func TestDiscordContentlessGuildReplyIsReportedAndNotIngested(t *testing.T) {
@@ -205,7 +207,7 @@ func TestDiscordContentlessGuildReplyIsReportedAndNotIngested(t *testing.T) {
 		}
 		return false
 	})
-	records, err := service.store.ListRouteRecords(ChatIdentity{"discord", discordAdapterAccountID(t), "500"})
+	records, err := service.store.ListRouteRecords(im.ChatIdentity{Platform: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500"})
 	if err != nil || len(records) != 0 {
 		t.Fatalf("contentless reply became durable input: records=%d error=%v", len(records), err)
 	}

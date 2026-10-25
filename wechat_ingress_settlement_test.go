@@ -7,11 +7,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatIngressFailedAcceptancePreservesCommittedReplyContext(t *testing.T) {
 	a, service, _, writer := newWechatIngressTest(t)
-	id := ChatIdentity{"wechat", "bot", "owner"}
+	id := im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "owner"}
 	service.mu.Lock()
 	service.blocked[id] = ingressBlocked{since: time.Now(), reason: "test"}
 	service.mu.Unlock()
@@ -21,12 +23,12 @@ func TestWechatIngressFailedAcceptancePreservesCommittedReplyContext(t *testing.
 			reply = "confirmed-context"
 		}
 		msg := wechatTextMessage(fmt.Sprint(100+i), "owner", "queued task", reply)
-		if result := a.receiveIncomingMessage(t.Context(), msg, a.token.Load()); result.Disposition != ReceiveAccepted {
+		if result := a.receiveIncomingMessage(t.Context(), msg, a.token.Load()); result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 	}
 	failed := a.receiveIncomingMessage(t.Context(), wechatTextMessage("200", "owner", "overflow task", "unaccepted-context"), a.token.Load())
-	if failed.Disposition != ReceiveRetryable || failed.Reason != "capacity" {
+	if failed.Disposition != im.ReceiveRetryable || failed.Reason != "capacity" {
 		t.Fatal(failed)
 	}
 	a.mu.Lock()
@@ -48,7 +50,7 @@ type wechatIngressReadinessProbe struct {
 	once         sync.Once
 }
 
-func (a *wechatIngressReadinessProbe) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *wechatIngressReadinessProbe) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	readiness := a.WechatAdapter.IngressDeliveryReadiness(id)
 	if readiness.Ready {
 		a.once.Do(func() { close(a.readyChecked) })
@@ -63,7 +65,7 @@ func TestWechatIngressStopDuringSessionReadyWaitPreservesReceived(t *testing.T) 
 	probe := &wechatIngressReadinessProbe{WechatAdapter: a, readyChecked: make(chan struct{})}
 	service.router.SetAdapter(probe)
 	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("301", "owner", "queued task", "confirmed-context"), a.token.Load())
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		close(ready)
 		t.Fatal(result)
 	}
@@ -80,7 +82,7 @@ func TestWechatIngressStopDuringSessionReadyWaitPreservesReceived(t *testing.T) 
 	waitIngressCondition(t, func() bool {
 		service.mu.Lock()
 		defer service.mu.Unlock()
-		return !service.active[ChatIdentity{"wechat", "bot", "owner"}]
+		return !service.active[im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "owner"}]
 	})
 	record, err := service.store.Get(result.RecordID)
 	if err != nil || record.State != "received" || len(wechatTaskWrites(writer)) != 0 {
@@ -89,12 +91,12 @@ func TestWechatIngressStopDuringSessionReadyWaitPreservesReceived(t *testing.T) 
 }
 
 type wechatIngressAcceptanceBarrier struct {
-	IngressReceiver
+	im.IngressReceiver
 	started chan struct{}
 	release chan struct{}
 }
 
-func (b *wechatIngressAcceptanceBarrier) Accept(ctx context.Context, envelope IngressEnvelope) ReceiveResult {
+func (b *wechatIngressAcceptanceBarrier) Accept(ctx context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
 	close(b.started)
 	<-b.release
 	return b.IngressReceiver.Accept(ctx, envelope)
@@ -122,7 +124,7 @@ func TestWechatIngressReconnectRejectsPreviousConnectionCallbacks(t *testing.T) 
 			}
 
 			msg := wechatTextMessage("501", "owner", "old connection task", "old-context")
-			future := make(chan ReceiveResult, 1)
+			future := make(chan im.ReceiveResult, 1)
 			go func() { future <- a.receiveIncomingMessage(t.Context(), msg, a.token.Load()) }()
 			select {
 			case <-started:
@@ -146,7 +148,7 @@ func TestWechatIngressReconnectRejectsPreviousConnectionCallbacks(t *testing.T) 
 			close(release)
 			select {
 			case result := <-future:
-				if result.Disposition != ReceiveRetryable || result.Reason != "transport_identity_changed" {
+				if result.Disposition != im.ReceiveRetryable || result.Reason != "transport_identity_changed" {
 					t.Fatal(result)
 				}
 			case <-time.After(3 * time.Second):
@@ -184,7 +186,7 @@ func TestWechatIngressReconnectRejectsPreviousConnectionConfirmation(t *testing.
 	}
 	a.mu.Unlock()
 	cancelOld()
-	a.confirmIncomingContext(wechatTextMessage("502", "owner", "old task", "reused-context"), a.token.Load(), ReceiveResult{Disposition: ReceiveAccepted}, pending)
+	a.confirmIncomingContext(wechatTextMessage("502", "owner", "old task", "reused-context"), a.token.Load(), im.ReceiveResult{Disposition: im.ReceiveAccepted}, pending)
 	a.mu.Lock()
 	committed := a.replyContexts[compositeKey("bot", "owner")].committed
 	a.mu.Unlock()

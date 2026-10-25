@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func textSendFeishuAdapter(t *testing.T, transport func(*http.Request) (*http.Response, error)) *FeishuAdapter {
@@ -56,7 +57,7 @@ func TestFeishuTextSharedBudgetTruncationAndDeadline(t *testing.T) {
 		var parts []string
 		a := textSendFeishuAdapter(t, func(req *http.Request) (*http.Response, error) {
 			deadline, ok := req.Context().Deadline()
-			if !ok || time.Until(deadline) > IMTextSendTimeout {
+			if !ok || time.Until(deadline) > im.IMTextSendTimeout {
 				t.Errorf("text request has no shared five-minute deadline")
 			}
 			parts = append(parts, textSendRequest(t, req))
@@ -66,7 +67,7 @@ func TestFeishuTextSharedBudgetTruncationAndDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 		joined := strings.Join(parts, "")
-		if len(parts) > imTextMaxSegments || len(joined) > imTextMaxBytes || !strings.Contains(parts[len(parts)-1], "Output truncated") {
+		if len(parts) > im.MaxTextSegments || len(joined) > im.MaxTextBytes || !strings.Contains(parts[len(parts)-1], "Output truncated") {
 			t.Fatalf("unbounded or silent truncation: %d segments, %d bytes", len(parts), len(joined))
 		}
 		for _, part := range parts {
@@ -94,8 +95,8 @@ func TestFeishuTextPartialUnknownStopsWithoutReplay(t *testing.T) {
 			return textSendResponse(response.status, response.body), nil
 		})
 		err := a.SendTextContext(t.Context(), "chat", strings.Repeat("x", feishuMaxTextLen*3))
-		var partial *IMTextSendError
-		if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 2 {
+		var partial *im.IMTextSendError
+		if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 2 {
 			t.Fatalf("unknown output replayed or lost confirmed count: %v calls=%d", err, calls.Load())
 		}
 		last := a.TextSendTargetSnapshot("chat")
@@ -203,7 +204,7 @@ func TestFeishuTextRetryAfterParsing(t *testing.T) {
 		want  time.Duration
 	}{
 		{"", time.Second}, {"invalid", time.Second}, {"-1", time.Second},
-		{"2", 2 * time.Second}, {"9223372036854775807", IMTextSendTimeout},
+		{"2", 2 * time.Second}, {"9223372036854775807", im.IMTextSendTimeout},
 		{now.Add(3 * time.Second).UTC().Format(http.TimeFormat), 3 * time.Second},
 	} {
 		if got := feishuTextRetryAfter(tc.value, now); got != tc.want {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestAdmittedWorkSurvivesTemporaryDisconnect(t *testing.T) {
@@ -28,7 +30,7 @@ func TestAdmittedWorkSurvivesTemporaryDisconnect(t *testing.T) {
 	if _, ok := admittedMessage(r, msg); ok {
 		t.Fatal("new input admitted while disconnected")
 	}
-	if !r.admission.Valid(*admitted.ticket) {
+	if !r.admission.Valid(*admitted.AdmissionTicket()) {
 		t.Fatal("accepted input lost on disconnect")
 	}
 	r.dispatchPaired(admitted)
@@ -43,20 +45,20 @@ func TestAdmittedWorkSurvivesTemporaryDisconnect(t *testing.T) {
 	if err := r.admission.pairing.PlatformReady("wechat", "bot"); err != nil {
 		t.Fatal(err)
 	}
-	if !r.admission.Valid(*admitted.ticket) || !r.validTarget(target) {
+	if !r.admission.Valid(*admitted.AdmissionTicket()) || !r.validTarget(target) {
 		t.Fatal("reconnect revoked original identity")
 	}
 	if err := r.admission.pairing.PlatformReady("wechat", "replacement-bot"); err == nil {
 		t.Fatal("account replacement allowed")
 	}
-	if r.admission.Valid(*admitted.ticket) || r.validTarget(target) {
+	if r.admission.Valid(*admitted.AdmissionTicket()) || r.validTarget(target) {
 		t.Fatal("old work survived account change")
 	}
 }
 
 func TestUnpairedTicketRequiresLivePairingWindow(t *testing.T) {
 	r, code := pairedTestRouter(t)
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "pair", Text: "/bind /tmp/project " + code}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "pair", Text: "/bind /tmp/project " + code}
 	ticket, ok := r.admission.Authorize(msg)
 	if !ok {
 		t.Fatal("pairing denied")

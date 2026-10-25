@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // DispatchResult describes evidence observed by the gateway, never IM delivery.
 type DispatchResult struct {
-	State  ingressState
+	State  im.IngressState
 	Reason string
 }
 
@@ -22,18 +24,18 @@ var errIngressCaptureBusy = errors.New("ingress target snapshot busy")
 
 // CaptureIngress is the synchronous capture path for transports that have
 // already read a complete batch and can wait while freezing its controls.
-func (r *NotificationRouter) CaptureIngress(msg IncomingMessage) (string, *IngressControlTarget) {
+func (r *NotificationRouter) CaptureIngress(msg im.IncomingMessage) (string, *im.IngressControlTarget) {
 	kind, target, _ := r.captureIngress(msg, false)
 	return kind, target
 }
 
 // tryCaptureIngress never waits on locks shared with stdin or persistence.
 // Failure freezes a refusal; callers must not recapture newer authority later.
-func (r *NotificationRouter) tryCaptureIngress(msg IncomingMessage) (string, *IngressControlTarget, bool) {
+func (r *NotificationRouter) tryCaptureIngress(msg im.IncomingMessage) (string, *im.IngressControlTarget, bool) {
 	return r.captureIngress(msg, true)
 }
 
-func (r *NotificationRouter) captureIngress(msg IncomingMessage, nonblocking bool) (string, *IngressControlTarget, bool) {
+func (r *NotificationRouter) captureIngress(msg im.IncomingMessage, nonblocking bool) (string, *im.IngressControlTarget, bool) {
 	cmd := commandForIncomingMessage(msg)
 	kind := "control"
 	if msg.InternalAction == nil && cmd.Type == "send" && (msg.ForceText || !strings.HasPrefix(strings.TrimSpace(msg.Text), "/")) {
@@ -73,9 +75,9 @@ func (r *NotificationRouter) captureIngress(msg IncomingMessage, nonblocking boo
 	r.mgr.mu.RUnlock()
 	if p == nil {
 		if cmd.Type == "takeover" {
-			return kind, &IngressControlTarget{TransferID: transferID}, true
+			return kind, &im.IngressControlTarget{TransferID: transferID}, true
 		}
-		target := &IngressControlTarget{}
+		target := &im.IngressControlTarget{}
 		if r.mgr.pins != nil {
 			pins := r.mgr.pins
 			if nonblocking {
@@ -105,7 +107,7 @@ func (r *NotificationRouter) captureIngress(msg IncomingMessage, nonblocking boo
 	}
 	defer p.mu.RUnlock()
 	s := p.state
-	target := &IngressControlTarget{RuntimeID: p.runtimeID, SessionEpoch: p.sessionEpoch, SessionID: s.SessionID, BindingInstanceID: p.bindingInstanceID, TransferID: transferID}
+	target := &im.IngressControlTarget{RuntimeID: p.runtimeID, SessionEpoch: p.sessionEpoch, SessionID: s.SessionID, BindingInstanceID: p.bindingInstanceID, TransferID: transferID}
 	if cmd.Type == "takeover" && target.TransferID == "" && s.Transfer != nil {
 		target.TransferID = s.Transfer.TransferID
 	}
@@ -153,7 +155,7 @@ func (r *NotificationRouter) captureIngress(msg IncomingMessage, nonblocking boo
 
 // targetMatchesLocked and the command write share p.mu, closing the final
 // snapshot-to-stdin race even when stdout changes the pending interaction.
-func (p *ChordProcess) ingressTargetMatchesLocked(t *IngressControlTarget, cmd IMCommand) bool {
+func (p *ChordProcess) ingressTargetMatchesLocked(t *im.IngressControlTarget, cmd im.IMCommand) bool {
 	if t == nil || t.RuntimeID == "" || t.RuntimeID != p.runtimeID || t.SessionEpoch != p.sessionEpoch || t.SessionID != "" && t.SessionID != p.state.SessionID || t.BindingInstanceID != "" && t.BindingInstanceID != p.bindingInstanceID {
 		return false
 	}
@@ -170,7 +172,7 @@ func (p *ChordProcess) ingressTargetMatchesLocked(t *IngressControlTarget, cmd I
 	}
 	return true
 }
-func (p *ChordProcess) sendIngressControl(t *IngressControlTarget, cmd IMCommand, payload map[string]any) error {
+func (p *ChordProcess) sendIngressControl(t *im.IngressControlTarget, cmd im.IMCommand, payload map[string]any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -197,9 +199,9 @@ func (p *ChordProcess) sendIngressControl(t *IngressControlTarget, cmd IMCommand
 
 // DispatchAccepted executes only in-memory control parameters. It intentionally
 // does not call the legacy void dispatcher or its fresh-session resend path.
-func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingMessage, target *IngressControlTarget, recordIDs ...string) DispatchResult {
+func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg im.IncomingMessage, target *im.IngressControlTarget, recordIDs ...string) DispatchResult {
 	reject := func(reason string) DispatchResult { return DispatchResult{"rejected", reason} }
-	if msg.ticket == nil || r.admission == nil || !r.admission.Valid(*msg.ticket) {
+	if msg.AdmissionTicket() == nil || r.admission == nil || !r.admission.Valid(*msg.AdmissionTicket()) {
 		return reject("authorization_changed")
 	}
 	cmd := commandForIncomingMessage(msg)
@@ -207,7 +209,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 		return reject("invalid_command")
 	}
 	help := !msg.ForceText && msg.InternalAction == nil && strings.TrimSpace(msg.Text) == "/help"
-	if msg.ticket.Kind == "owner_unbound" {
+	if msg.AdmissionTicket().Kind == "owner_unbound" {
 		text := "This chat is not bound. Send " + r.ingressCommandHint(msg, "/bind <directory>") + "."
 		if help {
 			text += " Use " + r.ingressCommandHint(msg, "/status") + " to check the binding."
@@ -221,7 +223,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 			r.enqueueIngressReply(msg, bindUsageMessage)
 			return reject("invalid_bind")
 		}
-		binding, err := (&BindingService{router: r}).Bind(ctx, msg, *msg.ticket, args)
+		binding, err := (&BindingService{router: r}).Bind(ctx, msg, *msg.AdmissionTicket(), args)
 		if err != nil {
 			if binding.ConfigOutcome.Phase >= Replaced || errors.Is(err, errConfigFaulted) || errors.Is(err, errBindOutcomeUnknown) {
 				return DispatchResult{"unknown", "binding_outcome_unknown"}
@@ -234,12 +236,12 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 		r.enqueueIngressReply(msg, bindingReply(binding, nil))
 		return DispatchResult{"completed", ""}
 	}
-	gate := msg.ticket.gate
-	gate.opMu.Lock()
+	gate := msg.AdmissionTicket().Gate
+	gate.OpMu.Lock()
 	opLocked := true
 	unlockOp := func() {
 		if opLocked {
-			gate.opMu.Unlock()
+			gate.OpMu.Unlock()
 			opLocked = false
 		}
 	}
@@ -249,16 +251,16 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 	// next message. Release it for the wait and re-acquire before continuing.
 	relockOp := func() {
 		if !opLocked {
-			gate.opMu.Lock()
+			gate.OpMu.Lock()
 			opLocked = true
 		}
 	}
 	defer func() {
 		if opLocked {
-			gate.opMu.Unlock()
+			gate.OpMu.Unlock()
 		}
 	}()
-	if !r.admission.Valid(*msg.ticket) {
+	if !r.admission.Valid(*msg.AdmissionTicket()) {
 		return reject("authorization_changed")
 	}
 	ws, err := r.getConfig().ResolveWorkspace(msg.IMType, msg.ChatID)
@@ -282,7 +284,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 		unlockOp()
 		p, target, result = r.restoreIngressQuery(ctx, key, target)
 		relockOp()
-		if !r.admission.Valid(*msg.ticket) {
+		if !r.admission.Valid(*msg.AdmissionTicket()) {
 			return reject("authorization_changed")
 		}
 		if result.State != "" {
@@ -309,7 +311,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 				}
 				cancel()
 				relockOp()
-				if !r.admission.Valid(*msg.ticket) {
+				if !r.admission.Valid(*msg.AdmissionTicket()) {
 					return reject("authorization_changed")
 				}
 				text = formatBindingStatus(ws, msg.IMType, msg.ChatID, state)
@@ -329,7 +331,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 		sessions, err := querySessionList(wait, r.getConfig(), ws.Path)
 		cancel()
 		relockOp()
-		if !r.admission.Valid(*msg.ticket) {
+		if !r.admission.Valid(*msg.AdmissionTicket()) {
 			return reject("authorization_changed")
 		}
 		if err != nil {
@@ -359,7 +361,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 		unlockOp()
 		p, target, result = r.startIngressCommandProcess(ctx, key, target)
 		relockOp()
-		if !r.admission.Valid(*msg.ticket) {
+		if !r.admission.Valid(*msg.AdmissionTicket()) {
 			return reject("authorization_changed")
 		}
 		if result.State != "" {
@@ -370,7 +372,7 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 		return reject("control_target_missing")
 	}
 	if msg.InternalAction == nil && cmd.Type == "send" && (msg.ForceText || !strings.HasPrefix(strings.TrimSpace(msg.Text), "/")) {
-		cmd = IMCommand{Type: "confirm", Action: "deny", Reason: msg.Text}
+		cmd = im.IMCommand{Type: "confirm", Action: "deny", Reason: msg.Text}
 	}
 	payload := map[string]any{"type": cmd.Type}
 	switch cmd.Type {
@@ -429,14 +431,14 @@ func (r *NotificationRouter) DispatchAccepted(ctx context.Context, msg IncomingM
 	}
 	return DispatchResult{"submitted", ""}
 }
-func targetRequestID(t *IngressControlTarget) string {
+func targetRequestID(t *im.IngressControlTarget) string {
 	if t == nil {
 		return ""
 	}
 	return t.RequestID
 }
 
-func (r *NotificationRouter) dispatchIngressSession(ctx context.Context, msg IncomingMessage, key string, cmd IMCommand, target *IngressControlTarget) DispatchResult {
+func (r *NotificationRouter) dispatchIngressSession(ctx context.Context, msg im.IncomingMessage, key string, cmd im.IMCommand, target *im.IngressControlTarget) DispatchResult {
 	p := r.mgr.GetProcessForKey(key)
 	// /new and /resume replace the active session, so a stale or missing
 	// control target must not block them. The only staleness that still applies
@@ -466,7 +468,7 @@ func (r *NotificationRouter) dispatchIngressSession(ctx context.Context, msg Inc
 	if p != nil && p.Alive() && p.State().Busy {
 		return DispatchResult{"rejected", "session_change_busy"}
 	}
-	finish, err := r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+	finish, err := r.beginIngressRouteChange(ctx, msg.AdmissionTicket().Identity)
 	if err != nil {
 		return DispatchResult{"rejected", "route_change_unavailable"}
 	}
@@ -545,8 +547,8 @@ func (r *NotificationRouter) waitIngressReadyPin(ctx context.Context, key string
 	}
 }
 
-func (r *NotificationRouter) ingressCommandHint(msg IncomingMessage, command string) string {
-	target := commandTargetForChat(msg.IMType, msg.ChatID)
+func (r *NotificationRouter) ingressCommandHint(msg im.IncomingMessage, command string) string {
+	target := im.CommandTargetForChat(msg.IMType, msg.ChatID)
 	target.ChatKind = msg.ChatKind
 	return r.commandHint(msg.IMType, target, command)
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // Card values are exact names; numeric text choices index the live role list.
@@ -21,7 +23,7 @@ func selectRoleName(target string, roles []RoleInfo, fromCard bool, hints ...fun
 	return name, nil
 }
 
-func interactionRequestID(msg IncomingMessage) string {
+func interactionRequestID(msg im.IncomingMessage) string {
 	if msg.InternalAction != nil {
 		return msg.InternalAction.RequestID
 	}

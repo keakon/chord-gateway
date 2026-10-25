@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // swapTestValue temporarily replaces a package-level knob for one test and
@@ -95,7 +96,7 @@ func (a *stubIMAdapter) StartLogin() (string, error) {
 	if fn != nil {
 		return fn()
 	}
-	return "", ErrLoginNotSupported
+	return "", im.ErrLoginNotSupported
 }
 
 func (a *stubIMAdapter) sentMessages() []sentMessage {

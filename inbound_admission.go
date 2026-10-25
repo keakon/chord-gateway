@@ -1,38 +1,21 @@
 package main
 
 import (
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
-
-type AdmissionTicket struct {
-	Kind                            string
-	Identity                        ChatIdentity
-	SenderID                        string
-	AccountEpoch, BindingGeneration uint64
-	PairingNonceID                  string
-	ReceivedAt                      time.Time
-	gate                            *ChatGate
-}
-
-// IsPairingHint reports whether the ticket authorizes only a bounded pairing
-// hint reply. Every hint kind shares the "pairing_hint" prefix, and callers that
-// decide authority, reply permits and dispatch all have to agree on that set, so
-// the distinction lives with the ticket instead of at each call site.
-func (t AdmissionTicket) IsPairingHint() bool {
-	return strings.HasPrefix(t.Kind, "pairing_hint")
-}
 
 type Admission struct {
 	pairing *PairingService
 	mu      sync.Mutex
-	gates   map[ChatIdentity]*ChatGate
+	gates   map[im.ChatIdentity]*im.ChatGate
 	closed  bool
 }
 
 func NewAdmission(p *PairingService) *Admission {
-	return &Admission{pairing: p, gates: map[ChatIdentity]*ChatGate{}}
+	return &Admission{pairing: p, gates: map[im.ChatIdentity]*im.ChatGate{}}
 }
 func (a *Admission) Close() {
 	a.mu.Lock()
@@ -46,13 +29,13 @@ func (a *Admission) Close() {
 	}
 	a.pairing.mu.Unlock()
 	for _, g := range a.gates {
-		lease, _, _ := g.snapshot()
+		lease, _, _ := g.Snapshot()
 		if lease != nil {
 			lease.Close()
 		}
 	}
 }
-func (a *Admission) gate(id ChatIdentity, workspace string, epoch uint64) *ChatGate {
+func (a *Admission) gate(id im.ChatIdentity, workspace string, epoch uint64) *im.ChatGate {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -60,25 +43,25 @@ func (a *Admission) gate(id ChatIdentity, workspace string, epoch uint64) *ChatG
 	}
 	g := a.gates[id]
 	if g == nil {
-		g = &ChatGate{generation: 1, phase: "unbound"}
+		g = im.NewChatGate()
 		if workspace != "" {
-			g.install(id, workspace, epoch)
+			g.Install(id, workspace, epoch)
 		}
 		a.gates[id] = g
 	}
 	return g
 }
 
-func (a *Admission) Authorize(msg IncomingMessage) (AdmissionTicket, bool) {
+func (a *Admission) Authorize(msg im.IncomingMessage) (im.AdmissionTicket, bool) {
 	return a.authorize(msg, true)
 }
 
-func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (AdmissionTicket, bool) {
+func (a *Admission) authorize(msg im.IncomingMessage, chargePairing bool) (im.AdmissionTicket, bool) {
 	p := a.pairing
 	cfg := p.store.Snapshot()
-	im := cfg.IMConfigByType(msg.IMType)
-	ticket := AdmissionTicket{Identity: ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}, SenderID: msg.SenderID, ReceivedAt: p.now()}
-	if im == nil || p.store.faulted.Load() || msg.AccountID == "" || msg.ChatID == "" || msg.SenderID == "" || msg.MessageID == "" || !isValidIngressChatKind(msg) {
+	imCfg := cfg.IMConfigByType(msg.IMType)
+	ticket := im.AdmissionTicket{Identity: im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID}, SenderID: msg.SenderID, ReceivedAt: p.now()}
+	if imCfg == nil || p.store.faulted.Load() || msg.AccountID == "" || msg.ChatID == "" || msg.SenderID == "" || msg.MessageID == "" || !isValidIngressChatKind(msg) {
 		return ticket, false
 	}
 	p.mu.Lock()
@@ -88,7 +71,7 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 		return ticket, false
 	}
 	ticket.AccountEpoch = state.epoch
-	owner := im.OwnerIdentity()
+	owner := imCfg.OwnerIdentity()
 	if owner != nil {
 		if owner.AccountID != msg.AccountID || owner.UserID != msg.SenderID {
 			p.mu.Unlock()
@@ -97,7 +80,7 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 		switch {
 		case !msg.ForceText && isBindCommand(msg.Text):
 			ticket.Kind = "paired_bind"
-		case im.Bindings()[msg.ChatID] == "":
+		case imCfg.Bindings()[msg.ChatID] == "":
 			ticket.Kind = "owner_unbound"
 		default:
 			ticket.Kind = "paired_task"
@@ -147,13 +130,13 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 		ticket.PairingNonceID = p.codeID
 	}
 	p.mu.Unlock()
-	ticket.gate = a.gate(ticket.Identity, im.Bindings()[msg.ChatID], ticket.AccountEpoch)
-	if ticket.gate == nil {
+	ticket.Gate = a.gate(ticket.Identity, imCfg.Bindings()[msg.ChatID], ticket.AccountEpoch)
+	if ticket.Gate == nil {
 		return ticket, false
 	}
-	lease, generation, phase := ticket.gate.snapshot()
+	lease, generation, phase := ticket.Gate.Snapshot()
 	ticket.BindingGeneration = generation
-	if ticket.Kind == "paired_task" && (phase != "active" || lease == nil || lease.WorkspaceID != im.Bindings()[msg.ChatID]) {
+	if ticket.Kind == "paired_task" && (phase != "active" || lease == nil || lease.WorkspaceID != imCfg.Bindings()[msg.ChatID]) {
 		return ticket, false
 	}
 	return ticket, true
@@ -161,7 +144,7 @@ func (a *Admission) authorize(msg IncomingMessage, chargePairing bool) (Admissio
 
 // Valid rechecks identity without upgrading the ticket's original input class.
 // Transport readiness gates new admission, not already accepted owner work.
-func (a *Admission) Valid(t AdmissionTicket) bool {
+func (a *Admission) Valid(t im.AdmissionTicket) bool {
 	a.mu.Lock()
 	closed := a.closed
 	a.mu.Unlock()
@@ -175,8 +158,8 @@ func (a *Admission) Valid(t AdmissionTicket) bool {
 	if s == nil || s.changed || s.account != t.Identity.AccountID || s.epoch != t.AccountEpoch {
 		return false
 	}
-	im := p.store.Snapshot().IMConfigByType(t.Identity.Platform)
-	if im == nil {
+	imCfg := p.store.Snapshot().IMConfigByType(t.Identity.Platform)
+	if imCfg == nil {
 		return false
 	}
 	if t.IsPairingHint() {
@@ -184,12 +167,12 @@ func (a *Admission) Valid(t AdmissionTicket) bool {
 		// gate, so it is valid only while the platform is still unpaired. Once
 		// an owner appears the ticket must expire rather than be upgraded to
 		// owner authority or reach the nil gate below.
-		if im.OwnerIdentity() != nil {
+		if imCfg.OwnerIdentity() != nil {
 			return false
 		}
 		return s.ready
 	}
-	owner := im.OwnerIdentity()
+	owner := imCfg.OwnerIdentity()
 	if owner == nil {
 		// Re-validate the binding ticket against the live pairing code: a code
 		// replaced while the probe is in flight must not authorize a bind.
@@ -198,17 +181,17 @@ func (a *Admission) Valid(t AdmissionTicket) bool {
 	if owner.UserID != t.SenderID || owner.AccountID != t.Identity.AccountID {
 		return false
 	}
-	_, generation, phase := t.gate.snapshot()
+	_, generation, phase := t.Gate.Snapshot()
 	return t.Kind != "paired_task" || (generation == t.BindingGeneration && phase == "active")
 }
 
-func admittedMessage(router MessageRouter, msg IncomingMessage) (IncomingMessage, bool) {
+func admittedMessage(router im.MessageRouter, msg im.IncomingMessage) (im.IncomingMessage, bool) {
 	if r, ok := router.(*NotificationRouter); ok && r.admission != nil {
 		ticket, allowed := r.admission.Authorize(msg)
 		if !allowed {
 			return msg, false
 		}
-		msg.ticket = &ticket
+		msg.SetAdmissionTicket(&ticket)
 		return msg, true
 	}
 	return msg, false

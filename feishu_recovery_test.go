@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
@@ -69,7 +70,7 @@ func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
 				if tokens.Load() != wantTokens || targetRequests.Load() != wantRequests {
 					t.Fatalf("tokens=%d requests=%d, want %d/%d", tokens.Load(), targetRequests.Load(), wantTokens, wantRequests)
 				}
-				if err != nil && phase == "send" && errors.Is(err, errDeliveryOutcomeUnknown) != !recoverable {
+				if err != nil && phase == "send" && errors.Is(err, im.ErrDeliveryOutcomeUnknown) != !recoverable {
 					t.Fatalf("wrong delivery outcome: %v", err)
 				}
 			})

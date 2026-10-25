@@ -8,6 +8,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestBindingSwitchAndOutgoingTransferAreExclusive(t *testing.T) {
@@ -26,14 +28,14 @@ func TestBindingSwitchAndOutgoingTransferAreExclusive(t *testing.T) {
 			if !ok {
 				t.Fatal("binding denied")
 			}
-			lease, _, _ := ticket.gate.snapshot()
+			lease, _, _ := ticket.Gate.Snapshot()
 			status := TransferStatus{TransferID: "transfer", SessionID: "session", SourceRuntimeID: "runtime", SourceSessionEpoch: 1, Workspace: "/workspace", TargetKind: "tui", TargetInstanceID: "target", BindingInstanceID: "binding"}
 			envelope := takeoverEnvelope(t, "session_transfer_preparing", status)
 			args, _ := parsePairedBindArgs(msg.Text)
 			if first == "transfer" {
 				p.processTransferEnvelope(envelope)
 				_, err := (&BindingService{router: r}).Bind(t.Context(), msg, ticket, args)
-				if !errors.Is(err, errBindBusy) || lease.ctx.Err() != nil || p.stoppedByGateway {
+				if !errors.Is(err, errBindBusy) || lease.Context().Err() != nil || p.stoppedByGateway {
 					t.Fatalf("binding interrupted admitted transfer: %v", err)
 				}
 				return
@@ -47,7 +49,7 @@ func TestBindingSwitchAndOutgoingTransferAreExclusive(t *testing.T) {
 				result <- err
 			}()
 			select {
-			case <-lease.ctx.Done():
+			case <-lease.Context().Done():
 			case <-time.After(3 * time.Second):
 				lease.EndSend()
 				t.Fatal("binding did not close admission")
@@ -99,9 +101,9 @@ func TestBindingSwitchCancellationRemainsBlocked(t *testing.T) {
 	m, p, _ := newTakeoverTestProcess(t)
 	p.readySignal = make(chan struct{})
 	close(p.readySignal)
-	g := &ChatGate{}
-	g.install(ChatIdentity{Platform: "wechat", ChatID: "chat"}, "test", 0)
-	lease, _, _ := g.snapshot()
+	g := &im.ChatGate{}
+	g.Install(im.ChatIdentity{Platform: "wechat", ChatID: "chat"}, "test", 0)
+	lease, _, _ := g.Snapshot()
 	lease.BeginSend()
 	defer lease.EndSend()
 	r := NewNotificationRouter(m)
@@ -111,7 +113,7 @@ func TestBindingSwitchCancellationRemainsBlocked(t *testing.T) {
 	if err := r.prepareBindingSwitch(ctx, g, p.key, "replacement"); !errors.Is(err, errBindBlocked) {
 		t.Fatalf("cancelled switch = %v", err)
 	}
-	_, _, phase := g.snapshot()
+	_, _, phase := g.Snapshot()
 	if phase != "blocked" || !p.stoppedByGateway || m.transferBlocked(p.key) {
 		t.Fatal("cancelled switch reopened routing or invented transfer guard")
 	}
@@ -176,18 +178,18 @@ func TestBindingStatusRefreshFailurePreservesLease(t *testing.T) {
 	if !ok {
 		t.Fatal("missing authorization")
 	}
-	lease, generation, phase := ticket.gate.snapshot()
+	lease, generation, phase := ticket.Gate.Snapshot()
 	ready := make(chan struct{})
 	close(ready)
 	p := &ChordProcess{key: key, readySignal: ready, state: ControlState{SessionID: "session", PausedInputs: &PausedInputs{PendingInputCount: 1}}}
 	r.mgr.procs[key] = p
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := r.prepareBindingSwitch(ctx, ticket.gate, key, "replacement"); !errors.Is(err, errInputStatusUnknown) {
+	if err := r.prepareBindingSwitch(ctx, ticket.Gate, key, "replacement"); !errors.Is(err, errInputStatusUnknown) {
 		t.Fatalf("refresh = %v", err)
 	}
-	got, gen, state := ticket.gate.snapshot()
-	if got != lease || gen != generation || state != phase || lease.ctx.Err() != nil || p.stoppedByGateway {
+	got, gen, state := ticket.Gate.Snapshot()
+	if got != lease || gen != generation || state != phase || lease.Context().Err() != nil || p.stoppedByGateway {
 		t.Fatal("failed status refresh retired the old binding")
 	}
 }

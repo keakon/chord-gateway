@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestFeishuTextInFlightCancellationPreservesUnknownOutcome(t *testing.T) {
@@ -28,10 +30,10 @@ func TestFeishuTextInFlightCancellationPreservesUnknownOutcome(t *testing.T) {
 	waitFeishuLifecycle(t, entered)
 	cancel()
 	err := waitFeishuLifecycle(t, done)
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, errDeliveryOutcomeUnknown) {
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		t.Fatalf("in-flight cancellation lost outcome evidence: %v", err)
 	}
-	var partial *IMTextSendError
+	var partial *im.IMTextSendError
 	if !errors.As(err, &partial) || partial.AcceptedSegments != 0 || partial.Category != "unknown_send" {
 		t.Fatalf("incorrect partial cancellation evidence: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestFeishuTextConfirmedRateLimitCancellationKeepsKnownRejection(t *testing.
 	waitFeishuLifecycle(t, entered)
 	cancel()
 	err := waitFeishuLifecycle(t, done)
-	if !errors.Is(err, context.Canceled) || errors.Is(err, errDeliveryOutcomeUnknown) {
+	if !errors.Is(err, context.Canceled) || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		t.Fatalf("confirmed 429 rejection became an unknown delivery: %v", err)
 	}
 	if posts.Load() != 1 {

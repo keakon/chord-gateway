@@ -13,6 +13,8 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const discordTestBotID = "9007199254740993"
@@ -61,9 +63,9 @@ func TestDiscordInboundChannelClassification(t *testing.T) {
 		{"contradictory_dm", discord.ChannelTypeDM, true, "unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var got IngressEnvelope
+			var got im.IngressEnvelope
 			submissions := 0
-			submit := func(ctx context.Context, key string, envelope IngressEnvelope, normalize func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+			submit := func(ctx context.Context, key string, envelope im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 				submissions++
 				if key != "500" {
 					t.Fatalf("normalization key = %q", key)
@@ -104,8 +106,8 @@ func TestDiscordInboundInvocationPreservesBody(t *testing.T) {
 		{"<@123> /answer <@" + discordTestBotID + ">", "<@123> /answer <@" + discordTestBotID + ">", true},
 	} {
 		t.Run(tc.text, func(t *testing.T) {
-			var got IncomingMessage
-			submit := func(_ context.Context, _ string, e IngressEnvelope, _ func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+			var got im.IncomingMessage
+			submit := func(_ context.Context, _ string, e im.IngressEnvelope, _ func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 				got = e.Message
 				return nil, nil
 			}
@@ -121,8 +123,8 @@ func TestDiscordInboundInvocationPreservesBody(t *testing.T) {
 			}
 		})
 	}
-	var got IncomingMessage
-	submit := func(_ context.Context, _ string, e IngressEnvelope, _ func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+	var got im.IncomingMessage
+	submit := func(_ context.Context, _ string, e im.IngressEnvelope, _ func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		got = e.Message
 		return nil, nil
 	}
@@ -158,7 +160,7 @@ func TestDiscordInboundFiltersBeforeLookup(t *testing.T) {
 			case "text_mention_only":
 				message.Mentions = nil
 			}
-			submit := func(context.Context, string, IngressEnvelope, func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+			submit := func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 				t.Fatal("irrelevant message submitted")
 				return nil, nil
 			}
@@ -170,17 +172,17 @@ func TestDiscordInboundFiltersBeforeLookup(t *testing.T) {
 	}
 }
 
-type discordTestIngressReceiver struct{ accepted chan IngressEnvelope }
+type discordTestIngressReceiver struct{ accepted chan im.IngressEnvelope }
 
-func (r discordTestIngressReceiver) Accept(_ context.Context, envelope IngressEnvelope) ReceiveResult {
+func (r discordTestIngressReceiver) Accept(_ context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
 	r.accepted <- envelope
-	return ReceiveResult{Disposition: ReceiveAccepted}
+	return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 }
 
 func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	accepted := make(chan IngressEnvelope, 1)
+	accepted := make(chan im.IngressEnvelope, 1)
 	normalizer := NewIngressNormalizer(ctx, discordTestIngressReceiver{accepted})
 	defer normalizer.Close()
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -195,9 +197,9 @@ func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t
 		}
 		return discordTestChannel(t, discord.ChannelTypeDM, id), nil
 	}
-	results := make(chan (<-chan ReceiveResult), 1)
-	submit := func(ctx context.Context, key string, e IngressEnvelope, normalize func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
-		future, err := normalizer.SubmitContext(ctx, key, func(ctx context.Context) (IngressEnvelope, error) { return normalize(ctx, e) })
+	results := make(chan (<-chan im.ReceiveResult), 1)
+	submit := func(ctx context.Context, key string, e im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
+		future, err := normalizer.SubmitContext(ctx, key, func(ctx context.Context) (im.IngressEnvelope, error) { return normalize(ctx, e) })
 		results <- future
 		return future, err
 	}
@@ -220,7 +222,7 @@ func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t
 	generation.Store(2)
 	close(release)
 	result := WaitIngressNormalization(t.Context(), <-results)
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal("captured message was lost across reconnect", result)
 	}
 	select {
@@ -242,7 +244,7 @@ func TestDiscordInboundChannelCacheAndBoundedSubmission(t *testing.T) {
 		lookups++
 		return discordTestChannel(t, discord.ChannelTypeDM, "500"), nil
 	}
-	submit := func(ctx context.Context, _ string, e IngressEnvelope, normalize func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+	submit := func(ctx context.Context, _ string, e im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		_, err := normalize(ctx, e)
 		return nil, err
 	}
@@ -274,7 +276,7 @@ func TestDiscordInboundChannelCacheAndBoundedSubmission(t *testing.T) {
 	if len(inbound.channels) != discordChannelCacheCapacity {
 		t.Fatal("channel cache unbounded")
 	}
-	inbound.submit = func(context.Context, string, IngressEnvelope, func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+	inbound.submit = func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		return nil, errIngressCapacity
 	}
 	if err := inbound.HandleMessage(1, discordTestMessage()); !errors.Is(err, errIngressCapacity) {
@@ -287,7 +289,7 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 	if err := router.admission.pairing.PlatformReady("discord", discordTestBotID); err != nil {
 		t.Fatal(err)
 	}
-	bind := IncomingMessage{IMType: "discord", AccountID: discordTestBotID, ChatKind: "group", ChatID: "500", SenderID: "9007199254740997", MessageID: "setup-binding", Text: fmt.Sprintf("/bind %q", t.TempDir())}
+	bind := im.IncomingMessage{IMType: "discord", AccountID: discordTestBotID, ChatKind: "group", ChatID: "500", SenderID: "9007199254740997", MessageID: "setup-binding", Text: fmt.Sprintf("/bind %q", t.TempDir())}
 	if !dispatchPairingTest(router, bind) {
 		t.Fatal("owner binding rejected")
 	}
@@ -298,8 +300,8 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 	}
 	t.Cleanup(service.Close)
 	pauseIngressTestRoute(t, service, bind)
-	futures := make(chan (<-chan ReceiveResult), 4)
-	submit := func(ctx context.Context, key string, e IngressEnvelope, normalize func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+	futures := make(chan (<-chan im.ReceiveResult), 4)
+	submit := func(ctx context.Context, key string, e im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		future, err := router.SubmitIngressNormalization(ctx, key, e, normalize)
 		if err == nil {
 			futures <- future
@@ -313,14 +315,14 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 		t.Fatal(err)
 	}
 	first := WaitIngressNormalization(t.Context(), <-futures)
-	if first.Disposition != ReceiveAccepted {
+	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
 	duplicate := WaitIngressNormalization(t.Context(), <-futures)
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != first.RecordID {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != first.RecordID {
 		t.Fatal(duplicate)
 	}
 	record, err := store.Get(first.RecordID)
@@ -336,14 +338,14 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 		t.Fatal(err)
 	}
 	rejected := WaitIngressNormalization(t.Context(), <-futures)
-	if rejected.Disposition != ReceiveRejected || rejected.RecordID == "" {
+	if rejected.Disposition != im.ReceiveRejected || rejected.RecordID == "" {
 		t.Fatal(rejected)
 	}
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
 	rejectedDuplicate := WaitIngressNormalization(t.Context(), <-futures)
-	if rejectedDuplicate.Disposition != ReceiveDuplicate || rejectedDuplicate.State != "rejected" || rejectedDuplicate.RecordID != rejected.RecordID {
+	if rejectedDuplicate.Disposition != im.ReceiveDuplicate || rejectedDuplicate.State != "rejected" || rejectedDuplicate.RecordID != rejected.RecordID {
 		t.Fatal(rejectedDuplicate)
 	}
 	record, err = store.Get(rejected.RecordID)
@@ -360,7 +362,7 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 		t.Fatal(err)
 	}
 	groupDM := WaitIngressNormalization(t.Context(), <-futures)
-	if groupDM.Disposition != ReceiveRejected || groupDM.RecordID == "" {
+	if groupDM.Disposition != im.ReceiveRejected || groupDM.RecordID == "" {
 		t.Fatal("GroupDM was treated as private", groupDM)
 	}
 }
@@ -383,7 +385,7 @@ func TestDiscordInboundIgnoresEmptyAndAttachmentOnlyMessages(t *testing.T) {
 				message.Content = tc.text
 			}
 			message.Attachments = []discord.Attachment{{Filename: "sample.txt"}}
-			inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, IngressEnvelope, func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+			inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 				t.Fatal("unsupported empty text submitted")
 				return nil, nil
 			}, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
@@ -421,7 +423,7 @@ func TestDiscordInboundReportsContentlessMentionWithoutFlooding(t *testing.T) {
 	}
 	t.Cleanup(func() { log.Warnf = original })
 	submitted := 0
-	inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, IngressEnvelope, func(context.Context, IngressEnvelope) (IngressEnvelope, error)) (<-chan ReceiveResult, error) {
+	inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		submitted++
 		return nil, nil
 	}, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, func(event, reason string) {

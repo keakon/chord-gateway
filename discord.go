@@ -18,6 +18,7 @@ import (
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/buildinfo"
 	gateway "github.com/keakon/chord-gateway/internal/discordgateway"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // DiscordAdapter owns one authenticated Bot account and its cancellable transport.
@@ -35,11 +36,11 @@ type DiscordAdapter struct {
 	accountID                string
 	gw                       gateway.Gateway
 	inbound                  *discordInbound
-	sender                   *IMTextSender
+	sender                   *im.IMTextSender
 	done                     chan struct{}
 	doneOnce                 sync.Once
 	finishOnce               sync.Once
-	accountLock              *instanceLocks
+	accountLock              *im.InstanceLocks
 	sends                    sync.WaitGroup
 	fatal                    chan error
 	proxyFunc                func(*http.Request) (*url.URL, error)
@@ -70,7 +71,7 @@ func NewDiscordAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *conf
 	if imCfg.Discord == nil || strings.TrimSpace(imCfg.Discord.BotToken) == "" || strings.TrimSpace(imCfg.Discord.ApplicationID) == "" {
 		return nil, errors.New("discord requires bot_token and application_id")
 	}
-	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	proxyFunc, err := im.WebsocketProxyFuncFor(cfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +88,7 @@ func NewDiscordAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *conf
 
 func (*DiscordAdapter) Type() string                { return "discord" }
 func (*DiscordAdapter) SupportsLoginRenewal() bool  { return false }
-func (*DiscordAdapter) StartLogin() (string, error) { return "", ErrLoginNotSupported }
+func (*DiscordAdapter) StartLogin() (string, error) { return "", im.ErrLoginNotSupported }
 
 func (a *DiscordAdapter) Connect() error {
 	a.mu.Lock()
@@ -109,7 +110,7 @@ func (a *DiscordAdapter) Connect() error {
 	if err != nil {
 		return a.connectError(err)
 	}
-	lock, err := AcquireIMAccountLock("discord", account)
+	lock, err := im.AcquireIMAccountLock("discord", account)
 	if err != nil {
 		return fmt.Errorf("discord account lock: %w", err)
 	}
@@ -248,7 +249,7 @@ func (a *DiscordAdapter) onStateChange(state gateway.Status, generation uint64) 
 	account := a.accountID
 	a.mu.Unlock()
 	if state == gateway.StatusReady {
-		if err := a.router.admission.pairing.PlatformReadyWithPresentation("discord", account, PlatformPresentation{Platform: "discord", BotMention: "<@" + account + ">"}); err != nil {
+		if err := a.router.admission.pairing.PlatformReadyWithPresentation("discord", account, im.PlatformPresentation{Platform: "discord", BotMention: "<@" + account + ">"}); err != nil {
 			a.reportFatal(errors.New("discord pairing_unavailable"))
 		} else {
 			a.mu.Lock()
@@ -335,10 +336,10 @@ func (a *DiscordAdapter) captureEvent(_ gateway.EventType, data gateway.EventDat
 // captureEnvelope must return on the Gateway reader even if stdin or session
 // persistence holds a process lock. A failed snapshot stays a frozen refusal;
 // the common ingress persists it instead of capturing a newer control target.
-func (a *DiscordAdapter) captureEnvelope(e IngressEnvelope) IngressEnvelope {
-	if e.capture == nil {
+func (a *DiscordAdapter) captureEnvelope(e im.IngressEnvelope) im.IngressEnvelope {
+	if e.Capture == nil {
 		kind, target, available := a.router.tryCaptureIngress(e.Message)
-		e.capture = &ingressCapture{kind: kind, target: target, unavailable: !available}
+		e.Capture = &im.IngressCapture{Kind: kind, Target: target, Unavailable: !available}
 	}
 	return e
 }
@@ -437,16 +438,16 @@ func (a *DiscordAdapter) Disconnect() {
 	}
 	<-a.done
 }
-func (a *DiscordAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *DiscordAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if id.Platform != "discord" || id.AccountID != a.accountID {
-		return IngressDeliveryReadiness{Reason: IngressWaitingAccount}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingAccount}
 	}
 	if !a.ready || a.stopping {
-		return IngressDeliveryReadiness{Reason: IngressWaitingPlatform}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingPlatform}
 	}
-	return IngressDeliveryReadiness{Ready: true}
+	return im.IngressDeliveryReadiness{Ready: true}
 }
 func (a *DiscordAdapter) resolveChannel(ctx context.Context, id string) (discord.Channel, error) {
 	channelID, err := snowflake.Parse(id)

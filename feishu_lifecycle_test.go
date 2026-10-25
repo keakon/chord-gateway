@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // This fixture keeps the actual intake workers and dispatcher. Only the network
@@ -104,7 +105,7 @@ func TestFeishuLifecycleAccountLockAndRepeatedDisconnectJoin(t *testing.T) {
 	waitFeishuLifecycle(t, started)
 	var secondCalls atomic.Int32
 	b.runLongConn = func(context.Context) error { secondCalls.Add(1); return nil }
-	if err := b.Connect(); !errors.Is(err, errInstanceRunning) || secondCalls.Load() != 0 {
+	if err := b.Connect(); !errors.Is(err, im.ErrInstanceRunning) || secondCalls.Load() != 0 {
 		t.Fatalf("same account accepted with a different state directory: %v calls=%d", err, secondCalls.Load())
 	}
 	firstDisconnect, secondDisconnect := make(chan struct{}), make(chan struct{})
@@ -116,7 +117,7 @@ func TestFeishuLifecycleAccountLockAndRepeatedDisconnectJoin(t *testing.T) {
 		t.Fatal("Disconnect returned before the connection task exited")
 	default:
 	}
-	if locks, err := AcquireIMAccountLock("feishu", account); err == nil {
+	if locks, err := im.AcquireIMAccountLock("feishu", account); err == nil {
 		locks.Close()
 		t.Fatal("account lock released before connection tasks exited")
 	}
@@ -127,7 +128,7 @@ func TestFeishuLifecycleAccountLockAndRepeatedDisconnectJoin(t *testing.T) {
 	if err := waitFeishuLifecycle(t, connected); err != nil {
 		t.Fatal(err)
 	}
-	locks, err := AcquireIMAccountLock("feishu", account)
+	locks, err := im.AcquireIMAccountLock("feishu", account)
 	if err != nil {
 		t.Fatalf("Disconnect did not release account ownership: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestFeishuLifecycleReconnectAndDisconnectKeepSharedStoreOpen(t *testing.T) 
 	writeOtherPlatform := func(business string) {
 		t.Helper()
 		record := testIngressTask(t, service.store, business)
-		if result := service.store.AcceptRecord(context.Background(), record, nil); result.Disposition != ReceiveAccepted {
+		if result := service.store.AcceptRecord(context.Background(), record, nil); result.Disposition != im.ReceiveAccepted {
 			t.Fatalf("other platform cannot commit to shared store: %+v", result)
 		}
 	}

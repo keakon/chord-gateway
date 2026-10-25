@@ -1,4 +1,4 @@
-package main
+package im
 
 import "testing"
 
@@ -22,11 +22,11 @@ func TestSlackCommandTargetRecognizesDMThreads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := commandTargetForChat("slack", thread)
+	target := CommandTargetForChat("slack", thread)
 	if !target.Thread || target.ChatKind != "group" {
 		t.Fatalf("target = %#v", target)
 	}
-	if commandTargetForChat("slack", "channel-example").Thread {
+	if CommandTargetForChat("slack", "channel-example").Thread {
 		t.Fatal("root target became a thread")
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/keakon/golog/log"
 )
 
@@ -33,39 +35,39 @@ func renderWecomText(source string) string {
 
 func (a *WecomAdapter) SendText(chatID, text string) error {
 	if a.router == nil || a.router.admission == nil {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	cfg := a.router.getConfig()
 	ws, err := cfg.ResolveWorkspace("wecom", chatID)
 	if err != nil || ws == nil {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	target, ok := a.router.targetForKey((processKey{workspaceID: ws.ID, imType: "wecom", chatID: chatID}).String())
 	if !ok {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	return a.router.SendBound(a.ctx, target, text)
 }
 
 func (a *WecomAdapter) SendTextContext(ctx context.Context, chatID, text string) error {
 	if ctx == nil || a.router == nil || a.router.admission == nil {
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	control := false
 	switch {
 	case ctx.Value(outboundDeliveryContextKey{}) != nil:
 		target, ok := ctx.Value(outboundDeliveryContextKey{}).(DeliveryTarget)
-		if !ok || target.Identity != (ChatIdentity{"wecom", a.imCfg.Wecom.BotID, chatID}) || !a.router.validTarget(target) {
-			return errPairingDenied
+		if !ok || target.Identity != (im.ChatIdentity{Platform: "wecom", AccountID: a.imCfg.Wecom.BotID, ChatID: chatID}) || !a.router.validTarget(target) {
+			return im.ErrPairingDenied
 		}
 	case ctx.Value(outboundReplyContextKey{}) != nil:
 		permit, ok := ctx.Value(outboundReplyContextKey{}).(ReplyPermit)
-		if !ok || permit.Identity != (ChatIdentity{"wecom", a.imCfg.Wecom.BotID, chatID}) || !time.Now().Before(permit.ExpiresAt) || !a.router.admission.Valid(permit.ticket) {
-			return errPairingDenied
+		if !ok || permit.Identity != (im.ChatIdentity{Platform: "wecom", AccountID: a.imCfg.Wecom.BotID, ChatID: chatID}) || !time.Now().Before(permit.ExpiresAt) || !a.router.admission.Valid(permit.ticket) {
+			return im.ErrPairingDenied
 		}
 		control = true
 	default:
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	return a.textSender.Send(ctx, a.ctx, ctx, chatID, text, control)
 }
@@ -73,14 +75,14 @@ func (a *WecomAdapter) SendTextContext(ctx context.Context, chatID, text string)
 // ValidateBindingTarget is the sole temporary unbound-target outlet. Its narrow
 // signature cannot choose arbitrary text, and BindingService verifies the
 // nonce/owner before calling it and revalidates authority before persistence.
-func (a *WecomAdapter) ValidateBindingTarget(ctx context.Context, target BindingProbeTarget) error {
-	if ctx == nil || target.Platform != "wecom" || target.AccountID != a.imCfg.Wecom.BotID || !a.IngressDeliveryReadiness(ChatIdentity(target)).Ready {
-		return errPairingDenied
+func (a *WecomAdapter) ValidateBindingTarget(ctx context.Context, target im.BindingProbeTarget) error {
+	if ctx == nil || target.Platform != "wecom" || target.AccountID != a.imCfg.Wecom.BotID || !a.IngressDeliveryReadiness(im.ChatIdentity(target)).Ready {
+		return im.ErrPairingDenied
 	}
 	if _, err := DecodeWecomTarget(target.ChatID); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, IMControlSendTimeout)
+	ctx, cancel := context.WithTimeout(ctx, im.IMControlSendTimeout)
 	defer cancel()
 	stop := context.AfterFunc(a.ctx, cancel)
 	defer stop()
@@ -89,14 +91,14 @@ func (a *WecomAdapter) ValidateBindingTarget(ctx context.Context, target Binding
 	}
 	// Share normal output's target ordering slot so the fixed probe cannot
 	// overtake a body segment that is still awaiting platform acceptance.
-	release, err := a.textSender.acquireTarget(ctx, target.ChatID)
+	release, err := a.textSender.AcquireTarget(ctx, target.ChatID)
 	if err != nil {
 		return err
 	}
 	defer release()
 	select {
-	case imTextSendSlots <- struct{}{}:
-		defer func() { <-imTextSendSlots }()
+	case im.IMTextSendSlots <- struct{}{}:
+		defer func() { <-im.IMTextSendSlots }()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -107,7 +109,7 @@ func (a *WecomAdapter) sendSegment(ctx context.Context, target, rendered string)
 	// Refuse here rather than inside SendMarkdown so the reason is a definite
 	// non-delivery, and use the shared category vocabulary so the common
 	// executor records it instead of falling back to delivery_failed.
-	if !a.IngressDeliveryReadiness(ChatIdentity{"wecom", a.imCfg.Wecom.BotID, target}).Ready {
+	if !a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "wecom", AccountID: a.imCfg.Wecom.BotID, ChatID: target}).Ready {
 		return wecomWSError("connection_unavailable")
 	}
 	raw, err := DecodeWecomTarget(target)
@@ -168,7 +170,9 @@ func (a *WecomAdapter) waitSendSlot(ctx context.Context, target string) error {
 	}
 }
 
-func (a *WecomAdapter) TextSendMetrics() IMTextMetricsSnapshot { return a.textSender.TextSendMetrics() }
-func (a *WecomAdapter) TextSendTargetSnapshot(target string) IMTextTargetSnapshot {
+func (a *WecomAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {
+	return a.textSender.TextSendMetrics()
+}
+func (a *WecomAdapter) TextSendTargetSnapshot(target string) im.IMTextTargetSnapshot {
 	return a.textSender.TextSendTargetSnapshot(target)
 }

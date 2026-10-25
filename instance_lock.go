@@ -1,44 +1,13 @@
 package main
 
 import (
-	"crypto/sha256"
 	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
-
-var errInstanceRunning = errors.New("another gateway instance holds a required resource")
-
-func canonicalResource(path string) (string, error) {
-	p, err := filepath.Abs(config.Expand(path))
-	if err != nil {
-		return "", err
-	}
-	p = filepath.Clean(p)
-	var suffix []string
-	for {
-		resolved, e := filepath.EvalSymlinks(p)
-		if e == nil {
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
-			}
-			return resolved, nil
-		}
-		if !os.IsNotExist(e) {
-			return "", e
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return "", e
-		}
-		suffix = append(suffix, filepath.Base(p))
-		p = parent
-	}
-}
 
 func instanceResources(path string, cfg *config.Config, paths *config.Paths) ([]string, error) {
 	pins := cfg.SessionPinsFile
@@ -46,13 +15,13 @@ func instanceResources(path string, cfg *config.Config, paths *config.Paths) ([]
 		pins = filepath.Join(paths.StateDir, "session-pins.json")
 	}
 	raw := []string{path, paths.StateDir, pins}
-	if im := cfg.IMConfigByType("wechat"); im != nil && im.Wechat.TokenPath != "" {
-		raw = append(raw, im.Wechat.TokenPath)
+	if imCfg := cfg.IMConfigByType("wechat"); imCfg != nil && imCfg.Wechat.TokenPath != "" {
+		raw = append(raw, imCfg.Wechat.TokenPath)
 	}
 	unique := map[string]bool{}
 	var result []string
 	for _, p := range raw {
-		r, err := canonicalResource(p)
+		r, err := config.CanonicalResource(p)
 		if err != nil {
 			return nil, err
 		}
@@ -65,61 +34,9 @@ func instanceResources(path string, cfg *config.Config, paths *config.Paths) ([]
 	return result, nil
 }
 
-type instanceLocks struct{ files []*os.File }
-
-// Tests replace this before starting workers; production always uses the
-// per-user directory, shared across configurations and state directories.
-var instanceLockCacheDir = os.UserCacheDir
-
-func (l *instanceLocks) Close() {
-	for i := len(l.files) - 1; i >= 0; i-- {
-		releaseInstanceLock(l.files[i])
-		_ = l.files[i].Close()
-	}
-	l.files = nil
-}
-func acquireInstanceLocks(resources []string) (*instanceLocks, error) {
-	cache, err := instanceLockCacheDir()
-	if err != nil {
-		return nil, err
-	}
-	dir := filepath.Join(cache, "chord-gateway", "instance-locks")
-	if err = os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	if err = os.Chmod(dir, 0o700); err != nil {
-		return nil, err
-	}
-	locks := &instanceLocks{}
-	success := false
-	defer func() {
-		if !success {
-			locks.Close()
-		}
-	}()
-	for _, resource := range resources {
-		name := fmt.Sprintf("%x.lock", sha256.Sum256([]byte(resource)))
-		f, e := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR, 0o600)
-		if e != nil {
-			return nil, e
-		}
-		if e = f.Chmod(0o600); e != nil {
-			f.Close()
-			return nil, e
-		}
-		if e = takeInstanceLock(f); e != nil {
-			f.Close()
-			return nil, e
-		}
-		locks.files = append(locks.files, f)
-	}
-	success = true
-	return locks, nil
-}
-
 // loadLockedConfiguration repeats read-only discovery once if a concurrent
 // local edit changed the resource set before all locks were acquired.
-func loadLockedConfiguration(path string, paths *config.Paths) (*ConfigStore, *instanceLocks, error) {
+func loadLockedConfiguration(path string, paths *config.Paths) (*ConfigStore, *im.InstanceLocks, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		cfg, err := config.Load(path)
 		if err != nil {
@@ -132,7 +49,7 @@ func loadLockedConfiguration(path string, paths *config.Paths) (*ConfigStore, *i
 		if err != nil {
 			return nil, nil, err
 		}
-		locks, lockErr := acquireInstanceLocks(resources)
+		locks, lockErr := im.AcquireInstanceLocks(resources)
 		if lockErr != nil {
 			return nil, nil, lockErr
 		}

@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-const maxGatewayImageDimension = 12000
+const MaxGatewayImageDimension = 12000
 
 // Serialize image-sized allocations across adapters. Queued images stay on
 // disk; the slot covers decode, resize, encode and upload, not just decode.
@@ -27,7 +27,7 @@ const maxGatewayImageDimension = 12000
 // the slot must remain serial; unrelated tests may still run in parallel.
 var imageUploadSlot = make(chan struct{}, 1)
 
-func acquireImageUpload(ctx context.Context) (func(), error) {
+func AcquireImageUpload(ctx context.Context) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -54,16 +54,17 @@ func validateReceivedImageHeader(src io.Reader, i *ReceivedImage) error {
 		return fmt.Errorf("decode received image header: %w", err)
 	}
 	mime := map[string]string{"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[format]
-	if cfg.Width != i.Width || cfg.Height != i.Height || mime != i.MIME || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxGatewayImageDimension || cfg.Height > maxGatewayImageDimension || int64(cfg.Width)*int64(cfg.Height) > 36_000_000 {
+	if cfg.Width != i.Width || cfg.Height != i.Height || mime != i.MIME || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxGatewayImageDimension || cfg.Height > MaxGatewayImageDimension || int64(cfg.Width)*int64(cfg.Height) > 36_000_000 {
 		return fmt.Errorf("received image dimensions or MIME mismatch")
 	}
 	return nil
 }
 
-// Verify and rewind the same open file used by Feishu, without retaining its
-// compressed original or copying it into a multipart buffer.
-func openReceivedImage(i *ReceivedImage) (*os.File, error) {
-	if i.Size <= 0 || i.Size > maxGatewayImageBytes {
+// OpenReceivedImage verifies and rewinds the same open file used by Feishu,
+// without retaining its compressed original or copying it into a multipart
+// buffer.
+func OpenReceivedImage(i *ReceivedImage) (*os.File, error) {
+	if i.Size <= 0 || i.Size > MaxGatewayImageBytes {
 		return nil, fmt.Errorf("image exceeds upload limit")
 	}
 	f, err := os.Open(i.Path)
@@ -91,8 +92,8 @@ func openReceivedImage(i *ReceivedImage) (*os.File, error) {
 	return f, nil
 }
 
-func readReceivedImage(i *ReceivedImage) ([]byte, error) {
-	if i.Size <= 0 || i.Size > maxGatewayImageBytes {
+func ReadReceivedImage(i *ReceivedImage) ([]byte, error) {
+	if i.Size <= 0 || i.Size > MaxGatewayImageBytes {
 		return nil, fmt.Errorf("image exceeds upload limit")
 	}
 	f, err := os.Open(i.Path)
@@ -118,8 +119,9 @@ func readReceivedImage(i *ReceivedImage) ([]byte, error) {
 	return data, nil
 }
 
-// Platform previews preserve alpha; the original remains in the Chord session.
-func imageUploadPreview(ctx context.Context, src io.Reader, limit int) ([]byte, error) {
+// ImageUploadPreview builds the platform preview, preserving alpha; the
+// original remains in the Chord session.
+func ImageUploadPreview(ctx context.Context, src io.Reader, limit int) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

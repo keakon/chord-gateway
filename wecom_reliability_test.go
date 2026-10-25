@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWecomDuplicateMustNotPromptResend(t *testing.T) {
@@ -18,8 +20,8 @@ func TestWecomDuplicateMustNotPromptResend(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "received") == 1 })
-	a.router.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, IngressEnvelope) ReceiveResult {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+	a.router.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, im.IngressEnvelope) im.ReceiveResult {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	})
 	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "redelivery", "same-business")); err != nil {
 		t.Fatal(err)
@@ -129,8 +131,8 @@ func TestWecomBusyCaptureRemainsRejectedAfterStateChanges(t *testing.T) {
 			p.state.PendingConfirm = &ConfirmPayload{RequestID: "replacement-confirm", ToolName: "Done"}
 			writer := p.stdin.(*ingressTestWriter)
 			p.mu.Unlock()
-			e := ctx.Value(wecomCapturedEnvelopeContextKey{}).(IngressEnvelope)
-			if e.capture == nil || !e.capture.unavailable {
+			e := ctx.Value(wecomCapturedEnvelopeContextKey{}).(im.IngressEnvelope)
+			if e.Capture == nil || !e.Capture.Unavailable {
 				t.Fatal("busy state was not frozen as unavailable")
 			}
 			if err := a.receiveFrame(ctx, raw); err != nil {

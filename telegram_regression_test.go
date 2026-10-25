@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestTelegramBatchFreezesControlsAcrossAdmissionAndRedelivery(t *testing.T) {
@@ -20,7 +22,7 @@ func TestTelegramBatchFreezesControlsAcrossAdmissionAndRedelivery(t *testing.T) 
 			p.mu.Lock()
 			p.state.PendingConfirm = &ConfirmPayload{RequestID: "original"}
 			p.mu.Unlock()
-			msg := IncomingMessage{IMType: "telegram", AccountID: "917001", ChatID: "123456"}
+			msg := im.IncomingMessage{IMType: "telegram", AccountID: "917001", ChatID: "123456"}
 			id := pauseIngressTestRoute(t, f.service, msg)
 			batch := []telegramUpdate{telegramGatewayUpdate(70, 123456, "/allow@GatewayBot"), telegramGatewayUpdate(71, 123456, "/allow@GatewayBot")}
 			a, api := f.adapter(t, f.botID, batch...)
@@ -36,7 +38,7 @@ func TestTelegramBatchFreezesControlsAcrossAdmissionAndRedelivery(t *testing.T) 
 			a.now = func() time.Time { return now }
 			firstReceived := now
 			receive, first := a.receive, true
-			a.receive = func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+			a.receive = func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 				if first {
 					first = false
 					p.mu.Lock()
@@ -49,7 +51,7 @@ func TestTelegramBatchFreezesControlsAcrossAdmissionAndRedelivery(t *testing.T) 
 							t.Error(err)
 						}
 						api.batches <- repeated
-						return ReceiveResult{Disposition: ReceiveRetryable}
+						return im.ReceiveResult{Disposition: im.ReceiveRetryable}
 					}
 				}
 				return receive(ctx, e)
@@ -95,8 +97,8 @@ func TestTelegramBatchCaptureWaitsForBusySnapshot(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("capture did not finish after the snapshot lock was released")
 	}
-	capture := batch[0].captured.envelope.capture
-	if capture == nil || capture.err != nil || capture.target == nil || capture.target.RequestID != "original" {
+	capture := batch[0].captured.envelope.Capture
+	if capture == nil || capture.Err != nil || capture.Target == nil || capture.Target.RequestID != "original" {
 		t.Fatalf("invalid retained snapshot: %+v", capture)
 	}
 }
@@ -105,7 +107,7 @@ func TestTelegramCommandAliasesRoundTripAndRejectLegacySuffix(t *testing.T) {
 	for _, canonical := range []string{"/handoff-deny", "/question-interact", "/question-withdraw", "/question-replace"} {
 		for _, kind := range []string{"private", "group"} {
 			command := canonical + " @request unchanged/path@value"
-			hint := FormatCommandHint(PlatformPresentation{Platform: "telegram", BotUsername: "GatewayBot"}, CommandTarget{ChatKind: kind}, command)
+			hint := im.FormatCommandHint(im.PlatformPresentation{Platform: "telegram", BotUsername: "GatewayBot"}, im.CommandTarget{ChatKind: kind}, command)
 			u := telegramGatewayUpdate(1, 123456, hint)
 			text, reason := telegramNormalizeCommand(hint, u.Message.Entities, "GatewayBot")
 			if reason != "" || text != command || parseIMCommand(text).Type != parseIMCommand(command).Type {
@@ -118,7 +120,7 @@ func TestTelegramCommandAliasesRoundTripAndRejectLegacySuffix(t *testing.T) {
 		// Telegram can produce; both must reject the legacy hyphenated form.
 		for _, token := range []string{canonical[:strings.IndexByte(canonical, '-')], canonical + "@GatewayBot"} {
 			u := telegramGatewayUpdate(1, 123456, legacy)
-			u.Message.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: imUTF16Units(token)}}
+			u.Message.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: im.UTF16Units(token)}}
 			if _, reason := telegramNormalizeCommand(legacy, u.Message.Entities, "GatewayBot"); reason != "invalid_command_entity" {
 				t.Fatalf("legacy suffix forwarded as model input: token=%q reason=%q", token, reason)
 			}
@@ -127,7 +129,7 @@ func TestTelegramCommandAliasesRoundTripAndRejectLegacySuffix(t *testing.T) {
 		// supported alias must still reach the canonical command through it.
 		supported := alias + "@GatewayBot argument"
 		v := telegramGatewayUpdate(1, 123456, supported)
-		v.Message.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: imUTF16Units(alias + "@GatewayBot")}}
+		v.Message.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: im.UTF16Units(alias + "@GatewayBot")}}
 		text, reason := telegramNormalizeCommand(supported, v.Message.Entities, "GatewayBot")
 		if reason != "" || text != canonical+" argument" || parseIMCommand(text).Type != parseIMCommand(canonical+" argument").Type {
 			t.Fatalf("supported alias rejected: text=%q reason=%q", text, reason)
@@ -145,7 +147,7 @@ func TestTelegramPartialFailureVisibleInStatusAndMetrics(t *testing.T) {
 	a, _ := f.adapter(t, f.botID)
 	calls := 0
 	var err error
-	a.sender, err = NewIMTextSender(IMTextSendOptions{Platform: "telegram", Budget: 3500, Measure: imUTF16Units, SendSegment: func(context.Context, string, string) error {
+	a.sender, err = im.NewIMTextSender(im.IMTextSendOptions{Platform: "telegram", Budget: 3500, Measure: im.UTF16Units, SendSegment: func(context.Context, string, string) error {
 		calls++
 		if calls == 2 {
 			return &telegramAPIError{Category: "chat_migrated"}
@@ -160,7 +162,7 @@ func TestTelegramPartialFailureVisibleInStatusAndMetrics(t *testing.T) {
 	if err = a.SendTextContext(t.Context(), "123456", strings.Repeat("x", 3501)); err == nil {
 		t.Fatal("expected failure")
 	}
-	status := f.router.ingressStatus(IncomingMessage{IMType: "telegram", AccountID: "917002", ChatID: "123456"})
+	status := f.router.ingressStatus(im.IncomingMessage{IMType: "telegram", AccountID: "917002", ChatID: "123456"})
 	if !strings.Contains(status, "Last outbound failure: chat_migrated after 1 accepted segments.") {
 		t.Fatal(status)
 	}

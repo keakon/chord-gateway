@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -30,13 +32,17 @@ const (
 	hintChatBucketMax = 256
 )
 
-var errPairingDenied = errors.New("pairing authorization is no longer valid")
+// pairingHint is the bounded hint-reply budget for one unpaired private chat.
+type pairingHint struct {
+	tokens   int
+	refilled time.Time
+}
 
 type pairingPlatform struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	presentation   PlatformPresentation
+	presentation   im.PlatformPresentation
 	account        string
 	epoch          uint64
 	ready, changed bool
@@ -46,12 +52,6 @@ type pairingPlatform struct {
 	// Hint budgets are keyed by private chat, not shared across the platform:
 	// a spammer in one chat must not silence hints for unpaired users elsewhere.
 	hints map[string]*pairingHint
-}
-
-// pairingHint is the bounded hint-reply budget for one unpaired private chat.
-type pairingHint struct {
-	tokens   int
-	refilled time.Time
 }
 
 // PairingService keeps credentials in memory and writes them only to the
@@ -81,14 +81,14 @@ func NewPairingService(store *ConfigStore, enabled bool, terminal io.Writer) *Pa
 }
 
 func (p *PairingService) PlatformReady(platform, accountID string) error {
-	return p.PlatformReadyWithPresentation(platform, accountID, PlatformPresentation{Platform: platform})
+	return p.PlatformReadyWithPresentation(platform, accountID, im.PlatformPresentation{Platform: platform})
 }
 
-func (p *PairingService) PlatformReadyWithPresentation(platform, accountID string, presentation PlatformPresentation) error {
+func (p *PairingService) PlatformReadyWithPresentation(platform, accountID string, presentation im.PlatformPresentation) error {
 	p.mu.Lock()
 	if accountID == "" {
 		p.mu.Unlock()
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	state := p.platforms[platform]
 	if state == nil {
@@ -107,24 +107,24 @@ func (p *PairingService) PlatformReadyWithPresentation(platform, accountID strin
 		state.changed = true
 		state.account = accountID
 		p.mu.Unlock()
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	presentation.Platform = platform
 	state.presentation = presentation
 	if state.changed {
 		p.mu.Unlock()
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
 	cfg := p.store.Snapshot()
-	im := cfg.IMConfigByType(platform)
-	if im == nil {
+	imCfg := cfg.IMConfigByType(platform)
+	if imCfg == nil {
 		p.mu.Unlock()
-		return errPairingDenied
+		return im.ErrPairingDenied
 	}
-	if owner := im.OwnerIdentity(); owner != nil {
+	if owner := imCfg.OwnerIdentity(); owner != nil {
 		if owner.AccountID != accountID {
 			p.mu.Unlock()
-			return errPairingDenied
+			return im.ErrPairingDenied
 		}
 		state.ready = true
 		p.mu.Unlock()
@@ -194,8 +194,8 @@ func (p *PairingService) preparePairingCodeLocked() (string, error) {
 	p.codeID = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:])
 	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(p.codeNonce[:])
 	names := make([]string, 0)
-	for _, im := range p.store.Snapshot().ActiveIMs() {
-		names = append(names, im.Type())
+	for _, imCfg := range p.store.Snapshot().ActiveIMs() {
+		names = append(names, imCfg.Type())
 	}
 	sort.Strings(names)
 	// One code serves every platform, and most platforms render the same
@@ -205,7 +205,7 @@ func (p *PairingService) preparePairingCodeLocked() (string, error) {
 	order := make([]string, 0, len(names))
 	grouped := make(map[string][]string, len(names))
 	for _, plat := range names {
-		hint := FormatCommandHint(PlatformPresentation{Platform: plat}, CommandTarget{ChatKind: "private"}, bind)
+		hint := im.FormatCommandHint(im.PlatformPresentation{Platform: plat}, im.CommandTarget{ChatKind: "private"}, bind)
 		if _, seen := grouped[hint]; !seen {
 			order = append(order, hint)
 		}

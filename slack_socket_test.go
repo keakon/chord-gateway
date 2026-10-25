@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func slackSocketTestAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
@@ -32,7 +33,7 @@ func slackSocketTestAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, _ := EncodeScopedID("account-v1:", "TTEST", "UBOT")
+	account, _ := im.EncodeScopedID("account-v1:", "TTEST", "UBOT")
 	identity := slackIdentity{TeamID: "TTEST", AppID: "ATEST", BotUserID: "UBOT", BotID: "BBOT", AccountID: account}
 	adapter.identity, adapter.identityVerified = identity, true
 	adapter.verifyIdentity = func(context.Context) (slackIdentity, error) { return identity, nil }
@@ -234,7 +235,7 @@ func TestSlackSocketURLAndFatalAuthentication(t *testing.T) {
 		t.Fatal("fatal classification")
 	}
 	for i := 0; i < 10; i++ {
-		d := reconnectBackoff(i)
+		d := im.ReconnectBackoff(i)
 		if d < 800*time.Millisecond || d > 36*time.Second {
 			t.Fatal(d)
 		}

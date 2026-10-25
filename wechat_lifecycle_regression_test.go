@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func assertWechatConnectionStopped(t *testing.T, a *WechatAdapter) {
@@ -24,7 +26,7 @@ func assertWechatConnectionStopped(t *testing.T, a *WechatAdapter) {
 	if ready {
 		t.Fatal("stopped supervisor left platform ready")
 	}
-	lock, err := AcquireIMAccountLock("wechat", a.token.Load().AccountID)
+	lock, err := im.AcquireIMAccountLock("wechat", a.token.Load().AccountID)
 	if err != nil {
 		t.Fatalf("stopped supervisor retained account lock: %v", err)
 	}
@@ -34,7 +36,7 @@ func assertWechatConnectionStopped(t *testing.T, a *WechatAdapter) {
 func TestWechatFatalPollingExitPausesSharedDelivery(t *testing.T) {
 	a, service, _, writer := newWechatIngressTest(t)
 	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("1", "owner", "pending task", ""), a.token.Load())
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	a.cachePairedContext("bot", "cached-chat", "context", true)
@@ -55,7 +57,7 @@ func TestWechatFatalPollingExitPausesSharedDelivery(t *testing.T) {
 	reply.accountEpoch = epoch
 	a.replyContexts[key] = reply
 	a.mu.Unlock()
-	if readiness := a.IngressDeliveryReadiness(ChatIdentity{"wechat", "bot", "owner"}); readiness.Ready {
+	if readiness := a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "owner"}); readiness.Ready {
 		t.Fatal("stopped adapter reopened delivery")
 	}
 	if !service.Available() {

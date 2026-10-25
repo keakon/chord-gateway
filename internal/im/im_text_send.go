@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 const (
 	IMTextSendTimeout    = 5 * time.Minute
 	IMControlSendTimeout = 15 * time.Second
-	imTextMaxBytes       = 64 << 10
-	imTextMaxSegments    = 32
+	MaxTextBytes         = 64 << 10
+	MaxTextSegments      = 32
 )
 
-// Shared by all platforms, rather than allowing eight senders per account.
-var imTextSendSlots = make(chan struct{}, 8)
+// IMTextSendSlots is shared by all platforms, rather than allowing eight senders per account.
+var IMTextSendSlots = make(chan struct{}, 8)
 
 // IMRateLimitError denotes an explicit platform rejection that accepted no
 // message. Never wrap a timeout or an unknown HTTP outcome in this type.
@@ -38,14 +38,14 @@ type IMTextSendError struct {
 	Cause            error
 }
 
-// imTextFailureClassifier allows a transport to retain a definite rejection or
+// IMTextFailureClassifier allows a transport to retain a definite rejection or
 // unknown outcome in partial-send diagnostics without exposing platform data.
-type imTextFailureClassifier interface {
+type IMTextFailureClassifier interface {
 	IMTextSendFailureCategory() string
 }
 
 // imTextFailureCategories is the bounded set of transport evidence a classifier
-// may report. These values are also metric labels, so imMetricReason must accept
+// may report. These values are also metric labels, so MetricReason must accept
 // every entry: a value the metrics vocabulary rejects becomes "other" and hides
 // which transport actually failed.
 var imTextFailureCategories = []string{
@@ -99,7 +99,7 @@ func NewIMTextSender(options IMTextSendOptions) (*IMTextSender, error) {
 	if options.TruncationNotice == "" {
 		options.TruncationNotice = "[Output truncated. View the full result in the original Chord session.]"
 	}
-	if !utf8.ValidString(options.TruncationNotice) || options.TruncationNotice == "" || len(options.TruncationNotice)+1 > imTextMaxBytes {
+	if !utf8.ValidString(options.TruncationNotice) || options.TruncationNotice == "" || len(options.TruncationNotice)+1 > MaxTextBytes {
 		return nil, errors.New("invalid truncation notice")
 	}
 	if n := options.Measure(options.Render(options.TruncationNotice)); n < 0 || n > options.Budget {
@@ -133,7 +133,7 @@ func (s *IMTextSender) Send(ctx, lifecycle, permit context.Context, target, text
 	}
 	fail := func(accepted int, category string, err error) error {
 		if s.options.FailureCategory != nil {
-			category = imMetricReason(s.options.FailureCategory(ctx, category, err))
+			category = MetricReason(s.options.FailureCategory(ctx, category, err))
 		}
 		s.observeSendFailure(target, accepted, category)
 		return &IMTextSendError{accepted, category, err}
@@ -144,12 +144,12 @@ func (s *IMTextSender) Send(ctx, lifecycle, permit context.Context, target, text
 	if err := ctx.Err(); err != nil {
 		return fail(0, "cancelled", err)
 	}
-	release, err := s.acquireTarget(ctx, target)
+	release, err := s.AcquireTarget(ctx, target)
 	if err != nil {
 		return fail(0, "cancelled", err)
 	}
 	defer release()
-	segments, err := s.segments(text)
+	segments, err := s.Segments(text)
 	if err != nil {
 		return fail(0, "invalid_text", err)
 	}
@@ -159,24 +159,24 @@ func (s *IMTextSender) Send(ctx, lifecycle, permit context.Context, target, text
 				return fail(i, "cancelled", err)
 			}
 			select {
-			case imTextSendSlots <- struct{}{}:
+			case IMTextSendSlots <- struct{}{}:
 			case <-ctx.Done():
 				return fail(i, "cancelled", ctx.Err())
 			}
 			if err = ctx.Err(); err == nil {
 				err = s.options.SendSegment(ctx, target, segment)
 			}
-			<-imTextSendSlots
+			<-IMTextSendSlots
 			if err == nil {
 				break
 			}
 			// A cancellation after the transport wrote a segment still leaves
 			// its delivery unknown. Retain that outcome rather than implying
 			// the segment was merely cancelled before sending.
-			if errors.Is(err, errDeliveryOutcomeUnknown) {
+			if errors.Is(err, ErrDeliveryOutcomeUnknown) {
 				return fail(i, "unknown_send", errors.Join(ctx.Err(), err))
 			}
-			var classified imTextFailureClassifier
+			var classified IMTextFailureClassifier
 			if errors.As(err, &classified) {
 				if category := classified.IMTextSendFailureCategory(); slices.Contains(imTextFailureCategories, category) {
 					return fail(i, category, err)
@@ -198,17 +198,17 @@ func (s *IMTextSender) Send(ctx, lifecycle, permit context.Context, target, text
 			timer := time.NewTimer(limited.RetryAfter)
 			select {
 			case <-timer.C:
-				s.observeRateWait(time.Since(waitStart))
+				s.ObserveRateWait(time.Since(waitStart))
 			case <-ctx.Done():
 				timer.Stop()
-				s.observeRateWait(time.Since(waitStart))
+				s.ObserveRateWait(time.Since(waitStart))
 				return fail(i, "cancelled", ctx.Err())
 			}
 		}
 	}
 	return nil
 }
-func (s *IMTextSender) acquireTarget(ctx context.Context, target string) (func(), error) {
+func (s *IMTextSender) AcquireTarget(ctx context.Context, target string) (func(), error) {
 	s.mu.Lock()
 	entry := s.targets[target]
 	if entry == nil {
@@ -268,17 +268,17 @@ func trimIMTextBytes(text string, limit int) string {
 	}
 	return text
 }
-func (s *IMTextSender) segments(text string) ([]string, error) {
+func (s *IMTextSender) Segments(text string) ([]string, error) {
 	if !utf8.ValidString(text) {
 		return nil, errors.New("text is not valid UTF-8")
 	}
 	if text == "" {
 		return nil, nil
 	}
-	raw := trimIMTextBytes(text, imTextMaxBytes)
+	raw := trimIMTextBytes(text, MaxTextBytes)
 	var source []string
 	remaining := raw
-	for len(source) < imTextMaxSegments && remaining != "" {
+	for len(source) < MaxTextSegments && remaining != "" {
 		part := s.prefix(remaining, "")
 		if part == "" {
 			return nil, errors.New("one character exceeds segment budget")
@@ -290,9 +290,9 @@ func (s *IMTextSender) segments(text string) ([]string, error) {
 	if truncated {
 		notice := s.options.TruncationNotice
 		// Reserve both the bytes and the final segment before sending anything.
-		remaining = trimIMTextBytes(text, imTextMaxBytes-len(notice)-1)
+		remaining = trimIMTextBytes(text, MaxTextBytes-len(notice)-1)
 		source = nil
-		for len(source) < imTextMaxSegments-1 && remaining != "" {
+		for len(source) < MaxTextSegments-1 && remaining != "" {
 			if s.fits(remaining + "\n" + notice) {
 				break
 			}
@@ -317,7 +317,7 @@ func (s *IMTextSender) segments(text string) ([]string, error) {
 	return rendered, nil
 }
 
-func imUTF16Units(text string) int {
+func UTF16Units(text string) int {
 	n := 0
 	for _, r := range text {
 		n++

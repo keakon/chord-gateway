@@ -3,6 +3,8 @@ package main
 import (
 	"strconv"
 	"strings"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type questionAnswer struct {
@@ -13,7 +15,7 @@ type questionAnswer struct {
 
 // parseQuestionAnswer resolves identities once. Labels are presentation only;
 // custom text remains one answer even when it contains commas or matches an ID.
-func parseQuestionAnswer(raw []string, q *QuestionPayload, action *InternalAction) questionAnswer {
+func parseQuestionAnswer(raw []string, q *QuestionPayload, action *im.InternalAction) questionAnswer {
 	if q == nil {
 		return questionAnswer{}
 	}
@@ -24,7 +26,7 @@ func parseQuestionAnswer(raw []string, q *QuestionPayload, action *InternalActio
 		}
 		return questionAnswer{values: []string{text}, labels: []string{text}, custom: true}
 	}
-	if action != nil && !action.questionFormSubmit() {
+	if action != nil && !action.QuestionFormSubmit() {
 		for i, id := range q.OptionIDs {
 			if action.Value == id && i < len(q.Options) {
 				return questionAnswer{values: []string{id}, labels: []string{q.Options[i]}}

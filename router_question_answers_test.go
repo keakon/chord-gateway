@@ -3,6 +3,8 @@ package main
 import (
 	"slices"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestQuestionAnswerIdentityAndCustomText(t *testing.T) {
@@ -10,7 +12,7 @@ func TestQuestionAnswerIdentityAndCustomText(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		raw    []string
-		action *InternalAction
+		action *im.InternalAction
 		values []string
 		labels []string
 		custom bool
@@ -20,10 +22,10 @@ func TestQuestionAnswerIdentityAndCustomText(t *testing.T) {
 		{name: "typed comma remains custom", raw: []string{"yes, please"}, values: []string{"yes, please"}, labels: []string{"yes, please"}, custom: true},
 		{name: "out of range remains custom", raw: []string{"4"}, values: []string{"4"}, labels: []string{"4"}, custom: true},
 		{name: "mixed indices remain custom", raw: []string{"1,yes"}, values: []string{"1,yes"}, labels: []string{"1,yes"}, custom: true},
-		{name: "button uses stable ID", action: &InternalAction{Type: "question", Value: "second"}, values: []string{"second"}, labels: []string{"Same label"}},
-		{name: "form preserves comma label and order", action: &InternalAction{Type: "question", Values: []string{"3", "1"}}, values: []string{"third", "first"}, labels: []string{"yes, always", "Same label"}},
-		{name: "invalid form rejects whole answer", action: &InternalAction{Type: "question", Values: []string{"1", "4"}}},
-		{name: "unknown button rejected", action: &InternalAction{Type: "question", Value: "missing"}},
+		{name: "button uses stable ID", action: &im.InternalAction{Type: "question", Value: "second"}, values: []string{"second"}, labels: []string{"Same label"}},
+		{name: "form preserves comma label and order", action: &im.InternalAction{Type: "question", Values: []string{"3", "1"}}, values: []string{"third", "first"}, labels: []string{"yes, always", "Same label"}},
+		{name: "invalid form rejects whole answer", action: &im.InternalAction{Type: "question", Values: []string{"1", "4"}}},
+		{name: "unknown button rejected", action: &im.InternalAction{Type: "question", Value: "missing"}},
 		{name: "empty text rejected", raw: []string{" "}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

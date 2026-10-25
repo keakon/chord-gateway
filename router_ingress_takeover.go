@@ -10,6 +10,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // routeChangeSettle makes the finish closure from beginIngressRouteChange
@@ -81,7 +82,7 @@ func (s *routeChangeSettle) transfer() *routeChangeSettle {
 
 // dispatchIngressTakeover is called with the admission gate held. Unlike the
 // legacy observer, it returns evidence from this exact transfer operation.
-func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg IncomingMessage, key string, cmd IMCommand, target *IngressControlTarget) DispatchResult {
+func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg im.IncomingMessage, key string, cmd im.IMCommand, target *im.IngressControlTarget) DispatchResult {
 	reject := func(reason string) DispatchResult { return DispatchResult{"rejected", reason} }
 	unknown := func(reason string) DispatchResult { return DispatchResult{"unknown", reason} }
 	m := r.mgr
@@ -148,7 +149,7 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 		if status.State != transferStatePreflight || status.Workspace == "" || status.SourceRuntimeID == "" || status.TransferID != req.TransferID || status.SessionID != req.SessionID || status.TargetKind != "gateway" || status.TargetInstanceID != req.TargetInstanceID {
 			return reject("takeover_preflight_identity_mismatch")
 		}
-		finish, e := r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+		finish, e := r.beginIngressRouteChange(ctx, msg.AdmissionTicket().Identity)
 		if e != nil {
 			return reject("undelivered_inputs")
 		}
@@ -187,7 +188,7 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 	}
 	// Status is a query unless it must finish a previously released restoration.
 	if record.Direction == "incoming" && (record.Status.State == "released" || record.Status.State == "restoring") {
-		finish, e := r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+		finish, e := r.beginIngressRouteChange(ctx, msg.AdmissionTicket().Identity)
 		if e != nil {
 			return reject("undelivered_inputs")
 		}
@@ -196,7 +197,7 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg In
 	return r.runIngressTakeoverStep(ctx, msg, key, ws, record, localPreparation, false, nil)
 }
 
-func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg IncomingMessage, key string, ws *config.Workspace, record sessionTransfer, localPreparation, start bool, settle *routeChangeSettle) (result DispatchResult) {
+func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg im.IncomingMessage, key string, ws *config.Workspace, record sessionTransfer, localPreparation, start bool, settle *routeChangeSettle) (result DispatchResult) {
 	// An abandoned change must never leave the route in "changing": the chat
 	// would refuse every later task with route_changing and never recover.
 	defer func() {
@@ -239,7 +240,7 @@ func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg Inc
 	if record.Direction == "incoming" && status.State == "released" {
 		next := settle.transfer()
 		if next == nil {
-			finish, e := r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+			finish, e := r.beginIngressRouteChange(ctx, msg.AdmissionTicket().Identity)
 			if e != nil {
 				return DispatchResult{"rejected", "undelivered_inputs"}
 			}
@@ -256,7 +257,7 @@ func (r *NotificationRouter) runIngressTakeoverStep(ctx context.Context, msg Inc
 	return DispatchResult{"completed", ""}
 }
 
-func (r *NotificationRouter) restoreIngressTakeover(ctx context.Context, msg IncomingMessage, key string, record sessionTransfer, settle *routeChangeSettle) (result DispatchResult) {
+func (r *NotificationRouter) restoreIngressTakeover(ctx context.Context, msg im.IncomingMessage, key string, record sessionTransfer, settle *routeChangeSettle) (result DispatchResult) {
 	// Restoration failing must still settle the route, or the chat keeps
 	// refusing every later task with route_changing.
 	defer func() {

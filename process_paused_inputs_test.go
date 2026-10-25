@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func testPausedInputs() *PausedInputs {
@@ -176,7 +177,7 @@ func TestPausedInputsVisibleThroughTargetRestoreAndStatusCommand(t *testing.T) {
 	if m.transferBlocked(key) || m.pins.Get(pinKeyForBinding(key)) != "session-1" || strings.Contains(text, "Pending inputs: 99") {
 		t.Fatal("target was not published from its own paused input snapshot")
 	}
-	router.dispatchMessage(IncomingMessage{IMType: "wechat", ChatID: "chat", Text: "/status"})
+	router.dispatchMessage(im.IncomingMessage{IMType: "wechat", ChatID: "chat", Text: "/status"})
 	text = adapter.lastMessage().text
 	for _, want := range []string{"Paused", "Pending inputs: 2", "Review the document", "task-2 · input-2"} {
 		requireContains(t, text, want)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type imageRoundTripper func(*http.Request) (*http.Response, error)
@@ -103,7 +104,7 @@ func TestFeishuDisconnectCancelsImageUpload(t *testing.T) {
 				return nil, req.Context().Err()
 			})}
 			if phase == "waiting" {
-				release, err := acquireImageUpload(t.Context())
+				release, err := im.AcquireImageUpload(t.Context())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -125,7 +126,7 @@ func TestFeishuDisconnectCancelsImageUpload(t *testing.T) {
 			a.Disconnect()
 			select {
 			case err := <-sendDone:
-				if !errors.Is(err, context.Canceled) || errors.Is(err, errDeliveryOutcomeUnknown) != (phase == "sending") {
+				if !errors.Is(err, context.Canceled) || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != (phase == "sending") {
 					t.Fatalf("cancelled upload = %v", err)
 				}
 			case <-time.After(2 * time.Second):

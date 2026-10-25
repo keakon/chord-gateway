@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 var (
@@ -53,7 +55,7 @@ func EncodeWecomTarget(kind, target string) (string, error) {
 	if strings.TrimSpace(target) == "" {
 		return "", errors.New("invalid wecom target")
 	}
-	return EncodeScopedID("target-v1:", scope, target)
+	return im.EncodeScopedID("target-v1:", scope, target)
 }
 
 type wecomSendTarget struct {
@@ -63,7 +65,7 @@ type wecomSendTarget struct {
 
 // DecodeWecomTarget preserves the addressing mode for proactive sending.
 func DecodeWecomTarget(chatID string) (wecomSendTarget, error) {
-	parts, err := DecodeScopedID(chatID, "target-v1:", 2)
+	parts, err := im.DecodeScopedID(chatID, "target-v1:", 2)
 	if err != nil || (parts[0] != "wecom-dm" && parts[0] != "wecom-group") || strings.TrimSpace(parts[1]) == "" {
 		return wecomSendTarget{}, errors.New("invalid wecom target")
 	}
@@ -78,9 +80,9 @@ func DecodeWecomTarget(chatID string) (wecomSendTarget, error) {
 // official SDK. In particular, chattype and chatid are top-level body fields;
 // only msgtype "text" is a user command, so voice transcripts and mixed
 // messages are not.
-func NormalizeWecomCallback(raw []byte, account string, receivedAt time.Time) (IngressEnvelope, error) {
+func NormalizeWecomCallback(raw []byte, account string, receivedAt time.Time) (im.IngressEnvelope, error) {
 	if len(raw) > 1<<20 || !utf8.Valid(raw) || strings.TrimSpace(account) == "" || receivedAt.IsZero() {
-		return IngressEnvelope{}, errWecomInvalidCallback
+		return im.IngressEnvelope{}, errWecomInvalidCallback
 	}
 	var frame struct {
 		Command string `json:"cmd"`
@@ -104,45 +106,45 @@ func NormalizeWecomCallback(raw []byte, account string, receivedAt time.Time) (I
 		} `json:"body"`
 	}
 	if json.Unmarshal(raw, &frame) != nil {
-		return IngressEnvelope{}, errWecomInvalidCallback
+		return im.IngressEnvelope{}, errWecomInvalidCallback
 	}
 	if frame.Command != "aibot_msg_callback" {
-		return IngressEnvelope{}, errWecomUnsupportedCallback
+		return im.IngressEnvelope{}, errWecomUnsupportedCallback
 	}
 	b := frame.Body
 	if strings.TrimSpace(b.BotID) == "" {
-		return IngressEnvelope{}, errWecomInvalidCallback
+		return im.IngressEnvelope{}, errWecomInvalidCallback
 	}
 	// Check the account before filtering message type: an identity mismatch is
 	// fatal even when the callback is for a currently unsupported media type.
 	if b.BotID != account {
-		return IngressEnvelope{}, errWecomAccountMismatch
+		return im.IngressEnvelope{}, errWecomAccountMismatch
 	}
 	// compat_info is present -- even as JSON null -- whenever the callback is
 	// not an ordinary text message from a real user. Detect key presence, not
 	// the payload content.
 	if b.CompatInfo != nil {
-		return IngressEnvelope{}, errWecomUnsupportedCallback
+		return im.IngressEnvelope{}, errWecomUnsupportedCallback
 	}
 	// Type comes before per-field validation: a voice or mixed callback is
 	// deliberately unsupported even when its other fields are incomplete, so it
 	// must not be reported as malformed user text.
 	if b.Type != "text" {
-		return IngressEnvelope{}, errWecomUnsupportedCallback
+		return im.IngressEnvelope{}, errWecomUnsupportedCallback
 	}
 	for _, id := range []string{b.BotID, b.MessageID, b.From.UserID} {
-		if strings.TrimSpace(id) == "" || len(id) > maxScopedIDBytes {
-			return IngressEnvelope{}, errWecomInvalidCallback
+		if strings.TrimSpace(id) == "" || len(id) > im.MaxScopedIDBytes {
+			return im.IngressEnvelope{}, errWecomInvalidCallback
 		}
 	}
-	if len("message:")+len(b.MessageID) > maxScopedIDBytes || len(frame.Headers.RequestID) > maxScopedIDBytes || b.Text == nil || b.Text.Content == nil || len(*b.Text.Content) > 64<<10 {
-		return IngressEnvelope{}, errWecomInvalidCallback
+	if len("message:")+len(b.MessageID) > im.MaxScopedIDBytes || len(frame.Headers.RequestID) > im.MaxScopedIDBytes || b.Text == nil || b.Text.Content == nil || len(*b.Text.Content) > 64<<10 {
+		return im.IngressEnvelope{}, errWecomInvalidCallback
 	}
 	// An empty or blank message is not a task; rejecting it here keeps the
 	// shared dispatch from sending empty input to Chord (Telegram already
 	// refuses empty text the same way).
 	if strings.TrimSpace(*b.Text.Content) == "" {
-		return IngressEnvelope{}, fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomEmptyText)
+		return im.IngressEnvelope{}, fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomEmptyText)
 	}
 	kind, target := "", ""
 	switch b.ChatType {
@@ -151,18 +153,18 @@ func NormalizeWecomCallback(raw []byte, account string, receivedAt time.Time) (I
 	case "group":
 		kind, target = "group", b.ChatID
 	default:
-		return IngressEnvelope{}, errWecomInvalidCallback
+		return im.IngressEnvelope{}, errWecomInvalidCallback
 	}
 	chatID, err := EncodeWecomTarget(kind, target)
 	if err != nil {
-		return IngressEnvelope{}, errWecomInvalidCallback
+		return im.IngressEnvelope{}, errWecomInvalidCallback
 	}
 	sourceTime, err := wecomSourceTime(b.Created, receivedAt)
 	if err != nil {
-		return IngressEnvelope{}, err
+		return im.IngressEnvelope{}, err
 	}
-	return IngressEnvelope{
-		Message:    IncomingMessage{IMType: "wecom", AccountID: account, ChatKind: kind, ChatID: chatID, SenderID: b.From.UserID, MessageID: "message:" + b.MessageID, Text: *b.Text.Content},
+	return im.IngressEnvelope{
+		Message:    im.IncomingMessage{IMType: "wecom", AccountID: account, ChatKind: kind, ChatID: chatID, SenderID: b.From.UserID, MessageID: "message:" + b.MessageID, Text: *b.Text.Content},
 		DeliveryID: frame.Headers.RequestID,
 		SourceTime: sourceTime,
 		ReceivedAt: receivedAt,

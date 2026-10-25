@@ -9,22 +9,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatPollingRetainsRetryablePosition(t *testing.T) {
 	batch := wechatPollingBatch{response: &ilinkGetUpdatesResponse{Msgs: []ilinkMessage{{MessageID: "1"}, {MessageID: "2"}, {MessageID: "3"}}}}
 	var called []string
 	retry := true
-	receive := func(_ context.Context, msg ilinkMessage, _ ReceiveResult) ReceiveResult {
+	receive := func(_ context.Context, msg ilinkMessage, _ im.ReceiveResult) im.ReceiveResult {
 		called = append(called, msg.MessageID.String())
 		if msg.MessageID == "2" && retry {
-			return ReceiveResult{Disposition: ReceiveRetryable}
+			return im.ReceiveResult{Disposition: im.ReceiveRetryable}
 		}
-		return ReceiveResult{Disposition: ReceiveAccepted, RecordID: msg.MessageID.String()}
+		return im.ReceiveResult{Disposition: im.ReceiveAccepted, RecordID: msg.MessageID.String()}
 	}
-	resolve := func(context.Context, ilinkMessage, ReceiveResult) ReceiveResult {
+	resolve := func(context.Context, ilinkMessage, im.ReceiveResult) im.ReceiveResult {
 		t.Fatal("retryable was treated as uncertain")
-		return ReceiveResult{}
+		return im.ReceiveResult{}
 	}
 	if batch.advance(t.Context(), receive, resolve) || batch.position != 1 || !reflect.DeepEqual(called, []string{"1", "2"}) {
 		t.Fatalf("position=%d calls=%v", batch.position, called)
@@ -39,15 +41,15 @@ func TestWechatPollingUncertainQueriesBeforeContinuing(t *testing.T) {
 	store := testIngressStore(t)
 	batch := wechatPollingBatch{response: &ilinkGetUpdatesResponse{Msgs: []ilinkMessage{{MessageID: "1"}, {MessageID: "2"}, {MessageID: "3"}}}}
 	var calls, queries int
-	receive := func(_ context.Context, msg ilinkMessage, _ ReceiveResult) ReceiveResult {
+	receive := func(_ context.Context, msg ilinkMessage, _ im.ReceiveResult) im.ReceiveResult {
 		calls++
 		if msg.MessageID == "2" {
-			return ReceiveResult{Disposition: ReceiveUncertain}
+			return im.ReceiveResult{Disposition: im.ReceiveUncertain}
 		}
-		return ReceiveResult{Disposition: ReceiveTransportIgnored}
+		return im.ReceiveResult{Disposition: im.ReceiveTransportIgnored}
 	}
 	business := wechatIngressBusinessID("sender", "2")
-	resolve := func(_ context.Context, _ ilinkMessage, previous ReceiveResult) ReceiveResult {
+	resolve := func(_ context.Context, _ ilinkMessage, previous im.ReceiveResult) im.ReceiveResult {
 		queries++
 		result, err := store.lookupCommittedBusiness("wechat", "account", business)
 		if err != nil {
@@ -62,7 +64,7 @@ func TestWechatPollingUncertainQueriesBeforeContinuing(t *testing.T) {
 		t.Fatal("resubmitted uncertain item")
 	}
 	record := IngressRecord{Platform: "wechat", AccountID: "account", ChatID: "sender", SenderID: "sender", BusinessID: business, Kind: "task", State: "rejected", Reason: "authorization_denied", ReceivedAt: time.Now()}
-	if result := store.AcceptRecord(t.Context(), record, nil); result.Disposition != ReceiveRejected {
+	if result := store.AcceptRecord(t.Context(), record, nil); result.Disposition != im.ReceiveRejected {
 		t.Fatal(result)
 	}
 	if !batch.advance(t.Context(), receive, resolve) || calls != 3 || queries != 2 {
@@ -73,17 +75,17 @@ func TestWechatPollingUncertainQueriesBeforeContinuing(t *testing.T) {
 func TestWechatPollingOnlyCommittedRefusalAdvances(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		result   ReceiveResult
+		result   im.ReceiveResult
 		complete bool
 	}{
-		{"ignored", ReceiveResult{Disposition: ReceiveTransportIgnored}, true},
-		{"duplicate", ReceiveResult{Disposition: ReceiveDuplicate, State: "consumed"}, true},
-		{"rejected", ReceiveResult{Disposition: ReceiveRejected, RecordID: "durable"}, true},
-		{"uncommitted_refusal", ReceiveResult{Disposition: ReceiveRejected}, false},
+		{"ignored", im.ReceiveResult{Disposition: im.ReceiveTransportIgnored}, true},
+		{"duplicate", im.ReceiveResult{Disposition: im.ReceiveDuplicate, State: "consumed"}, true},
+		{"rejected", im.ReceiveResult{Disposition: im.ReceiveRejected, RecordID: "durable"}, true},
+		{"uncommitted_refusal", im.ReceiveResult{Disposition: im.ReceiveRejected}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			batch := wechatPollingBatch{response: &ilinkGetUpdatesResponse{Msgs: []ilinkMessage{{}}}}
-			fn := func(context.Context, ilinkMessage, ReceiveResult) ReceiveResult { return tc.result }
+			fn := func(context.Context, ilinkMessage, im.ReceiveResult) im.ReceiveResult { return tc.result }
 			if complete := batch.advance(t.Context(), fn, fn); complete != tc.complete {
 				t.Fatal(complete)
 			}
@@ -139,7 +141,7 @@ func TestWechatMalformedTopLevelIDNeverUsesItemFallback(t *testing.T) {
 }
 
 func TestWechatCursorMissingBufPreservesCheckpoint(t *testing.T) {
-	previous := IngressCursor{Kind: "wechat", Version: 1, Generation: 4, Wechat: &WechatIngressCursor{AccountID: "account", Buf: "opaque-prev", BatchVersion: 8}}
+	previous := im.IngressCursor{Kind: "wechat", Version: 1, Generation: 4, Wechat: &im.WechatIngressCursor{AccountID: "account", Buf: "opaque-prev", BatchVersion: 8}}
 	for _, buf := range []string{"", "opaque-prev", "opaque-next"} {
 		next, err := nextWechatCursor(previous, "account", buf)
 		if err != nil || next.Generation != 5 || next.Wechat.BatchVersion != 9 {
@@ -190,9 +192,9 @@ func TestWechatCursorRejectsOldAccountSnapshot(t *testing.T) {
 	a.msgRouter = service.router
 	old := a.token.Load()
 	epoch, _ := a.currentPollingEpoch(old)
-	next, _ := nextWechatCursor(IngressCursor{}, old.AccountID, "old-next")
+	next, _ := nextWechatCursor(im.IngressCursor{}, old.AccountID, "old-next")
 	a.swapPollingToken(&TokenData{AccountID: "replacement", Token: "replacement-token"})
-	if err := a.commitPollingCursor(t.Context(), old, epoch, IngressCursor{}, next); !errors.Is(err, errWechatPollingIdentityChanged) {
+	if err := a.commitPollingCursor(t.Context(), old, epoch, im.IngressCursor{}, next); !errors.Is(err, errWechatPollingIdentityChanged) {
 		t.Fatal(err)
 	}
 	if actual, err := service.store.Cursor("wechat", old.AccountID); err != nil || actual.Generation != 0 {
@@ -206,12 +208,12 @@ func TestWechatCursorEpochChangeStopsAdvance(t *testing.T) {
 	a.msgRouter = service.router
 	token := a.token.Load()
 	epoch, _ := a.currentPollingEpoch(token)
-	next, _ := nextWechatCursor(IngressCursor{}, token.AccountID, "next")
+	next, _ := nextWechatCursor(im.IngressCursor{}, token.AccountID, "next")
 	p := service.router.admission.pairing
 	p.mu.Lock()
 	p.platforms["wechat"].epoch++
 	p.mu.Unlock()
-	if err := a.commitPollingCursor(t.Context(), token, epoch, IngressCursor{}, next); !errors.Is(err, errWechatPollingIdentityChanged) {
+	if err := a.commitPollingCursor(t.Context(), token, epoch, im.IngressCursor{}, next); !errors.Is(err, errWechatPollingIdentityChanged) {
 		t.Fatal(err)
 	}
 	if actual, err := service.store.Cursor("wechat", token.AccountID); err != nil || actual.Generation != 0 {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestNewIMAdapter_UnsupportedType(t *testing.T) {
@@ -62,7 +63,7 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 		if _, ok := adapter.(*WecomAdapter); !ok || adapter.Type() != "wecom" || adapter.SupportsLoginRenewal() {
 			t.Fatalf("unexpected wecom adapter: %T", adapter)
 		}
-		if _, err = adapter.StartLogin(); err != ErrLoginNotSupported {
+		if _, err = adapter.StartLogin(); err != im.ErrLoginNotSupported {
 			t.Fatalf("StartLogin() error = %v", err)
 		}
 	})

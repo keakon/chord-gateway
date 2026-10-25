@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type orderedIngressReceiver struct {
@@ -15,42 +17,42 @@ type orderedIngressReceiver struct {
 	ids []string
 }
 
-func (r *orderedIngressReceiver) Accept(_ context.Context, e IngressEnvelope) ReceiveResult {
+func (r *orderedIngressReceiver) Accept(_ context.Context, e im.IngressEnvelope) im.ReceiveResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.ids = append(r.ids, e.Message.MessageID)
-	return ReceiveResult{Disposition: ReceiveAccepted}
+	return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 }
 func TestIngressNormalizationPreservesTargetOrder(t *testing.T) {
 	receiver := &orderedIngressReceiver{}
 	n := NewIngressNormalizer(context.Background(), receiver)
 	defer n.Close()
 	started, release := make(chan struct{}), make(chan struct{})
-	first, err := n.Submit("channel", func(ctx context.Context) (IngressEnvelope, error) {
+	first, err := n.Submit("channel", func(ctx context.Context) (im.IngressEnvelope, error) {
 		close(started)
 		select {
 		case <-release:
 		case <-ctx.Done():
 		}
-		return IngressEnvelope{Message: IncomingMessage{MessageID: "first"}}, nil
+		return im.IngressEnvelope{Message: im.IncomingMessage{MessageID: "first"}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	second, err := n.Submit("channel", func(context.Context) (IngressEnvelope, error) {
-		return IngressEnvelope{Message: IncomingMessage{MessageID: "second"}}, nil
+	second, err := n.Submit("channel", func(context.Context) (im.IngressEnvelope, error) {
+		return im.IngressEnvelope{Message: im.IncomingMessage{MessageID: "second"}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := n.Submit("another-channel", func(context.Context) (IngressEnvelope, error) {
-		return IngressEnvelope{Message: IncomingMessage{MessageID: "other"}}, nil
+	other, err := n.Submit("another-channel", func(context.Context) (im.IngressEnvelope, error) {
+		return im.IngressEnvelope{Message: im.IncomingMessage{MessageID: "other"}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := <-other; result.Disposition != ReceiveAccepted {
+	if result := <-other; result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	close(release)
@@ -64,27 +66,30 @@ func TestIngressNormalizationPreservesTargetOrder(t *testing.T) {
 }
 func TestIngressNormalizationCapacityAndShutdown(t *testing.T) {
 	n := NewIngressNormalizer(context.Background(), &orderedIngressReceiver{})
-	var results []<-chan ReceiveResult
+	var results []<-chan im.ReceiveResult
 	for range 128 {
-		result, err := n.Submit("channel", func(ctx context.Context) (IngressEnvelope, error) { <-ctx.Done(); return IngressEnvelope{}, ctx.Err() })
+		result, err := n.Submit("channel", func(ctx context.Context) (im.IngressEnvelope, error) {
+			<-ctx.Done()
+			return im.IngressEnvelope{}, ctx.Err()
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		results = append(results, result)
 	}
-	if _, err := n.Submit("channel", func(context.Context) (IngressEnvelope, error) { return IngressEnvelope{}, nil }); err == nil {
+	if _, err := n.Submit("channel", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); err == nil {
 		t.Fatal("queue exceeded")
 	}
 	n.Close()
 	n.Close()
 	for _, result := range results {
-		if r := <-result; r.Disposition != ReceiveRetryable {
+		if r := <-result; r.Disposition != im.ReceiveRetryable {
 			t.Fatal(r)
 		}
 	}
 }
 
-func receiveNormalization(t *testing.T, result <-chan ReceiveResult) ReceiveResult {
+func receiveNormalization(t *testing.T, result <-chan im.ReceiveResult) im.ReceiveResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -95,11 +100,11 @@ func TestIngressNormalizationParentCancellationDrainsWithoutClose(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	n := NewIngressNormalizer(ctx, &orderedIngressReceiver{})
 	defer n.Close()
-	var results []<-chan ReceiveResult
+	var results []<-chan im.ReceiveResult
 	for range 16 {
-		result, err := n.Submit("channel", func(ctx context.Context) (IngressEnvelope, error) {
+		result, err := n.Submit("channel", func(ctx context.Context) (im.IngressEnvelope, error) {
 			<-ctx.Done()
-			return IngressEnvelope{}, ctx.Err()
+			return im.IngressEnvelope{}, ctx.Err()
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -108,14 +113,14 @@ func TestIngressNormalizationParentCancellationDrainsWithoutClose(t *testing.T) 
 	}
 	cancel()
 	for _, result := range results {
-		if got := receiveNormalization(t, result); got.Disposition != ReceiveRetryable || got.Reason != "normalization_cancelled" {
+		if got := receiveNormalization(t, result); got.Disposition != im.ReceiveRetryable || got.Reason != "normalization_cancelled" {
 			t.Fatal(got)
 		}
 		if _, ok := <-result; ok {
 			t.Fatal("result channel was not closed")
 		}
 	}
-	if _, err := n.Submit("channel", func(context.Context) (IngressEnvelope, error) { return IngressEnvelope{}, nil }); !errors.Is(err, errIngressClosed) {
+	if _, err := n.Submit("channel", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); !errors.Is(err, errIngressClosed) {
 		t.Fatalf("submit after cancellation: %v", err)
 	}
 }
@@ -126,27 +131,27 @@ func TestIngressNormalizationIndividualCancellationPreservesFIFO(t *testing.T) {
 	defer n.Close()
 	started := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
-	first, err := n.SubmitContext(ctx, "channel", func(ctx context.Context) (IngressEnvelope, error) {
+	first, err := n.SubmitContext(ctx, "channel", func(ctx context.Context) (im.IngressEnvelope, error) {
 		close(started)
 		<-ctx.Done()
 		// A lookup ignoring cancellation must never proceed to admission.
-		return IngressEnvelope{Message: IncomingMessage{MessageID: "cancelled"}}, nil
+		return im.IngressEnvelope{Message: im.IncomingMessage{MessageID: "cancelled"}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	second, err := n.Submit("channel", func(context.Context) (IngressEnvelope, error) {
-		return IngressEnvelope{Message: IncomingMessage{MessageID: "next"}}, nil
+	second, err := n.Submit("channel", func(context.Context) (im.IngressEnvelope, error) {
+		return im.IngressEnvelope{Message: im.IncomingMessage{MessageID: "next"}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	if got := receiveNormalization(t, first); got.Disposition != ReceiveRetryable {
+	if got := receiveNormalization(t, first); got.Disposition != im.ReceiveRetryable {
 		t.Fatal(got)
 	}
-	if got := receiveNormalization(t, second); got.Disposition != ReceiveAccepted {
+	if got := receiveNormalization(t, second); got.Disposition != im.ReceiveAccepted {
 		t.Fatal(got)
 	}
 	receiver.mu.Lock()
@@ -160,9 +165,9 @@ type cancellingIngressReceiver struct {
 	cancel context.CancelFunc
 }
 
-func (r cancellingIngressReceiver) Accept(context.Context, IngressEnvelope) ReceiveResult {
+func (r cancellingIngressReceiver) Accept(context.Context, im.IngressEnvelope) im.ReceiveResult {
 	r.cancel()
-	return ReceiveResult{Disposition: ReceiveAccepted, RecordID: "accepted"}
+	return im.ReceiveResult{Disposition: im.ReceiveAccepted, RecordID: "accepted"}
 }
 
 func TestIngressNormalizationPreservesAdmissionResultAfterCancellation(t *testing.T) {
@@ -170,11 +175,11 @@ func TestIngressNormalizationPreservesAdmissionResultAfterCancellation(t *testin
 	defer cancel()
 	n := NewIngressNormalizer(context.Background(), cancellingIngressReceiver{cancel})
 	defer n.Close()
-	result, err := n.SubmitContext(ctx, "channel", func(context.Context) (IngressEnvelope, error) { return IngressEnvelope{}, nil })
+	result, err := n.SubmitContext(ctx, "channel", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := receiveNormalization(t, result); got.Disposition != ReceiveAccepted || got.RecordID != "accepted" {
+	if got := receiveNormalization(t, result); got.Disposition != im.ReceiveAccepted || got.RecordID != "accepted" {
 		t.Fatal(got)
 	}
 }
@@ -182,16 +187,16 @@ func TestIngressNormalizationPreservesAdmissionResultAfterCancellation(t *testin
 func TestIngressNormalizationWaitCancellationIsUncertain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result := make(chan ReceiveResult, 1)
-	if got := WaitIngressNormalization(ctx, result); got.Disposition != ReceiveUncertain {
+	result := make(chan im.ReceiveResult, 1)
+	if got := WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveUncertain {
 		t.Fatal(got)
 	}
-	result <- ReceiveResult{Disposition: ReceiveAccepted}
-	if got := WaitIngressNormalization(ctx, result); got.Disposition != ReceiveAccepted {
+	result <- im.ReceiveResult{Disposition: im.ReceiveAccepted}
+	if got := WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveAccepted {
 		t.Fatal(got)
 	}
 	close(result)
-	if got := WaitIngressNormalization(ctx, result); got.Disposition != ReceiveUncertain {
+	if got := WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveUncertain {
 		t.Fatal(got)
 	}
 }
@@ -201,10 +206,10 @@ func TestIngressNormalizationGlobalWorkerBound(t *testing.T) {
 	defer n.Close()
 	started := make(chan struct{}, 16)
 	for i := range 16 {
-		_, err := n.Submit(fmt.Sprintf("channel-%d", i), func(ctx context.Context) (IngressEnvelope, error) {
+		_, err := n.Submit(fmt.Sprintf("channel-%d", i), func(ctx context.Context) (im.IngressEnvelope, error) {
 			started <- struct{}{}
 			<-ctx.Done()
-			return IngressEnvelope{}, ctx.Err()
+			return im.IngressEnvelope{}, ctx.Err()
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -236,10 +241,10 @@ func TestIngressNormalizationKeyFairness(t *testing.T) {
 	defer n.Close()
 	blocked := make(chan struct{}, ingressNormalizationWorkers-1)
 	for i := range ingressNormalizationWorkers - 1 {
-		_, err := n.Submit(fmt.Sprintf("blocker-%d", i), func(ctx context.Context) (IngressEnvelope, error) {
+		_, err := n.Submit(fmt.Sprintf("blocker-%d", i), func(ctx context.Context) (im.IngressEnvelope, error) {
 			blocked <- struct{}{}
 			<-ctx.Done()
-			return IngressEnvelope{}, ctx.Err()
+			return im.IngressEnvelope{}, ctx.Err()
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -249,10 +254,10 @@ func TestIngressNormalizationKeyFairness(t *testing.T) {
 		<-blocked
 	}
 	started, release := make(chan struct{}), make(chan struct{})
-	_, err := n.Submit("hot", func(context.Context) (IngressEnvelope, error) {
+	_, err := n.Submit("hot", func(context.Context) (im.IngressEnvelope, error) {
 		close(started)
 		<-release
-		return IngressEnvelope{}, nil
+		return im.IngressEnvelope{}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -260,9 +265,9 @@ func TestIngressNormalizationKeyFairness(t *testing.T) {
 	<-started
 	order := make(chan string, 2)
 	for _, key := range []string{"hot", "cold"} {
-		_, err := n.Submit(key, func(context.Context) (IngressEnvelope, error) {
+		_, err := n.Submit(key, func(context.Context) (im.IngressEnvelope, error) {
 			order <- key
-			return IngressEnvelope{}, nil
+			return im.IngressEnvelope{}, nil
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -284,10 +289,10 @@ func TestIngressNormalizationKeyFairness(t *testing.T) {
 func TestCaptureIngressEnvelopeFreezesActionAndIsIdempotent(t *testing.T) {
 	// An existing capture must never be replaced by a later runtime observation.
 	r := &NotificationRouter{}
-	action := &InternalAction{Type: "question", Values: []string{"1", "2"}}
+	action := &im.InternalAction{Type: "question", Values: []string{"1", "2"}}
 	offset := int64(7)
-	cursor := &IngressCursor{Kind: "telegram", Version: 1, Telegram: &TelegramIngressCursor{PendingOffset: &offset}}
-	envelope := IngressEnvelope{Cursor: cursor, Message: IncomingMessage{InternalAction: action}, capture: &ingressCapture{kind: "control", target: &IngressControlTarget{RuntimeID: "original"}}}
+	cursor := &im.IngressCursor{Kind: "telegram", Version: 1, Telegram: &im.TelegramIngressCursor{PendingOffset: &offset}}
+	envelope := im.IngressEnvelope{Cursor: cursor, Message: im.IncomingMessage{InternalAction: action}, Capture: &im.IngressCapture{Kind: "control", Target: &im.IngressControlTarget{RuntimeID: "original"}}}
 	frozen := r.CaptureIngressEnvelope(envelope)
 	offset = 100
 	if *frozen.Cursor.Telegram.PendingOffset != 7 {
@@ -298,18 +303,18 @@ func TestCaptureIngressEnvelopeFreezesActionAndIsIdempotent(t *testing.T) {
 	if frozen.Message.InternalAction.Type != "question" || frozen.Message.InternalAction.Values[0] != "1" {
 		t.Fatal("callback mutation changed frozen action")
 	}
-	if frozen.capture != envelope.capture || frozen.capture.target.RuntimeID != "original" {
+	if frozen.Capture != envelope.Capture || frozen.Capture.Target.RuntimeID != "original" {
 		t.Fatal("existing target was recaptured")
 	}
 }
 
 func TestIngressNormalizationConcurrentCloseDeliversEachResultOnce(t *testing.T) {
 	n := NewIngressNormalizer(context.Background(), &orderedIngressReceiver{})
-	var results []<-chan ReceiveResult
+	var results []<-chan im.ReceiveResult
 	for range ingressNormalizationCapacity {
-		result, err := n.Submit("channel", func(ctx context.Context) (IngressEnvelope, error) {
+		result, err := n.Submit("channel", func(ctx context.Context) (im.IngressEnvelope, error) {
 			<-ctx.Done()
-			return IngressEnvelope{}, ctx.Err()
+			return im.IngressEnvelope{}, ctx.Err()
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -322,7 +327,7 @@ func TestIngressNormalizationConcurrentCloseDeliversEachResultOnce(t *testing.T)
 	}
 	closers.Wait()
 	for _, result := range results {
-		if got := receiveNormalization(t, result); got.Disposition != ReceiveRetryable {
+		if got := receiveNormalization(t, result); got.Disposition != im.ReceiveRetryable {
 			t.Fatal(got)
 		}
 		if _, ok := <-result; ok {

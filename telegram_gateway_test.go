@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // This fake only replaces Telegram transport. Authorization, binding writeback,
@@ -66,7 +67,7 @@ func telegramGatewayUpdate(id, chat int64, text string) telegramUpdate {
 	m := &telegramMessage{MessageID: id, Date: time.Now().Unix(), Chat: telegramChat{ID: chat, Type: kind}, From: &telegramUser{ID: 123456}, Text: text}
 	if strings.HasPrefix(text, "/") {
 		token := regexp.MustCompile(`^/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?`).FindString(text)
-		m.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: imUTF16Units(token)}}
+		m.Entities = []telegramEntity{{Type: "bot_command", Offset: 0, Length: im.UTF16Units(token)}}
 	}
 	return telegramUpdate{UpdateID: id, Message: m}
 }
@@ -163,7 +164,7 @@ func (f *telegramGatewayFixture) adapter(t *testing.T, botID int64, probe ...tel
 	a.api = api
 	// Sender limiting has separate tests; remove time delays here to observe
 	// command and admission outcomes deterministically through the real router.
-	a.sender, err = NewIMTextSender(IMTextSendOptions{Platform: "telegram", Budget: telegramTextBudget, Measure: imUTF16Units, SendSegment: func(ctx context.Context, chat, text string) error {
+	a.sender, err = im.NewIMTextSender(im.IMTextSendOptions{Platform: "telegram", Budget: telegramTextBudget, Measure: im.UTF16Units, SendSegment: func(ctx context.Context, chat, text string) error {
 		id, err := strconv.ParseInt(chat, 10, 64)
 		if err != nil {
 			return err
@@ -191,11 +192,11 @@ func startTelegramGateway(t *testing.T, a *TelegramAdapter) chan error {
 	})
 	return done
 }
-func telegramGatewayRecord(t *testing.T, f *telegramGatewayFixture, chat, id int64, state ingressState) IngressRecord {
+func telegramGatewayRecord(t *testing.T, f *telegramGatewayFixture, chat, id int64, state im.IngressState) IngressRecord {
 	t.Helper()
 	var result IngressRecord
 	waitIngressCondition(t, func() bool {
-		records, err := f.service.store.ListRouteRecords(ChatIdentity{"telegram", strconv.FormatInt(f.botID, 10), strconv.FormatInt(chat, 10)})
+		records, err := f.service.store.ListRouteRecords(im.ChatIdentity{Platform: "telegram", AccountID: strconv.FormatInt(f.botID, 10), ChatID: strconv.FormatInt(chat, 10)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +315,7 @@ func TestTelegramGatewayTokenRotationAndBotIsolation(t *testing.T) {
 	rotated, _ := f.adapter(t, f.botID, telegramGatewayUpdate(41, 123456, "/status"))
 	rotatedDone := startTelegramGateway(t, rotated)
 	telegramGatewayRecord(t, f, 123456, 41, "completed")
-	msg := IncomingMessage{IMType: "telegram", AccountID: strconv.FormatInt(f.botID, 10), ChatKind: "private", ChatID: "123456", SenderID: "123456", MessageID: "authorize-rotation", Text: "task"}
+	msg := im.IncomingMessage{IMType: "telegram", AccountID: strconv.FormatInt(f.botID, 10), ChatKind: "private", ChatID: "123456", SenderID: "123456", MessageID: "authorize-rotation", Text: "task"}
 	ticket, ok := f.router.admission.Authorize(msg)
 	if !ok {
 		t.Fatal("same Bot ID token rotation lost owner")
@@ -328,7 +329,7 @@ func TestTelegramGatewayTokenRotationAndBotIsolation(t *testing.T) {
 	close(rotatedDone)
 	other, _ := f.adapter(t, f.botID+100)
 	err := other.Connect()
-	if !errors.Is(err, errPairingDenied) {
+	if !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("different bot accepted old owner: %v", err)
 	}
 	if f.router.admission.Valid(ticket) {
@@ -392,7 +393,7 @@ func TestTelegramGatewaySuffixedControlsCaptureSharedTargets(t *testing.T) {
 	process.state.TurnStartedAt = time.Now()
 	turnID := uint64(process.state.TurnStartedAt.UnixNano())
 	process.mu.Unlock()
-	msg := IncomingMessage{IMType: "telegram", AccountID: strconv.FormatInt(f.botID, 10), ChatID: "123456"}
+	msg := im.IncomingMessage{IMType: "telegram", AccountID: strconv.FormatInt(f.botID, 10), ChatID: "123456"}
 	pauseIngressTestRoute(t, f.service, msg)
 	a, api := f.adapter(t, f.botID)
 	startTelegramGateway(t, a)
@@ -421,7 +422,7 @@ func TestTelegramGatewaySuffixedControlsCaptureSharedTargets(t *testing.T) {
 				t.Fatal(rec.ControlTarget)
 			}
 		}
-		var cmd IncomingMessage
+		var cmd im.IncomingMessage
 		waitIngressCondition(t, func() bool {
 			f.service.mu.Lock()
 			defer f.service.mu.Unlock()

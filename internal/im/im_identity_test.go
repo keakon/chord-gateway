@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"encoding/base64"
@@ -73,22 +73,5 @@ func TestPlatformCommandHints(t *testing.T) {
 		if got != tt.want {
 			t.Fatalf("%s: got %q want %q", tt.platform, got, tt.want)
 		}
-	}
-}
-
-func TestNotificationHintsPreserveModelContent(t *testing.T) {
-	t.Parallel()
-	r := &NotificationRouter{}
-	hint := func(cmd string) string {
-		return FormatCommandHint(PlatformPresentation{Platform: "slack"}, CommandTarget{}, cmd)
-	}
-	state := ControlState{PendingConfirm: &ConfirmPayload{ToolName: "Done", DoneReport: "Keep /allow and /tmp/path in report"}}
-	got := r.formatNotification("confirm_request", state, hint)
-	if !strings.Contains(got, "Keep /allow and /tmp/path in report") || !strings.Contains(got, "Reply /chord allow") {
-		t.Fatal(got)
-	}
-	state.LastAssistantText = "Use /allow from /tmp/path"
-	if got := r.formatNotification("assistant_message", state, hint); got != state.LastAssistantText {
-		t.Fatal(got)
 	}
 }

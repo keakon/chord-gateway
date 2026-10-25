@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // TelegramAdapter owns exactly one long poller and one account-wide sender.
 // Its lifecycle context also cancels in-flight sends and throttle waits.
 type TelegramAdapter struct {
 	api       telegramAPI
-	sender    *IMTextSender
-	router    IMPollingHost
+	sender    *im.IMTextSender
+	router    im.IMPollingHost
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.Mutex
@@ -26,8 +27,8 @@ type TelegramAdapter struct {
 	username  string
 	ready     bool
 	now       telegramClock
-	receive   func(context.Context, IngressEnvelope) ReceiveResult
-	reject    func(context.Context, IngressEnvelope, string) ReceiveResult
+	receive   func(context.Context, im.IngressEnvelope) im.ReceiveResult
+	reject    func(context.Context, im.IngressEnvelope, string) im.ReceiveResult
 	store     telegramCursorStore
 	retry     telegramBackoff // Owned by the single startup/poll worker.
 	retryWarn time.Time
@@ -44,7 +45,7 @@ func NewTelegramAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *con
 	if imCfg.Telegram == nil || imCfg.Telegram.BotToken == "" {
 		return nil, errors.New("telegram bot_token is required")
 	}
-	proxyFunc, err := proxyFuncFor(cfg, imCfg)
+	proxyFunc, err := im.ProxyFuncFor(cfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +66,7 @@ func NewTelegramAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *con
 
 func (a *TelegramAdapter) Type() string                { return "telegram" }
 func (a *TelegramAdapter) SupportsLoginRenewal() bool  { return false }
-func (a *TelegramAdapter) StartLogin() (string, error) { return "", ErrLoginNotSupported }
+func (a *TelegramAdapter) StartLogin() (string, error) { return "", im.ErrLoginNotSupported }
 func (a *TelegramAdapter) Disconnect() {
 	if a.cancel != nil {
 		a.cancel()
@@ -90,22 +91,22 @@ func (a *TelegramAdapter) SendTextContext(ctx context.Context, chat, text string
 	}
 	return a.sender.Send(ctx, a.ctx, nil, chat, text, false)
 }
-func (a *TelegramAdapter) TextSendMetrics() IMTextMetricsSnapshot {
+func (a *TelegramAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {
 	return a.sender.TextSendMetrics()
 }
-func (a *TelegramAdapter) TextSendTargetSnapshot(target string) IMTextTargetSnapshot {
+func (a *TelegramAdapter) TextSendTargetSnapshot(target string) im.IMTextTargetSnapshot {
 	return a.sender.TextSendTargetSnapshot(target)
 }
-func (a *TelegramAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *TelegramAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.ready {
-		return IngressDeliveryReadiness{Reason: IngressWaitingPlatform}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingPlatform}
 	}
 	if id.AccountID != a.accountID {
-		return IngressDeliveryReadiness{Reason: IngressWaitingAccount}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingAccount}
 	}
-	return IngressDeliveryReadiness{Ready: true}
+	return im.IngressDeliveryReadiness{Ready: true}
 }
 
 func (a *TelegramAdapter) Connect() (result error) {
@@ -116,7 +117,7 @@ func (a *TelegramAdapter) Connect() (result error) {
 	}
 	a.running = true
 	a.mu.Unlock()
-	var accountLock *instanceLocks
+	var accountLock *im.InstanceLocks
 	defer func() {
 		// Only an explicit shutdown is success; preserve unrelated failures.
 		if errors.Is(result, context.Canceled) && a.ctx.Err() != nil {
@@ -155,7 +156,7 @@ func (a *TelegramAdapter) Connect() (result error) {
 		return errors.New("telegram invalid bot identity")
 	}
 	account := strconv.FormatInt(me.ID, 10)
-	accountLock, err = AcquireIMAccountLock("telegram", account)
+	accountLock, err = im.AcquireIMAccountLock("telegram", account)
 	if err != nil {
 		return err
 	}
@@ -184,7 +185,7 @@ func (a *TelegramAdapter) Connect() (result error) {
 	if err != nil {
 		return err
 	}
-	if err := a.router.PlatformReady("telegram", account, PlatformPresentation{Platform: "telegram", BotUsername: me.Username}); err != nil {
+	if err := a.router.PlatformReady("telegram", account, im.PlatformPresentation{Platform: "telegram", BotUsername: me.Username}); err != nil {
 		return err
 	}
 	a.mu.Lock()

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestIngressQuestionReceiptRejectsAfterParentCancellation(t *testing.T) {
@@ -34,14 +36,14 @@ func TestIngressNormalizationCannotReplaceChatEvidence(t *testing.T) {
 	pauseIngressTestRoute(t, s, msg)
 	msg.MessageID, msg.Text = "chat-evidence", "task"
 	msg.ChatKind = "private"
-	future, err := s.router.SubmitIngressNormalization(context.Background(), "chat", IngressEnvelope{Message: msg}, func(_ context.Context, e IngressEnvelope) (IngressEnvelope, error) {
+	future, err := s.router.SubmitIngressNormalization(context.Background(), "chat", im.IngressEnvelope{Message: msg}, func(_ context.Context, e im.IngressEnvelope) (im.IngressEnvelope, error) {
 		e.Message.ChatKind = "group"
 		return e, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := receiveNormalization(t, future); got.Disposition != ReceiveRetryable || got.Reason != "normalization_failed" {
+	if got := receiveNormalization(t, future); got.Disposition != im.ReceiveRetryable || got.Reason != "normalization_failed" {
 		t.Fatalf("normalization changed trusted chat evidence: %v", got)
 	}
 }
@@ -70,13 +72,13 @@ func TestIngressNormalizationRawKeyIsAccountScoped(t *testing.T) {
 	pauseIngressTestRoute(t, s, msg)
 	msg.MessageID, msg.Text = "blocked-account", "task"
 	started, release := make(chan struct{}), make(chan struct{})
-	future, err := s.router.SubmitIngressNormalization(context.Background(), "shared-raw-chat", IngressEnvelope{Message: msg}, func(ctx context.Context, e IngressEnvelope) (IngressEnvelope, error) {
+	future, err := s.router.SubmitIngressNormalization(context.Background(), "shared-raw-chat", im.IngressEnvelope{Message: msg}, func(ctx context.Context, e im.IngressEnvelope) (im.IngressEnvelope, error) {
 		close(started)
 		select {
 		case <-release:
 			return e, nil
 		case <-ctx.Done():
-			return IngressEnvelope{}, ctx.Err()
+			return im.IngressEnvelope{}, ctx.Err()
 		}
 	})
 	if err != nil {
@@ -85,17 +87,17 @@ func TestIngressNormalizationRawKeyIsAccountScoped(t *testing.T) {
 	<-started
 	other := msg
 	other.AccountID, other.MessageID = "other-account", "independent-account"
-	otherFuture, err := s.router.SubmitIngressNormalization(context.Background(), "shared-raw-chat", IngressEnvelope{Message: other}, func(_ context.Context, e IngressEnvelope) (IngressEnvelope, error) { return e, nil })
+	otherFuture, err := s.router.SubmitIngressNormalization(context.Background(), "shared-raw-chat", im.IngressEnvelope{Message: other}, func(_ context.Context, e im.IngressEnvelope) (im.IngressEnvelope, error) { return e, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The other account is not the owner, so admission rejects it. It must
 	// nevertheless complete without waiting for this account's slow lookup.
-	if got := receiveNormalization(t, otherFuture); got.Disposition != ReceiveRejected {
+	if got := receiveNormalization(t, otherFuture); got.Disposition != im.ReceiveRejected {
 		t.Fatalf("another account was serialized behind the blocked lookup: %v", got)
 	}
 	close(release)
-	if got := receiveNormalization(t, future); got.Disposition != ReceiveAccepted {
+	if got := receiveNormalization(t, future); got.Disposition != im.ReceiveAccepted {
 		t.Fatal(got)
 	}
 }
@@ -119,11 +121,11 @@ func TestIngressQuestionReceiptQueueIsBoundedAndNonblocking(t *testing.T) {
 
 func TestIngressQuestionReceiptUpdateFailureKeepsControlUnresolved(t *testing.T) {
 	s, process, _, _ := ingressTestService(t)
-	target := &IngressControlTarget{RuntimeID: process.runtimeID, SessionEpoch: process.sessionEpoch, SessionID: "session", RequestID: "question", Version: 1}
+	target := &im.IngressControlTarget{RuntimeID: process.runtimeID, SessionEpoch: process.sessionEpoch, SessionID: "session", RequestID: "question", Version: 1}
 	record := testIngressTask(t, s.store, "receipt-storage-failure")
 	record.Kind, record.Text, record.ControlTarget = "control", "", target
 	accepted := mustAcceptIngress(t, s.store, record)
-	if err := s.store.UpdateRecord(t.Context(), accepted.RecordID, []ingressState{"received"}, func(record *IngressRecord) error { record.State = "unknown"; return nil }); err != nil {
+	if err := s.store.UpdateRecord(t.Context(), accepted.RecordID, []im.IngressState{"received"}, func(record *IngressRecord) error { record.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	s.router.mu.Lock()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type wecomCommandFixture struct {
@@ -69,7 +70,7 @@ func newWecomCommandFixture(t *testing.T, paired bool) wecomCommandFixture {
 func wecomCommandPairingCode(t *testing.T, fixture wecomCommandFixture) string {
 	t.Helper()
 	waitIngressCondition(t, func() bool {
-		return fixture.adapter.IngressDeliveryReadiness(ChatIdentity{"wecom", "example-bot", fixture.private}).Ready
+		return fixture.adapter.IngressDeliveryReadiness(im.ChatIdentity{Platform: "wecom", AccountID: "example-bot", ChatID: fixture.private}).Ready
 	})
 	pairing := fixture.adapter.router.admission.pairing
 	pairing.mu.Lock()
@@ -84,7 +85,7 @@ func wecomCommandPairingCode(t *testing.T, fixture wecomCommandFixture) string {
 	return ""
 }
 
-func wecomCommandEnvelope(t *testing.T, id, delivery, kind, sender, content string) IngressEnvelope {
+func wecomCommandEnvelope(t *testing.T, id, delivery, kind, sender, content string) im.IngressEnvelope {
 	t.Helper()
 	chatType := "single"
 	if kind == "group" {
@@ -130,7 +131,7 @@ func TestWecomPrivateAndGroupCommandsWithoutActiveProcess(t *testing.T) {
 			id := kind + command
 			envelope := wecomCommandEnvelope(t, id, "delivery-"+id, kind, "example-owner", command)
 			result := fixture.adapter.router.ReceiveIngress(t.Context(), envelope)
-			if result.Disposition != ReceiveAccepted {
+			if result.Disposition != im.ReceiveAccepted {
 				t.Fatalf("%s %s: %+v", kind, command, result)
 			}
 			if record := waitWecomCommandTerminal(t, fixture.store, result.RecordID); record.State != "completed" || record.Kind != "control" {
@@ -139,7 +140,7 @@ func TestWecomPrivateAndGroupCommandsWithoutActiveProcess(t *testing.T) {
 			// Delivery IDs are diagnostics and never create another business operation.
 			envelope.DeliveryID = "different-delivery-" + id
 			duplicate := fixture.adapter.router.ReceiveIngress(t.Context(), envelope)
-			if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != result.RecordID {
+			if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != result.RecordID {
 				t.Fatalf("duplicate callback: %+v", duplicate)
 			}
 		}
@@ -165,7 +166,7 @@ func TestWecomPrivateAndGroupCommandsWithoutActiveProcess(t *testing.T) {
 	for _, kind := range []string{"private", "group"} {
 		envelope := wecomCommandEnvelope(t, "stranger-"+kind, "stranger-delivery", kind, "example-stranger", "/allow example-request")
 		result := fixture.adapter.router.ReceiveIngress(t.Context(), envelope)
-		if result.Disposition != ReceiveRejected {
+		if result.Disposition != im.ReceiveRejected {
 			t.Fatalf("non-owner approval admitted in %s: %+v", kind, result)
 		}
 	}
@@ -193,12 +194,12 @@ func TestWecomFirstBindingRequiresSuccessfulProactiveACK(t *testing.T) {
 			}
 			directory := t.TempDir()
 			groupClaim := wecomCommandEnvelope(t, "group-first-claim", "group-claim-delivery", "group", "example-owner", fmt.Sprintf("/bind %q %s", directory, code))
-			if denied := fixture.adapter.router.ReceiveIngress(t.Context(), groupClaim); denied.Disposition != ReceiveRejected {
+			if denied := fixture.adapter.router.ReceiveIngress(t.Context(), groupClaim); denied.Disposition != im.ReceiveRejected {
 				t.Fatalf("group callback claimed owner before private pairing: %+v", denied)
 			}
 			envelope := wecomCommandEnvelope(t, "first-bind", "first-bind-delivery", "private", "example-owner", fmt.Sprintf("/bind %q %s", directory, code))
 			result := fixture.adapter.router.ReceiveIngress(t.Context(), envelope)
-			if result.Disposition != ReceiveAccepted {
+			if result.Disposition != im.ReceiveAccepted {
 				t.Fatalf("verified /bind not admitted: %+v", result)
 			}
 			record := waitWecomCommandTerminal(t, fixture.store, result.RecordID)
@@ -210,10 +211,10 @@ func TestWecomFirstBindingRequiresSuccessfulProactiveACK(t *testing.T) {
 			default:
 				t.Fatal("binding completed without an actual proactive probe")
 			}
-			im := configStore.Snapshot().IMConfigByType("wecom")
+			imCfg := configStore.Snapshot().IMConfigByType("wecom")
 			if accepted {
-				if record.State != "completed" || im.OwnerIdentity() == nil || im.OwnerIdentity().UserID != "example-owner" || im.Bindings()[fixture.private] == "" {
-					t.Fatalf("successful probe did not pair and bind: %+v %+v", record, im)
+				if record.State != "completed" || imCfg.OwnerIdentity() == nil || imCfg.OwnerIdentity().UserID != "example-owner" || imCfg.Bindings()[fixture.private] == "" {
+					t.Fatalf("successful probe did not pair and bind: %+v %+v", record, imCfg)
 				}
 				reloaded, err := NewConfigStore(configStore.path)
 				if err != nil || reloaded.Snapshot().IMConfigByType("wecom").Bindings()[fixture.private] == "" {
@@ -221,7 +222,7 @@ func TestWecomFirstBindingRequiresSuccessfulProactiveACK(t *testing.T) {
 				}
 				groupBind := wecomCommandEnvelope(t, "owner-group-bind", "owner-group-delivery", "group", "example-owner", fmt.Sprintf("/bind %q", directory))
 				groupResult := fixture.adapter.router.ReceiveIngress(t.Context(), groupBind)
-				if groupResult.Disposition != ReceiveAccepted {
+				if groupResult.Disposition != im.ReceiveAccepted {
 					t.Fatalf("paired owner cannot explicitly bind group: %+v", groupResult)
 				}
 				groupRecord := waitWecomCommandTerminal(t, fixture.store, groupResult.RecordID)
@@ -241,7 +242,7 @@ func TestWecomFirstBindingRequiresSuccessfulProactiveACK(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if record.State != "rejected" || record.Reason != "binding_not_changed" || im.OwnerIdentity() != nil || len(im.Bindings()) != 0 || !bytes.Equal(before, after) {
+				if record.State != "rejected" || record.Reason != "binding_not_changed" || imCfg.OwnerIdentity() != nil || len(imCfg.Bindings()) != 0 || !bytes.Equal(before, after) {
 					t.Fatalf("rejected probe changed configuration: %+v", record)
 				}
 			}
@@ -254,7 +255,7 @@ func TestWecomMissingCommonIngressNeverUsesLegacyDispatch(t *testing.T) {
 	fixture.adapter.router.ingress.Close()
 	fixture.adapter.router.ingress = nil
 	result := fixture.adapter.router.ReceiveIngress(t.Context(), wecomCommandEnvelope(t, "missing-ingress", "missing-delivery", "private", "example-owner", "task"))
-	if result.Disposition != ReceiveRetryable || result.Reason != "ingress_unavailable" {
+	if result.Disposition != im.ReceiveRetryable || result.Reason != "ingress_unavailable" {
 		t.Fatal(result)
 	}
 	raw, err := json.Marshal(map[string]any{"cmd": "aibot_msg_callback", "headers": map[string]string{"req_id": "callback-without-ingress"}, "body": map[string]any{"aibotid": "example-bot", "msgid": "callback-without-ingress", "chattype": "single", "from": map[string]string{"userid": "example-owner"}, "msgtype": "text", "text": map[string]string{"content": "task"}}})

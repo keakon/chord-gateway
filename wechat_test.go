@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func newTestWechatAdapter(t *testing.T) *WechatAdapter {
@@ -273,13 +274,13 @@ func TestWechatAdapter_QRAndUpdatesHelpers(t *testing.T) {
 func TestWechatAdapter_MessageHandling(t *testing.T) {
 	t.Run("common ingress stores context and delivers normalized text", func(t *testing.T) {
 		a, service, _, writer := newWechatIngressTest(t)
-		msg := IncomingMessage{SenderID: "owner", ChatID: "owner"}
+		msg := im.IncomingMessage{SenderID: "owner", ChatID: "owner"}
 		_ = service
 		result := a.receiveIncomingMessage(a.ctx, ilinkMessage{
 			FromUserID: msg.SenderID, MessageID: "103", MessageType: ilinkMessageTypeUser, ContextToken: "ctx-1",
 			ItemList: []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "hello"}}, {Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: "world"}}},
 		}, a.token.Load())
-		if result.Disposition != ReceiveAccepted {
+		if result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 		waitIngressCondition(t, func() bool {

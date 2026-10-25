@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type dingtalkAdapterFixture struct {
@@ -60,7 +61,7 @@ func dingtalkAdapterFrame(t *testing.T, callback dingtalkCallback, delivery stri
 	}, Data: dingtalkIdentityTestPayload(t, callback)}
 }
 
-func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkCallback, delivery string) ReceiveResult {
+func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkCallback, delivery string) im.ReceiveResult {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -88,7 +89,7 @@ func dingtalkAdapterVerify(t *testing.T, f dingtalkAdapterFixture) {
 	}
 	callback := dingtalkIdentityTestCallback()
 	callback.MsgID, callback.Text.Content = "identity-hello", "hello"
-	if result := dingtalkAdapterReceive(t, f.a, callback, "identity-delivery"); result.Disposition != ReceiveRejected || result.Reason != "identity_probe" {
+	if result := dingtalkAdapterReceive(t, f.a, callback, "identity-delivery"); result.Disposition != im.ReceiveRejected || result.Reason != "identity_probe" {
 		t.Fatalf("probe result: %+v", result)
 	}
 }
@@ -112,27 +113,27 @@ func TestDingtalkAdapterProbeNeverExecutesOrAuthorizesOwner(t *testing.T) {
 	group.MsgID, group.ConversationType, group.IsInAtList = "first-group", "2", true
 	group.Text.Content = "sensitive unverified task"
 	result := dingtalkAdapterReceive(t, f.a, group, "group-delivery")
-	if result.Disposition != ReceiveRejected || result.Reason != "identity_unverified" {
+	if result.Disposition != im.ReceiveRejected || result.Reason != "identity_unverified" {
 		t.Fatal(result)
 	}
 	groupRecordID := result.RecordID
-	if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "any"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "any"}).Ready {
 		t.Fatal("group callback verified enterprise identity")
 	}
 	probe := dingtalkIdentityTestCallback()
 	probe.MsgID, probe.Text.Content = "probe-bind-body", "/bind \"/project\" invalid-nonce"
 	result = dingtalkAdapterReceive(t, f.a, probe, "probe-delivery")
-	if result.Disposition != ReceiveRejected || result.Reason != "identity_probe" {
+	if result.Disposition != im.ReceiveRejected || result.Reason != "identity_probe" {
 		t.Fatal(result)
 	}
-	if !f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "any"}).Ready || !strings.Contains(f.terminal.String(), "Valid for 10 minutes") {
+	if !f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "any"}).Ready || !strings.Contains(f.terminal.String(), "Valid for 10 minutes") {
 		t.Fatal("successful identity probe did not unlock pairing")
 	}
 	if strings.Contains(f.terminal.String(), "@robot /bind") {
 		t.Fatal("private pairing instructions require a group mention")
 	}
 	privateTarget, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", probe.SenderStaffID)
-	if hint := f.r.commandHint("dingtalk", commandTargetForChat("dingtalk", privateTarget), "/bind /project"); hint != "/bind /project" {
+	if hint := f.r.commandHint("dingtalk", im.CommandTargetForChat("dingtalk", privateTarget), "/bind /project"); hint != "/bind /project" {
 		t.Fatalf("private reply hint: %q", hint)
 	}
 	if f.store.Snapshot().IMConfigByType("dingtalk").OwnerIdentity() != nil {
@@ -151,7 +152,7 @@ func TestDingtalkAdapterProbeNeverExecutesOrAuthorizesOwner(t *testing.T) {
 		}
 	}
 	duplicate := dingtalkAdapterReceive(t, f.a, group, "different-delivery")
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != groupRecordID || duplicate.State != "rejected" {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != groupRecordID || duplicate.State != "rejected" {
 		t.Fatalf("unverified group replayed after readiness: %+v", duplicate)
 	}
 	f.r.mgr.mu.Lock()
@@ -171,7 +172,7 @@ func TestDingtalkAdapterRejectsUnsupportedSenderAndTenant(t *testing.T) {
 	frame := dingtalkAdapterFrame(t, callback, "fallback-delivery")
 	frame.Data = strings.TrimSuffix(frame.Data, "}") + `,"senderId":"fallback-owner","isAdmin":true}`
 	future, err := f.a.onCallback(t.Context(), frame)
-	if err != nil || receiveNormalization(t, future).Disposition != ReceiveRejected {
+	if err != nil || receiveNormalization(t, future).Disposition != im.ReceiveRejected {
 		t.Fatalf("unsupported sender accepted: %v", err)
 	}
 	callback = dingtalkIdentityTestCallback()
@@ -290,17 +291,17 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 	callback := dingtalkIdentityTestCallback()
 	callback.MsgID, callback.Text.Content = "bound-task", "run this task once"
 	accepted := dingtalkAdapterReceive(t, f.a, callback, "task-delivery-one")
-	if accepted.Disposition != ReceiveAccepted {
+	if accepted.Disposition != im.ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	duplicate := dingtalkAdapterReceive(t, f.a, callback, "task-delivery-two")
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != accepted.RecordID {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != accepted.RecordID {
 		t.Fatal(duplicate)
 	}
 	waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
 	callback.SenderStaffID, callback.MsgID = "another-staff", "unauthorized-task"
 	deniedResult := dingtalkAdapterReceive(t, f.a, callback, "unauthorized-delivery")
-	if deniedResult.Disposition != ReceiveRejected || len(writer.snapshot()) != 1 {
+	if deniedResult.Disposition != im.ReceiveRejected || len(writer.snapshot()) != 1 {
 		t.Fatalf("nonowner controlled Chord: %+v", deniedResult)
 	}
 	// A binding switch cancels the shared delivery lease after the first accepted
@@ -310,17 +311,17 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 	if !ok {
 		t.Fatal("bound delivery target unavailable")
 	}
-	original := f.a.sender.options.SendSegment
-	f.a.sender.options.SendSegment = func(ctx context.Context, chat, text string) error {
+	original := f.a.sender.SendSegmentForTest()
+	f.a.sender.SetSendSegmentForTest(func(ctx context.Context, chat, text string) error {
 		err := original(ctx, chat, text)
 		if err == nil {
-			ticket.gate.switching()
+			ticket.Gate.Switching()
 			<-ctx.Done() // Join the router's asynchronous lease cancellation.
 		}
 		return err
-	}
+	})
 	err = f.r.SendBound(t.Context(), target, strings.Repeat("output ", 400))
-	var stopped *IMTextSendError
+	var stopped *im.IMTextSendError
 	if !errors.As(err, &stopped) || stopped.AcceptedSegments != 1 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("binding switch failed to stop remaining segments: %v", err)
 	}
@@ -336,7 +337,7 @@ func TestDingtalkAdapterUnboundSendAndOldGenerationDenied(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
 	target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
-	if err := f.a.SendText(target, "must not send"); !errors.Is(err, errPairingDenied) {
+	if err := f.a.SendText(target, "must not send"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("unbound send: %v", err)
 	}
 	f.a.mu.Lock()
@@ -403,14 +404,14 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 			f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
 			f.a.api.targetInterval, f.a.api.accountInterval = 0, 0
 			if scenario == "cancel_after_first" {
-				original := f.a.sender.options.SendSegment
-				f.a.sender.options.SendSegment = func(ctx context.Context, target, text string) error {
+				original := f.a.sender.SendSegmentForTest()
+				f.a.sender.SetSendSegmentForTest(func(ctx context.Context, target, text string) error {
 					err := original(ctx, target, text)
 					if err == nil {
 						cancel()
 					}
 					return err
-				}
+				})
 			}
 			target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "group", "original/group:id")
 			text := strings.Repeat("测试🙂", 250)
@@ -423,7 +424,7 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 					t.Fatalf("segments=%d err=%v", len(got), err)
 				}
 			} else {
-				var stopped *IMTextSendError
+				var stopped *im.IMTextSendError
 				if !errors.As(err, &stopped) || stopped.AcceptedSegments != 1 {
 					t.Fatalf("partial acceptance: %v", err)
 				}
@@ -468,7 +469,9 @@ func TestDingtalkAdapterConnectCachedIdentityAndDisconnect(t *testing.T) {
 		t.Fatal("no Stream handshake")
 	}
 	defer conn.Close()
-	waitIngressCondition(t, func() bool { return f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready })
+	waitIngressCondition(t, func() bool {
+		return f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready
+	})
 	f.a.Disconnect()
 	select {
 	case err := <-done:
@@ -478,7 +481,7 @@ func TestDingtalkAdapterConnectCachedIdentityAndDisconnect(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Disconnect did not join Connect")
 	}
-	if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
 		t.Fatal("disconnected adapter remained ready")
 	}
 }
@@ -527,7 +530,7 @@ func TestDingtalkAdapterConnectTenantMismatchStopsReconnect(t *testing.T) {
 	if registrations.Load() != 1 {
 		t.Fatalf("terminal mismatch reconnected %d times", registrations.Load())
 	}
-	if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
 		t.Fatal("mismatched tenant became ready")
 	}
 }
@@ -568,11 +571,11 @@ func TestDingtalkAdapterBindingProbeRechecksNonceAndRoute(t *testing.T) {
 			defer server.Close()
 			f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
 			_, err = (&BindingService{router: f.r}).Bind(t.Context(), msg, ticket, []string{dir, code})
-			if !errors.Is(err, errPairingDenied) {
+			if !errors.Is(err, im.ErrPairingDenied) {
 				t.Fatalf("authority changed during probe: %v", err)
 			}
-			im := f.store.Snapshot().IMConfigByType("dingtalk")
-			if im.OwnerIdentity() != nil || len(im.Bindings()) != 0 {
+			imCfg := f.store.Snapshot().IMConfigByType("dingtalk")
+			if imCfg.OwnerIdentity() != nil || len(imCfg.Bindings()) != 0 {
 				t.Fatal("probe saved binding under replaced authority")
 			}
 		})
@@ -622,13 +625,13 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 				t.Fatal(err)
 			}
 			result := receiveNormalization(t, future)
-			if result.Disposition != ReceiveRejected {
+			if result.Disposition != im.ReceiveRejected {
 				t.Fatal(result)
 			}
 			if valid && result.Reason != "identity_probe" || !valid && result.Reason != "source_time_out_of_range" {
 				t.Fatalf("timestamp %s: %+v", scenario, result)
 			}
-			if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready != valid {
+			if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready != valid {
 				t.Fatal("invalid timestamp established identity readiness")
 			}
 			record, err := f.s.store.Get(result.RecordID)
@@ -651,10 +654,10 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 					t.Fatal(err)
 				}
 				duplicate := receiveNormalization(t, future)
-				if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID != result.RecordID || duplicate.Reason != "source_time_out_of_range" {
+				if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != result.RecordID || duplicate.Reason != "source_time_out_of_range" {
 					t.Fatal(duplicate)
 				}
-				if f.a.IngressDeliveryReadiness(ChatIdentity{"dingtalk", f.a.account, "chat"}).Ready {
+				if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
 					t.Fatal("previously rejected business ID established identity")
 				}
 				if valid := f.a.verified; valid {

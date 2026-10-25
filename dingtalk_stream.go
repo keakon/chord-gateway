@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -55,10 +57,10 @@ type dingtalkStreamCallbacks struct {
 	OnUnavailable func()
 	// OnCallback runs on the sole socket reader. It must capture and enqueue
 	// admission without blocking, then return the authoritative result channel.
-	OnCallback      func(context.Context, dingtalkFrame) (<-chan ReceiveResult, error)
+	OnCallback      func(context.Context, dingtalkFrame) (<-chan im.ReceiveResult, error)
 	OnDiagnostic    func(string)
 	OnRetry         func(category string, attempt int, delay time.Duration)
-	OnReceiveResult func(ReceiveResult)
+	OnReceiveResult func(im.ReceiveResult)
 }
 
 type dingtalkStream struct {
@@ -74,7 +76,7 @@ type dingtalkStream struct {
 }
 
 func newDingtalkStreamWithProxy(api *dingtalkAPI, callbacks dingtalkStreamCallbacks, proxyFunc func(*http.Request) (*url.URL, error)) *dingtalkStream {
-	proxy := websocketProxyFunc(proxyFunc)
+	proxy := im.WebsocketProxyFunc(proxyFunc)
 	return &dingtalkStream{
 		callbacks:      callbacks,
 		openConnection: api.openConnection,
@@ -236,7 +238,7 @@ func dingtalkStreamURL(endpoint, ticket string, allowInsecure bool) (string, err
 	return u.String(), nil
 }
 
-func dingtalkStreamBackoff(attempt int) time.Duration { return reconnectBackoff(attempt) }
+func dingtalkStreamBackoff(attempt int) time.Duration { return im.ReconnectBackoff(attempt) }
 
 type dingtalkStreamWrite struct {
 	kind    int
@@ -520,7 +522,7 @@ func (c *dingtalkStreamConnection) handleFrame(frame dingtalkFrame) bool {
 	case c.admissionSlots <- struct{}{}:
 	default:
 		if c.stream.callbacks.OnReceiveResult != nil {
-			c.stream.callbacks.OnReceiveResult(ReceiveResult{Disposition: ReceiveRetryable, Reason: "stream_capacity"})
+			c.stream.callbacks.OnReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "stream_capacity"})
 		}
 		if c.stream.callbacks.OnDiagnostic != nil {
 			c.stream.callbacks.OnDiagnostic("backpressure")
@@ -552,7 +554,7 @@ func (c *dingtalkStreamConnection) handleFrame(frame dingtalkFrame) bool {
 		}
 		code := 500
 		switch outcome.Disposition {
-		case ReceiveAccepted, ReceiveDuplicate, ReceiveRejected:
+		case im.ReceiveAccepted, im.ReceiveDuplicate, im.ReceiveRejected:
 			code = 200
 		}
 		c.respond(frame, code, `{"response":null}`, false)

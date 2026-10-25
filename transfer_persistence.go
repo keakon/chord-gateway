@@ -5,12 +5,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // Transfer admission must survive restart before the preparation ACK is sent.
 func writePrivateFileSynced(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, privateDirMode); err != nil {
+	if err := os.MkdirAll(dir, im.PrivateDirMode); err != nil {
 		return fmt.Errorf("create transfer directory: %w", err)
 	}
 	f, err := os.CreateTemp(dir, ".transfer-*")
@@ -19,7 +21,7 @@ func writePrivateFileSynced(path string, data []byte) error {
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	if err = f.Chmod(privateFileMode); err != nil {
+	if err = f.Chmod(im.PrivateFileMode); err != nil {
 		return fmt.Errorf("protect transfer file: %w", err)
 	}
 	n, err := f.Write(data)

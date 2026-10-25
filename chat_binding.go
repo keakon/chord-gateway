@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 var errBindBusy = errors.New("binding has active work")
@@ -48,10 +49,10 @@ func findBindingWorkspace(cfg *config.Config, path string, info os.FileInfo) (st
 	return found, nil
 }
 
-func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t AdmissionTicket, args []string) (result BindResult, err error) {
+func (b *BindingService) Bind(ctx context.Context, msg im.IncomingMessage, t im.AdmissionTicket, args []string) (result BindResult, err error) {
 	r := b.router
 	if !r.admission.Valid(t) {
-		return result, errPairingDenied
+		return result, im.ErrPairingDenied
 	}
 	path, info, err := canonicalBindingDirectory(args[0])
 	if err != nil {
@@ -61,19 +62,19 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 		return result, errBindBusy
 	}
 	result.Directory = path
-	g := t.gate
-	g.opMu.Lock()
-	defer g.opMu.Unlock()
+	g := t.Gate
+	g.OpMu.Lock()
+	defer g.OpMu.Unlock()
 	if !r.admission.Valid(t) {
-		return result, errPairingDenied
+		return result, im.ErrPairingDenied
 	}
-	_, generation, _ := g.snapshot()
+	_, generation, _ := g.Snapshot()
 	if generation != t.BindingGeneration {
-		return result, errPairingDenied
+		return result, im.ErrPairingDenied
 	}
 	cfg := r.getConfig()
-	im := cfg.IMConfigByType(msg.IMType)
-	oldID := im.Bindings()[msg.ChatID]
+	imCfg := cfg.IMConfigByType(msg.IMType)
+	oldID := imCfg.Bindings()[msg.ChatID]
 	if old := cfg.WorkspaceByID(oldID); old != nil {
 		result.PreviousDirectory = old.Path
 	}
@@ -85,7 +86,7 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 		result.Already = true
 		return result, nil
 	}
-	_, _, phase := g.snapshot()
+	_, _, phase := g.Snapshot()
 	if phase == "blocked" || phase == "switching" {
 		return result, errBindBlocked
 	}
@@ -109,36 +110,32 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 		// uncertain replacement. Leave changing for startup reconciliation.
 		if r.mgr.store.faulted.Load() {
 			err = errors.Join(err, errConfigFaulted)
-			g.mu.Lock()
-			g.phase = "blocked"
-			g.mu.Unlock()
+			g.Block()
 			return
 		}
 		if finishErr := finishIngressChange(); finishErr != nil {
 			err = errors.Join(err, fmt.Errorf("%w: %w", errBindOutcomeUnknown, finishErr))
-			g.mu.Lock()
-			g.phase = "blocked"
-			g.mu.Unlock()
+			g.Block()
 		}
 	}()
 	if err = r.prepareBindingSwitch(ctx, g, oldKey, newKey); err != nil {
 		return result, err
 	}
-	result.First = im.OwnerIdentity() == nil
+	result.First = imCfg.OwnerIdentity() == nil
 	result.ConfigOutcome, err = r.mgr.store.Commit(ctx, ConfigMutation{
 		Check: func() error {
 			if !r.admission.Valid(t) {
-				return errPairingDenied
+				return im.ErrPairingDenied
 			}
 			return nil
 		},
 		Apply: func(doc *yaml.Node, current *config.Config) error {
 			currentIM := current.IMConfigByType(msg.IMType)
 			if currentIM == nil {
-				return errPairingDenied
+				return im.ErrPairingDenied
 			}
 			if owner := currentIM.OwnerIdentity(); owner != nil && (owner.AccountID != msg.AccountID || owner.UserID != msg.SenderID) {
-				return errPairingDenied
+				return im.ErrPairingDenied
 			}
 			id, e := findBindingWorkspace(current, path, info)
 			if e != nil {
@@ -188,21 +185,17 @@ func (b *BindingService) Bind(ctx context.Context, msg IncomingMessage, t Admiss
 	})
 	if err != nil {
 		if r.mgr.store.faulted.Load() {
-			g.mu.Lock()
-			g.phase = "blocked"
-			g.mu.Unlock()
+			g.Block()
 			return result, errConfigFaulted
 		}
 		if oldID != "" {
-			g.install(t.Identity, oldID, t.AccountEpoch)
+			g.Install(t.Identity, oldID, t.AccountEpoch)
 		} else {
-			g.mu.Lock()
-			g.phase = "unbound"
-			g.mu.Unlock()
+			g.SetUnbound()
 		}
 		return result, err
 	}
-	g.install(t.Identity, workspaceID, t.AccountEpoch)
+	g.Install(t.Identity, workspaceID, t.AccountEpoch)
 	return result, nil
 }
 
@@ -228,11 +221,11 @@ func (p *ChordProcess) readyForBindingLocked() bool {
 	}
 }
 
-func (r *NotificationRouter) dispatchPaired(msg IncomingMessage) {
-	if r.admission == nil || msg.ticket == nil {
+func (r *NotificationRouter) dispatchPaired(msg im.IncomingMessage) {
+	if r.admission == nil || msg.AdmissionTicket() == nil {
 		return
 	}
-	t := *msg.ticket
+	t := *msg.AdmissionTicket()
 	if !r.admission.Valid(t) {
 		return
 	}
@@ -249,22 +242,22 @@ func (r *NotificationRouter) dispatchPaired(msg IncomingMessage) {
 		return
 	}
 	if t.Kind == "owner_unbound" {
-		r.sendPairingReply(msg, "This chat is not bound. Send "+r.commandHint(msg.IMType, CommandTarget{ChatID: msg.ChatID, ChatKind: msg.ChatKind}, "/bind <directory>")+".")
+		r.sendPairingReply(msg, "This chat is not bound. Send "+r.commandHint(msg.IMType, im.CommandTarget{ChatID: msg.ChatID, ChatKind: msg.ChatKind}, "/bind <directory>")+".")
 		return
 	}
-	t.gate.opMu.Lock()
-	defer t.gate.opMu.Unlock()
+	t.Gate.OpMu.Lock()
+	defer t.Gate.OpMu.Unlock()
 	if !r.admission.Valid(t) {
 		return
 	}
 	r.dispatchMessage(msg)
 }
 
-func (r *NotificationRouter) sendPairingReply(msg IncomingMessage, text string) {
-	if msg.ticket == nil || !r.admission.Valid(*msg.ticket) || time.Since(msg.ticket.ReceivedAt) > 30*time.Second {
+func (r *NotificationRouter) sendPairingReply(msg im.IncomingMessage, text string) {
+	if msg.AdmissionTicket() == nil || !r.admission.Valid(*msg.AdmissionTicket()) || time.Since(msg.AdmissionTicket().ReceivedAt) > 30*time.Second {
 		return
 	}
-	t := *msg.ticket
+	t := *msg.AdmissionTicket()
 	_ = r.SendFlowReply(context.Background(), ReplyPermit{Identity: t.Identity, SenderID: t.SenderID, AccountEpoch: t.AccountEpoch, RequestID: msg.MessageID, Kind: "owner", ExpiresAt: t.ReceivedAt.Add(30 * time.Second), ticket: t}, text)
 }
 
@@ -285,7 +278,7 @@ func displayBindingDirectory(path string) string {
 // Unknown persistence outcomes are classified by the caller before formatting.
 func bindingReply(result BindResult, err error) string {
 	if err != nil {
-		if errors.Is(err, errPairingDenied) {
+		if errors.Is(err, im.ErrPairingDenied) {
 			return ""
 		}
 		text := "Binding was not changed. Check the local gateway and try again."

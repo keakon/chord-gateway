@@ -13,6 +13,7 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestFeishuSocketMixedTextAndCardPreservesChatOrder(t *testing.T) {
@@ -21,19 +22,19 @@ func TestFeishuSocketMixedTextAndCardPreservesChatOrder(t *testing.T) {
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	accepted := make(chan string, 3)
-	installFeishuReceiver(t, a, func(ctx context.Context, e IngressEnvelope) ReceiveResult {
+	installFeishuReceiver(t, a, func(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		if e.Message.ChatID == "chat" {
 			if e.Message.MessageID == "message:first" {
 				close(firstEntered)
 				select {
 				case <-release:
 				case <-ctx.Done():
-					return ReceiveResult{Disposition: ReceiveUncertain}
+					return im.ReceiveResult{Disposition: im.ReceiveUncertain}
 				}
 			}
 			accepted <- e.Message.MessageID
 		}
-		return ReceiveResult{Disposition: ReceiveAccepted, State: "received"}
+		return im.ReceiveResult{Disposition: im.ReceiveAccepted, State: "received"}
 	})
 	conn, client := feishuSocketPair(t)
 	generation := a.startGeneration(t.Context(), conn)

@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package im
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ import (
 func takeInstanceLock(f *os.File) error {
 	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-		return errInstanceRunning
+		return ErrInstanceRunning
 	}
 	return err
 }

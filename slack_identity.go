@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/slack-go/slack"
 )
 
@@ -47,7 +49,7 @@ func verifySlackIdentity(ctx context.Context, client *slack.Client, teamID, appI
 	if bot == nil || bot.ID != auth.BotID || bot.AppID != appID || bot.UserID != auth.UserID || bot.Deleted {
 		return slackIdentity{}, fmt.Errorf("slack bot app identity mismatch: %w", errSlackFatal)
 	}
-	account, err := EncodeScopedID("account-v1:", teamID, auth.UserID)
+	account, err := im.EncodeScopedID("account-v1:", teamID, auth.UserID)
 	if err != nil {
 		return slackIdentity{}, fmt.Errorf("slack account identity: %w", errSlackFatal)
 	}
@@ -144,14 +146,14 @@ func slackTarget(channel, threadTS string) (string, error) {
 	if !validSlackTimestamp(threadTS) {
 		return "", errSlackIgnored
 	}
-	return EncodeScopedID("target-v1:", "slack-thread", channel, threadTS)
+	return im.EncodeScopedID("target-v1:", "slack-thread", channel, threadTS)
 }
 
 func decodeSlackTarget(target string) (channel, threadTS string, err error) {
 	if validSlackChannelID(target) {
 		return target, "", nil
 	}
-	parts, err := DecodeScopedID(target, "target-v1:", 3)
+	parts, err := im.DecodeScopedID(target, "target-v1:", 3)
 	if err != nil || parts[0] != "slack-thread" || !validSlackChannelID(parts[1]) || !validSlackTimestamp(parts[2]) {
 		return "", "", errSlackIgnored
 	}

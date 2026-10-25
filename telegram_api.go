@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -173,10 +175,10 @@ type telegramHTTPAPI struct {
 }
 
 func newTelegramAPI(token string, proxyFunc func(*http.Request) (*url.URL, error)) *telegramHTTPAPI {
-	transport := proxiedTransport(proxyFunc)
+	transport := im.ProxiedTransport(proxyFunc)
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 5 * time.Second
-	return &telegramHTTPAPI{token: token, baseURL: telegramAPIBaseURL, client: messageHTTPClient(&http.Client{Transport: transport})}
+	return &telegramHTTPAPI{token: token, baseURL: telegramAPIBaseURL, client: im.MessageHTTPClient(&http.Client{Transport: transport})}
 }
 func (a *telegramHTTPAPI) GetMe(ctx context.Context) (telegramUser, error) {
 	var user telegramUser
@@ -220,7 +222,7 @@ func (a *telegramHTTPAPI) SendMessage(ctx context.Context, chatID int64, text st
 	payload.LinkPreviewOptions.IsDisabled = true
 	err := a.call(ctx, "sendMessage", payload, &result, false)
 	if err == nil && (result.MessageID <= 0 || result.Chat.ID != chatID) {
-		err = &telegramAPIError{Method: "sendMessage", Status: http.StatusOK, Category: "unknown_send", Cause: errDeliveryOutcomeUnknown}
+		err = &telegramAPIError{Method: "sendMessage", Status: http.StatusOK, Category: "unknown_send", Cause: im.ErrDeliveryOutcomeUnknown}
 	}
 	return result, err
 }
@@ -240,7 +242,7 @@ func (a *telegramHTTPAPI) call(parent context.Context, method string, payload, r
 			category = "poller_conflict"
 		}
 		if sending && (category == "network" || category == "invalid_response") {
-			category, cause = "unknown_send", errDeliveryOutcomeUnknown
+			category, cause = "unknown_send", im.ErrDeliveryOutcomeUnknown
 		}
 		return &telegramAPIError{Method: method, Status: status, Code: code, Category: category, Cause: cause}
 	}

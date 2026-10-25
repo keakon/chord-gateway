@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"maps"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // retiredPinKeyPrefix marks the removed identity-scoped pin layout. Keys under
@@ -32,7 +34,7 @@ func (p *ChordProcess) sessionPinKey() string {
 
 func pinPlatform(key string) (string, error) {
 	workspace, platform, chat := parseProcessKey(key)
-	if workspace == "" || chat == "" || (!supportedIMPlatform(platform) && platform != "console") {
+	if workspace == "" || chat == "" || (!im.SupportedIMPlatform(platform) && platform != "console") {
 		return "", errors.New("unrecognized session pin key")
 	}
 	return platform, nil

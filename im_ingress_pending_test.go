@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestIngressPendingMetadataTracksAtomicTransitions(t *testing.T) {
@@ -15,7 +17,7 @@ func TestIngressPendingMetadataTracksAtomicTransitions(t *testing.T) {
 	task := testIngressTask(t, s, "metadata")
 	task.Text = strings.Repeat("private input ", 1000)
 	record := mustAcceptIngress(t, s, task)
-	assertMetadata := func(state ingressState) {
+	assertMetadata := func(state im.IngressState) {
 		t.Helper()
 		records := s.listPendingMetadata()
 		route := s.ListRoutePendingMetadata(record.Identity())
@@ -42,12 +44,12 @@ func TestIngressPendingMetadataTracksAtomicTransitions(t *testing.T) {
 	}
 	assertMetadata("received")
 	failure := errors.New("rollback")
-	if err := s.UpdateRecord(t.Context(), record.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return failure }); !errors.Is(err, failure) {
+	if err := s.UpdateRecord(t.Context(), record.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return failure }); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	assertMetadata("received")
-	for _, state := range []ingressState{"dispatching", "unknown", "consumed"} {
-		if err := s.UpdateRecord(context.Background(), record.RecordID, []ingressState{"received", "dispatching", "unknown"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
+	for _, state := range []im.IngressState{"dispatching", "unknown", "consumed"} {
+		if err := s.UpdateRecord(context.Background(), record.RecordID, []im.IngressState{"received", "dispatching", "unknown"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
 			t.Fatal(err)
 		}
 		assertMetadata(state)
@@ -65,13 +67,13 @@ func BenchmarkIngressPendingScan(b *testing.B) {
 	})
 	body := strings.Repeat("x", 60<<10)
 	for i := range 256 {
-		id := ChatIdentity{"telegram", "bot", fmt.Sprint(i / 32)}
+		id := im.ChatIdentity{Platform: "telegram", AccountID: "bot", ChatID: fmt.Sprint(i / 32)}
 		route, err := s.EnsureRoute(context.Background(), id, "digest", "workspace", "session")
 		if err != nil {
 			b.Fatal(err)
 		}
 		result := s.AcceptRecord(context.Background(), IngressRecord{Platform: id.Platform, AccountID: id.AccountID, ChatID: id.ChatID, SenderID: "owner", BusinessID: fmt.Sprint(i), Kind: "task", Text: body, RouteRevision: route.Revision, AuthorizationDigest: route.AuthorizationDigest, WorkspaceID: route.WorkspaceID, SessionID: route.SessionID}, nil)
-		if result.Disposition != ReceiveAccepted {
+		if result.Disposition != im.ReceiveAccepted {
 			b.Fatal(result)
 		}
 	}
@@ -106,7 +108,7 @@ func BenchmarkIngressAcceptRetainedHistory(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				result := s.AcceptRecord(context.Background(), record, nil)
-				if result.Disposition != ReceiveRejected {
+				if result.Disposition != im.ReceiveRejected {
 					b.Fatal(result)
 				}
 				// Remove only the probe, keeping the same retained-history size each iteration.
@@ -139,14 +141,14 @@ func TestIngressRoutePendingCapacityAndCleanup(t *testing.T) {
 		}
 	}
 	check(64)
-	if err := s.UpdateRecord(t.Context(), first.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
+	if err := s.UpdateRecord(t.Context(), first.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	// Isolation is settled input: it keeps its evidence until the history TTL
 	// expires, so it must not keep holding a pending slot the chat still needs.
 	check(63)
 	task.BusinessID = "overflow"
-	if got := s.AcceptRecord(t.Context(), task, nil); got.Disposition != ReceiveAccepted {
+	if got := s.AcceptRecord(t.Context(), task, nil); got.Disposition != im.ReceiveAccepted {
 		t.Fatalf("isolation still held a slot: %+v", got)
 	}
 	check(64)
@@ -155,7 +157,7 @@ func TestIngressRoutePendingCapacityAndCleanup(t *testing.T) {
 	}
 	check(64)
 	// Terminal metadata updates must not recreate a pending entry.
-	if err := s.UpdateRecord(t.Context(), first.RecordID, []ingressState{"consumed"}, func(r *IngressRecord) error { r.Reason = "settled"; return nil }); err != nil {
+	if err := s.UpdateRecord(t.Context(), first.RecordID, []im.IngressState{"consumed"}, func(r *IngressRecord) error { r.Reason = "settled"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	check(64)

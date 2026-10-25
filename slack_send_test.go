@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type slackPostFunc func(context.Context, string, ...slack.MsgOption) (string, string, error)
@@ -60,7 +62,7 @@ func TestSlackSendSafeTextAndThread(t *testing.T) {
 	}
 	var combined strings.Builder
 	for _, form := range forms {
-		if imUTF16Units(form.Get("text")) > slackTextBudget {
+		if im.UTF16Units(form.Get("text")) > slackTextBudget {
 			t.Fatal("rendered segment exceeds UTF-16 budget")
 		}
 		for key, expected := range map[string]string{"channel": "CCHAN1", "thread_ts": "1234567890.000009", "mrkdwn": "false", "parse": "none", "link_names": "false", "unfurl_links": "false", "unfurl_media": "false"} {
@@ -77,7 +79,7 @@ func TestSlackSendSafeTextAndThread(t *testing.T) {
 	if len(forms) < 2 || combined.String() != source {
 		t.Fatal("segmentation lost text or split escaped entities")
 	}
-	if imUTF16Units("a😀") != 3 {
+	if im.UTF16Units("a😀") != 3 {
 		t.Fatal("supplementary rune is not counted as two UTF-16 units")
 	}
 }
@@ -96,7 +98,7 @@ func TestSlackSendRequiresExplicitReceipt(t *testing.T) {
 			var calls atomic.Int32
 			client := testSlackAPI(t, func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); _, _ = fmt.Fprint(w, body) })
 			err := testSlackSender(t, client).Send(context.Background(), nil, "CCHAN1", "sample")
-			if !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 1 {
+			if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 1 {
 				t.Fatalf("error=%v, calls=%d", err, calls.Load())
 			}
 		})
@@ -109,13 +111,13 @@ func TestSlackTextSegmentationPreservesEntityBoundaries(t *testing.T) {
 		return "", "", nil
 	}))
 	for _, source := range []string{strings.Repeat("<&>😀", 900), strings.Repeat("&amp;", 900)} {
-		parts, err := sender.text.segments(source)
+		parts, err := sender.text.Segments(source)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var decoded strings.Builder
 		for _, part := range parts {
-			if imUTF16Units(part) > slackTextBudget {
+			if im.UTF16Units(part) > slackTextBudget {
 				t.Fatal("escaped segment exceeded budget")
 			}
 			decoded.WriteString(strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;", "&").Replace(part))
@@ -150,8 +152,8 @@ func TestSlackSendPartialFailureNeverReplays(t *testing.T) {
 	if last := sender.text.TextSendTargetSnapshot("CCHAN1"); last.LastFailureCategory != "unknown_send" || last.LastAcceptedSegments != 1 {
 		t.Fatalf("status=%+v", last)
 	}
-	var partial *IMTextSendError
-	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 2 {
+	var partial *im.IMTextSendError
+	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 2 {
 		t.Fatalf("error=%v, partial=%+v, calls=%d", err, partial, calls.Load())
 	}
 	if strings.Contains(partial.Cause.Error(), "sensitive") {
@@ -175,8 +177,8 @@ func TestSlackSendClassifiesRejections(t *testing.T) {
 		t.Run(code, func(t *testing.T) {
 			client := testSlackAPI(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintf(w, `{"ok":false,"error":%q}`, code) })
 			err := testSlackSender(t, client).Send(context.Background(), nil, "CCHAN1", "sample")
-			var sendErr *IMTextSendError
-			if !errors.As(err, &sendErr) || errors.Is(err, errDeliveryOutcomeUnknown) || !strings.Contains(sendErr.Cause.Error(), code) {
+			var sendErr *im.IMTextSendError
+			if !errors.As(err, &sendErr) || errors.Is(err, im.ErrDeliveryOutcomeUnknown) || !strings.Contains(sendErr.Cause.Error(), code) {
 				t.Fatalf("error=%v", err)
 			}
 			if sendErr.Category != category {
@@ -190,7 +192,7 @@ func TestSlackSendClassifiesRejections(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 	})
 	err := testSlackSender(t, client).Send(context.Background(), nil, "CCHAN1", "sample")
-	var sendErr *IMTextSendError
+	var sendErr *im.IMTextSendError
 	if !errors.As(err, &sendErr) || sendErr.Category != "platform_rejected" || calls.Load() != 1 {
 		t.Fatalf("HTTP rejection category: error=%v calls=%d", err, calls.Load())
 	}
@@ -205,7 +207,7 @@ func TestSlackSendInternalAPIFailureRemainsUnknown(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"ok":false,"error":%q}`, code)
 			})
 			err := testSlackSender(t, client).Send(context.Background(), nil, "CCHAN1", "sample")
-			if !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 1 {
+			if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 1 {
 				t.Fatalf("potentially accepted operation was retried or called a definite rejection: error=%v, calls=%d", err, calls.Load())
 			}
 		})
@@ -222,7 +224,7 @@ func TestSlackSendDisallowsRedirectAndUserTargets(t *testing.T) {
 	if err := sender.Send(context.Background(), nil, "UUSER1", "sample"); err == nil || calls.Load() != 0 {
 		t.Fatal("user target must not initiate a DM")
 	}
-	if err := sender.Send(context.Background(), nil, "CCHAN1", "sample"); !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 1 {
+	if err := sender.Send(context.Background(), nil, "CCHAN1", "sample"); !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 1 {
 		t.Fatalf("redirect followed: error=%v, calls=%d", err, calls.Load())
 	}
 }
@@ -236,7 +238,7 @@ func TestSlackSDKRateLimitHasNoHiddenRetry(t *testing.T) {
 	})
 	sender := testSlackSender(t, client)
 	err := sender.sendSegment(context.Background(), "CCHAN1", "sample")
-	var limited *IMRateLimitError
+	var limited *im.IMRateLimitError
 	if !errors.As(err, &limited) || limited.RetryAfter != time.Second || calls.Load() != 1 {
 		t.Fatalf("error=%v, calls=%d", err, calls.Load())
 	}
@@ -252,7 +254,7 @@ func TestSlackSendHonorsPublishedMethodCooldown(t *testing.T) {
 		sender := testSlackSender(t, slack.New("sample-bot-token", slack.OptionHTTPClient(httpClient)))
 		first, _ := slackTarget("CCHAN1", "1234567890.000001")
 		second, _ := slackTarget("CCHAN1", "1234567890.000002")
-		var limited *IMRateLimitError
+		var limited *im.IMRateLimitError
 		if err := sender.sendSegment(t.Context(), first, "first"); !errors.As(err, &limited) {
 			t.Fatal(err)
 		}

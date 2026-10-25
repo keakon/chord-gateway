@@ -9,17 +9,18 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestFeishuNormalizerCapacityReturnsFailureWithoutBlockingPong(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
-	installFeishuReceiver(t, a, func(ctx context.Context, _ IngressEnvelope) ReceiveResult {
+	installFeishuReceiver(t, a, func(ctx context.Context, _ im.IngressEnvelope) im.ReceiveResult {
 		<-ctx.Done()
-		return ReceiveResult{Disposition: ReceiveUncertain}
+		return im.ReceiveResult{Disposition: im.ReceiveUncertain}
 	})
 	r := a.msgRouter.(*NotificationRouter)
 	for range ingressNormalizationCapacity {
-		if _, err := r.ingress.normalizer.Submit("occupied-route", func(context.Context) (IngressEnvelope, error) { return IngressEnvelope{}, nil }); err != nil {
+		if _, err := r.ingress.normalizer.Submit("occupied-route", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -95,13 +96,13 @@ func TestFeishuLateAcceptedOldGenerationDoesNotSendToNewSocket(t *testing.T) {
 	entered, release, accepted := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	installFeishuReceiver(t, a, func(_ context.Context, e IngressEnvelope) ReceiveResult {
+	installFeishuReceiver(t, a, func(_ context.Context, e im.IngressEnvelope) im.ReceiveResult {
 		if e.Message.MessageID == "message:old-business" {
 			close(entered)
 			<-release
 			close(accepted)
 		}
-		return ReceiveResult{Disposition: ReceiveAccepted}
+		return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 	})
 	oldConn, _ := feishuSocketPair(t)
 	old := a.startGeneration(t.Context(), oldConn)
@@ -180,9 +181,9 @@ func TestFeishuIncompleteFragmentsStayWithinMessageBudget(t *testing.T) {
 func TestFeishuOldSocketCannotSubmitBusinessToNewGeneration(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
 	received := make(chan struct{}, 1)
-	installFeishuReceiver(t, a, func(context.Context, IngressEnvelope) ReceiveResult {
+	installFeishuReceiver(t, a, func(context.Context, im.IngressEnvelope) im.ReceiveResult {
 		received <- struct{}{}
-		return ReceiveResult{Disposition: ReceiveAccepted}
+		return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 	})
 	oldConn, _ := feishuSocketPair(t)
 	old := a.startGeneration(t.Context(), oldConn)
@@ -209,10 +210,10 @@ func TestFeishuAcceptanceBudgetReturnsUncertainBeforeLateCommit(t *testing.T) {
 	release, accepted := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	installFeishuReceiver(t, a, func(context.Context, IngressEnvelope) ReceiveResult {
+	installFeishuReceiver(t, a, func(context.Context, im.IngressEnvelope) im.ReceiveResult {
 		<-release
 		close(accepted)
-		return ReceiveResult{Disposition: ReceiveAccepted}
+		return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 	})
 	conn, client := feishuSocketPair(t)
 	g := a.startGeneration(t.Context(), conn)

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -55,21 +57,21 @@ func TestWecomCallbacksUseDurableBusinessDedupe(t *testing.T) {
 	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("other", "delivery-3", "business-2")); !errors.Is(err, errWecomAccountMismatch) {
 		t.Fatal("account mismatch not fatal")
 	}
-	if a.IngressDeliveryReadiness(ChatIdentity{"wecom", "bot", "chat"}).Ready {
+	if a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "wecom", AccountID: "bot", ChatID: "chat"}).Ready {
 		t.Fatal("account mismatch left adapter ready")
 	}
 }
 
 func TestWecomAdmissionFailureDistinguishesLossAndUncertainty(t *testing.T) {
 	a, msg, store := wecomAdapterFixture(t)
-	a.router.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, IngressEnvelope) ReceiveResult {
-		return ReceiveResult{Disposition: ReceiveRetryable, Reason: "ingress_unavailable"}
+	a.router.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, im.IngressEnvelope) im.ReceiveResult {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	})
 	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "failed-delivery", "failed-business")); err != nil {
 		t.Fatal(err)
 	}
 	waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "acceptance_unconfirmed") == 1 })
-	a.observeReceive(msg, ReceiveResult{Disposition: ReceiveUncertain, Reason: "commit_pending"})
+	a.observeReceive(msg, im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "commit_pending"})
 	if countWecomIngressEvent(store, "lost_before_accept") != 0 {
 		t.Fatal("uncertain commit recorded as lost")
 	}
@@ -77,19 +79,19 @@ func TestWecomAdmissionFailureDistinguishesLossAndUncertainty(t *testing.T) {
 
 func TestWecomAdapterLifecycleAndAccountLockBeforeDial(t *testing.T) {
 	a, _, _ := wecomAdapterFixture(t)
-	lock, err := AcquireIMAccountLock("wecom", "bot")
+	lock, err := im.AcquireIMAccountLock("wecom", "bot")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lock.Close()
 	a.ws.endpoint = "ws://127.0.0.1:1"
-	if err = a.Connect(); !errors.Is(err, errInstanceRunning) {
+	if err = a.Connect(); !errors.Is(err, im.ErrInstanceRunning) {
 		t.Fatalf("dialed before acquiring account lock: %v", err)
 	}
 	if a.SupportsLoginRenewal() {
 		t.Fatal("interactive login incorrectly enabled")
 	}
-	if _, err = a.StartLogin(); !errors.Is(err, ErrLoginNotSupported) {
+	if _, err = a.StartLogin(); !errors.Is(err, im.ErrLoginNotSupported) {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -106,7 +108,7 @@ func TestWecomAdapterLifecycleAndAccountLockBeforeDial(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := a.ValidateBindingTarget(ctx, BindingProbeTarget{"wecom", "bot", "invalid"}); err == nil {
+	if err := a.ValidateBindingTarget(ctx, im.BindingProbeTarget{Platform: "wecom", AccountID: "bot", ChatID: "invalid"}); err == nil {
 		t.Fatal("stopped adapter accepted probe")
 	}
 }
@@ -138,7 +140,7 @@ func TestWecomConcurrentDisconnectJoinsSubscribeAndReleasesAccountLock(t *testin
 	case <-time.After(time.Second):
 		t.Fatal("subscribe did not start")
 	}
-	if lock, err := AcquireIMAccountLock("wecom", "bot"); err == nil {
+	if lock, err := im.AcquireIMAccountLock("wecom", "bot"); err == nil {
 		lock.Close()
 		t.Fatal("live connection released account lock")
 	}
@@ -161,7 +163,7 @@ func TestWecomConcurrentDisconnectJoinsSubscribeAndReleasesAccountLock(t *testin
 	case <-time.After(time.Second):
 		t.Fatal("Connect did not stop")
 	}
-	lock, err := AcquireIMAccountLock("wecom", "bot")
+	lock, err := im.AcquireIMAccountLock("wecom", "bot")
 	if err != nil {
 		t.Fatal("account lock retained after shutdown", err)
 	}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // A busy process is mid-turn: /new and /resume must refuse before the
@@ -27,7 +29,7 @@ func TestIngressSessionChangeRejectsBusyProcessBeforeReplacing(t *testing.T) {
 	defer mgr.StopAll(time.Second)
 	r := &NotificationRouter{mgr: mgr}
 	key := (processKey{workspaceID: "test", imType: "wechat", chatID: "chat"}).String()
-	p, _, result := r.startIngressCommandProcess(t.Context(), key, &IngressControlTarget{})
+	p, _, result := r.startIngressCommandProcess(t.Context(), key, &im.IngressControlTarget{})
 	if result.State != "" || p == nil {
 		t.Fatal(p, result)
 	}
@@ -37,8 +39,9 @@ func TestIngressSessionChangeRejectsBusyProcessBeforeReplacing(t *testing.T) {
 	p.mu.Lock()
 	p.state.Busy = true
 	p.mu.Unlock()
-	msg := IncomingMessage{IMType: "wechat", ChatID: "chat", ticket: &AdmissionTicket{Identity: ChatIdentity{"wechat", "bot", "chat"}}}
-	got := r.dispatchIngressSession(t.Context(), msg, key, IMCommand{Type: "new"}, nil)
+	msg := im.IncomingMessage{IMType: "wechat", ChatID: "chat"}
+	msg.SetAdmissionTicket(&im.AdmissionTicket{Identity: im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}})
+	got := r.dispatchIngressSession(t.Context(), msg, key, im.IMCommand{Type: "new"}, nil)
 	if got.State != "rejected" || got.Reason != "session_change_busy" {
 		t.Fatalf("result = %+v, want a busy refusal", got)
 	}
@@ -73,7 +76,7 @@ func TestSessionChangeRejectReasonDistinguishesRefusals(t *testing.T) {
 // actionable step is cancelling the turn, not checking status.
 func TestIngressDispatchDiagnosticExplainsBusySessionChange(t *testing.T) {
 	r, code := pairedTestRouter(t)
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
 	if !dispatchPairingTest(r, msg) {
 		t.Fatal("bind rejected")
 	}
@@ -83,7 +86,7 @@ func TestIngressDispatchDiagnosticExplainsBusySessionChange(t *testing.T) {
 	if !ok {
 		t.Fatal("authorization")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	r.enqueueIngressDispatchDiagnostic(msg, DispatchResult{"rejected", "session_change_busy"})
 	waitIngressCondition(t, func() bool {
 		adapter.mu.Lock()

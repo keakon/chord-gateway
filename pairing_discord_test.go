@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestDiscordPairingAndResetPreserveCredentialsAndOtherPlatforms(t *testing.T) {
@@ -14,7 +15,7 @@ func TestDiscordPairingAndResetPreserveCredentialsAndOtherPlatforms(t *testing.T
 	beforeWechat := r.getConfig().IMConfigByType("wechat")
 	p := r.admission.pairing
 	const botID = "234567890123456789"
-	if err := p.PlatformReadyWithPresentation("discord", botID, PlatformPresentation{BotMention: "<@" + botID + ">"}); err != nil {
+	if err := p.PlatformReadyWithPresentation("discord", botID, im.PlatformPresentation{BotMention: "<@" + botID + ">"}); err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
@@ -23,7 +24,7 @@ func TestDiscordPairingAndResetPreserveCredentialsAndOtherPlatforms(t *testing.T
 	if code == "" {
 		t.Fatal("Discord pairing instructions missing")
 	}
-	msg := IncomingMessage{IMType: "discord", AccountID: botID, ChatKind: "private", ChatID: "345678901234567890", SenderID: "456789012345678901", MessageID: "message:567890123456789012", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
+	msg := im.IncomingMessage{IMType: "discord", AccountID: botID, ChatKind: "private", ChatID: "345678901234567890", SenderID: "456789012345678901", MessageID: "message:567890123456789012", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
 	group := msg
 	group.ChatKind = "group"
 	if _, ok := r.admission.Authorize(group); ok {

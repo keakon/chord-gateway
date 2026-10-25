@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // buildExpiredConfirmFollowup formats a follow-up message for the chord
 // process when a user replies to an already-expired confirmation request.
-func buildExpiredConfirmFollowup(cmd IMCommand, c *ConfirmPayload) string {
+func buildExpiredConfirmFollowup(cmd im.IMCommand, c *ConfirmPayload) string {
 	var sb strings.Builder
 	sb.WriteString("The previous pending confirmation has expired, so this must not be treated as an approval or denial. Treat this only as follow-up context and ask the user to retry the original request if confirmation is still required.")
 	if c != nil {
@@ -50,7 +52,7 @@ func buildFeishuResolvedCard(title, message, template string) map[string]any {
 
 // displaySender returns a short, human-readable name for the sender of an
 // inbound IM message. Falls back to a truncated id, then the literal "user".
-func displaySender(msg IncomingMessage) string {
+func displaySender(msg im.IncomingMessage) string {
 	if strings.TrimSpace(msg.SenderName) != "" {
 		return strings.TrimSpace(msg.SenderName)
 	}
@@ -63,7 +65,7 @@ func displaySender(msg IncomingMessage) string {
 // updateFeishuCardStatus resolves a previously-sent interactive Feishu card
 // (referenced by processKey/requestType/requestID) by patching it with the
 // supplied card body. No-op for non-Feishu IMs or when no handle is available.
-func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, processKey, requestType, requestID string, card map[string]any) bool {
+func (r *NotificationRouter) updateFeishuCardStatus(msg im.IncomingMessage, processKey, requestType, requestID string, card map[string]any) bool {
 	target, ok := r.targetForKey(processKey)
 	if !ok {
 		return false
@@ -71,11 +73,11 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg IncomingMessage, process
 	return r.updateFeishuCardForTarget(msg, target, requestType, requestID, card)
 }
 
-func (r *NotificationRouter) updateFeishuCardForTarget(msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
+func (r *NotificationRouter) updateFeishuCardForTarget(msg im.IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
 	return r.updateFeishuCardForTargetContext(context.Background(), msg, target, requestType, requestID, card)
 }
 
-func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Context, msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
+func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Context, msg im.IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
 	updated, _ := r.patchFeishuCardForTargetContext(ctx, msg, target, requestType, requestID, card, true)
 	return updated
 }
@@ -83,7 +85,7 @@ func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Contex
 // Preserve handles until a confirmed terminal patch. A failed or uncertain
 // patch can be reconciled by a later trusted result instead of stranding the
 // original card, and uncertain writes must not trigger the same text fallback.
-func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context, msg IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any, terminal bool) (bool, error) {
+func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context, msg im.IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any, terminal bool) (bool, error) {
 	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
 		return false, err
@@ -104,7 +106,7 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 		ok = false
 	}
 	r.mu.Unlock()
-	handle := InteractiveCardHandle{}
+	handle := im.InteractiveCardHandle{}
 	if ok {
 		handle = entry.handle
 	}
@@ -125,7 +127,7 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 		r.mu.Lock()
 		if current, exists := r.cardHandles[key]; exists && current.recordedAt == entry.recordedAt {
 			if current.terminal {
-				current.handle = InteractiveCardHandle{}
+				current.handle = im.InteractiveCardHandle{}
 				r.cardHandles[key] = current
 			} else {
 				delete(r.cardHandles, key)
@@ -139,6 +141,6 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 // resolveFeishuCard patches the previously-sent interactive Feishu card with a
 // title/message/template tuple, sparing callers from constructing the card body.
 // It reports whether the card was actually patched.
-func (r *NotificationRouter) resolveFeishuCard(msg IncomingMessage, processKey, requestType, requestID, title, message, template string) bool {
+func (r *NotificationRouter) resolveFeishuCard(msg im.IncomingMessage, processKey, requestType, requestID, title, message, template string) bool {
 	return r.updateFeishuCardStatus(msg, processKey, requestType, requestID, buildFeishuResolvedCard(title, message, template))
 }

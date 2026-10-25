@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWecomPairingOwnerAccountAndSecretRotation(t *testing.T) {
@@ -25,7 +26,7 @@ func TestWecomPairingOwnerAccountAndSecretRotation(t *testing.T) {
 			var terminal bytes.Buffer
 			pairing := NewPairingService(store, true, &terminal)
 			err := pairing.PlatformReady("wecom", tc.bot)
-			if (err == nil) != tc.allowed || !tc.allowed && !errors.Is(err, errPairingDenied) {
+			if (err == nil) != tc.allowed || !tc.allowed && !errors.Is(err, im.ErrPairingDenied) {
 				t.Fatalf("owner account authorization: %v", err)
 			}
 			if terminal.Len() != 0 {
@@ -52,18 +53,18 @@ func TestWecomPairingAccountChangeRevokesPendingCode(t *testing.T) {
 		}
 	}
 	chat, _ := EncodeWecomTarget("private", "example-owner")
-	msg := IncomingMessage{IMType: "wecom", AccountID: "example-bot", ChatKind: "private", ChatID: chat, SenderID: "example-owner", MessageID: "message:example", Text: "/bind /project " + code}
+	msg := im.IncomingMessage{IMType: "wecom", AccountID: "example-bot", ChatKind: "private", ChatID: chat, SenderID: "example-owner", MessageID: "message:example", Text: "/bind /project " + code}
 	ticket, ok := admission.Authorize(msg)
 	if !ok {
 		t.Fatal("pairing denied before account changed")
 	}
-	if err := pairing.PlatformReady("wecom", "other-bot"); !errors.Is(err, errPairingDenied) {
+	if err := pairing.PlatformReady("wecom", "other-bot"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("account change error: %v", err)
 	}
 	if admission.Valid(ticket) {
 		t.Fatal("old pairing ticket survived bot account change")
 	}
-	if err := pairing.PlatformReady("wecom", "example-bot"); !errors.Is(err, errPairingDenied) {
+	if err := pairing.PlatformReady("wecom", "example-bot"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatal("returning to old account silently reopened pairing")
 	}
 }
@@ -78,8 +79,8 @@ func TestWecomLocalResetClearsIdentityAndPreservesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	im := reloaded.Snapshot().IMConfigByType("wecom")
-	if im.OwnerIdentity() != nil || len(im.Bindings()) != 0 || im.Wecom.BotID != "new-bot" || im.Wecom.Secret != "example-secret" || reloaded.Snapshot().WorkspaceByID("project") == nil || reloaded.Snapshot().IMConfigByType("feishu").OwnerIdentity().UserID != "other-owner" {
+	imCfg := reloaded.Snapshot().IMConfigByType("wecom")
+	if imCfg.OwnerIdentity() != nil || len(imCfg.Bindings()) != 0 || imCfg.Wecom.BotID != "new-bot" || imCfg.Wecom.Secret != "example-secret" || reloaded.Snapshot().WorkspaceByID("project") == nil || reloaded.Snapshot().IMConfigByType("feishu").OwnerIdentity().UserID != "other-owner" {
 		t.Fatal("reset changed credentials, unrelated platform or workspace")
 	}
 	pairing := NewPairingService(reloaded, false, nil)

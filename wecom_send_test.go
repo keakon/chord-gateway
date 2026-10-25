@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/golog"
@@ -21,7 +23,7 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-func wecomAdapterFixture(t *testing.T) (*WecomAdapter, IncomingMessage, *IngressStore) {
+func wecomAdapterFixture(t *testing.T) (*WecomAdapter, im.IncomingMessage, *IngressStore) {
 	t.Helper()
 	chat, err := EncodeWecomTarget("private", "owner")
 	if err != nil {
@@ -50,7 +52,7 @@ func wecomAdapterFixture(t *testing.T) (*WecomAdapter, IncomingMessage, *Ingress
 	if err = a.transportReady(a.ctx); err != nil {
 		t.Fatal(err)
 	}
-	msg := IncomingMessage{IMType: "wecom", AccountID: "bot", ChatID: chat, ChatKind: "private", SenderID: "owner", MessageID: "message:fixture", Text: "task"}
+	msg := im.IncomingMessage{IMType: "wecom", AccountID: "bot", ChatID: chat, ChatKind: "private", SenderID: "owner", MessageID: "message:fixture", Text: "task"}
 	if _, ok := r.admission.Authorize(msg); !ok {
 		t.Fatal("fixture admission failed")
 	}
@@ -139,7 +141,7 @@ func startWecomAdapterTestWS(t *testing.T, a *WecomAdapter, send func(string, st
 func TestWecomRenderedSegmentsStayWithinByteBudget(t *testing.T) {
 	a, _, _ := wecomAdapterFixture(t)
 	source := strings.Repeat("\\*中文😀<@owner>@all[link](url)\n", 3000)
-	segments, err := a.textSender.segments(source)
+	segments, err := a.textSender.Segments(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,20 +172,20 @@ func TestWecomBoundSendAndProbeAuthorization(t *testing.T) {
 		payloads = append(payloads, target+":"+text)
 		return 0
 	})
-	if !errors.Is(a.SendTextContext(t.Context(), msg.ChatID, "bypass"), errPairingDenied) {
+	if !errors.Is(a.SendTextContext(t.Context(), msg.ChatID, "bypass"), im.ErrPairingDenied) {
 		t.Fatal("ordinary context bypassed binding permit")
 	}
 	if err := a.SendText(msg.ChatID, "hello"); err != nil {
 		t.Fatal(err)
 	}
 	group, _ := EncodeWecomTarget("group", "candidate")
-	if err := a.SendText(group, "unbound"); !errors.Is(err, errPairingDenied) {
+	if err := a.SendText(group, "unbound"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("unbound send=%v", err)
 	}
-	if err := a.ValidateBindingTarget(t.Context(), BindingProbeTarget{"wecom", "other", group}); !errors.Is(err, errPairingDenied) {
+	if err := a.ValidateBindingTarget(t.Context(), im.BindingProbeTarget{Platform: "wecom", AccountID: "other", ChatID: group}); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatal("wrong account probe allowed")
 	}
-	if err := a.ValidateBindingTarget(t.Context(), BindingProbeTarget{"wecom", "bot", group}); err != nil {
+	if err := a.ValidateBindingTarget(t.Context(), im.BindingProbeTarget{Platform: "wecom", AccountID: "bot", ChatID: group}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -210,7 +212,7 @@ func TestWecomSendReportsAcceptedSegmentsAndDoesNotRetry(t *testing.T) {
 		return 0
 	})
 	err := a.SendText(msg.ChatID, strings.Repeat("😀", 900))
-	var partial *IMTextSendError
+	var partial *im.IMTextSendError
 	var transport *WecomTransportError
 	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "platform_rejected" || !errors.As(err, &transport) || transport.Category != "platform_rejected" || transport.Code != 45001 {
 		t.Fatalf("send=%v", err)
@@ -268,7 +270,7 @@ func TestWecomUnknownSendReportsPartialWithoutReplay(t *testing.T) {
 		return 0
 	})
 	err := a.SendText(msg.ChatID, strings.Repeat("x", 2100))
-	var partial *IMTextSendError
+	var partial *im.IMTextSendError
 	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" {
 		t.Fatalf("send=%v", err)
 	}
@@ -303,7 +305,7 @@ func TestWecomLongResultAndRetiredBinding(t *testing.T) {
 	}
 	defer done()
 	target.lease.Close()
-	if err := a.SendTextContext(ctx, msg.ChatID, "stale output"); !errors.Is(err, errPairingDenied) {
+	if err := a.SendTextContext(ctx, msg.ChatID, "stale output"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("retired permit allowed: %v", err)
 	}
 }
@@ -330,7 +332,7 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 	}
 	probeDone := make(chan error, 1)
 	go func() {
-		probeDone <- a.ValidateBindingTarget(t.Context(), BindingProbeTarget{"wecom", "bot", msg.ChatID})
+		probeDone <- a.ValidateBindingTarget(t.Context(), im.BindingProbeTarget{Platform: "wecom", AccountID: "bot", ChatID: msg.ChatID})
 	}()
 	// While the body ACK is held, probe must wait for the same target's slot.
 	time.Sleep(20 * time.Millisecond)

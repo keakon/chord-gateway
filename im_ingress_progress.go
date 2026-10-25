@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"unicode/utf8"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 var errIngressCursorConflict = errors.New("ingress cursor generation conflict")
 
-func cloneIngressCursor(cursor *IngressCursor) *IngressCursor {
+func cloneIngressCursor(cursor *im.IngressCursor) *im.IngressCursor {
 	if cursor == nil {
 		return nil
 	}
@@ -32,7 +34,7 @@ func cloneIngressCursor(cursor *IngressCursor) *IngressCursor {
 	return &copy
 }
 
-func validateIngressCursor(platform string, c *IngressCursor) error {
+func validateIngressCursor(platform string, c *im.IngressCursor) error {
 	if c == nil {
 		return nil
 	}
@@ -56,7 +58,7 @@ func validateIngressCursor(platform string, c *IngressCursor) error {
 			return errors.New("nonpending Telegram checkpoint contains offset")
 		}
 	case "wechat":
-		if c.Kind != "wechat" || c.Wechat == nil || c.Telegram != nil || c.Wechat.AccountID == "" || len(c.Wechat.AccountID) > maxScopedIDBytes || !utf8.ValidString(c.Wechat.AccountID) || c.Wechat.BatchVersion == 0 || len(c.Wechat.Buf) > 64<<10 || !utf8.ValidString(c.Wechat.Buf) {
+		if c.Kind != "wechat" || c.Wechat == nil || c.Telegram != nil || c.Wechat.AccountID == "" || len(c.Wechat.AccountID) > im.MaxScopedIDBytes || !utf8.ValidString(c.Wechat.AccountID) || c.Wechat.BatchVersion == 0 || len(c.Wechat.Buf) > 64<<10 || !utf8.ValidString(c.Wechat.Buf) {
 			return errors.New("invalid Wechat checkpoint")
 		}
 	default:
@@ -64,8 +66,8 @@ func validateIngressCursor(platform string, c *IngressCursor) error {
 	}
 	return nil
 }
-func (s *IngressStore) checkCursor(platform, account string, expected uint64, next IngressCursor) error {
-	if account == "" || len(account) > maxScopedIDBytes || !utf8.ValidString(account) {
+func (s *IngressStore) checkCursor(platform, account string, expected uint64, next im.IngressCursor) error {
+	if account == "" || len(account) > im.MaxScopedIDBytes || !utf8.ValidString(account) {
 		return errors.New("invalid cursor account")
 	}
 	if err := validateIngressCursor(platform, &next); err != nil {
@@ -83,10 +85,10 @@ func (s *IngressStore) checkCursor(platform, account string, expected uint64, ne
 	}
 	return nil
 }
-func (s *IngressStore) CommitCursor(ctx context.Context, platform, account string, expected uint64, next IngressCursor) error {
+func (s *IngressStore) CommitCursor(ctx context.Context, platform, account string, expected uint64, next im.IngressCursor) error {
 	return s.commitCursorGuarded(ctx, platform, account, expected, next, nil)
 }
-func (s *IngressStore) commitCursorGuarded(ctx context.Context, platform, account string, expected uint64, next IngressCursor, valid func() bool) error {
+func (s *IngressStore) commitCursorGuarded(ctx context.Context, platform, account string, expected uint64, next im.IngressCursor, valid func() bool) error {
 	// Check the adapter callback before taking the store mutex: it reads an
 	// adapter lock, and one cursor commit must not serialize behind it.
 	if valid != nil && !valid() {
@@ -102,7 +104,7 @@ func (s *IngressStore) commitCursorGuarded(ctx context.Context, platform, accoun
 	s.cursors[compositeKey(platform, account)] = *cloneIngressCursor(&next)
 	return nil
 }
-func (s *IngressStore) Cursor(platform, account string) (IngressCursor, error) {
+func (s *IngressStore) Cursor(platform, account string) (im.IngressCursor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.cursors[compositeKey(platform, account)]

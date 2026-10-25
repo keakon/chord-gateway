@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func unpairedTestRouter(t *testing.T) (*NotificationRouter, string) {
@@ -17,33 +18,33 @@ func unpairedTestRouter(t *testing.T) (*NotificationRouter, string) {
 
 func TestAuthorizeUnpairedPrivateHints(t *testing.T) {
 	r, code := unpairedTestRouter(t)
-	result := r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "plain", Text: "hello"})
-	if result.Disposition != AdmissionRejected || result.Ticket.Kind != "pairing_hint_text" || result.Reason != "pairing_hint_text" {
+	result := r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "plain", Text: "hello"})
+	if result.Disposition != im.AdmissionRejected || result.Ticket.Kind != "pairing_hint_text" || result.Reason != "pairing_hint_text" {
 		t.Fatal(result)
 	}
 	if !r.admission.Valid(result.Ticket) {
 		t.Fatal("hint ticket cannot carry a flow reply")
 	}
-	result = r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "usage", Text: "/bind"})
-	if result.Disposition != AdmissionRejected || result.Ticket.Kind != "pairing_hint_usage" {
+	result = r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "usage", Text: "/bind"})
+	if result.Disposition != im.AdmissionRejected || result.Ticket.Kind != "pairing_hint_usage" {
 		t.Fatal(result)
 	}
-	result = r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "wrong-code", Text: fmt.Sprintf("/bind %q nope", t.TempDir())})
-	if result.Disposition != AdmissionRejected || result.Ticket.Kind != "pairing_hint_code" {
+	result = r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "wrong-code", Text: fmt.Sprintf("/bind %q nope", t.TempDir())})
+	if result.Disposition != im.AdmissionRejected || result.Ticket.Kind != "pairing_hint_code" {
 		t.Fatal(result)
 	}
 	// Group chatter and internal actions stay silent: no hint kind, no reply.
-	result = r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "group", ChatID: "group1", SenderID: "stranger", MessageID: "grouped", Text: "hello"})
-	if result.Disposition != AdmissionRejected || result.Ticket.Kind != "" || result.Reason != "authorization_denied" {
+	result = r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "group", ChatID: "group1", SenderID: "stranger", MessageID: "grouped", Text: "hello"})
+	if result.Disposition != im.AdmissionRejected || result.Ticket.Kind != "" || result.Reason != "authorization_denied" {
 		t.Fatal(result)
 	}
 	// Hints never upgraded admission, and a valid code still pairs through.
-	if _, ok := r.admission.Authorize(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}); !ok {
+	if _, ok := r.admission.Authorize(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}); !ok {
 		t.Fatal("valid pairing rejected")
 	}
 	// Hint replies die with platform readiness like every flow reply.
 	r.admission.pairing.PlatformUnavailable("wechat")
-	result = r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "again", Text: "hello"})
+	result = r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "again", Text: "hello"})
 	if result.Ticket.Kind != "" {
 		t.Fatal(result)
 	}
@@ -54,7 +55,7 @@ func TestAuthorizeUnpairedPrivateHints(t *testing.T) {
 // (or reach the gate it never had).
 func TestHintTicketExpiresWhenOwnerPairs(t *testing.T) {
 	r, code := unpairedTestRouter(t)
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "hint", Text: "hello"}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "hint", Text: "hello"}
 	hint := r.admission.AuthorizeClassified(msg).Ticket
 	if hint.Kind != "pairing_hint_text" {
 		t.Fatalf("expected a hint ticket, got %q", hint.Kind)
@@ -72,7 +73,7 @@ func TestPairingHintBucketExhausts(t *testing.T) {
 	r, _ := unpairedTestRouter(t)
 	hints := 0
 	for i := 0; i < hintBucketSize+3; i++ {
-		result := r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: fmt.Sprintf("hint-%d", i), Text: "hello"})
+		result := r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: fmt.Sprintf("hint-%d", i), Text: "hello"})
 		if result.Ticket.Kind == "pairing_hint_text" {
 			hints++
 		}
@@ -85,10 +86,10 @@ func TestPairingHintBucketExhausts(t *testing.T) {
 func TestPairingHintBucketIsPerChat(t *testing.T) {
 	r, _ := unpairedTestRouter(t)
 	for i := 0; i < hintBucketSize+3; i++ {
-		r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat-a", SenderID: "stranger", MessageID: fmt.Sprintf("a-%d", i), Text: "hello"})
+		r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat-a", SenderID: "stranger", MessageID: fmt.Sprintf("a-%d", i), Text: "hello"})
 	}
 	// Exhausting one chat must not silence hints for a different private chat.
-	result := r.admission.AuthorizeClassified(IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat-b", SenderID: "stranger", MessageID: "b-0", Text: "hello"})
+	result := r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat-b", SenderID: "stranger", MessageID: "b-0", Text: "hello"})
 	if result.Ticket.Kind != "pairing_hint_text" {
 		t.Fatalf("second chat did not receive a hint: %+v", result)
 	}
@@ -108,9 +109,9 @@ func TestIngressUnpairedHintReply(t *testing.T) {
 		}
 	})
 	adapter := r.currentAdapter().(*pairingTestAdapter)
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "hint", Text: "hello"}
-	result := r.ReceiveIngress(t.Context(), IngressEnvelope{Message: msg})
-	if result.Disposition != ReceiveRejected || result.Reason != "pairing_hint_text" {
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: "hint", Text: "hello"}
+	result := r.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: msg})
+	if result.Disposition != im.ReceiveRejected || result.Reason != "pairing_hint_text" {
 		t.Fatal(result)
 	}
 	waitIngressCondition(t, func() bool {
@@ -124,8 +125,8 @@ func TestIngressUnpairedHintReply(t *testing.T) {
 		return false
 	})
 	// Redelivery of the same message is a committed duplicate: no second hint.
-	redelivered := r.ReceiveIngress(t.Context(), IngressEnvelope{Message: msg})
-	if redelivered.Disposition != ReceiveDuplicate {
+	redelivered := r.ReceiveIngress(t.Context(), im.IngressEnvelope{Message: msg})
+	if redelivered.Disposition != im.ReceiveDuplicate {
 		t.Fatal(redelivered)
 	}
 	adapter.mu.Lock()
@@ -143,7 +144,7 @@ func TestPairingHintReplyTextVariants(t *testing.T) {
 	mgr.store = store
 	r := NewNotificationRouter(mgr)
 	defer r.Close()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat"}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat"}
 
 	r.admission = NewAdmission(NewPairingService(store, true, nil))
 	mgr.admission = r.admission

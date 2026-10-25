@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 var errSlackCaptureBusy = errors.New("slack control snapshot busy")
@@ -28,12 +30,12 @@ type slackCachedConversation struct {
 type slackInbound struct {
 	client   *slack.Client
 	identity slackIdentity
-	router   IMSocketHost
+	router   im.IMSocketHost
 	mu       sync.Mutex
 	cache    map[string]slackCachedConversation
 }
 
-func newSlackInbound(client *slack.Client, identity slackIdentity, router IMSocketHost) *slackInbound {
+func newSlackInbound(client *slack.Client, identity slackIdentity, router im.IMSocketHost) *slackInbound {
 	return &slackInbound{client: client, identity: identity, router: router, cache: make(map[string]slackCachedConversation)}
 }
 
@@ -76,45 +78,45 @@ type slackSlashPayload struct {
 
 // decode runs on the reader: validate installation scope, retain exact ts,
 // and construct the operation before any slow conversation lookup.
-func (s *slackInbound) decode(kind string, payload json.RawMessage, envelopeID string, receivedAt time.Time) (IngressEnvelope, string, bool, error) {
+func (s *slackInbound) decode(kind string, payload json.RawMessage, envelopeID string, receivedAt time.Time) (im.IngressEnvelope, string, bool, error) {
 	if envelopeID == "" {
-		return IngressEnvelope{}, "", false, errSlackIgnored
+		return im.IngressEnvelope{}, "", false, errSlackIgnored
 	}
 	if receivedAt.IsZero() {
 		receivedAt = time.Now()
 	}
-	message := IncomingMessage{IMType: "slack", AccountID: s.identity.AccountID, AppID: s.identity.AppID}
-	envelope := IngressEnvelope{Message: message, DeliveryID: envelopeID, ReceivedAt: receivedAt}
+	message := im.IncomingMessage{IMType: "slack", AccountID: s.identity.AccountID, AppID: s.identity.AppID}
+	envelope := im.IngressEnvelope{Message: message, DeliveryID: envelopeID, ReceivedAt: receivedAt}
 	var channel, thread, text string
 	force := false
 	switch kind {
 	case "events_api":
 		var p slackEventsPayload
 		if json.Unmarshal(payload, &p) != nil || p.Type != "event_callback" || p.TeamID != s.identity.TeamID || p.AppID != s.identity.AppID || p.EventID == "" {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		for _, auth := range p.Authorizations {
 			if auth.IsEnterpriseInstall {
-				return IngressEnvelope{}, "", false, errSlackIgnored
+				return im.IngressEnvelope{}, "", false, errSlackIgnored
 			}
 		}
 		e := p.Event
 		if (e.Type != "message" && e.Type != "app_mention") || e.Subtype != "" || e.BotID != "" || e.User == "" || e.User == s.identity.BotUserID || (e.Team != "" && e.Team != s.identity.TeamID) || (e.UserTeam != "" && e.UserTeam != s.identity.TeamID) {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		if e.Type == "message" && (e.ChannelType != "im" || !strings.HasPrefix(e.Channel, "D")) {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		channel, thread, text = e.Channel, e.ThreadTS, e.Text
 		if (e.Type == "app_mention" || thread != "" || !strings.HasPrefix(channel, "D")) && !strings.Contains(text, "<@"+s.identity.BotUserID+">") {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		// Check invocation syntax before decoding: escaped literal mentions
 		// must never become authorization evidence. Decode only Slack's entities,
 		// exactly once; slash text has escaping disabled and stays untouched.
 		text = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">").Replace(stripSlackMentionPrefix(text, s.identity.BotUserID))
 		if !validSlackTimestamp(e.TS) {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		sourceTS := e.EventTS
 		if sourceTS == "" {
@@ -123,28 +125,28 @@ func (s *slackInbound) decode(kind string, payload json.RawMessage, envelopeID s
 		var err error
 		envelope.SourceTime, err = slackSourceTime(sourceTS)
 		if err != nil {
-			return IngressEnvelope{}, "", false, err
+			return im.IngressEnvelope{}, "", false, err
 		}
-		envelope.SemanticID, err = EncodeScopedID("slack-message-v1:", p.TeamID, channel, e.TS)
+		envelope.SemanticID, err = im.EncodeScopedID("slack-message-v1:", p.TeamID, channel, e.TS)
 		if err != nil {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		envelope.Message.SenderID, envelope.Message.MessageID = e.User, "event:"+p.EventID
 	case "slash_commands":
 		var p slackSlashPayload
 		if json.Unmarshal(payload, &p) != nil || p.TeamID != s.identity.TeamID || p.AppID != s.identity.AppID || p.UserID == "" || p.UserID == s.identity.BotUserID || p.Command != "/chord" || p.TriggerID == "" || !slackWorkspaceInstallation(p.IsEnterpriseInstall) {
-			return IngressEnvelope{}, "", false, errSlackIgnored
+			return im.IngressEnvelope{}, "", false, errSlackIgnored
 		}
 		channel, text = p.ChannelID, slackSlashText(p.Text)
 		envelope.Message.SenderID, envelope.Message.MessageID = p.UserID, "slash:"+p.TriggerID
 		envelope.SourceTime = receivedAt
 	default:
-		return IngressEnvelope{}, "", false, errSlackIgnored
+		return im.IngressEnvelope{}, "", false, errSlackIgnored
 	}
 	var err error
 	envelope.Message.ChatID, err = slackTarget(channel, thread)
 	if err != nil || strings.TrimSpace(text) == "" {
-		return IngressEnvelope{}, "", false, errSlackIgnored
+		return im.IngressEnvelope{}, "", false, errSlackIgnored
 	}
 	envelope.Message.Text = text
 	// Kind stays missing until conversations.info proves the conversation.
@@ -177,7 +179,7 @@ func stripSlackMentionPrefix(text, botUserID string) string {
 // submit never performs network I/O on the socket reader. Shared normalizer
 // keys use the root channel so API lookups preserve receive order even across
 // threads. Its common queue and worker limits apply across all platforms.
-func (s *slackInbound) submit(ctx context.Context, kind string, payload json.RawMessage, envelopeID string, receivedAt time.Time) (<-chan ReceiveResult, context.CancelFunc, error) {
+func (s *slackInbound) submit(ctx context.Context, kind string, payload json.RawMessage, envelopeID string, receivedAt time.Time) (<-chan im.ReceiveResult, context.CancelFunc, error) {
 	envelope, channel, force, err := s.decode(kind, payload, envelopeID, receivedAt)
 	if err != nil {
 		return nil, nil, err
@@ -189,14 +191,14 @@ func (s *slackInbound) submit(ctx context.Context, kind string, payload json.Raw
 	if !ok {
 		return nil, nil, errSlackCaptureBusy
 	}
-	envelope.capture = &ingressCapture{kind: capturedKind, target: target}
+	envelope.Capture = &im.IngressCapture{Kind: capturedKind, Target: target}
 	// Admission may finish after the ACK window; bound lookup and queue time
 	// independently, and cancel all work when its socket generation closes.
 	ctx, cancel := context.WithDeadline(ctx, envelope.ReceivedAt.Add(30*time.Second))
-	future, err := s.router.SubmitIngressNormalization(ctx, channel, envelope, func(ctx context.Context, envelope IngressEnvelope) (IngressEnvelope, error) {
+	future, err := s.router.SubmitIngressNormalization(ctx, channel, envelope, func(ctx context.Context, envelope im.IngressEnvelope) (im.IngressEnvelope, error) {
 		conversation, err := s.conversation(ctx, channel, force)
 		if err != nil {
-			return IngressEnvelope{}, err
+			return im.IngressEnvelope{}, err
 		}
 		kind := slackConversationKind(conversation, channel, envelope.Message.SenderID)
 		if kind != "unsupported" && strings.HasPrefix(envelope.Message.ChatID, "target-v1:") {

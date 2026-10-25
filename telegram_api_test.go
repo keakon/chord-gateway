@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func testTelegramAPI(t *testing.T, handler http.HandlerFunc) *telegramHTTPAPI {
@@ -21,7 +23,7 @@ func testTelegramAPI(t *testing.T, handler http.HandlerFunc) *telegramHTTPAPI {
 	api := newTelegramAPI("123:secret-token", nil)
 	// Swapping in the test server's client must keep the redirect policy that
 	// newTelegramAPI applies, so redirect-replay tests stay meaningful.
-	api.baseURL, api.client = server.URL, messageHTTPClient(server.Client())
+	api.baseURL, api.client = server.URL, im.MessageHTTPClient(server.Client())
 	return api
 }
 func TestTelegramTypedAPIRequests(t *testing.T) {
@@ -148,7 +150,7 @@ func TestTelegramAPICancellationDoesNotReplaySend(t *testing.T) {
 	<-entered
 	cancel()
 	err := <-done
-	if !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 1 {
+	if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 1 {
 		t.Fatalf("calls = %d, err = %v", calls.Load(), err)
 	}
 	// A cancelled request never reaches the server.
@@ -399,7 +401,7 @@ func TestTelegramAPIBlocksRedirectReplay(t *testing.T) {
 		w.WriteHeader(307)
 	})
 	_, err := api.SendMessage(t.Context(), 1, "test")
-	if !errors.Is(err, errDeliveryOutcomeUnknown) || calls.Load() != 1 {
+	if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 1 {
 		t.Fatalf("redirect replay calls = %d, err = %v", calls.Load(), err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
@@ -25,9 +26,9 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		result := WaitIngressNormalization(t.Context(), future)
-		want := ReceiveAccepted
+		want := im.ReceiveAccepted
 		if delivery == "delivery-two" {
-			want = ReceiveDuplicate
+			want = im.ReceiveDuplicate
 		}
 		if result.Disposition != want {
 			t.Fatal(result)
@@ -39,7 +40,7 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 	if err != nil || immediate != nil {
 		t.Fatal(immediate, err)
 	}
-	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != ReceiveAccepted {
+	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	raw, _ := feishuTestReceivers.Load(a)
@@ -66,33 +67,33 @@ func timeToMillis(value time.Time) string { return strconv.FormatInt(value.UnixM
 func TestFeishuCardMissingChatTypeKeepsAuthorizationStrict(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "test"}})
 	r := a.msgRouter.(*NotificationRouter)
-	valid := IncomingMessage{IMType: "feishu", AccountID: "app", ChatID: "chat", SenderID: "owner", MessageID: "card:event", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "request", BindingInstanceID: "binding"}}
-	if result := r.admission.AuthorizeClassified(valid); result.Disposition != AdmissionAllowed {
+	valid := im.IncomingMessage{IMType: "feishu", AccountID: "app", ChatID: "chat", SenderID: "owner", MessageID: "card:event", InternalAction: &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "request", BindingInstanceID: "binding"}}
+	if result := r.admission.AuthorizeClassified(valid); result.Disposition != im.AdmissionAllowed {
 		t.Fatal(result)
 	}
 	for _, tc := range []struct {
 		name   string
-		change func(*IncomingMessage)
+		change func(*im.IncomingMessage)
 	}{
-		{"text", func(m *IncomingMessage) { m.InternalAction = nil; m.Text = "task" }},
-		{"other platform", func(m *IncomingMessage) { m.IMType = "wechat" }},
-		{"wrong owner", func(m *IncomingMessage) { m.SenderID = "stranger" }},
-		{"missing binding instance", func(m *IncomingMessage) {
+		{"text", func(m *im.IncomingMessage) { m.InternalAction = nil; m.Text = "task" }},
+		{"other platform", func(m *im.IncomingMessage) { m.IMType = "wechat" }},
+		{"wrong owner", func(m *im.IncomingMessage) { m.SenderID = "stranger" }},
+		{"missing binding instance", func(m *im.IncomingMessage) {
 			action := *m.InternalAction
 			action.BindingInstanceID = ""
 			m.InternalAction = &action
 		}},
-		{"invalid action", func(m *IncomingMessage) {
+		{"invalid action", func(m *im.IncomingMessage) {
 			action := *m.InternalAction
 			action.Action = "switch"
 			m.InternalAction = &action
 		}},
-		{"unbound chat", func(m *IncomingMessage) { m.ChatID = "elsewhere" }},
+		{"unbound chat", func(m *im.IncomingMessage) { m.ChatID = "elsewhere" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := valid
 			tc.change(&m)
-			if result := r.admission.AuthorizeClassified(m); result.Disposition != AdmissionRejected {
+			if result := r.admission.AuthorizeClassified(m); result.Disposition != im.AdmissionRejected {
 				t.Fatal(result)
 			}
 		})
@@ -129,7 +130,7 @@ func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 	receiver.mu.Lock()
 	defer receiver.mu.Unlock()
 	for i, want := range []uint64{0, 2, 3} {
-		target := receiver.envelopes[i].capture.target
+		target := receiver.envelopes[i].Capture.Target
 		if target == nil || target.Version != want || target.RuntimeID != "runtime-one" {
 			t.Fatalf("target=%+v want version %d", target, want)
 		}
@@ -138,15 +139,15 @@ func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 
 func TestFeishuCardAcceptanceNeverOverwritesTerminalCard(t *testing.T) {
 	event := makeFeishuCardActionEvent("owner", "chat", "request", "allow")
-	for _, result := range []ReceiveResult{{Disposition: ReceiveAccepted}, {Disposition: ReceiveDuplicate, State: "submitted"}, {Disposition: ReceiveDuplicate, State: "unknown"}, {Disposition: ReceiveDuplicate, State: "rejected"}, {Disposition: ReceiveRetryable}, {Disposition: ReceiveUncertain}} {
+	for _, result := range []im.ReceiveResult{{Disposition: im.ReceiveAccepted}, {Disposition: im.ReceiveDuplicate, State: "submitted"}, {Disposition: im.ReceiveDuplicate, State: "unknown"}, {Disposition: im.ReceiveDuplicate, State: "rejected"}, {Disposition: im.ReceiveRetryable}, {Disposition: im.ReceiveUncertain}} {
 		response := feishuCardIngressResponse(event, result)
 		if response == nil || response.Toast == nil || response.Card != nil {
 			t.Fatalf("result=%+v response=%+v", result, response)
 		}
-		if (result.Disposition == ReceiveUncertain || result.Disposition == ReceiveRetryable) && feishuMessageIngressError(result) == nil {
+		if (result.Disposition == im.ReceiveUncertain || result.Disposition == im.ReceiveRetryable) && feishuMessageIngressError(result) == nil {
 			t.Fatal("uncommitted result acknowledged")
 		}
-		if result.Disposition == ReceiveUncertain && strings.Contains(response.Toast.Content, "try again") {
+		if result.Disposition == im.ReceiveUncertain && strings.Contains(response.Toast.Content, "try again") {
 			t.Fatal("uncertain interaction encouraged repeat")
 		}
 	}
@@ -212,17 +213,17 @@ func TestFeishuUnauthorizedDuplicateCallbackDoesNotExposeStoredOutcome(t *testin
 	r := a.msgRouter.(*NotificationRouter)
 	store := r.ingressStore
 	original := store.AcceptRecord(t.Context(), IngressRecord{Platform: "feishu", AccountID: "app", ChatID: "chat", SenderID: "owner", BusinessID: "card:shared-event", Kind: "control", State: "received"}, nil)
-	if original.Disposition != ReceiveAccepted {
+	if original.Disposition != im.ReceiveAccepted {
 		t.Fatal(original)
 	}
-	if err := store.UpdateRecord(t.Context(), original.RecordID, []ingressState{"received"}, func(record *IngressRecord) error { record.State = "consumed"; return nil }); err != nil {
+	if err := store.UpdateRecord(t.Context(), original.RecordID, []im.IngressState{"received"}, func(record *IngressRecord) error { record.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	// The common duplicate lookup precedes the rejected admission transaction.
 	// A stranger's verified callback therefore retrieves the original record.
-	message := IncomingMessage{IMType: "feishu", AccountID: "app", ChatID: "chat", SenderID: "stranger", MessageID: "card:shared-event", InternalAction: &InternalAction{Type: "confirm", Action: "allow", RequestID: "request", BindingInstanceID: "binding"}}
-	result := r.ingress.Accept(t.Context(), IngressEnvelope{Message: message})
-	if result.Disposition != ReceiveDuplicate || result.State != "consumed" {
+	message := im.IncomingMessage{IMType: "feishu", AccountID: "app", ChatID: "chat", SenderID: "stranger", MessageID: "card:shared-event", InternalAction: &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "request", BindingInstanceID: "binding"}}
+	result := r.ingress.Accept(t.Context(), im.IngressEnvelope{Message: message})
+	if result.Disposition != im.ReceiveDuplicate || result.State != "consumed" {
 		t.Fatal("duplicate lookup behavior changed", result)
 	}
 	event := makeFeishuCardActionEvent("stranger", "chat", "request", "allow")
@@ -246,7 +247,7 @@ func TestFeishuUnauthorizedDuplicateCallbackDoesNotExposeStoredOutcome(t *testin
 
 func TestFeishuCardOutcomePresentationChecksCurrentOwnerAppAndChat(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "test"}})
-	for _, result := range []ReceiveResult{{Disposition: ReceiveDuplicate, State: "consumed"}, {Disposition: ReceiveDuplicate, State: "unknown"}} {
+	for _, result := range []im.ReceiveResult{{Disposition: im.ReceiveDuplicate, State: "consumed"}, {Disposition: im.ReceiveDuplicate, State: "unknown"}} {
 		owner := makeFeishuCardActionEvent("owner", "chat", "request", "allow")
 		if content := a.feishuCardIngressResponse(owner, result).Toast.Content; content == "This interaction could not be accepted." {
 			t.Fatal("current owner cannot inspect result")

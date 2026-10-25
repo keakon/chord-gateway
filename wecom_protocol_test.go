@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func wecomProtocolFrame(t *testing.T, mutate func(map[string]any)) []byte {
@@ -63,7 +65,7 @@ func TestWecomProtocolIdentityAndTargets(t *testing.T) {
 	if private == group {
 		t.Fatal("private and group target scopes collide")
 	}
-	foreign, _ := EncodeScopedID("target-v1:", "slack-thread", "example")
+	foreign, _ := im.EncodeScopedID("target-v1:", "slack-thread", "example")
 	for _, target := range []string{"raw-chat", "", foreign, private + "="} {
 		if _, err := DecodeWecomTarget(target); err == nil {
 			t.Fatalf("accepted target %q", target)
@@ -114,7 +116,7 @@ func TestWecomProtocolClassifiesCallbacks(t *testing.T) {
 		"empty_content":    func(b map[string]any) { b["text"] = map[string]any{"content": ""} },
 		"blank_content":    func(b map[string]any) { b["text"] = map[string]any{"content": " \t\n"} },
 		"large_text":       func(b map[string]any) { b["text"] = map[string]any{"content": strings.Repeat("x", 64<<10+1)} },
-		"large_message_id": func(b map[string]any) { b["msgid"] = strings.Repeat("x", maxScopedIDBytes) },
+		"large_message_id": func(b map[string]any) { b["msgid"] = strings.Repeat("x", im.MaxScopedIDBytes) },
 	}
 	for name, mutate := range invalid {
 		t.Run("invalid/"+name, func(t *testing.T) {

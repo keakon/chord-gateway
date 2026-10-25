@@ -14,6 +14,8 @@ import (
 	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const (
@@ -117,7 +119,7 @@ func (a *FeishuAdapter) submitDataFrame(ctx context.Context, conn *websocket.Con
 		} `json:"header"`
 	}
 	err := json.Unmarshal(payload, &header)
-	var future <-chan ReceiveResult
+	var future <-chan im.ReceiveResult
 	var immediate *larkcallback.CardActionTriggerResponse
 	var card *larkcallback.CardActionTriggerEvent
 	if err == nil {

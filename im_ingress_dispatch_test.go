@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type ingressTestWriter struct {
@@ -33,10 +35,10 @@ func (w *ingressTestWriter) snapshot() []map[string]any {
 	return append([]map[string]any(nil), w.messages...)
 }
 
-func ingressTestService(t *testing.T) (*IngressService, *ChordProcess, *ingressTestWriter, IncomingMessage) {
+func ingressTestService(t *testing.T) (*IngressService, *ChordProcess, *ingressTestWriter, im.IncomingMessage) {
 	t.Helper()
 	r, code := pairedTestRouter(t)
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", t.TempDir(), code)}
 	if !dispatchPairingTest(r, msg) {
 		t.Fatal("bind rejected")
 	}
@@ -104,18 +106,18 @@ func TestIngressFIFOOnlyAdvancesAfterReceipt(t *testing.T) {
 	s, p, w, msg := ingressTestService(t)
 	msg.MessageID = "first"
 	msg.Text = "first task"
-	first := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if first.Disposition != ReceiveAccepted {
+	first := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
 	msg.MessageID = "second"
 	msg.Text = "second task"
-	second := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if second.Disposition != ReceiveAccepted {
+	second := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if second.Disposition != im.ReceiveAccepted {
 		t.Fatal(second)
 	}
 	waitIngressCondition(t, func() bool { return len(w.snapshot()) == 1 })
-	records, err := s.store.ListRouteRecords(ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID})
+	records, err := s.store.ListRouteRecords(im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,7 @@ func TestIngressFrozenConfirmCannotApproveReplacement(t *testing.T) {
 	if !ok {
 		t.Fatal("authorization")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	p.mu.Lock()
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "new"}
 	p.mu.Unlock()
@@ -177,7 +179,7 @@ func TestIngressDoneClassificationAndCancelTurn(t *testing.T) {
 	p.mu.Unlock()
 	_, target = s.router.CaptureIngress(msg)
 	ticket, _ := s.router.admission.Authorize(msg)
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	p.mu.Lock()
 	p.state.TurnStartedAt = p.state.TurnStartedAt.Add(time.Second)
 	p.mu.Unlock()
@@ -191,15 +193,15 @@ func TestIngressQueuedTaskQuarantinedWhenDoneAppears(t *testing.T) {
 	s, p, w, msg := ingressTestService(t)
 	msg.MessageID = "first"
 	msg.Text = "first"
-	first := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if first.Disposition != ReceiveAccepted {
+	first := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
 	waitIngressCondition(t, func() bool { return len(w.snapshot()) == 1 })
 	msg.MessageID = "second"
 	msg.Text = "ordinary task"
-	second := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if second.Disposition != ReceiveAccepted {
+	second := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if second.Disposition != im.ReceiveAccepted {
 		t.Fatal(second)
 	}
 	p.mu.Lock()
@@ -218,7 +220,7 @@ func TestIngressBindingBarrierAndIdempotence(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws, _ := s.router.getConfig().ResolveWorkspace(msg.IMType, msg.ChatID)
-	id := ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}
+	id := im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID}
 	digest, workspace, session, err := s.router.ingressRouteIdentity(id)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +235,7 @@ func TestIngressBindingBarrierAndIdempotence(t *testing.T) {
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.active, id); s.mu.Unlock() }()
 	accepted := s.store.AcceptRecord(context.Background(), IngressRecord{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID, SenderID: msg.SenderID, BusinessID: "pending", Kind: "task", Text: "pending", RouteRevision: route.Revision, AuthorizationDigest: route.AuthorizationDigest, WorkspaceID: ws.ID, SessionID: "session"}, nil)
-	if accepted.Disposition != ReceiveAccepted {
+	if accepted.Disposition != im.ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	msg.Text = fmt.Sprintf("/bind %q", ws.Path)
@@ -241,7 +243,7 @@ func TestIngressBindingBarrierAndIdempotence(t *testing.T) {
 	if !ok {
 		t.Fatal("authorize")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	result := s.router.DispatchAccepted(context.Background(), msg, nil)
 	if result.State != "completed" {
 		t.Fatal("idempotent bind blocked", result)
@@ -255,7 +257,7 @@ func TestIngressBindingBarrierAndIdempotence(t *testing.T) {
 	if !ok {
 		t.Fatal("authorize")
 	}
-	msg.ticket = &ticket
+	msg.SetAdmissionTicket(&ticket)
 	result = s.router.DispatchAccepted(context.Background(), msg, nil)
 	if result.State != "rejected" {
 		t.Fatal("changed directory with undelivered input", result)
@@ -275,7 +277,7 @@ func TestIngressSessionControlRejectsNewRuntime(t *testing.T) {
 		if !ok {
 			t.Fatal("authorize")
 		}
-		msg.ticket = &ticket
+		msg.SetAdmissionTicket(&ticket)
 		p.mu.Lock()
 		p.sessionEpoch++
 		p.mu.Unlock()
@@ -315,7 +317,7 @@ func TestIngressSessionControlAllowedDuringSpawnWindow(t *testing.T) {
 		if !ok {
 			t.Fatal("authorize")
 		}
-		msg.ticket = &ticket
+		msg.SetAdmissionTicket(&ticket)
 		result := s.router.DispatchAccepted(context.Background(), msg, target)
 		if result.Reason == "control_target_expired" || result.Reason == "session_id_required" {
 			t.Fatalf("%q rejected during spawn window: %+v", text, result)
@@ -333,12 +335,12 @@ func TestIngressAdmissionBudgetIncludesBusyGate(t *testing.T) {
 	if !ok {
 		t.Fatal("authorize")
 	}
-	ticket.gate.opMu.Lock()
-	defer ticket.gate.opMu.Unlock()
+	ticket.Gate.OpMu.Lock()
+	defer ticket.Gate.OpMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	result := s.Accept(ctx, IngressEnvelope{Message: msg})
-	if result.Disposition != ReceiveRetryable || result.Reason != "route_busy" {
+	result := s.Accept(ctx, im.IngressEnvelope{Message: msg})
+	if result.Disposition != im.ReceiveRetryable || result.Reason != "route_busy" {
 		t.Fatal(result)
 	}
 	records, err := s.store.listAll()
@@ -363,9 +365,9 @@ func TestIngressTelegramRejectionCommitsCursor(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	msg := IncomingMessage{IMType: "telegram", AccountID: "telegram-bot", ChatID: "42", ChatKind: "private", SenderID: "owner", MessageID: "100", Text: "not bound"}
-	result := s.Accept(context.Background(), IngressEnvelope{Message: msg, Cursor: testTelegramIngressCursor(1, 101)})
-	if result.Disposition != ReceiveRejected || result.RecordID == "" {
+	msg := im.IncomingMessage{IMType: "telegram", AccountID: "telegram-bot", ChatID: "42", ChatKind: "private", SenderID: "owner", MessageID: "100", Text: "not bound"}
+	result := s.Accept(context.Background(), im.IngressEnvelope{Message: msg, Cursor: testTelegramIngressCursor(1, 101)})
+	if result.Disposition != im.ReceiveRejected || result.RecordID == "" {
 		t.Fatal(result)
 	}
 	cursor, err := store.Cursor("telegram", "telegram-bot")
@@ -384,8 +386,8 @@ func TestIngressReadyWaitReleasesGateAndRechecksRoute(t *testing.T) {
 		ready := make(chan struct{})
 		process.readySignal = ready
 		msg.MessageID, msg.Text = "waiting-for-pin", "Run task"
-		result := s.Accept(t.Context(), IngressEnvelope{Message: msg})
-		if result.Disposition != ReceiveAccepted {
+		result := s.Accept(t.Context(), im.IngressEnvelope{Message: msg})
+		if result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 		synctest.Wait()
@@ -393,11 +395,11 @@ func TestIngressReadyWaitReleasesGateAndRechecksRoute(t *testing.T) {
 		if !ok {
 			t.Fatal("authorization unavailable")
 		}
-		if !ticket.gate.opMu.TryLock() {
+		if !ticket.Gate.OpMu.TryLock() {
 			t.Fatal("readiness wait held the admission gate")
 		}
 		_, err := s.store.EnsureRoute(t.Context(), ticket.Identity, "changed", "workspace", "new-session")
-		ticket.gate.opMu.Unlock()
+		ticket.Gate.OpMu.Unlock()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -426,7 +428,7 @@ func TestIngressSweepControlsDropsStaleEntries(t *testing.T) {
 	if _, ok := service.controls["missing"]; ok {
 		t.Fatal("retained parameters for a pruned record")
 	}
-	if err := store.UpdateRecord(t.Context(), pending.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
+	if err := store.UpdateRecord(t.Context(), pending.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "consumed"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	service.sweepControls()
@@ -445,8 +447,8 @@ func assertLateReceiptAfterSettlementKeepsInputUsable(t *testing.T, text string)
 	t.Helper()
 	s, p, w, msg := ingressTestService(t)
 	msg.MessageID, msg.Text = "stalled", text
-	accepted := s.Accept(context.Background(), IngressEnvelope{Message: msg})
-	if accepted.Disposition != ReceiveAccepted {
+	accepted := s.Accept(context.Background(), im.IngressEnvelope{Message: msg})
+	if accepted.Disposition != im.ReceiveAccepted {
 		t.Fatal(accepted)
 	}
 	waitIngressCondition(t, func() bool { return len(w.snapshot()) == 1 })
@@ -461,7 +463,7 @@ func assertLateReceiptAfterSettlementKeepsInputUsable(t *testing.T, text string)
 		t.Fatal("delivery was not dispatched, so no receipt can arrive")
 	}
 
-	identity := ChatIdentity{msg.IMType, msg.AccountID, msg.ChatID}
+	identity := im.ChatIdentity{Platform: msg.IMType, AccountID: msg.AccountID, ChatID: msg.ChatID}
 	ageIngressRecord(t, s.store, accepted.RecordID)
 	s.settleStalledRecords(s.store.ListRoutePendingMetadata(identity))
 	stalled, err := s.store.Get(accepted.RecordID)

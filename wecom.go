@@ -10,6 +10,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // wecomCallbackWarnInterval bounds how often a rejected text callback repeats
@@ -22,7 +23,7 @@ type WecomAdapter struct {
 	imCfg                           config.IMAdapterConfig
 	router                          *NotificationRouter
 	ws                              *wecomWS
-	textSender                      *IMTextSender
+	textSender                      *im.IMTextSender
 	ctx                             context.Context
 	cancel                          context.CancelFunc
 	mu                              sync.Mutex
@@ -41,14 +42,14 @@ func NewWecomAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config
 	if imCfg.Wecom == nil || imCfg.Wecom.BotID == "" || imCfg.Wecom.Secret == "" {
 		return nil, errors.New("wecom: bot_id and secret are required")
 	}
-	proxyFunc, err := websocketProxyFuncFor(cfg, imCfg)
+	proxyFunc, err := im.WebsocketProxyFuncFor(cfg, imCfg)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &WecomAdapter{imCfg: imCfg, router: router, ctx: ctx, cancel: cancel, done: make(chan struct{}), targetNext: make(map[string]time.Time), accountInterval: 500 * time.Millisecond, targetInterval: 4 * time.Second}
 	a.ws = newWecomWSWithProxy(imCfg.Wecom.BotID, imCfg.Wecom.Secret, wecomWSCallbacks{OnAuthenticated: a.authenticated, OnReady: a.transportReady, CaptureFrame: a.captureFrame, OnFrame: a.receiveFrame, OnUnavailable: a.unavailable, OnDroppedBeforeAccept: a.droppedBeforeAccept, OnCallbackRejected: a.callbackRejected}, proxyFunc)
-	sender, err := NewIMTextSender(IMTextSendOptions{Platform: "wecom", Budget: 1024, Render: renderWecomText, Measure: func(s string) int { return len(s) }, SendSegment: a.sendSegment})
+	sender, err := im.NewIMTextSender(im.IMTextSendOptions{Platform: "wecom", Budget: 1024, Render: renderWecomText, Measure: func(s string) int { return len(s) }, SendSegment: a.sendSegment})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -59,7 +60,7 @@ func NewWecomAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config
 
 func (*WecomAdapter) Type() string                { return "wecom" }
 func (*WecomAdapter) SupportsLoginRenewal() bool  { return false }
-func (*WecomAdapter) StartLogin() (string, error) { return "", ErrLoginNotSupported }
+func (*WecomAdapter) StartLogin() (string, error) { return "", im.ErrLoginNotSupported }
 
 func (a *WecomAdapter) Connect() error {
 	a.mu.Lock()
@@ -88,7 +89,7 @@ func (a *WecomAdapter) Connect() error {
 	}
 	// Lock the configured account before even dialing: another instance must
 	// never authenticate first and kick out the current local owner.
-	lock, err := AcquireIMAccountLock("wecom", a.imCfg.Wecom.BotID)
+	lock, err := im.AcquireIMAccountLock("wecom", a.imCfg.Wecom.BotID)
 	if err != nil {
 		return fmt.Errorf("wecom: account lock: %w", err)
 	}
@@ -173,14 +174,14 @@ func (a *WecomAdapter) callbackRejected(reason string) {
 	}
 }
 
-func (a *WecomAdapter) IngressDeliveryReadiness(id ChatIdentity) IngressDeliveryReadiness {
+func (a *WecomAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()
 	ready := a.ready && !a.stopping
 	a.mu.Unlock()
 	if id.Platform != "wecom" || id.AccountID != a.imCfg.Wecom.BotID {
-		return IngressDeliveryReadiness{Reason: IngressWaitingAccount}
+		return im.IngressDeliveryReadiness{Reason: im.IngressWaitingAccount}
 	}
-	return IngressDeliveryReadiness{Ready: ready, Reason: IngressWaitingPlatform}
+	return im.IngressDeliveryReadiness{Ready: ready, Reason: im.IngressWaitingPlatform}
 }
 func (a *WecomAdapter) captureFrame(ctx context.Context, raw []byte) context.Context {
 	receivedAt := time.Now()
@@ -192,7 +193,7 @@ func (a *WecomAdapter) captureFrame(ctx context.Context, raw []byte) context.Con
 		return ctx
 	}
 	kind, target, ok := a.router.tryCaptureIngress(e.Message)
-	e.capture = &ingressCapture{kind: kind, target: target, unavailable: !ok}
+	e.Capture = &im.IngressCapture{Kind: kind, Target: target, Unavailable: !ok}
 	return context.WithValue(ctx, wecomCapturedEnvelopeContextKey{}, e)
 }
 
@@ -200,7 +201,7 @@ func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
 	if a.router == nil {
 		return nil
 	}
-	e, captured := ctx.Value(wecomCapturedEnvelopeContextKey{}).(IngressEnvelope)
+	e, captured := ctx.Value(wecomCapturedEnvelopeContextKey{}).(im.IngressEnvelope)
 	var err error
 	if !captured {
 		receivedAt := time.Now()
@@ -222,16 +223,16 @@ func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
 	// target, because the pipeline authorizes the submitted envelope
 	// independently. The envelope is already normalized, so submit without a
 	// normalize hook and resolve the reply identity inside the observer.
-	_, err = a.router.SubmitIngressObserved(ctx, e, func(result ReceiveResult) {
+	_, err = a.router.SubmitIngressObserved(ctx, e, func(result im.ReceiveResult) {
 		a.observeReceive(a.admitDiagnosticReply(e.Message), result)
 	})
 	if err != nil {
-		a.observeReceive(e.Message, ReceiveResult{Disposition: ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
+		a.observeReceive(e.Message, im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
 	}
 	return nil
 }
 
-func (a *WecomAdapter) observeReceive(msg IncomingMessage, result ReceiveResult) {
+func (a *WecomAdapter) observeReceive(msg im.IncomingMessage, result im.ReceiveResult) {
 	if a.router == nil {
 		return
 	}
@@ -240,17 +241,17 @@ func (a *WecomAdapter) observeReceive(msg IncomingMessage, result ReceiveResult)
 	// authorizes the frozen capture independently. Replies that need pipeline
 	// authority are sent by the pipeline itself from its own ticket.
 	switch result.Disposition {
-	case ReceiveRetryable:
+	case im.ReceiveRetryable:
 		// Retryable describes this attempt, not the business ID's history.
 		// A previous delivery may already have committed or still be in flight.
 		if a.router.ingressStore != nil {
 			a.router.ingressStore.metrics.record("wecom", "acceptance_unconfirmed", result.Reason)
 		}
-		if msg.ticket != nil {
+		if msg.AdmissionTicket() != nil {
 			a.router.enqueueIngressReply(msg, "Gateway could not confirm receipt of this message. Check the original Chord session before sending it again.")
 		}
-	case ReceiveRejected:
-		if result.Reason == "control_target_unavailable" && msg.ticket != nil {
+	case im.ReceiveRejected:
+		if result.Reason == "control_target_unavailable" && msg.AdmissionTicket() != nil {
 			a.router.enqueueIngressReply(msg, "Request was not applied: control_target_unavailable. Check /status before trying again.")
 		}
 	}
@@ -259,15 +260,15 @@ func (a *WecomAdapter) observeReceive(msg IncomingMessage, result ReceiveResult)
 // admitDiagnosticReply mints the reply-only ticket used by this attempt's
 // diagnostics. Admission reads pairing and binding state under its own locks,
 // so callers must run it on a bounded worker rather than a socket reader.
-func (a *WecomAdapter) admitDiagnosticReply(msg IncomingMessage) IncomingMessage {
+func (a *WecomAdapter) admitDiagnosticReply(msg im.IncomingMessage) im.IncomingMessage {
 	if a.router.admission == nil {
 		return msg
 	}
-	im := a.router.getConfig().IMConfigByType("wecom")
-	if im == nil {
+	imCfg := a.router.getConfig().IMConfigByType("wecom")
+	if imCfg == nil {
 		return msg
 	}
-	owner := im.OwnerIdentity()
+	owner := imCfg.OwnerIdentity()
 	if owner == nil || owner.AccountID != msg.AccountID || owner.UserID != msg.SenderID || msg.ChatKind != "private" {
 		return msg
 	}

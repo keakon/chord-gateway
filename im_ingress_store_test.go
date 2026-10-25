@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func testIngressStore(t *testing.T) *IngressStore {
@@ -22,7 +24,7 @@ func testIngressStore(t *testing.T) *IngressStore {
 }
 func testIngressTask(t *testing.T, s *IngressStore, business string) IngressRecord {
 	t.Helper()
-	id := ChatIdentity{"telegram", "bot", "chat"}
+	id := im.ChatIdentity{Platform: "telegram", AccountID: "bot", ChatID: "chat"}
 	route, err := s.EnsureRoute(context.Background(), id, "digest", "workspace", "session")
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +34,7 @@ func testIngressTask(t *testing.T, s *IngressStore, business string) IngressReco
 func mustAcceptIngress(t *testing.T, s *IngressStore, r IngressRecord) IngressRecord {
 	t.Helper()
 	result := s.AcceptRecord(context.Background(), r, nil)
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatalf("accept: %+v", result)
 	}
 	got, err := s.Get(result.RecordID)
@@ -47,7 +49,7 @@ func TestIngressStoreConcurrentBusinessAndSemanticDedupe(t *testing.T) {
 	input := testIngressTask(t, s, "business")
 	input.SemanticID = "original-message"
 	var wg sync.WaitGroup
-	results := make(chan ReceiveResult, 20)
+	results := make(chan im.ReceiveResult, 20)
 	for range 20 {
 		wg.Go(func() { results <- s.AcceptRecord(context.Background(), input, nil) })
 	}
@@ -56,9 +58,9 @@ func TestIngressStoreConcurrentBusinessAndSemanticDedupe(t *testing.T) {
 	accepted := 0
 	id := ""
 	for result := range results {
-		if result.Disposition == ReceiveAccepted {
+		if result.Disposition == im.ReceiveAccepted {
 			accepted++
-		} else if result.Disposition != ReceiveDuplicate {
+		} else if result.Disposition != im.ReceiveDuplicate {
 			t.Fatalf("unexpected result: %+v", result)
 		}
 		if id == "" {
@@ -81,7 +83,7 @@ func TestIngressStoreConcurrentBusinessAndSemanticDedupe(t *testing.T) {
 	duplicate := s.AcceptRecord(context.Background(), input, nil)
 	// Telegram retains the new delivery identity even without a body digest;
 	// it must not overwrite or execute the original semantic input.
-	if duplicate.Disposition != ReceiveDuplicate || duplicate.RecordID == id || duplicate.Reason != "semantic_duplicate" {
+	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID == id || duplicate.Reason != "semantic_duplicate" {
 		t.Fatalf("semantic duplicate: %+v", duplicate)
 	}
 	after, err := s.Get(id)
@@ -104,7 +106,7 @@ func TestIngressStoreSourceTimeAndRejectedDoNotRevive(t *testing.T) {
 			r := testIngressTask(t, s, "old")
 			r.SourceTime = time.Now().Add(age)
 			result := s.AcceptRecord(context.Background(), r, nil)
-			if result.Disposition != ReceiveRejected || result.State != "rejected" || result.RecordID == "" {
+			if result.Disposition != im.ReceiveRejected || result.State != "rejected" || result.RecordID == "" {
 				t.Fatalf("missing rejection tombstone: %+v", result)
 			}
 			original, err := s.Get(result.RecordID)
@@ -117,7 +119,7 @@ func TestIngressStoreSourceTimeAndRejectedDoNotRevive(t *testing.T) {
 			r.SourceTime = time.Time{}
 			r.Text = "now authorized"
 			duplicate := s.AcceptRecord(context.Background(), r, nil)
-			if duplicate.Disposition != ReceiveDuplicate || duplicate.State != "rejected" || duplicate.Reason != original.Reason {
+			if duplicate.Disposition != im.ReceiveDuplicate || duplicate.State != "rejected" || duplicate.Reason != original.Reason {
 				t.Fatalf("rejection revived: %+v", duplicate)
 			}
 		})
@@ -127,7 +129,7 @@ func TestIngressStoreSourceTimeAndRejectedDoNotRevive(t *testing.T) {
 	r.State = "rejected"
 	r.Reason = "chat_unbound"
 	result := s.AcceptRecord(context.Background(), r, nil)
-	if result.Disposition != ReceiveRejected {
+	if result.Disposition != im.ReceiveRejected {
 		t.Fatal(result)
 	}
 	if _, err := s.EnsureRoute(context.Background(), r.Identity(), "new-digest", "new-workspace", "new-session"); err != nil {
@@ -145,10 +147,10 @@ func TestIngressStoreCursorAtomicRollbackAndGeneration(t *testing.T) {
 	s := testIngressStore(t)
 	r := testIngressTask(t, s, "first")
 	result := s.AcceptRecord(context.Background(), r, testTelegramIngressCursor(1, 10))
-	if result.Disposition != ReceiveAccepted {
+	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
-	if result = s.AcceptRecord(context.Background(), r, testTelegramIngressCursor(2, 9)); result.Disposition != ReceiveDuplicate {
+	if result = s.AcceptRecord(context.Background(), r, testTelegramIngressCursor(2, 9)); result.Disposition != im.ReceiveDuplicate {
 		t.Fatal(result)
 	}
 	cursor, err := s.Cursor(r.Platform, r.AccountID)
@@ -157,7 +159,7 @@ func TestIngressStoreCursorAtomicRollbackAndGeneration(t *testing.T) {
 	}
 	r.BusinessID = "rolled-back"
 	result = s.acceptRecord(context.Background(), r, testTelegramIngressCursor(3, 11), func() bool { return false })
-	if result.Disposition != ReceiveRetryable && result.Disposition != ReceiveUncertain {
+	if result.Disposition != im.ReceiveRetryable && result.Disposition != im.ReceiveUncertain {
 		t.Fatalf("failed transaction accepted: %+v", result)
 	}
 	cursor, err = s.Cursor(r.Platform, r.AccountID)
@@ -185,7 +187,7 @@ func TestIngressStoreIsolationIsSettledAndReclaimed(t *testing.T) {
 			first = got
 		}
 	}
-	if err := s.UpdateRecord(context.Background(), first.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
+	if err := s.UpdateRecord(context.Background(), first.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "quarantined"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(s.pendingByRoute[first.Identity()]); got != 63 {
@@ -213,11 +215,11 @@ func TestIngressStoreIsolationIsSettledAndReclaimed(t *testing.T) {
 }
 
 func TestIngressStoreTerminalClearsBodyAndControlNeverRetainsSecrets(t *testing.T) {
-	for _, state := range []ingressState{"consumed", "rejected"} {
+	for _, state := range []im.IngressState{"consumed", "rejected"} {
 		t.Run(string(state), func(t *testing.T) {
 			s := testIngressStore(t)
 			r := mustAcceptIngress(t, s, testIngressTask(t, s, "body"))
-			if err := s.UpdateRecord(context.Background(), r.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
+			if err := s.UpdateRecord(context.Background(), r.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = state; return nil }); err != nil {
 				t.Fatal(err)
 			}
 			got, err := s.Get(r.RecordID)
@@ -266,11 +268,11 @@ func TestIngressStoreRouteRevisionNeverRevives(t *testing.T) {
 		t.Fatalf("old task not isolated: %+v %v", got, err)
 	}
 	stale := s.AcceptRecord(context.Background(), r, nil)
-	if stale.Disposition != ReceiveDuplicate {
+	if stale.Disposition != im.ReceiveDuplicate {
 		t.Fatal(stale)
 	}
 	r.BusinessID = "stale-ticket"
-	if result := s.AcceptRecord(context.Background(), r, nil); result.Disposition != ReceiveRetryable || result.Reason != "route_changed" {
+	if result := s.AcceptRecord(context.Background(), r, nil); result.Disposition != im.ReceiveRetryable || result.Reason != "route_changed" {
 		t.Fatalf("stale revision accepted: %+v", result)
 	}
 	barrier, err := s.BeginRouteChange(context.Background(), r.Identity())
@@ -291,7 +293,7 @@ func TestIngressStoreCancelledBeforeTransactionDoesNotCommit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	result := s.AcceptRecord(ctx, r, nil)
-	if result.Disposition != ReceiveRetryable {
+	if result.Disposition != im.ReceiveRetryable {
 		t.Fatalf("cancelled admission: %+v", result)
 	}
 	records, err := s.listAll()
@@ -311,7 +313,7 @@ func TestIngressPendingIndexesTrackTransitions(t *testing.T) {
 	if err != nil || len(route) != 1 {
 		t.Fatalf("%v %v", route, err)
 	}
-	if err = s.UpdateRecord(context.Background(), r.RecordID, []ingressState{"received"}, func(r *IngressRecord) error { r.State = "unknown"; return nil }); err != nil {
+	if err = s.UpdateRecord(context.Background(), r.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = "unknown"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	all, err = s.listPending()
@@ -335,17 +337,17 @@ func TestIngressPendingIndexesTrackTransitions(t *testing.T) {
 	}
 }
 
-func testTelegramIngressCursor(generation uint64, offset int64) *IngressCursor {
-	return &IngressCursor{Kind: "telegram", Version: 1, Generation: generation, Telegram: &TelegramIngressCursor{PendingOffset: &offset, ObservedAt: time.Now(), State: "pending"}}
+func testTelegramIngressCursor(generation uint64, offset int64) *im.IngressCursor {
+	return &im.IngressCursor{Kind: "telegram", Version: 1, Generation: generation, Telegram: &im.TelegramIngressCursor{PendingOffset: &offset, ObservedAt: time.Now(), State: "pending"}}
 }
 
-type testIngressReceiverFunc func(context.Context, IngressEnvelope) ReceiveResult
+type testIngressReceiverFunc func(context.Context, im.IngressEnvelope) im.ReceiveResult
 
-func (f testIngressReceiverFunc) Accept(ctx context.Context, e IngressEnvelope) ReceiveResult {
+func (f testIngressReceiverFunc) Accept(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
 	return f(ctx, e)
 }
 
 // Discard is a test-only shortcut for releasing a pending fixture.
 func (s *IngressStore) Discard(ctx context.Context, id string) error {
-	return s.UpdateRecord(ctx, id, []ingressState{"received", "dispatching", "unknown", "quarantined"}, func(r *IngressRecord) error { r.State = "consumed"; r.Reason = "local_discard"; return nil })
+	return s.UpdateRecord(ctx, id, []im.IngressState{"received", "dispatching", "unknown", "quarantined"}, func(r *IngressRecord) error { r.State = "consumed"; r.Reason = "local_discard"; return nil })
 }

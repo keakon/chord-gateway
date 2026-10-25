@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatInboundMessageIdentity(t *testing.T) {
@@ -54,7 +56,7 @@ func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 			t.Fatal(err)
 		}
 		result := a.receiveIncomingMessage(t.Context(), response.Msgs[0], a.token.Load())
-		if result.Disposition != ReceiveAccepted && result.Disposition != ReceiveDuplicate {
+		if result.Disposition != im.ReceiveAccepted && result.Disposition != im.ReceiveDuplicate {
 			t.Fatal(result)
 		}
 		waitIngressCondition(t, func() bool {

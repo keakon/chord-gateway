@@ -8,17 +8,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/keakon/chord-gateway/config"
 )
 
 type bindingProbeAdapter struct {
 	pairingTestAdapter
-	probe func(context.Context, BindingProbeTarget) error
+	probe func(context.Context, im.BindingProbeTarget) error
 	calls int
 }
 
 func (a *bindingProbeAdapter) Type() string { return "wecom" }
-func (a *bindingProbeAdapter) ValidateBindingTarget(ctx context.Context, target BindingProbeTarget) error {
+func (a *bindingProbeAdapter) ValidateBindingTarget(ctx context.Context, target im.BindingProbeTarget) error {
 	a.calls++
 	return a.probe(ctx, target)
 }
@@ -46,7 +48,7 @@ func TestBindingProbeRevalidatesAuthority(t *testing.T) {
 				}
 			}
 			dir := t.TempDir()
-			msg := IncomingMessage{IMType: "wecom", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "message", Text: fmt.Sprintf("/bind %q %s", dir, code)}
+			msg := im.IncomingMessage{IMType: "wecom", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "message", Text: fmt.Sprintf("/bind %q %s", dir, code)}
 			ticket, ok := r.admission.Authorize(msg)
 			if !ok {
 				t.Fatal("admission failed")
@@ -54,15 +56,15 @@ func TestBindingProbeRevalidatesAuthority(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			adapter := &bindingProbeAdapter{}
-			adapter.probe = func(ctx context.Context, target BindingProbeTarget) error {
-				if target != (BindingProbeTarget{"wecom", "bot", "chat"}) {
+			adapter.probe = func(ctx context.Context, target im.BindingProbeTarget) error {
+				if target != (im.BindingProbeTarget{Platform: "wecom", AccountID: "bot", ChatID: "chat"}) {
 					t.Errorf("wrong target: %+v", target)
 				}
 				// The callback must be able to acquire the gate: no network under opMu.
-				if !ticket.gate.opMu.TryLock() {
+				if !ticket.Gate.OpMu.TryLock() {
 					t.Error("gate held across network")
 				} else {
-					ticket.gate.opMu.Unlock()
+					ticket.Gate.OpMu.Unlock()
 				}
 				switch scenario {
 				case "failure":

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func discordMetricsAdapter(t *testing.T, send func(context.Context, string, string) error) *DiscordAdapter {
@@ -28,7 +29,7 @@ func discordMetricsAdapter(t *testing.T, send func(context.Context, string, stri
 
 func assertDiscordPartialMetrics(t *testing.T, adapter *DiscordAdapter, target string, err error, category string, failures uint64) {
 	t.Helper()
-	var partial *IMTextSendError
+	var partial *im.IMTextSendError
 	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != category {
 		t.Fatalf("send result and expected classification differ: %v", err)
 	}
@@ -63,12 +64,12 @@ func TestDiscordMetricsWrittenPostCancellationCountsUnknownOnce(t *testing.T) {
 	defer server.Close()
 	adapter := discordRESTTestAdapter(t, server)
 	err := adapter.SendTextContext(ctx, "500", strings.Repeat("a", 5700))
-	if !errors.Is(err, errDeliveryOutcomeUnknown) || !errors.Is(err, context.Canceled) || requests.Load() != 2 {
+	if !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || !errors.Is(err, context.Canceled) || requests.Load() != 2 {
 		t.Fatalf("written POST lost unknown evidence or continued: requests=%d error=%v", requests.Load(), err)
 	}
 	assertDiscordPartialMetrics(t, adapter, "500", err, "unknown_send", 1)
 	var lines []string
-	logIMMetrics(nil, &MultiAdapter{adapters: []IMAdapter{adapter}}, func(format string, args ...any) {
+	logIMMetrics(nil, &MultiAdapter{adapters: []im.IMAdapter{adapter}}, func(format string, args ...any) {
 		lines = append(lines, fmt.Sprintf(format, args...))
 	})
 	if len(lines) != 1 || !strings.Contains(lines[0], "platform=discord") || !strings.Contains(lines[0], "failures=1 partial_failures=1") {
@@ -84,10 +85,10 @@ func TestDiscordMetricsRateWaitAndPartialUnknownCountOnce(t *testing.T) {
 		case 1:
 			return nil
 		case 2:
-			return &IMRateLimitError{RetryAfter: time.Millisecond}
+			return &im.IMRateLimitError{RetryAfter: time.Millisecond}
 		default:
 			ctx.Value(discordSendOutcomeKey{}).(*discordSendOutcome).unknown.Store(true)
-			return errDeliveryOutcomeUnknown
+			return im.ErrDeliveryOutcomeUnknown
 		}
 	})
 	err := adapter.SendTextContext(t.Context(), "500", strings.Repeat("a", 5700))
@@ -111,7 +112,7 @@ func TestDiscordMetricsConcurrentTargetsAndLaterFailureKeepTheirCategories(t *te
 		}
 		if target == "501" && count == 2 {
 			ctx.Value(discordSendOutcomeKey{}).(*discordSendOutcome).unknown.Store(true)
-			return errDeliveryOutcomeUnknown
+			return im.ErrDeliveryOutcomeUnknown
 		}
 		return errors.New("discord permission_denied")
 	})
@@ -138,7 +139,7 @@ func TestDiscordMetricsConcurrentTargetsAndLaterFailureKeepTheirCategories(t *te
 	// A later failure in the same target must retain its own definite category.
 	err := adapter.SendTextContext(t.Context(), "501", strings.Repeat("a", 3800))
 	assertDiscordPartialMetrics(t, adapter, "501", err, "delivery_failed", 3)
-	if errors.Is(err, errDeliveryOutcomeUnknown) {
+	if errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		t.Fatal("earlier unknown evidence leaked into a later output")
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestPrivateRotatingLogWriterUsesPrivatePermissions(t *testing.T) {
@@ -19,8 +21,8 @@ func TestPrivateRotatingLogWriterUsesPrivatePermissions(t *testing.T) {
 		t.Fatalf("newPrivateRotatingLogWriter: %v", err)
 	}
 
-	assertPathMode(t, dir, privateDirMode)
-	assertPathMode(t, path, privateFileMode)
+	assertPathMode(t, dir, im.PrivateDirMode)
+	assertPathMode(t, path, im.PrivateFileMode)
 
 	if _, err := writer.Write([]byte("0123456789abcdef")); err != nil {
 		_ = writer.Close()
@@ -30,8 +32,8 @@ func TestPrivateRotatingLogWriterUsesPrivatePermissions(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	assertPathMode(t, path, privateFileMode)
-	assertPathMode(t, path+".1", privateFileMode)
+	assertPathMode(t, path, im.PrivateFileMode)
+	assertPathMode(t, path+".1", im.PrivateFileMode)
 }
 
 func TestPrivateRotatingLogWriterRestrictsExistingFile(t *testing.T) {
@@ -49,5 +51,16 @@ func TestPrivateRotatingLogWriterRestrictsExistingFile(t *testing.T) {
 	}
 	defer writer.Close()
 
-	assertPathMode(t, path, privateFileMode)
+	assertPathMode(t, path, im.PrivateFileMode)
+}
+
+func assertPathMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode(%s) = %04o, want %04o", path, got, want)
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestQuestionCollectionsSurviveIdleAndTargetedClose(t *testing.T) {
@@ -61,7 +62,7 @@ func TestFeishuQuestionCallbackKeepsCardUntilResolved(t *testing.T) {
 			t.Fatalf("response=%+v err=%v", response, err)
 		}
 	}
-	if got := len(feishuTestQueue(a, IncomingMessage{})); got != 2 {
+	if got := len(feishuTestQueue(a, im.IncomingMessage{})); got != 2 {
 		t.Fatalf("accepted callbacks=%d", got)
 	}
 
@@ -179,7 +180,7 @@ func TestHistoricalQuestionAnswerDoesNotInventBusy(t *testing.T) {
 	attachQuestionTestReceipts(p)
 	r.mgr.procs[key] = p
 	q := &QuestionPayload{RequestID: "old", Version: 2, Outcome: QuestionResolvedAnswered}
-	if !r.submitQuestionAnswer("chat-1", IncomingMessage{IMType: "wechat", MessageID: "answer-1", Text: "/answer @old Revised"}, key, p, q, []string{"Revised"}) {
+	if !r.submitQuestionAnswer("chat-1", im.IncomingMessage{IMType: "wechat", MessageID: "answer-1", Text: "/answer @old Revised"}, key, p, q, []string{"Revised"}) {
 		t.Fatal("revision was not accepted")
 	}
 	if p.State().Busy || len(r.reminders) != 0 {

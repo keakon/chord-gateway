@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type slackRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -107,8 +109,8 @@ func TestSlackCooldownCancellationDoesNotSend(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		err := sender.Send(ctx, nil, "CCHAN1", "output")
-		var partial *IMTextSendError
-		if !errors.As(err, &partial) || partial.Category != "cancelled" || errors.Is(err, errDeliveryOutcomeUnknown) || calls != 0 {
+		var partial *im.IMTextSendError
+		if !errors.As(err, &partial) || partial.Category != "cancelled" || errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls != 0 {
 			t.Fatalf("send=%v calls=%d", err, calls)
 		}
 	})

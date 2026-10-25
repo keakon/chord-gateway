@@ -137,10 +137,10 @@ func (p *ChordProcess) handleExit() {
 				return
 			}
 			if p.gate != nil {
-				p.gate.opMu.Lock()
-				defer p.gate.opMu.Unlock()
-				current, _, phase := p.gate.snapshot()
-				if p.lease == nil || current != p.lease || phase != "active" || p.lease.ctx.Err() != nil {
+				p.gate.OpMu.Lock()
+				defer p.gate.OpMu.Unlock()
+				current, _, phase := p.gate.Snapshot()
+				if p.lease == nil || current != p.lease || phase != "active" || p.lease.Context().Err() != nil {
 					return
 				}
 			}

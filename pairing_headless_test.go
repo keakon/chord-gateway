@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestPairingHeadlessStartsOnlyAfterOwnerTask(t *testing.T) {
@@ -39,7 +41,7 @@ done
 		t.Fatal(err)
 	}
 	first, second := t.TempDir(), t.TempDir()
-	msg := IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", first, code)}
+	msg := im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "owner", MessageID: "bind", Text: fmt.Sprintf("/bind %q %s", first, code)}
 	if !dispatchPairingTest(r, msg) {
 		t.Fatal("pairing rejected")
 	}

@@ -13,6 +13,8 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type discordSendOutcomeKey struct{}
@@ -78,9 +80,9 @@ func discordResponseOutcome(ctx context.Context, status int) {
 	}
 }
 
-func newDiscordTextSender(send func(context.Context, string, string) error) (*IMTextSender, error) {
-	return NewIMTextSender(IMTextSendOptions{
-		Platform: "discord", Budget: 1900, Render: discordEscapeMarkdown, Measure: imUTF16Units, SendSegment: send,
+func newDiscordTextSender(send func(context.Context, string, string) error) (*im.IMTextSender, error) {
+	return im.NewIMTextSender(im.IMTextSendOptions{
+		Platform: "discord", Budget: 1900, Render: discordEscapeMarkdown, Measure: im.UTF16Units, SendSegment: send,
 		FailureCategory: func(ctx context.Context, category string, _ error) string {
 			if outcome, ok := ctx.Value(discordSendOutcomeKey{}).(*discordSendOutcome); ok && outcome.unknown.Load() {
 				return "unknown_send"
@@ -118,17 +120,17 @@ func (a *DiscordAdapter) SendTextContext(ctx context.Context, chatID, text strin
 	outcome := &discordSendOutcome{}
 	ctx = context.WithValue(ctx, discordSendOutcomeKey{}, outcome)
 	err := a.sender.Send(ctx, a.ctx, nil, chatID, text, false)
-	var partial *IMTextSendError
+	var partial *im.IMTextSendError
 	if errors.As(err, &partial) && partial.Category == "unknown_send" {
 		// The shared sender correctly stops following segments on cancellation,
 		// but cancellation cannot prove that an already written POST failed.
-		cause := errDeliveryOutcomeUnknown
+		cause := im.ErrDeliveryOutcomeUnknown
 		if errors.Is(err, context.Canceled) {
 			cause = errors.Join(cause, context.Canceled)
 		} else if errors.Is(err, context.DeadlineExceeded) {
 			cause = errors.Join(cause, context.DeadlineExceeded)
 		}
-		return &IMTextSendError{AcceptedSegments: partial.AcceptedSegments, Category: "unknown_send", Cause: cause}
+		return &im.IMTextSendError{AcceptedSegments: partial.AcceptedSegments, Category: "unknown_send", Cause: cause}
 	}
 	return err
 }
@@ -156,7 +158,7 @@ func (a *DiscordAdapter) sendSegment(ctx context.Context, chatID, text string) e
 			return ctx.Err() // SendTextContext preserves written-but-unconfirmed evidence.
 		}
 		safe := discordRESTError(err)
-		if outcome != nil && errors.Is(safe, errDeliveryOutcomeUnknown) {
+		if outcome != nil && errors.Is(safe, im.ErrDeliveryOutcomeUnknown) {
 			status := int(outcome.status.Load())
 			if status == http.StatusTooManyRequests || status >= 400 && status < 500 && status != http.StatusRequestTimeout {
 				return errors.New("discord rejected_response_processing_failed")
@@ -169,7 +171,7 @@ func (a *DiscordAdapter) sendSegment(ctx context.Context, chatID, text string) e
 		if outcome != nil {
 			outcome.unknown.Store(true)
 		}
-		return fmt.Errorf("discord unknown_send: %w", errDeliveryOutcomeUnknown)
+		return fmt.Errorf("discord unknown_send: %w", im.ErrDeliveryOutcomeUnknown)
 	}
 	if outcome != nil {
 		outcome.accepted()

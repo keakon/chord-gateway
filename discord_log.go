@@ -14,6 +14,7 @@ import (
 	"github.com/keakon/golog/log"
 
 	gateway "github.com/keakon/chord-gateway/internal/discordgateway"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // SDK attributes can include frames, tokens and complete HTTP bodies. Only
@@ -70,7 +71,7 @@ func discordRESTError(err error) error {
 		return context.Canceled
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("discord unknown_send: %w", errDeliveryOutcomeUnknown)
+		return fmt.Errorf("discord unknown_send: %w", im.ErrDeliveryOutcomeUnknown)
 	}
 	var response *rest.Error
 	if errors.As(err, &response) && response.Response != nil {
@@ -91,18 +92,18 @@ func discordRESTError(err error) error {
 		}
 		if status == http.StatusTooManyRequests {
 			if delay := discordRetryDelay(response.Response.Header.Get("Retry-After")); delay > 0 {
-				return &IMRateLimitError{RetryAfter: delay}
+				return &im.IMRateLimitError{RetryAfter: delay}
 			}
 			return errors.New("discord invalid_rate_limit")
 		}
 		if status == http.StatusRequestTimeout {
-			return fmt.Errorf("discord unknown_send: %w", errDeliveryOutcomeUnknown)
+			return fmt.Errorf("discord unknown_send: %w", im.ErrDeliveryOutcomeUnknown)
 		}
 		if status >= 400 && status < 500 {
 			return fmt.Errorf("discord request_rejected status=%d", status)
 		}
 	}
-	return fmt.Errorf("discord unknown_send: %w", errDeliveryOutcomeUnknown)
+	return fmt.Errorf("discord unknown_send: %w", im.ErrDeliveryOutcomeUnknown)
 }
 func discordGatewayError(err error) error {
 	if errors.Is(err, gateway.ErrSessionStartLimitFatal) {

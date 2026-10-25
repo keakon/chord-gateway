@@ -110,7 +110,7 @@ func TestTransferPreparationWriterFailureRejectsACKAndBlocksSend(t *testing.T) {
 		t.Fatalf("failure ACK=%#v", commands)
 	}
 	if err := p.SendUserMessage("late instruction"); !errors.Is(err, ErrSessionTransferred) {
-		t.Fatalf("input reopened on uncertain preparation: %v", err)
+		t.Fatalf("input reopened on uncertain Preparation: %v", err)
 	}
 	if _, err := m.GetOrSpawnForKey(p.key); !errors.Is(err, ErrSessionTransferred) {
 		t.Fatalf("manager ignored failed preparation guard: %v", err)

@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestMultiAdapter_Connect(t *testing.T) {
 	t.Run("all adapters connect", func(t *testing.T) {
 		wechat := &stubIMAdapter{typ: "wechat"}
 		feishu := &stubIMAdapter{typ: "feishu"}
-		m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+		m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 		if err := m.Connect(); err != nil {
 			t.Fatalf("Connect() error = %v", err)
 		}
@@ -26,7 +27,7 @@ func TestMultiAdapter_Connect(t *testing.T) {
 		wantFS := errors.New("fs down")
 		wechat := &stubIMAdapter{typ: "wechat", connectFunc: func() error { return wantWX }}
 		feishu := &stubIMAdapter{typ: "feishu", connectFunc: func() error { return wantFS }}
-		m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+		m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 		err := m.Connect()
 		if err == nil {
 			t.Fatal("expected error")
@@ -42,7 +43,7 @@ func TestMultiAdapter_SendText(t *testing.T) {
 		wechat := &stubIMAdapter{typ: "wechat"}
 		feishu := &stubIMAdapter{typ: "feishu"}
 		r := &NotificationRouter{mgr: newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}), lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
-		m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}, router: r}
+		m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}, router: r}
 		if err := m.SendText("feishu-chat", "hello"); err != nil {
 			t.Fatalf("SendText() error = %v", err)
 		}
@@ -55,7 +56,7 @@ func TestMultiAdapter_SendText(t *testing.T) {
 		wantErr := errors.New("wx fail")
 		wechat := &stubIMAdapter{typ: "wechat", sendFunc: func(chatID, text string) error { return wantErr }}
 		feishu := &stubIMAdapter{typ: "feishu"}
-		m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+		m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 		if err := m.SendText("chat", "hello"); err != nil {
 			t.Fatalf("SendText() error = %v", err)
 		}
@@ -69,7 +70,7 @@ func TestMultiAdapter_SendText(t *testing.T) {
 		errFS := errors.New("fs fail")
 		wechat := &stubIMAdapter{typ: "wechat", sendFunc: func(chatID, text string) error { return errWX }}
 		feishu := &stubIMAdapter{typ: "feishu", sendFunc: func(chatID, text string) error { return errFS }}
-		m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+		m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 		err := m.SendText("chat", "hello")
 		if err == nil || !errors.Is(err, errWX) || !errors.Is(err, errFS) {
 			t.Fatalf("SendText() error = %v", err)
@@ -88,7 +89,7 @@ func TestMultiAdapter_SendText(t *testing.T) {
 func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat", startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
 	feishu := &stubIMAdapter{typ: "feishu"}
-	m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu}}
+	m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
 
 	if err := m.SendTextVia("wechat", "chat-1", "hello"); err != nil {
 		t.Fatalf("SendTextVia() error = %v", err)
@@ -119,7 +120,7 @@ func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 	}
 
 	qrURL, err := m.StartLogin()
-	if !errors.Is(err, ErrLoginNotSupported) || qrURL != "" {
+	if !errors.Is(err, im.ErrLoginNotSupported) || qrURL != "" {
 		t.Fatalf("StartLogin() = %q, %v", qrURL, err)
 	}
 
@@ -130,9 +131,9 @@ func TestMultiAdapter_SendTextViaFindDisconnectAndStartLogin(t *testing.T) {
 }
 
 func TestMultiAdapter_StartLoginWithoutWechat(t *testing.T) {
-	m := &MultiAdapter{adapters: []IMAdapter{&stubIMAdapter{typ: "feishu"}}}
+	m := &MultiAdapter{adapters: []im.IMAdapter{&stubIMAdapter{typ: "feishu"}}}
 	qrURL, err := m.StartLogin()
-	if !errors.Is(err, ErrLoginNotSupported) || qrURL != "" {
+	if !errors.Is(err, im.ErrLoginNotSupported) || qrURL != "" {
 		t.Fatalf("StartLogin() = %q, %v", qrURL, err)
 	}
 }
@@ -142,7 +143,7 @@ func TestMultiAdapter_BroadcastTextExcept(t *testing.T) {
 	feishu := &stubIMAdapter{typ: "feishu"}
 	console := &stubIMAdapter{typ: "console"}
 	r := &NotificationRouter{mgr: newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{ChatBindings: map[string]string{"feishu-fallback": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}), lastKeyChatID: map[string]string{(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat"}}
-	m := &MultiAdapter{adapters: []IMAdapter{wechat, feishu, console}, router: r}
+	m := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu, console}, router: r}
 
 	m.BroadcastTextExcept("wechat", map[string]string{"feishu": "feishu-direct"}, "cross notify")
 	if len(wechat.sentMessages()) != 0 {

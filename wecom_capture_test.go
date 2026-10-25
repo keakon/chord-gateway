@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWecomRecoveryCaptureCannotApproveReplacementRuntime(t *testing.T) {
@@ -18,9 +20,9 @@ func TestWecomRecoveryCaptureCannotApproveReplacementRuntime(t *testing.T) {
 	firstReceived := time.Now().Add(-2 * time.Second)
 	readerCtx := context.WithValue(a.ctx, wecomReceivedAtContextKey{}, firstReceived)
 	frozenCtx := a.captureFrame(readerCtx, raw)
-	e, ok := frozenCtx.Value(wecomCapturedEnvelopeContextKey{}).(IngressEnvelope)
-	if !ok || e.capture == nil || e.capture.target == nil || e.capture.target.RuntimeID != "runtime" || e.capture.target.RequestID != "old-confirm" {
-		t.Fatalf("reader did not capture original control: %+v", e.capture)
+	e, ok := frozenCtx.Value(wecomCapturedEnvelopeContextKey{}).(im.IngressEnvelope)
+	if !ok || e.Capture == nil || e.Capture.Target == nil || e.Capture.Target.RuntimeID != "runtime" || e.Capture.Target.RequestID != "old-confirm" {
+		t.Fatalf("reader did not capture original control: %+v", e.Capture)
 	}
 	// Simulate the restore window changing the active runtime and confirmation
 	// after socket receipt but before the staged callback reaches SubmitIngress.

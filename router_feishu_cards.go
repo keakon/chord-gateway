@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func (r *NotificationRouter) sendFeishuConfirmCard(target DeliveryTarget, state ControlState) (bool, error) {
@@ -47,7 +49,7 @@ func (r *NotificationRouter) sendFeishuQuestionCard(target DeliveryTarget, state
 // must not be repeated as text by this helper or its caller.
 func (r *NotificationRouter) reportFeishuCardFailure(target DeliveryTarget, err error) {
 	log.Warnf("feishu card delivery failed error=%v", err)
-	if errors.Is(err, errDeliveryOutcomeUnknown) {
+	if errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		feishu := r.findFeishuAdapter()
 		if feishu != nil {
 			if err := r.SendBound(context.Background(), target, "Message delivery is unconfirmed; check the chat first. If the question entry is missing, send /status to view it; send /role to view the role menu. The prompt is not resent as text automatically."); err != nil {

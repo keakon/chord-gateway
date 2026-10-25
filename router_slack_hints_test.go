@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type slackHintCaptureAdapter struct{ pairingTestAdapter }
 
 func (*slackHintCaptureAdapter) Type() string { return "slack" }
 
-func slackHintTestRouter(t *testing.T, chat string, bound bool) (*NotificationRouter, *slackHintCaptureAdapter, IncomingMessage) {
+func slackHintTestRouter(t *testing.T, chat string, bound bool) (*NotificationRouter, *slackHintCaptureAdapter, im.IncomingMessage) {
 	t.Helper()
 	bindings := "{}"
 	if bound {
@@ -39,10 +40,10 @@ workspaces: {project: {path: %q}}
 	adapter := &slackHintCaptureAdapter{}
 	r.SetAdapter(adapter)
 	t.Cleanup(func() { r.admission.Close(); r.Close() })
-	if err := pairing.PlatformReadyWithPresentation("slack", "account-example", PlatformPresentation{Platform: "slack", BotMention: "<@bot-example>", BotUsername: "ExampleBot"}); err != nil {
+	if err := pairing.PlatformReadyWithPresentation("slack", "account-example", im.PlatformPresentation{Platform: "slack", BotMention: "<@bot-example>", BotUsername: "ExampleBot"}); err != nil {
 		t.Fatal(err)
 	}
-	msg := IncomingMessage{IMType: "slack", AccountID: "account-example", ChatID: chat, ChatKind: "group", SenderID: "owner-example", MessageID: "event-example"}
+	msg := im.IncomingMessage{IMType: "slack", AccountID: "account-example", ChatID: chat, ChatKind: "group", SenderID: "owner-example", MessageID: "event-example"}
 	return r, adapter, msg
 }
 
@@ -67,7 +68,7 @@ func requireSlackHintReply(t *testing.T, adapter *slackHintCaptureAdapter, want 
 }
 
 func TestSlackGeneratedRuntimeHints(t *testing.T) {
-	thread, err := EncodeScopedID("target-v1:", "slack-thread", "channel-example", "123.000001")
+	thread, err := im.EncodeScopedID("target-v1:", "slack-thread", "channel-example", "123.000001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestSlackGeneratedRuntimeHints(t *testing.T) {
 			if !ok {
 				t.Fatal("help not authorized")
 			}
-			msg.ticket = &ticket
+			msg.SetAdmissionTicket(&ticket)
 			if result := r.DispatchAccepted(t.Context(), msg, nil); result.State != "completed" {
 				t.Fatal(result)
 			}
@@ -92,7 +93,7 @@ func TestSlackGeneratedRuntimeHints(t *testing.T) {
 			if !ok {
 				t.Fatal("role not authorized")
 			}
-			msg.ticket = &ticket
+			msg.SetAdmissionTicket(&ticket)
 			if result := r.DispatchAccepted(t.Context(), msg, nil); result.State != "completed" {
 				t.Fatal(result)
 			}
@@ -105,8 +106,8 @@ func TestSlackGeneratedRuntimeHints(t *testing.T) {
 			if !ok {
 				t.Fatal("MCP not authorized")
 			}
-			msg.ticket = &ticket
-			if result := r.dispatchIngressSlash(t.Context(), msg, &ChordProcess{}, IMCommand{Content: "/mcp status"}, nil, ""); result.State != "completed" {
+			msg.SetAdmissionTicket(&ticket)
+			if result := r.dispatchIngressSlash(t.Context(), msg, &ChordProcess{}, im.IMCommand{Content: "/mcp status"}, nil, ""); result.State != "completed" {
 				t.Fatal(result)
 			}
 			requireSlackHintReply(t, adapter, tc.prefix+"status")
@@ -130,9 +131,9 @@ func TestSlackGeneratedQuestionAndRoleHintsPreserveContent(t *testing.T) {
 	r := &NotificationRouter{}
 	roles := []RoleInfo{{Name: "builder"}, {Name: "Keep /role in content"}}
 	for _, thread := range []bool{false, true} {
-		presentation := PlatformPresentation{Platform: "slack", BotMention: "<@bot-example>", BotUsername: "ExampleBot"}
+		presentation := im.PlatformPresentation{Platform: "slack", BotMention: "<@bot-example>", BotUsername: "ExampleBot"}
 		hint := func(command string) string {
-			return FormatCommandHint(presentation, CommandTarget{Thread: thread}, command)
+			return im.FormatCommandHint(presentation, im.CommandTarget{Thread: thread}, command)
 		}
 		state := ControlState{LastQuestionResolved: &QuestionPayload{RequestID: "question-example", Outcome: QuestionResolvedNoResponse}}
 		if got := r.formatNotification("question_resolved", state, hint); !strings.Contains(got, hint("/answer @question-example <answer>")) {

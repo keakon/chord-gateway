@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestIngressTakeoverStartUsesAuthoritativeResult(t *testing.T) {
@@ -16,7 +18,7 @@ func TestIngressTakeoverStartUsesAuthoritativeResult(t *testing.T) {
 			r := NewNotificationRouter(m)
 			t.Cleanup(r.Close)
 			r.ingressStore = testIngressStore(t)
-			identity := ChatIdentity{"wechat", "bot", "chat"}
+			identity := im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}
 			before, err := r.ingressStore.EnsureRoute(context.Background(), identity, "digest", "test", "")
 			if err != nil {
 				t.Fatal(err)
@@ -41,11 +43,12 @@ func TestIngressTakeoverStartUsesAuthoritativeResult(t *testing.T) {
 				status.State = "draining"
 				return status, nil
 			}
-			msg := IncomingMessage{IMType: "wechat", ChatID: "chat", ticket: &AdmissionTicket{Identity: ChatIdentity{"wechat", "bot", "chat"}}}
-			result := r.dispatchIngressTakeover(context.Background(), msg, key, IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
-			want := ingressSubmitted
+			msg := im.IncomingMessage{IMType: "wechat", ChatID: "chat"}
+			msg.SetAdmissionTicket(&im.AdmissionTicket{Identity: im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}})
+			result := r.dispatchIngressTakeover(context.Background(), msg, key, im.IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
+			want := im.IngressSubmitted
 			if unknown {
-				want = ingressUnknown
+				want = im.IngressUnknown
 			}
 			after, err := r.ingressStore.GetRoute(identity)
 			if err != nil {
@@ -78,7 +81,7 @@ func TestIngressTakeoverPendingBlocksMutatingStart(t *testing.T) {
 	t.Cleanup(r.Close)
 	store := testIngressStore(t)
 	r.ingressStore = store
-	id := ChatIdentity{"wechat", "bot", "chat"}
+	id := im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}
 	route, err := store.EnsureRoute(context.Background(), id, "digest", "test", "")
 	if err != nil {
 		t.Fatal(err)
@@ -93,8 +96,9 @@ func TestIngressTakeoverPendingBlocksMutatingStart(t *testing.T) {
 		return TransferStatus{TransferID: req.TransferID, SessionID: req.SessionID, SourceRuntimeID: "source", SourceSessionEpoch: 3, Workspace: cfg.Workspaces[0].Path, TargetKind: "gateway", TargetInstanceID: req.TargetInstanceID, State: transferStatePreflight}, nil
 	}
 	key := (processKey{workspaceID: "test", imType: "wechat", chatID: "chat"}).String()
-	msg := IncomingMessage{IMType: "wechat", ChatID: "chat", ticket: &AdmissionTicket{Identity: id}}
-	got := r.dispatchIngressTakeover(context.Background(), msg, key, IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
+	msg := im.IncomingMessage{IMType: "wechat", ChatID: "chat"}
+	msg.SetAdmissionTicket(&im.AdmissionTicket{Identity: id})
+	got := r.dispatchIngressTakeover(context.Background(), msg, key, im.IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
 	if got.State != "rejected" || got.Reason != "undelivered_inputs" || calls != 1 || m.transferBlocked(key) {
 		t.Fatalf("result=%+v calls=%d", got, calls)
 	}
@@ -114,7 +118,7 @@ func TestIngressTakeoverStatusRejectsReplacementTransfer(t *testing.T) {
 		t.Fatal("stale status queried replacement transfer")
 		return TransferStatus{}, nil
 	}
-	got := r.dispatchIngressTakeover(context.Background(), IncomingMessage{IMType: "wechat", ChatID: "chat"}, key, IMCommand{Type: "takeover", Action: "status"}, &IngressControlTarget{TransferID: "old-transfer"})
+	got := r.dispatchIngressTakeover(context.Background(), im.IncomingMessage{IMType: "wechat", ChatID: "chat"}, key, im.IMCommand{Type: "takeover", Action: "status"}, &im.IngressControlTarget{TransferID: "old-transfer"})
 	if got.State != "rejected" || got.Reason != "control_target_expired" {
 		t.Fatal(got)
 	}
@@ -140,7 +144,7 @@ func TestIngressTakeoverAbandonedChangeSettlesRoute(t *testing.T) {
 			r := NewNotificationRouter(m)
 			t.Cleanup(r.Close)
 			r.ingressStore = testIngressStore(t)
-			identity := ChatIdentity{"wechat", "bot", "chat"}
+			identity := im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}
 			if _, err := r.ingressStore.EnsureRoute(context.Background(), identity, "digest", "test", ""); err != nil {
 				t.Fatal(err)
 			}
@@ -153,8 +157,9 @@ func TestIngressTakeoverAbandonedChangeSettlesRoute(t *testing.T) {
 				}
 				return tc.status, tc.err
 			}
-			msg := IncomingMessage{IMType: "wechat", ChatID: "chat", ticket: &AdmissionTicket{Identity: identity}}
-			if result := r.dispatchIngressTakeover(context.Background(), msg, key, IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil); result.State != "unknown" {
+			msg := im.IncomingMessage{IMType: "wechat", ChatID: "chat"}
+			msg.SetAdmissionTicket(&im.AdmissionTicket{Identity: identity})
+			if result := r.dispatchIngressTakeover(context.Background(), msg, key, im.IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil); result.State != "unknown" {
 				t.Fatalf("expected an unknown outcome, got %+v", result)
 			}
 			route, err := r.ingressStore.GetRoute(identity)
@@ -179,7 +184,7 @@ func TestIngressTakeoverGuardCommitFailureSettlesRoute(t *testing.T) {
 	r := NewNotificationRouter(m)
 	t.Cleanup(r.Close)
 	r.ingressStore = testIngressStore(t)
-	identity := ChatIdentity{"wechat", "bot", "chat"}
+	identity := im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}
 	if _, err := r.ingressStore.EnsureRoute(context.Background(), identity, "digest", "test", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +193,9 @@ func TestIngressTakeoverGuardCommitFailureSettlesRoute(t *testing.T) {
 		return TransferStatus{TransferID: req.TransferID, SessionID: req.SessionID, SourceRuntimeID: "source", SourceSessionEpoch: 3, Workspace: cfg.Workspaces[0].Path, TargetKind: "gateway", TargetInstanceID: req.TargetInstanceID, State: transferStatePreflight}, nil
 	}
 	m.transfers.writer = func(string, []byte) error { return errors.New("disk full") }
-	msg := IncomingMessage{IMType: "wechat", ChatID: "chat", ticket: &AdmissionTicket{Identity: identity}}
-	result := r.dispatchIngressTakeover(context.Background(), msg, key, IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
+	msg := im.IncomingMessage{IMType: "wechat", ChatID: "chat"}
+	msg.SetAdmissionTicket(&im.AdmissionTicket{Identity: identity})
+	result := r.dispatchIngressTakeover(context.Background(), msg, key, im.IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
 	if result.State != "unknown" || result.Reason != "transfer_guard_commit_unknown" {
 		t.Fatalf("expected the guard commit failure to be reported, got %+v", result)
 	}

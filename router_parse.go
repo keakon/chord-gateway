@@ -1,12 +1,16 @@
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/keakon/chord-gateway/internal/im"
+)
 
 // commandForIncomingMessage keeps text and authenticated platform actions on
 // the same command model. Admission still decides whether the caller is allowed.
-func commandForIncomingMessage(msg IncomingMessage) IMCommand {
+func commandForIncomingMessage(msg im.IncomingMessage) im.IMCommand {
 	if msg.ForceText {
-		return IMCommand{Type: "send", Content: msg.Text}
+		return im.IMCommand{Type: "send", Content: msg.Text}
 	}
 	if msg.InternalAction != nil {
 		return commandFromInternalAction(msg.InternalAction)
@@ -14,16 +18,16 @@ func commandForIncomingMessage(msg IncomingMessage) IMCommand {
 	return parseIMCommand(msg.Text)
 }
 
-func parseIMCommand(text string) IMCommand {
+func parseIMCommand(text string) im.IMCommand {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "!") {
-		return IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "!"))}
+		return im.IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "!"))}
 	}
 	if strings.HasPrefix(text, "！") {
-		return IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "！"))}
+		return im.IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "！"))}
 	}
 	if !strings.HasPrefix(text, "/") {
-		return IMCommand{Type: "send", Content: text}
+		return im.IMCommand{Type: "send", Content: text}
 	}
 
 	parts := strings.SplitN(text, " ", 3)
@@ -34,108 +38,101 @@ func parseIMCommand(text string) IMCommand {
 	case "/takeover":
 		return parseTakeoverCommand(rest)
 	case "/status":
-		return IMCommand{Type: "status"}
+		return im.IMCommand{Type: "status"}
 	case "/summary":
-		return IMCommand{Type: "send", Content: "/summary"}
+		return im.IMCommand{Type: "send", Content: "/summary"}
 	case "/cancel":
-		return IMCommand{Type: "cancel"}
+		return im.IMCommand{Type: "cancel"}
 	case "/allow":
 		requestID := ""
 		if len(parts) > 1 {
 			requestID = strings.TrimSpace(parts[1])
 		}
-		return IMCommand{Type: "confirm", Action: "allow", RequestID: requestID}
+		return im.IMCommand{Type: "confirm", Action: "allow", RequestID: requestID}
 	case "/deny":
 		reason := ""
 		if len(parts) > 1 {
 			reason = strings.TrimSpace(text[len(parts[0]):])
 		}
-		return IMCommand{Type: "confirm", Action: "deny", Reason: reason}
+		return im.IMCommand{Type: "confirm", Action: "deny", Reason: reason}
 	case "/answer":
 		id := ""
 		if strings.HasPrefix(rest, "@") {
 			id, rest, _ = strings.Cut(rest, " ")
 			id = strings.TrimPrefix(id, "@")
 		}
-		return IMCommand{Type: "question", RequestID: id, Answers: []string{rest}}
+		return im.IMCommand{Type: "question", RequestID: id, Answers: []string{rest}}
 	case "/question-interact", "/question-withdraw":
 		action := map[string]string{"/question-interact": "interact", "/question-withdraw": "withdraw_requirement"}[cmd]
 		id, text, _ := strings.Cut(rest, " ")
 		if text == "" && action == "withdraw_requirement" {
 			text = "Withdraw the requirement for question " + id
 		}
-		return IMCommand{Type: "question", RequestID: strings.TrimPrefix(id, "@"), Action: action, Content: text}
+		return im.IMCommand{Type: "question", RequestID: strings.TrimPrefix(id, "@"), Action: action, Content: text}
 	case "/question-replace":
 		pieces := strings.Fields(rest)
 		if len(pieces) < 2 {
-			return IMCommand{Type: "question", Invalid: true}
+			return im.IMCommand{Type: "question", Invalid: true}
 		}
-		return IMCommand{Type: "question", RequestID: strings.TrimPrefix(pieces[0], "@"), Action: "replace_requirement", Reason: strings.TrimPrefix(pieces[1], "@"), Content: "Replace the requirement for question " + pieces[0] + " with " + pieces[1]}
+		return im.IMCommand{Type: "question", RequestID: strings.TrimPrefix(pieces[0], "@"), Action: "replace_requirement", Reason: strings.TrimPrefix(pieces[1], "@"), Content: "Replace the requirement for question " + pieces[0] + " with " + pieces[1]}
 
 	case "/handoff":
 		agent, pool, ok := parseHandoffArgs(strings.TrimSpace(strings.TrimPrefix(text, parts[0])))
-		return IMCommand{Type: "handoff", Action: "accept", Agent: agent, Pool: pool, Invalid: !ok}
+		return im.IMCommand{Type: "handoff", Action: "accept", Agent: agent, Pool: pool, Invalid: !ok}
 	case "/handoff-deny":
 		reason := ""
 		if len(parts) > 1 {
 			reason = strings.TrimSpace(text[len(parts[0]):])
 		}
-		return IMCommand{Type: "handoff", Action: "deny", Reason: reason}
+		return im.IMCommand{Type: "handoff", Action: "deny", Reason: reason}
 	case "/role":
 		content := ""
 		if len(parts) > 1 {
 			content = strings.TrimSpace(strings.Join(parts[1:], " "))
 		}
-		return IMCommand{Type: "role", Content: content}
+		return im.IMCommand{Type: "role", Content: content}
 	case "/new":
-		return IMCommand{Type: "new"}
+		return im.IMCommand{Type: "new"}
 	case "/resume":
 		sessionID := ""
 		if len(parts) > 1 {
 			sessionID = strings.TrimSpace(parts[1])
 		}
-		return IMCommand{Type: "resume", SessionID: sessionID}
+		return im.IMCommand{Type: "resume", SessionID: sessionID}
 	case "/sessions":
-		return IMCommand{Type: "sessions"}
+		return im.IMCommand{Type: "sessions"}
 	case "/todos":
-		return IMCommand{Type: "todos"}
+		return im.IMCommand{Type: "todos"}
 	case "/login":
 		target := ""
 		if len(parts) > 1 {
 			target = strings.TrimSpace(parts[1])
 		}
-		return IMCommand{Type: "login", Content: target}
+		return im.IMCommand{Type: "login", Content: target}
 	case "/bind":
-		return IMCommand{Type: "bind"}
+		return im.IMCommand{Type: "bind"}
 	default:
-		return IMCommand{Type: "send", Content: text}
+		return im.IMCommand{Type: "send", Content: text}
 	}
 }
 
-func commandFromInternalAction(action *InternalAction) IMCommand {
+func commandFromInternalAction(action *im.InternalAction) im.IMCommand {
 	if action == nil {
-		return IMCommand{Type: "send"}
+		return im.IMCommand{Type: "send"}
 	}
 	switch action.Type {
 	case "confirm":
-		return IMCommand{Type: "confirm", Action: action.Action, RequestID: action.RequestID}
+		return im.IMCommand{Type: "confirm", Action: action.Action, RequestID: action.RequestID}
 	case "question":
-		if action.questionFormSubmit() {
-			return IMCommand{Type: "question", RequestID: action.RequestID, Answers: action.Values}
+		if action.QuestionFormSubmit() {
+			return im.IMCommand{Type: "question", RequestID: action.RequestID, Answers: action.Values}
 		}
-		return IMCommand{Type: "question", RequestID: action.RequestID, Answers: []string{action.Value}}
+		return im.IMCommand{Type: "question", RequestID: action.RequestID, Answers: []string{action.Value}}
 	case "role":
-		return IMCommand{Type: "role", Content: action.Value}
+		return im.IMCommand{Type: "role", Content: action.Value}
 	default:
-		return IMCommand{Type: "send"}
+		return im.IMCommand{Type: "send"}
 	}
-}
-
-// questionFormSubmit reports whether the action came from a multi-select
-// question card's form: it carries the checked option numbers instead of an
-// stable option ID.
-func (a *InternalAction) questionFormSubmit() bool {
-	return a != nil && a.Type == "question" && len(a.Values) > 0
 }
 
 func parseHandoffArgs(rest string) (agentName, pool string, ok bool) {

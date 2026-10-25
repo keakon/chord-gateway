@@ -1,15 +1,19 @@
 package main
 
-import "context"
+import (
+	"context"
 
-func (s *IngressStore) routePending(id ChatIdentity) []IngressRecord {
+	"github.com/keakon/chord-gateway/internal/im"
+)
+
+func (s *IngressStore) routePending(id im.ChatIdentity) []IngressRecord {
 	var out []IngressRecord
 	for key := range s.pendingByRoute[id] {
 		out = append(out, s.records[key])
 	}
 	return out
 }
-func (s *IngressStore) EnsureRoute(ctx context.Context, id ChatIdentity, digest, workspace, session string) (IngressRoute, error) {
+func (s *IngressStore) EnsureRoute(ctx context.Context, id im.ChatIdentity, digest, workspace, session string) (IngressRoute, error) {
 	if err := s.lock(ctx); err != nil {
 		return IngressRoute{}, err
 	}
@@ -21,13 +25,13 @@ func (s *IngressStore) EnsureRoute(ctx context.Context, id ChatIdentity, digest,
 	}
 	records := s.routePending(id)
 	for _, r := range records {
-		if r.State == ingressDispatching || r.State == ingressUnknown {
+		if r.State == im.IngressDispatching || r.State == im.IngressUnknown {
 			return IngressRoute{}, errIngressBlocked
 		}
 	}
 	for _, r := range records {
-		if r.State == ingressReceived {
-			r.State = ingressQuarantined
+		if r.State == im.IngressReceived {
+			r.State = im.IngressQuarantined
 			r.Reason = "route_identity_changed"
 			r.UpdatedAt = s.now()
 			s.save(r)
@@ -42,7 +46,7 @@ func (s *IngressStore) EnsureRoute(ctx context.Context, id ChatIdentity, digest,
 	s.routes[id] = route
 	return route, nil
 }
-func (s *IngressStore) BeginRouteChange(ctx context.Context, id ChatIdentity) (IngressRoute, error) {
+func (s *IngressStore) BeginRouteChange(ctx context.Context, id im.ChatIdentity) (IngressRoute, error) {
 	if err := s.lock(ctx); err != nil {
 		return IngressRoute{}, err
 	}
@@ -51,7 +55,7 @@ func (s *IngressStore) BeginRouteChange(ctx context.Context, id ChatIdentity) (I
 		// A queued task owns the route; a queued control can be re-targeted or
 		// dropped by the change itself. Anything already in flight blocks
 		// regardless of kind.
-		if r.State == ingressDispatching || r.State == ingressUnknown || (r.Kind == "task" && r.State == ingressReceived) {
+		if r.State == im.IngressDispatching || r.State == im.IngressUnknown || (r.Kind == "task" && r.State == im.IngressReceived) {
 			return IngressRoute{}, errIngressBlocked
 		}
 	}
@@ -62,7 +66,7 @@ func (s *IngressStore) BeginRouteChange(ctx context.Context, id ChatIdentity) (I
 	s.routes[id] = route
 	return route, nil
 }
-func (s *IngressStore) FinishRouteChange(ctx context.Context, id ChatIdentity, revision, digest, workspace, session string) error {
+func (s *IngressStore) FinishRouteChange(ctx context.Context, id im.ChatIdentity, revision, digest, workspace, session string) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -81,7 +85,7 @@ func (s *IngressStore) FinishRouteChange(ctx context.Context, id ChatIdentity, r
 	s.routes[id] = route
 	return nil
 }
-func (s *IngressStore) BindRouteSession(ctx context.Context, id ChatIdentity, revision, session string) error {
+func (s *IngressStore) BindRouteSession(ctx context.Context, id im.ChatIdentity, revision, session string) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -94,7 +98,7 @@ func (s *IngressStore) BindRouteSession(ctx context.Context, id ChatIdentity, re
 		return errIngressBlocked
 	}
 	for _, r := range s.routePending(id) {
-		if r.State == ingressReceived && r.RouteRevision == revision && r.SessionID == "" {
+		if r.State == im.IngressReceived && r.RouteRevision == revision && r.SessionID == "" {
 			r.SessionID = session
 			r.UpdatedAt = s.now()
 			s.save(r)

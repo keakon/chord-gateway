@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // ValidateIngressInteraction validates the normalized callback shape. It is
 // deliberately independent of admission: a valid callback grants no authority.
-func ValidateIngressInteraction(msg IncomingMessage) error {
+func ValidateIngressInteraction(msg im.IncomingMessage) error {
 	a := msg.InternalAction
 	if a == nil {
 		return nil
@@ -73,7 +74,7 @@ func (r *NotificationRouter) loginReply(target string, hints ...func(string) str
 		return fmt.Sprintf("⚠️ No %s adapter found, please check configuration.", target), DispatchResult{"rejected", "login_adapter_missing"}
 	}
 	qr, err := adapter.StartLogin()
-	if errors.Is(err, ErrLoginNotSupported) {
+	if errors.Is(err, im.ErrLoginNotSupported) {
 		return fmt.Sprintf("⚠️ %s does not support login renewal via %s.", imDisplayName(target), commandHint("/login", hints)), DispatchResult{"rejected", "login_unsupported"}
 	}
 	if err != nil {
@@ -84,7 +85,7 @@ func (r *NotificationRouter) loginReply(target string, hints ...func(string) str
 
 // restoreIngressQuery may resume only the session pin frozen at reception.
 // A missing pin means an empty query, never permission to create a session.
-func (r *NotificationRouter) restoreIngressQuery(ctx context.Context, key string, t *IngressControlTarget) (*ChordProcess, *IngressControlTarget, DispatchResult) {
+func (r *NotificationRouter) restoreIngressQuery(ctx context.Context, key string, t *im.IngressControlTarget) (*ChordProcess, *im.IngressControlTarget, DispatchResult) {
 	if t == nil || t.SessionID == "" {
 		return nil, t, DispatchResult{}
 	}
@@ -97,7 +98,7 @@ func (r *NotificationRouter) restoreIngressQuery(ctx context.Context, key string
 	return p, target, result
 }
 
-func (r *NotificationRouter) synchronizeIngressQuestion(ctx context.Context, p *ChordProcess, cmd IMCommand, t *IngressControlTarget) (*IngressControlTarget, error) {
+func (r *NotificationRouter) synchronizeIngressQuestion(ctx context.Context, p *ChordProcess, cmd im.IMCommand, t *im.IngressControlTarget) (*im.IngressControlTarget, error) {
 	if t == nil {
 		return nil, errIngressTargetExpired
 	}
@@ -108,7 +109,7 @@ func (r *NotificationRouter) synchronizeIngressQuestion(ctx context.Context, p *
 		return nil, errIngressTargetExpired
 	}
 	p.mu.RLock()
-	valid := p.ingressTargetMatchesLocked(t, IMCommand{Type: "status"})
+	valid := p.ingressTargetMatchesLocked(t, im.IMCommand{Type: "status"})
 	p.mu.RUnlock()
 	if !valid {
 		return nil, errIngressTargetExpired
@@ -120,7 +121,7 @@ func (r *NotificationRouter) synchronizeIngressQuestion(ctx context.Context, p *
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if !p.ingressTargetMatchesLocked(t, IMCommand{Type: "status"}) {
+	if !p.ingressTargetMatchesLocked(t, im.IMCommand{Type: "status"}) {
 		return nil, errIngressTargetExpired
 	}
 	q := p.state.Questions[t.RequestID]
@@ -133,7 +134,7 @@ func (r *NotificationRouter) synchronizeIngressQuestion(ctx context.Context, p *
 	return &copyTarget, nil
 }
 
-func questionOperationCommand(msg IncomingMessage, q *QuestionPayload, cmd IMCommand, t *IngressControlTarget) (map[string]any, error) {
+func questionOperationCommand(msg im.IncomingMessage, q *QuestionPayload, cmd im.IMCommand, t *im.IngressControlTarget) (map[string]any, error) {
 	if cmd.Invalid || q == nil || t == nil {
 		return nil, errIngressTargetExpired
 	}
@@ -159,7 +160,7 @@ func questionOperationCommand(msg IncomingMessage, q *QuestionPayload, cmd IMCom
 	return payload, nil
 }
 
-func (r *NotificationRouter) dispatchIngressQuestion(ctx context.Context, msg IncomingMessage, p *ChordProcess, cmd IMCommand, t *IngressControlTarget, recordIDs ...string) DispatchResult {
+func (r *NotificationRouter) dispatchIngressQuestion(ctx context.Context, msg im.IncomingMessage, p *ChordProcess, cmd im.IMCommand, t *im.IngressControlTarget, recordIDs ...string) DispatchResult {
 	t, err := r.synchronizeIngressQuestion(ctx, p, cmd, t)
 	if err != nil {
 		return DispatchResult{"rejected", "question_sync_failed"}
@@ -182,7 +183,7 @@ func (r *NotificationRouter) dispatchIngressQuestion(ctx context.Context, msg In
 		if r.ingressStore == nil {
 			return DispatchResult{"unknown", "storage_unavailable"}
 		}
-		if err := r.ingressStore.UpdateRecord(ctx, recordID, []ingressState{ingressReceived}, func(rec *IngressRecord) error {
+		if err := r.ingressStore.UpdateRecord(ctx, recordID, []im.IngressState{im.IngressReceived}, func(rec *IngressRecord) error {
 			if rec.ControlTarget == nil || rec.ControlTarget.RequestID != t.RequestID || rec.ControlTarget.SessionID != "" && rec.ControlTarget.SessionID != t.SessionID || rec.ControlTarget.RuntimeID != "" && rec.ControlTarget.RuntimeID != t.RuntimeID {
 				return errIngressTargetExpired
 			}
@@ -211,11 +212,11 @@ func (r *NotificationRouter) dispatchIngressQuestion(ctx context.Context, msg In
 
 // waitIngressQuestion registers and writes while holding the same state lock
 // used by stdout projections. The frozen target cannot be replaced mid-write.
-func (p *ChordProcess) waitIngressQuestion(ctx context.Context, command map[string]any, t *IngressControlTarget) (QuestionReceipt, error) {
+func (p *ChordProcess) waitIngressQuestion(ctx context.Context, command map[string]any, t *im.IngressControlTarget) (QuestionReceipt, error) {
 	id, _ := command["operation_id"].(string)
 	ch := make(chan QuestionReceipt, 1)
 	p.mu.Lock()
-	if !p.ingressTargetMatchesLocked(t, IMCommand{Type: "question"}) {
+	if !p.ingressTargetMatchesLocked(t, im.IMCommand{Type: "question"}) {
 		p.mu.Unlock()
 		return QuestionReceipt{}, errIngressTargetExpired
 	}
@@ -243,7 +244,7 @@ func (p *ChordProcess) waitIngressQuestion(ctx context.Context, command map[stri
 	select {
 	case receipt := <-ch:
 		p.mu.RLock()
-		valid := p.ingressTargetMatchesLocked(t, IMCommand{Type: "status"})
+		valid := p.ingressTargetMatchesLocked(t, im.IMCommand{Type: "status"})
 		p.mu.RUnlock()
 		version, _ := command["version"].(uint64)
 		if !valid || receipt.OperationID != id || receipt.RequestID != t.RequestID || receipt.Accepted && receipt.Version < version {
@@ -257,8 +258,8 @@ func (p *ChordProcess) waitIngressQuestion(ctx context.Context, command map[stri
 
 // IngressQuestionRetryRecords proves that a new user input is an explicit retry
 // of a retained uncertain operation. It does not replay any stored parameters.
-func (r *NotificationRouter) IngressQuestionRetryRecords(msg IncomingMessage, t *IngressControlTarget) []string {
-	if r.mgr == nil || t == nil || t.QuestionLookup || msg.ticket == nil || r.admission == nil || !r.admission.Valid(*msg.ticket) {
+func (r *NotificationRouter) IngressQuestionRetryRecords(msg im.IncomingMessage, t *im.IngressControlTarget) []string {
+	if r.mgr == nil || t == nil || t.QuestionLookup || msg.AdmissionTicket() == nil || r.admission == nil || !r.admission.Valid(*msg.AdmissionTicket()) {
 		return nil
 	}
 	cmd := commandForIncomingMessage(msg)
@@ -330,7 +331,7 @@ func (r *NotificationRouter) ObserveIngressQuestionReceipt(p *ChordProcess, rece
 	if key == "" {
 		return nil
 	}
-	state := ingressCompleted
+	state := im.IngressCompleted
 	reason := ""
 	if !receipt.Accepted {
 		state, reason = "rejected", "question_rejected"
@@ -355,7 +356,7 @@ func (r *NotificationRouter) ObserveIngressQuestionReceipt(p *ChordProcess, rece
 		if rec.Kind != "control" || rec.ControlTarget == nil || rec.ControlTarget.RuntimeID != runtime || rec.ControlTarget.RequestID != receipt.RequestID {
 			return fmt.Errorf("question control identity mismatch")
 		}
-		if err = r.ingressStore.UpdateRecord(context.Background(), id, []ingressState{ingressReceived, ingressDispatching, ingressUnknown}, func(rec *IngressRecord) error { rec.State, rec.Reason = state, reason; return nil }); err != nil {
+		if err = r.ingressStore.UpdateRecord(context.Background(), id, []im.IngressState{im.IngressReceived, im.IngressDispatching, im.IngressUnknown}, func(rec *IngressRecord) error { rec.State, rec.Reason = state, reason; return nil }); err != nil {
 			return fmt.Errorf("persist question receipt: %w", err)
 		}
 	}
@@ -370,7 +371,7 @@ func (r *NotificationRouter) ObserveIngressQuestionReceipt(p *ChordProcess, rece
 // Explicit shell, role-switch and Chord commands may start their first runtime.
 // The lifecycle lock verifies the reception-time absence before any spawn; a
 // disappeared captured runtime is never silently replaced.
-func (r *NotificationRouter) startIngressCommandProcess(ctx context.Context, key string, target *IngressControlTarget) (*ChordProcess, *IngressControlTarget, DispatchResult) {
+func (r *NotificationRouter) startIngressCommandProcess(ctx context.Context, key string, target *im.IngressControlTarget) (*ChordProcess, *im.IngressControlTarget, DispatchResult) {
 	if target == nil || target.RuntimeID != "" {
 		return nil, target, DispatchResult{"rejected", "control_target_expired"}
 	}

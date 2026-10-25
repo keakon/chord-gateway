@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func TestWechatAccountCredentialRotationKeepsCursor(t *testing.T) {
@@ -47,7 +49,7 @@ func TestWechatAccountAccountLockAcrossDatabases(t *testing.T) {
 	if _, err := first.prepareIngressAccount(t.Context(), first.token.Load()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.prepareIngressAccount(t.Context(), second.token.Load()); !errors.Is(err, errInstanceRunning) {
+	if _, err := second.prepareIngressAccount(t.Context(), second.token.Load()); !errors.Is(err, im.ErrInstanceRunning) {
 		t.Fatalf("distinct databases bypassed account lock: %v", err)
 	}
 	first.closeIngressAccount()
@@ -71,19 +73,19 @@ func TestWechatAccountOversizedTextDoesNotBlockBatchProgress(t *testing.T) {
 			wechatTextMessage("201", "owner", "next task", ""),
 		},
 	}}
-	var results []ReceiveResult
-	receive := func(ctx context.Context, msg ilinkMessage, _ ReceiveResult) ReceiveResult {
+	var results []im.ReceiveResult
+	receive := func(ctx context.Context, msg ilinkMessage, _ im.ReceiveResult) im.ReceiveResult {
 		result := a.receiveIncomingMessage(ctx, msg, token)
 		results = append(results, result)
 		return result
 	}
-	resolve := func(ctx context.Context, msg ilinkMessage, result ReceiveResult) ReceiveResult {
+	resolve := func(ctx context.Context, msg ilinkMessage, result im.ReceiveResult) im.ReceiveResult {
 		return a.resolveIncomingMessage(ctx, msg, token, result)
 	}
 	if !batch.advance(t.Context(), receive, resolve) || batch.position != 2 || len(results) != 2 {
 		t.Fatalf("permanent size rejection blocked the batch: position=%d results=%+v", batch.position, results)
 	}
-	if results[0].Disposition != ReceiveRejected || results[0].RecordID == "" || results[1].Disposition != ReceiveAccepted {
+	if results[0].Disposition != im.ReceiveRejected || results[0].RecordID == "" || results[1].Disposition != im.ReceiveAccepted {
 		t.Fatalf("unexpected batch results: %+v", results)
 	}
 	rejected, err := service.store.Get(results[0].RecordID)

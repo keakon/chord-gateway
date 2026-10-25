@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 var errIngressMissing = errors.New("ingress record or route not found")
@@ -45,11 +47,11 @@ type IngressStore struct {
 	now                func() time.Time
 	records            map[string]IngressRecord
 	pending            map[string]struct{}
-	pendingByRoute     map[ChatIdentity]map[string]struct{}
-	routes             map[ChatIdentity]IngressRoute
-	byRoute            map[ChatIdentity]map[string]struct{}
+	pendingByRoute     map[im.ChatIdentity]map[string]struct{}
+	routes             map[im.ChatIdentity]IngressRoute
+	byRoute            map[im.ChatIdentity]map[string]struct{}
 	business, semantic map[string]string
-	cursors            map[string]IngressCursor
+	cursors            map[string]im.IngressCursor
 	history            []ingressHistoryEntry
 	historyHead        int
 	counts             map[string]ingressCounts
@@ -65,10 +67,10 @@ type ingressCounts struct{ Pending, Bytes, Tombstones int }
 func NewIngressStore() *IngressStore {
 	return &IngressStore{changed: make(chan struct{}, 1), now: time.Now,
 		records: make(map[string]IngressRecord), pending: make(map[string]struct{}),
-		pendingByRoute: make(map[ChatIdentity]map[string]struct{}),
-		routes:         make(map[ChatIdentity]IngressRoute), byRoute: make(map[ChatIdentity]map[string]struct{}),
+		pendingByRoute: make(map[im.ChatIdentity]map[string]struct{}),
+		routes:         make(map[im.ChatIdentity]IngressRoute), byRoute: make(map[im.ChatIdentity]map[string]struct{}),
 		business: make(map[string]string), semantic: make(map[string]string),
-		cursors: make(map[string]IngressCursor), counts: make(map[string]ingressCounts)}
+		cursors: make(map[string]im.IngressCursor), counts: make(map[string]ingressCounts)}
 }
 func newIngressID() string                       { return rand.Text() }
 func (s *IngressStore) Changed() <-chan struct{} { return s.changed }
@@ -175,7 +177,7 @@ func (s *IngressStore) save(r IngressRecord) {
 	}
 	s.byRoute[r.Identity()][r.RecordID] = struct{}{}
 }
-func (s *IngressStore) pruneHistory(preserve ChatIdentity) {
+func (s *IngressStore) pruneHistory(preserve im.ChatIdentity) {
 	// Terminal entries are appended in completion order. Evict only expired
 	// entries: reaching the bound must never silently forget live deduplication.
 	for s.historyHead < len(s.history) {
@@ -222,7 +224,7 @@ func (s *IngressStore) Get(id string) (IngressRecord, error) {
 	}
 	return cloneIngressRecord(r), nil
 }
-func (s *IngressStore) list(id *ChatIdentity, pending, metadata bool) []IngressRecord {
+func (s *IngressStore) list(id *im.ChatIdentity, pending, metadata bool) []IngressRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []IngressRecord
@@ -272,7 +274,7 @@ func (s *IngressStore) list(id *ChatIdentity, pending, metadata bool) []IngressR
 // scheduler uses the Metadata variants to avoid cloning record bodies.
 func (s *IngressStore) listAll() ([]IngressRecord, error)     { return s.list(nil, false, false), nil }
 func (s *IngressStore) listPending() ([]IngressRecord, error) { return s.list(nil, true, false), nil }
-func (s *IngressStore) listRoutePending(id ChatIdentity) ([]IngressRecord, error) {
+func (s *IngressStore) listRoutePending(id im.ChatIdentity) ([]IngressRecord, error) {
 	return s.list(&id, true, false), nil
 }
 
@@ -285,9 +287,9 @@ func (s *IngressStore) listPendingMetadata() []IngressRecord {
 // PendingRoutes returns the routes holding at least one pending record, ordered
 // by identity. The scheduler uses it to visit only routes that can dispatch
 // instead of rescanning every pending record on each wake.
-func (s *IngressStore) PendingRoutes() []ChatIdentity {
+func (s *IngressStore) PendingRoutes() []im.ChatIdentity {
 	s.mu.Lock()
-	out := make([]ChatIdentity, 0, len(s.pendingByRoute))
+	out := make([]im.ChatIdentity, 0, len(s.pendingByRoute))
 	for id := range s.pendingByRoute {
 		out = append(out, id)
 	}
@@ -296,7 +298,7 @@ func (s *IngressStore) PendingRoutes() []ChatIdentity {
 	return out
 }
 
-func compareChatIdentity(a, b ChatIdentity) int {
+func compareChatIdentity(a, b im.ChatIdentity) int {
 	if a.Platform != b.Platform {
 		return strings.Compare(a.Platform, b.Platform)
 	}
@@ -305,13 +307,13 @@ func compareChatIdentity(a, b ChatIdentity) int {
 	}
 	return strings.Compare(a.ChatID, b.ChatID)
 }
-func (s *IngressStore) ListRouteRecords(id ChatIdentity) ([]IngressRecord, error) {
+func (s *IngressStore) ListRouteRecords(id im.ChatIdentity) ([]IngressRecord, error) {
 	return s.list(&id, false, false), nil
 }
-func (s *IngressStore) ListRoutePendingMetadata(id ChatIdentity) []IngressRecord {
+func (s *IngressStore) ListRoutePendingMetadata(id im.ChatIdentity) []IngressRecord {
 	return s.list(&id, true, true)
 }
-func (s *IngressStore) GetRoute(id ChatIdentity) (IngressRoute, error) {
+func (s *IngressStore) GetRoute(id im.ChatIdentity) (IngressRoute, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.routes[id]
@@ -320,28 +322,32 @@ func (s *IngressStore) GetRoute(id ChatIdentity) (IngressRoute, error) {
 	}
 	return r, nil
 }
-func (s *IngressStore) lookupCommittedBusiness(platform, account, business string) (ReceiveResult, error) {
+func (s *IngressStore) lookupCommittedBusiness(platform, account, business string) (im.ReceiveResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, ok := s.business[compositeKey(platform, account, business)]
 	if !ok {
-		return ReceiveResult{}, errIngressMissing
+		return im.ReceiveResult{}, errIngressMissing
 	}
 	r := s.records[id]
-	return ReceiveResult{Disposition: ReceiveDuplicate, RecordID: id, State: r.State, Reason: r.Reason}, nil
+	return im.ReceiveResult{Disposition: im.ReceiveDuplicate, RecordID: id, State: r.State, Reason: r.Reason}, nil
 }
-func (s *IngressStore) AcceptRecord(ctx context.Context, r IngressRecord, cursor *IngressCursor) ReceiveResult {
+func (s *IngressStore) AcceptRecord(ctx context.Context, r IngressRecord, cursor *im.IngressCursor) im.ReceiveResult {
 	return s.acceptRecord(ctx, r, cursor, nil)
 }
-func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor *IngressCursor, valid func() bool) (outcome ReceiveResult) {
+func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor *im.IngressCursor, valid func() bool) (outcome im.ReceiveResult) {
 	defer func() { s.observeAcceptance(r.Platform, outcome) }()
-	reject := func(reason string) ReceiveResult { return ReceiveResult{Disposition: ReceiveRejected, Reason: reason} }
-	retry := func(reason string) ReceiveResult { return ReceiveResult{Disposition: ReceiveRetryable, Reason: reason} }
-	if r.Platform == "" || r.AccountID == "" || r.ChatID == "" || (r.SenderID == "" && r.State != ingressRejected) || r.BusinessID == "" || !utf8.ValidString(r.Text) || len(r.Text) > 64<<10 {
+	reject := func(reason string) im.ReceiveResult {
+		return im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: reason}
+	}
+	retry := func(reason string) im.ReceiveResult {
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: reason}
+	}
+	if r.Platform == "" || r.AccountID == "" || r.ChatID == "" || (r.SenderID == "" && r.State != im.IngressRejected) || r.BusinessID == "" || !utf8.ValidString(r.Text) || len(r.Text) > 64<<10 {
 		return reject("invalid_input")
 	}
 	for _, v := range []string{r.Platform, r.AccountID, r.ChatID, r.SenderID, r.BusinessID, r.SemanticID, r.DeliveryID} {
-		if len(v) > maxScopedIDBytes || !utf8.ValidString(v) {
+		if len(v) > im.MaxScopedIDBytes || !utf8.ValidString(v) {
 			return reject("invalid_identity")
 		}
 	}
@@ -377,20 +383,20 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	}
 	r.UpdatedAt = now
 	if r.State == "" {
-		r.State = ingressReceived
+		r.State = im.IngressReceived
 	}
-	if r.State != ingressReceived && r.State != ingressRejected {
+	if r.State != im.IngressReceived && r.State != im.IngressRejected {
 		return reject("invalid_state")
 	}
 	if !r.SourceTime.IsZero() && (r.SourceTime.Before(now.Add(-24*time.Hour)) || r.SourceTime.After(now.Add(5*time.Minute))) {
-		r.State = ingressRejected
+		r.State = im.IngressRejected
 		r.Reason = "source_time_out_of_range"
 	}
 	if r.Kind == "control" {
 		r.Text = ""
 		r.InputDigest = ""
 	}
-	if r.State == ingressRejected {
+	if r.State == im.IngressRejected {
 		r.Text = ""
 	}
 	if cursor != nil {
@@ -409,13 +415,13 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 			if old.ChatID != r.ChatID || old.SemanticID != r.SemanticID || old.InputDigest != r.InputDigest {
 				d := sha256.Sum256(ingressKey("", r.BusinessID, r.ChatID, r.SemanticID, r.InputDigest))
 				r.BusinessID = "update-conflict:" + hex.EncodeToString(d[:])
-				r.State = ingressRejected
+				r.State = im.IngressRejected
 				r.Reason = "update_id_conflict"
 				r.Text = ""
 			}
 		}
 	}
-	disposition := ReceiveAccepted
+	disposition := im.ReceiveAccepted
 	for _, index := range []struct {
 		values   map[string]string
 		key      string
@@ -427,25 +433,25 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 		if id := index.values[index.key]; id != "" {
 			old := s.records[id]
 			if index.semantic && r.Platform == "telegram" {
-				r.State = ingressRejected
+				r.State = im.IngressRejected
 				r.Reason = "semantic_duplicate"
 				r.Text = ""
-				disposition = ReceiveDuplicate
+				disposition = im.ReceiveDuplicate
 				break
 			}
 			commitCursor()
-			return ReceiveResult{Disposition: ReceiveDuplicate, RecordID: old.RecordID, State: old.State, Reason: old.Reason}
+			return im.ReceiveResult{Disposition: im.ReceiveDuplicate, RecordID: old.RecordID, State: old.State, Reason: old.Reason}
 		}
 	}
 	route, exists := s.routes[r.Identity()]
 	if !exists {
 		route = IngressRoute{Identity: r.Identity(), Revision: newIngressID(), Phase: "unbound"}
 	}
-	if r.State != ingressRejected && r.Kind == "task" && (route.Phase != "active" || route.Revision != r.RouteRevision || route.AuthorizationDigest != r.AuthorizationDigest) {
+	if r.State != im.IngressRejected && r.Kind == "task" && (route.Phase != "active" || route.Revision != r.RouteRevision || route.AuthorizationDigest != r.AuthorizationDigest) {
 		return retry("route_changed")
 	}
 	reserve := 0
-	if r.statusQuery && r.Kind == "control" && r.State == ingressReceived {
+	if r.statusQuery && r.Kind == "control" && r.State == im.IngressReceived {
 		reserve = 1
 	}
 	pending := len(s.pendingByRoute[r.Identity()])
@@ -464,12 +470,12 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	}
 	commitCursor()
 	s.signal()
-	if r.State == ingressRejected && disposition != ReceiveDuplicate {
-		disposition = ReceiveRejected
+	if r.State == im.IngressRejected && disposition != im.ReceiveDuplicate {
+		disposition = im.ReceiveRejected
 	}
-	return ReceiveResult{Disposition: disposition, RecordID: r.RecordID, State: r.State, Reason: r.Reason}
+	return im.ReceiveResult{Disposition: disposition, RecordID: r.RecordID, State: r.State, Reason: r.Reason}
 }
-func (s *IngressStore) UpdateRecord(ctx context.Context, id string, allowed []ingressState, mutate func(*IngressRecord) error) error {
+func (s *IngressStore) UpdateRecord(ctx context.Context, id string, allowed []im.IngressState, mutate func(*IngressRecord) error) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}

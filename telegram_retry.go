@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // Retry pacing is variable so tests can exercise the state transitions without
@@ -56,7 +58,7 @@ func (b *telegramBackoff) failed(err error) (time.Duration, bool) {
 				return 0, false
 			}
 			b.conflictRetries++
-			return jitterBackoff(telegramConflictRetryDelay), true
+			return im.JitterBackoff(telegramConflictRetryDelay), true
 		case "rate_limited":
 			if apiErr.RetryAfter > 0 {
 				return apiErr.RetryAfter, true
@@ -66,7 +68,7 @@ func (b *telegramBackoff) failed(err error) (time.Duration, bool) {
 	if b.next == 0 {
 		b.next = telegramRetryBaseDelay
 	}
-	delay := jitterBackoff(b.next)
+	delay := im.JitterBackoff(b.next)
 	b.next = min(b.next*2, 30*time.Second)
 	return delay, true
 }

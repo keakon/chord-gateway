@@ -1,5 +1,7 @@
 package main
 
+import "github.com/keakon/chord-gateway/internal/im"
+
 type ingressQuestionReceipt struct {
 	process *ChordProcess
 	receipt QuestionReceipt
@@ -66,11 +68,11 @@ func (s *IngressService) applyQuestionReceipt(item ingressQuestionReceipt) {
 }
 
 func (s *IngressService) canRetryIngressQuestion(control ingressControl, records []IngressRecord) bool {
-	if control.message.ticket == nil {
+	if control.message.AdmissionTicket() == nil {
 		return false
 	}
 	s.mu.Lock()
-	blocked := s.routeBlockedLocked(control.message.ticket.Identity)
+	blocked := s.routeBlockedLocked(control.message.AdmissionTicket().Identity)
 	s.mu.Unlock()
 	if blocked {
 		return false
@@ -85,7 +87,7 @@ func (s *IngressService) canRetryIngressQuestion(control ingressControl, records
 	}
 	found := false
 	for _, rec := range records {
-		if rec.State == ingressUnknown || rec.State == ingressDispatching {
+		if rec.State == im.IngressUnknown || rec.State == im.IngressDispatching {
 			if rec.Kind != "control" || !matched[rec.RecordID] {
 				return false
 			}
@@ -97,17 +99,17 @@ func (s *IngressService) canRetryIngressQuestion(control ingressControl, records
 
 // currentIngressBlockers rechecks late/explicit Question receipts before
 // advancing ordinary input. It never guesses success from the runtime state.
-func (s *IngressService) currentIngressBlockers(id ChatIdentity) (blocked, unknown bool) {
+func (s *IngressService) currentIngressBlockers(id im.ChatIdentity) (blocked, unknown bool) {
 	s.mu.Lock()
 	blocked = s.routeBlockedLocked(id)
 	s.mu.Unlock()
 	unknown = blocked
 	records := s.store.ListRoutePendingMetadata(id)
 	for _, rec := range records {
-		if rec.State == ingressUnknown {
+		if rec.State == im.IngressUnknown {
 			unknown = true
 		}
-		if rec.State == ingressUnknown || rec.State == ingressDispatching {
+		if rec.State == im.IngressUnknown || rec.State == im.IngressDispatching {
 			blocked = true
 		}
 	}

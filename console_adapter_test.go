@@ -4,16 +4,18 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-type consoleMessageRecorder struct{ messages chan IncomingMessage }
+type consoleMessageRecorder struct{ messages chan im.IncomingMessage }
 
-func (r *consoleMessageRecorder) HandleIncomingMessage(m IncomingMessage) { r.messages <- m }
+func (r *consoleMessageRecorder) HandleIncomingMessage(m im.IncomingMessage) { r.messages <- m }
 
 func TestConsoleInputAndDisconnect(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer writer.Close()
-	recorder := &consoleMessageRecorder{messages: make(chan IncomingMessage, 1)}
+	recorder := &consoleMessageRecorder{messages: make(chan im.IncomingMessage, 1)}
 	a := newConsoleAdapter(recorder)
 	a.input = reader
 	defer a.Disconnect()

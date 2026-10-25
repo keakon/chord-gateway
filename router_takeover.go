@@ -10,10 +10,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/keakon/chord-gateway/config"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func parseTakeoverCommand(rest string) IMCommand {
-	c := IMCommand{Type: "takeover"}
+func parseTakeoverCommand(rest string) im.IMCommand {
+	c := im.IMCommand{Type: "takeover"}
 	fields := strings.Fields(rest)
 	if len(fields) == 1 && fields[0] == "status" {
 		c.Action = "status"
@@ -40,7 +41,7 @@ func parseTakeoverCommand(rest string) IMCommand {
 	return c
 }
 
-func (r *NotificationRouter) handleTakeover(ws *config.Workspace, chat, key string, cmd IMCommand) {
+func (r *NotificationRouter) handleTakeover(ws *config.Workspace, chat, key string, cmd im.IMCommand) {
 	if cmd.Invalid {
 		r.sendTextForKey(key, chat, "⚠️ Usage: /takeover <session-id> [--timeout <duration>] or /takeover status.")
 		return
@@ -102,7 +103,7 @@ func (r *NotificationRouter) handleTakeover(ws *config.Workspace, chat, key stri
 // Workspace identity comes from Chord. Resolve it without holding lifecycle
 // locks, then recheck the binding before persisting the guard and contacting
 // the source with a mutating start request.
-func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat, key string, cmd IMCommand, operation *chatOperation) {
+func (r *NotificationRouter) prepareIncomingTakeover(ws *config.Workspace, chat, key string, cmd im.IMCommand, operation *chatOperation) {
 	m := r.mgr
 	req := takeoverRequest{Action: transferStatePreflight, TransferID: "transfer-" + rand.Text(), SessionID: cmd.SessionID, TargetInstanceID: "binding-" + rand.Text(), Workspace: ws.Path, WorkDir: ws.Path, StateDir: config.Expand(m.Config().ChordStateDir)}
 	ctx, cancel := context.WithTimeout(operation.context(), 10*time.Second)
@@ -421,7 +422,7 @@ func (r *NotificationRouter) clearTransferCards(key string) {
 	}
 }
 
-func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key string, cmd IMCommand, msg IncomingMessage) bool {
+func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key string, cmd im.IMCommand, msg im.IncomingMessage) bool {
 	p := r.mgr.GetProcessForKey(key)
 	if !r.mgr.transferBlocked(key) && (p == nil || !p.transferActive()) {
 		return false
@@ -430,7 +431,7 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 		return false
 	}
 	if cmd.Type == "status" {
-		r.handleTakeover(ws, chat, key, IMCommand{Type: "takeover", Action: "status"})
+		r.handleTakeover(ws, chat, key, im.IMCommand{Type: "takeover", Action: "status"})
 		return true
 	}
 	if cmd.Type == "new" || cmd.Type == "resume" {
@@ -441,9 +442,9 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 		ctx, cancel := context.WithTimeout(context.Background(), transferReadyTimeout)
 		defer cancel()
 		finish := func() error { return nil }
-		if r.ingressStore != nil && msg.ticket != nil {
+		if r.ingressStore != nil && msg.AdmissionTicket() != nil {
 			var err error
-			finish, err = r.beginIngressRouteChange(ctx, msg.ticket.Identity)
+			finish, err = r.beginIngressRouteChange(ctx, msg.AdmissionTicket().Identity)
 			if err != nil {
 				r.sendTextForKey(key, chat, "⚠️ Undelivered inputs block this session change. Inspect the local inbox first.")
 				return true
@@ -494,7 +495,7 @@ func (r *NotificationRouter) routeTransferGuard(ws *config.Workspace, chat, key 
 
 // Cards are scoped to a runtime binding; stale approvals and late answers
 // cannot turn into instructions in a replacement process.
-func (r *NotificationRouter) rejectStaleCard(key string, msg IncomingMessage) bool {
+func (r *NotificationRouter) rejectStaleCard(key string, msg im.IncomingMessage) bool {
 	if msg.InternalAction == nil {
 		return false
 	}

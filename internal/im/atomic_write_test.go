@@ -1,4 +1,4 @@
-package main
+package im
 
 import (
 	"os"
@@ -14,19 +14,19 @@ func TestWritePrivateFileAtomicallyUsesPrivatePermissions(t *testing.T) {
 
 	dir := filepath.Join(t.TempDir(), "state")
 	path := filepath.Join(dir, "secret.json")
-	if err := writePrivateFileAtomically(path, []byte("secret")); err != nil {
-		t.Fatalf("writePrivateFileAtomically: %v", err)
+	if err := WritePrivateFileAtomically(path, []byte("secret")); err != nil {
+		t.Fatalf("WritePrivateFileAtomically: %v", err)
 	}
-	assertPathMode(t, dir, privateDirMode)
-	assertPathMode(t, path, privateFileMode)
+	assertPathMode(t, dir, PrivateDirMode)
+	assertPathMode(t, path, PrivateFileMode)
 
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("chmod existing file: %v", err)
 	}
-	if err := writePrivateFileAtomically(path, []byte("updated")); err != nil {
+	if err := WritePrivateFileAtomically(path, []byte("updated")); err != nil {
 		t.Fatalf("rewrite private file: %v", err)
 	}
-	assertPathMode(t, path, privateFileMode)
+	assertPathMode(t, path, PrivateFileMode)
 }
 
 func assertPathMode(t *testing.T, path string, want os.FileMode) {

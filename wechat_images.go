@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/keakon/golog/log"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 const ilinkItemTypeImage = 2
@@ -50,7 +52,7 @@ type ilinkImageItem struct {
 // that request with a context deadline instead.
 func (a *WechatAdapter) mediaClient() *http.Client {
 	if a.httpClient == nil {
-		return &http.Client{Transport: proxiedTransport(a.proxyFunc)}
+		return &http.Client{Transport: im.ProxiedTransport(a.proxyFunc)}
 	}
 	client := *a.httpClient
 	client.Timeout = 0
@@ -84,10 +86,10 @@ func encryptILinkImage(data, key []byte) ([]byte, error) {
 	return padded, nil
 }
 
-func (a *WechatAdapter) SendImage(chatID string, image *ReceivedImage) error {
+func (a *WechatAdapter) SendImage(chatID string, image *im.ReceivedImage) error {
 	return a.SendImageContext(a.adapterContext(), chatID, image)
 }
-func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, image *ReceivedImage) error {
+func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, image *im.ReceivedImage) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -113,12 +115,12 @@ func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, ima
 	if expected, ok := ctx.Value(replyAccountContextKey{}).(string); ok && account.AccountID != expected {
 		return fmt.Errorf("account changed")
 	}
-	release, err := acquireImageUpload(ctx)
+	release, err := im.AcquireImageUpload(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
-	data, err := readReceivedImage(image)
+	data, err := im.ReadReceivedImage(image)
 	if err != nil {
 		return err
 	}
