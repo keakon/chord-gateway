@@ -12,7 +12,7 @@ func TestWechatImageCancellationBeforeReading(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	a := newTestWechatAdapter(t)
-	a.ctx = ctx
+	a.SetConnectionForTest(ctx, nil)
 	if err := a.SendImage("sample-chat", &im.ReceivedImage{Path: "missing-image"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled upload = %v", err)
 	}

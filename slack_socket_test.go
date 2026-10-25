@@ -14,9 +14,10 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/slack"
 )
 
-func slackSocketTestAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
+func slackSocketTestAdapter(t *testing.T) (*slack.SlackAdapter, slack.Identity) {
 	t.Helper()
 	store := testConfigStore(t, "ims: {slack: {app_token: sample-app-token, bot_token: sample-bot-token, app_id: ATEST, team_id: TTEST}}\n")
 	mgr := NewChordManager(store.Snapshot(), testPaths(t))
@@ -29,20 +30,26 @@ func slackSocketTestAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
 	if err := ingress.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := NewSlackAdapter(store.Snapshot(), store.Snapshot().IMs[0], testPaths(t), router)
+	adapter, err := slack.NewSlackAdapter(store.Snapshot(), store.Snapshot().IMs[0], testPaths(t), router)
 	if err != nil {
 		t.Fatal(err)
 	}
 	account, _ := im.EncodeScopedID("account-v1:", "TTEST", "UBOT")
-	identity := slackIdentity{TeamID: "TTEST", AppID: "ATEST", BotUserID: "UBOT", BotID: "BBOT", AccountID: account}
-	adapter.identity, adapter.identityVerified = identity, true
-	adapter.verifyIdentity = func(context.Context) (slackIdentity, error) { return identity, nil }
+	identity := slack.Identity{TeamID: "TTEST", AppID: "ATEST", BotUserID: "UBOT", BotID: "BBOT", AccountID: account}
+	adapter.SetIdentityForTest(identity, true)
+	adapter.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) { return identity, nil })
 	router.SetAdapter(adapter)
-	t.Cleanup(func() { adapter.cancel(); ingress.Close(); router.admission.Close(); router.Close(); _ = db.Close() })
+	t.Cleanup(func() {
+		adapter.CancelForTest()
+		ingress.Close()
+		router.admission.Close()
+		router.Close()
+		_ = db.Close()
+	})
 	return adapter, identity
 }
 
-func startSlackSocketTest(t *testing.T, adapter *SlackAdapter, identity slackIdentity) (*websocket.Conn, <-chan error, context.CancelFunc) {
+func startSlackSocketTest(t *testing.T, adapter *slack.SlackAdapter, identity slack.Identity) (*websocket.Conn, <-chan error, context.CancelFunc) {
 	t.Helper()
 	connections := make(chan *websocket.Conn, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,13 +59,12 @@ func startSlackSocketTest(t *testing.T, adapter *SlackAdapter, identity slackIde
 		}
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
-	adapter.openSocket = func(context.Context) (string, error) { return "ws" + strings.TrimPrefix(server.URL, "http"), nil }
-	adapter.dialSocket = func(ctx context.Context, address string) (*websocket.Conn, error) {
+	adapter.SetSocketHooksForTest(func(context.Context) (string, error) { return "ws" + strings.TrimPrefix(server.URL, "http"), nil }, func(ctx context.Context, address string) (*websocket.Conn, error) {
 		conn, _, err := websocket.DefaultDialer.DialContext(ctx, address, nil)
 		return conn, err
-	}
+	})
 	done := make(chan error, 1)
-	go func() { done <- adapter.runSlackSocket(ctx, identity) }()
+	go func() { done <- adapter.RunSocketForTest(ctx, identity) }()
 	var conn *websocket.Conn
 	select {
 	case conn = <-connections:
@@ -88,18 +94,15 @@ func TestSlackSocketHelloAndDisconnect(t *testing.T) {
 			if err := conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": id.AppID}}); err != nil {
 				t.Fatal(err)
 			}
-			waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+			waitIngressCondition(t, func() bool { return a.ReadyForTest() })
 			if err := conn.WriteJSON(map[string]string{"type": "disconnect", "reason": reason}); err != nil {
 				t.Fatal(err)
 			}
 			err := waitSlackSocketDone(t, done)
-			if slackConnectionFatal(err) != (reason == "link_disabled") {
+			if slack.ConnectionFatal(err) != (reason == "link_disabled") {
 				t.Fatal(err)
 			}
-			a.mu.Lock()
-			ready := a.ready
-			a.mu.Unlock()
-			if ready {
+			if a.ReadyForTest() {
 				t.Fatal("disconnected generation stayed ready")
 			}
 		})
@@ -110,16 +113,16 @@ func TestSlackSocketHelloIdentityAndTimeout(t *testing.T) {
 	for _, app := range []string{"", "AOTHER", "timeout"} {
 		t.Run(app, func(t *testing.T) {
 			a, id := slackSocketTestAdapter(t)
-			a.helloTimeout = 25 * time.Millisecond
+			a.SetTimeoutsForTest(25*time.Millisecond, 60*time.Second)
 			conn, done, _ := startSlackSocketTest(t, a, id)
 			if app != "timeout" {
 				_ = conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": app}})
 			}
 			err := waitSlackSocketDone(t, done)
-			if slackConnectionFatal(err) != (app != "timeout") {
+			if slack.ConnectionFatal(err) != (app != "timeout") {
 				t.Fatal(err)
 			}
-			if p := a.router.(*NotificationRouter).admission.pairing; func() bool {
+			if p := a.HostForTest().(*NotificationRouter).admission.pairing; func() bool {
 				p.mu.Lock()
 				defer p.mu.Unlock()
 				return p.platforms["slack"] != nil && p.platforms["slack"].ready
@@ -134,7 +137,7 @@ func TestSlackSocketPingAndIgnoredACK(t *testing.T) {
 	a, id := slackSocketTestAdapter(t)
 	conn, done, cancel := startSlackSocketTest(t, a, id)
 	_ = conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": id.AppID}})
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
 	pong := make(chan string, 1)
 	conn.SetPongHandler(func(payload string) error { pong <- payload; return nil })
 	_ = conn.WriteControl(websocket.PingMessage, []byte("heartbeat"), time.Now().Add(time.Second))
@@ -163,25 +166,25 @@ func TestSlackSocketPingAndIgnoredACK(t *testing.T) {
 func TestSlackSocketPingTimeoutAndIdentityRefresh(t *testing.T) {
 	t.Run("ping", func(t *testing.T) {
 		a, id := slackSocketTestAdapter(t)
-		a.pingTimeout = 30 * time.Millisecond
+		a.SetTimeoutsForTest(10*time.Second, 30*time.Millisecond)
 		conn, done, _ := startSlackSocketTest(t, a, id)
 		_ = conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": id.AppID}})
 		err := waitSlackSocketDone(t, done)
-		if slackConnectionCategory(err) != "ping_timeout" {
+		if slack.ConnectionCategory(err) != "ping_timeout" {
 			t.Fatal(err)
 		}
 	})
 	t.Run("identity", func(t *testing.T) {
 		a, id := slackSocketTestAdapter(t)
-		a.verifyIdentity = func(context.Context) (slackIdentity, error) {
+		a.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) {
 			changed := id
 			changed.BotUserID = "UCHANGED"
 			changed.AccountID = "other-account"
 			return changed, nil
-		}
+		})
 		conn, done, _ := startSlackSocketTest(t, a, id)
 		_ = conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": id.AppID}})
-		if err := waitSlackSocketDone(t, done); !slackConnectionFatal(err) {
+		if err := waitSlackSocketDone(t, done); !slack.ConnectionFatal(err) {
 			t.Fatal(err)
 		}
 	})
@@ -191,19 +194,17 @@ func TestSlackACKWriterRejectsExpiredAndOldGeneration(t *testing.T) {
 	a, id := slackSocketTestAdapter(t)
 	conn, done, cancel := startSlackSocketTest(t, a, id)
 	_ = conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": id.AppID}})
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
-	a.mu.Lock()
-	client, generation := a.conn, a.generation
-	a.mu.Unlock()
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
+	client, generation := a.SocketStateForTest()
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
-	queue := make(chan slackACK, 2)
+	queue := make(chan slack.ACK, 2)
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
-		a.slackACKWriter(ctx, client, generation, queue, func(error) { t.Error("unexpected write") })
+		a.ACKWriterForTest(ctx, client, generation, queue, func(error) { t.Error("unexpected write") })
 	}()
-	for _, test := range []slackACK{{Generation: generation - 1, Deadline: time.Now().Add(time.Second), Data: []byte(`{"envelope_id":"old"}`), Done: make(chan error, 1)}, {Generation: generation, Deadline: time.Now().Add(-time.Second), Data: []byte(`{"envelope_id":"late"}`), Done: make(chan error, 1)}} {
+	for _, test := range []slack.ACK{{Generation: generation - 1, Deadline: time.Now().Add(time.Second), Data: []byte(`{"envelope_id":"old"}`), Done: make(chan error, 1)}, {Generation: generation, Deadline: time.Now().Add(-time.Second), Data: []byte(`{"envelope_id":"late"}`), Done: make(chan error, 1)}} {
 		queue <- test
 		select {
 		case err := <-test.Done:
@@ -221,17 +222,17 @@ func TestSlackACKWriterRejectsExpiredAndOldGeneration(t *testing.T) {
 }
 
 func TestSlackSocketURLAndFatalAuthentication(t *testing.T) {
-	for _, address := range []string{"wss://wss.slack.com/link/?ticket=sample", "wss://wss-primary.slack.com/link", "wss://wss-backup.slack.com/link"} {
-		if !validSlackSocketURL(address) {
+	for _, address := range []string{"wss://wss.slackapi.com/link/?ticket=sample", "wss://wss-primary.slackapi.com/link", "wss://wss-backup.slackapi.com/link"} {
+		if !slack.ValidSocketURL(address) {
 			t.Fatal(address)
 		}
 	}
-	for _, address := range []string{"ws://wss.slack.com/link", "wss://wss.slack.com.evil.test/link", "wss://user@wss.slack.com/link", "wss://wss.slack.com/link#fragment", "wss://wss.slack.com:8080/link"} {
-		if validSlackSocketURL(address) {
+	for _, address := range []string{"ws://wss.slackapi.com/link", "wss://wss.slackapi.com.evil.test/link", "wss://user@wss.slackapi.com/link", "wss://wss.slackapi.com/link#fragment", "wss://wss.slackapi.com:8080/link"} {
+		if slack.ValidSocketURL(address) {
 			t.Fatal(address)
 		}
 	}
-	if !slackConnectionFatal(errSlackFatal) || slackConnectionFatal(errors.New("network")) {
+	if !slack.ConnectionFatal(slack.ErrFatal) || slack.ConnectionFatal(errors.New("network")) {
 		t.Fatal("fatal classification")
 	}
 	for i := 0; i < 10; i++ {
@@ -244,7 +245,7 @@ func TestSlackSocketURLAndFatalAuthentication(t *testing.T) {
 
 func TestSlackAdapterRequiresIngressAndStopsBeforeConnect(t *testing.T) {
 	cfg := config.IMAdapterConfig{Slack: &config.SlackConfig{AppToken: "sample-app-token", BotToken: "sample-bot-token", AppID: "ATEST", TeamID: "TTEST"}}
-	a, err := NewSlackAdapter(nil, cfg, nil, nil)
+	a, err := slack.NewSlackAdapter(nil, cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestSlackAdapterRequiresIngressAndStopsBeforeConnect(t *testing.T) {
 		t.Fatal("started without durable ingress")
 	}
 	a.Disconnect()
-	b, err := NewSlackAdapter(nil, cfg, nil, nil)
+	b, err := slack.NewSlackAdapter(nil, cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,22 +265,22 @@ func TestSlackAdapterRequiresIngressAndStopsBeforeConnect(t *testing.T) {
 
 func TestSlackAdapterReusesOneConversationCache(t *testing.T) {
 	a, identity := slackSocketTestAdapter(t)
-	first := a.inboundFor(identity)
+	first := a.InboundForTest(identity)
 	if first == nil {
 		t.Fatal("adapter did not create an inbound cache")
 	}
-	if first != a.inboundFor(identity) {
+	if first != a.InboundForTest(identity) {
 		t.Fatal("adapter rebuilt the conversation cache between generations")
 	}
-	if first.identity != identity {
+	if first.IdentityForTest() != identity {
 		t.Fatal("cache bound to the wrong installation identity")
 	}
 }
 
 func TestSlackOversizedACKHintFallsBackToBareACK(t *testing.T) {
-	queue := make(chan slackACK, 1)
-	frame := slackSocketFrame{Type: "slash_commands", EnvelopeID: "big-hint", AcceptsResponsePayload: true}
-	done := (&SlackAdapter{}).queueSlackACK(t.Context(), 1, frame, time.Now(), strings.Repeat("x", 3000), queue)
+	queue := make(chan slack.ACK, 1)
+	frame := slack.SocketFrame{Type: "slash_commands", EnvelopeID: "big-hint", AcceptsResponsePayload: true}
+	done := (&slack.SlackAdapter{}).QueueACKForTest(t.Context(), 1, frame, time.Now(), strings.Repeat("x", 3000), queue)
 	if done == nil {
 		t.Fatal("oversized hint dropped the ACK")
 	}

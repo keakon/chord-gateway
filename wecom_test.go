@@ -13,6 +13,8 @@ import (
 
 	"github.com/keakon/chord-gateway/internal/im"
 
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -34,27 +36,27 @@ func countWecomIngressEvent(store *IngressStore, event string) uint64 {
 // many messages never reached the ingress, which is what docs/wecom.md promises
 // and what the Discord adapter's callback_dropped accounting already does.
 func TestWecomDroppedBeforeAcceptCountsEachDelivery(t *testing.T) {
-	a, _, store := wecomAdapterFixture(t)
-	a.droppedBeforeAccept(3)
-	a.droppedBeforeAccept(0)
+	a, _, store, _ := wecomAdapterFixture(t)
+	a.DroppedBeforeAcceptForTest(3)
+	a.DroppedBeforeAcceptForTest(0)
 	if got := countWecomIngressEvent(store, "callback_dropped"); got != 3 {
 		t.Fatalf("callback_dropped = %d, want 3", got)
 	}
 }
 
 func TestWecomCallbacksUseDurableBusinessDedupe(t *testing.T) {
-	a, _, store := wecomAdapterFixture(t)
-	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "delivery-1", "business")); err != nil {
+	a, _, store, _ := wecomAdapterFixture(t)
+	if err := a.ReceiveFrameForTest(a.ContextForTest(), wecomAdapterCallback("bot", "delivery-1", "business")); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "delivery-2", "business")); err != nil {
+	if err := a.ReceiveFrameForTest(a.ContextForTest(), wecomAdapterCallback("bot", "delivery-2", "business")); err != nil {
 		t.Fatal(err)
 	}
 	waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "duplicate") == 1 })
 	if countWecomIngressEvent(store, "received") != 1 {
 		t.Fatal("callback req_id replaced business ID dedupe")
 	}
-	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("other", "delivery-3", "business-2")); !errors.Is(err, errWecomAccountMismatch) {
+	if err := a.ReceiveFrameForTest(a.ContextForTest(), wecomAdapterCallback("other", "delivery-3", "business-2")); !errors.Is(err, wecom.ErrWecomAccountMismatch) {
 		t.Fatal("account mismatch not fatal")
 	}
 	if a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "wecom", AccountID: "bot", ChatID: "chat"}).Ready {
@@ -63,28 +65,28 @@ func TestWecomCallbacksUseDurableBusinessDedupe(t *testing.T) {
 }
 
 func TestWecomAdmissionFailureDistinguishesLossAndUncertainty(t *testing.T) {
-	a, msg, store := wecomAdapterFixture(t)
-	a.router.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, im.IngressEnvelope) im.ReceiveResult {
+	a, msg, store, r := wecomAdapterFixture(t)
+	r.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, im.IngressEnvelope) im.ReceiveResult {
 		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	})
-	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "failed-delivery", "failed-business")); err != nil {
+	if err := a.ReceiveFrameForTest(a.ContextForTest(), wecomAdapterCallback("bot", "failed-delivery", "failed-business")); err != nil {
 		t.Fatal(err)
 	}
 	waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "acceptance_unconfirmed") == 1 })
-	a.observeReceive(msg, im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "commit_pending"})
+	a.ObserveReceiveForTest(msg, im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "commit_pending"})
 	if countWecomIngressEvent(store, "lost_before_accept") != 0 {
 		t.Fatal("uncertain commit recorded as lost")
 	}
 }
 
 func TestWecomAdapterLifecycleAndAccountLockBeforeDial(t *testing.T) {
-	a, _, _ := wecomAdapterFixture(t)
+	a, _, _, _ := wecomAdapterFixture(t)
 	lock, err := im.AcquireIMAccountLock("wecom", "bot")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lock.Close()
-	a.ws.endpoint = "ws://127.0.0.1:1"
+	a.SetWSEndpointForTest("ws://127.0.0.1:1")
 	if err = a.Connect(); !errors.Is(err, im.ErrInstanceRunning) {
 		t.Fatalf("dialed before acquiring account lock: %v", err)
 	}
@@ -103,8 +105,8 @@ func TestWecomAdapterLifecycleAndAccountLockBeforeDial(t *testing.T) {
 	}
 	// Disconnect is permanent: reconnecting must report that the adapter is
 	// stopped rather than succeed as if a dead adapter were healthy.
-	if err := a.Connect(); !errors.Is(err, errWecomStopped) {
-		t.Fatalf("connect after disconnect = %v, want errWecomStopped", err)
+	if err := a.Connect(); !errors.Is(err, wecom.ErrWecomStopped) {
+		t.Fatalf("connect after disconnect = %v, want wecom.ErrWecomStopped", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -114,7 +116,7 @@ func TestWecomAdapterLifecycleAndAccountLockBeforeDial(t *testing.T) {
 }
 
 func TestWecomConcurrentDisconnectJoinsSubscribeAndReleasesAccountLock(t *testing.T) {
-	a, _, _ := wecomAdapterFixture(t)
+	a, _, _, _ := wecomAdapterFixture(t)
 	subscribed := make(chan struct{})
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +125,7 @@ func TestWecomConcurrentDisconnectJoinsSubscribeAndReleasesAccountLock(t *testin
 			return
 		}
 		defer conn.Close()
-		var frame wecomWSFrame
+		var frame wecom.WecomWSFrame
 		if conn.ReadJSON(&frame) != nil {
 			return
 		}
@@ -132,7 +134,7 @@ func TestWecomConcurrentDisconnectJoinsSubscribeAndReleasesAccountLock(t *testin
 		_ = conn.ReadJSON(&frame)
 	}))
 	t.Cleanup(server.Close)
-	a.ws.endpoint = "ws" + strings.TrimPrefix(server.URL, "http")
+	a.SetWSEndpointForTest("ws" + strings.TrimPrefix(server.URL, "http"))
 	done := make(chan error, 1)
 	go func() { done <- a.Connect() }()
 	select {

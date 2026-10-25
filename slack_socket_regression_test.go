@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/slack"
 )
 
 func TestSlackSocketDisconnectDuringIdentityPreservesFailure(t *testing.T) {
@@ -20,11 +21,11 @@ func TestSlackSocketDisconnectDuringIdentityPreservesFailure(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			a, identity := slackSocketTestAdapter(t)
 			entered := make(chan struct{})
-			a.verifyIdentity = func(ctx context.Context) (slackIdentity, error) {
+			a.SetVerifyIdentityForTest(func(ctx context.Context) (slack.Identity, error) {
 				close(entered)
 				<-ctx.Done()
-				return slackIdentity{}, ctx.Err()
-			}
+				return slack.Identity{}, ctx.Err()
+			})
 			conn, done, _ := startSlackSocketTest(t, a, identity)
 			if err := conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
 				t.Fatal(err)
@@ -38,7 +39,7 @@ func TestSlackSocketDisconnectDuringIdentityPreservesFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := waitSlackSocketDone(t, done)
-			if slackConnectionCategory(err) != "socket_"+reason || slackConnectionFatal(err) != (reason == "link_disabled") {
+			if slack.ConnectionCategory(err) != "socket_"+reason || slack.ConnectionFatal(err) != (reason == "link_disabled") {
 				t.Fatalf("disconnect failure was overwritten by API cancellation: %v", err)
 			}
 		})
@@ -51,9 +52,9 @@ func TestSlackSocketControlEnvelopesWithoutEvent(t *testing.T) {
 	if err := conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
 		t.Fatal(err)
 	}
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
 	// Neither an unknown control frame nor a malformed Events envelope carries
-	// an executable event. Every actual delivery still receives its own ACK.
+	// an executable event. Every actual delivery still receives its own slack.ACK.
 	for _, frame := range []map[string]any{
 		{"type": "interactive", "envelope_id": "control-envelope"},
 		{"type": "events_api", "envelope_id": "empty-event-envelope", "payload": map[string]string{"type": "event_callback", "team_id": identity.TeamID, "api_app_id": identity.AppID, "event_id": "empty-event"}},
@@ -72,7 +73,7 @@ func TestSlackSocketControlEnvelopesWithoutEvent(t *testing.T) {
 			t.Fatalf("unsupported envelope ACK: %s", raw)
 		}
 	}
-	records, err := a.router.(*NotificationRouter).ingress.store.listAll()
+	records, err := a.HostForTest().(*NotificationRouter).ingress.store.listAll()
 	if err != nil || len(records) != 0 {
 		t.Fatalf("non-events entered durable ingress: %d, %v", len(records), err)
 	}
@@ -85,7 +86,7 @@ func TestSlackSocketHTTPQueryDoesNotBlockPingOrShutdown(t *testing.T) {
 	apiEntered, apiExited := make(chan struct{}), make(chan struct{})
 	release := make(chan struct{})
 	defer close(release)
-	a.client = testSlackAPI(t, func(_ http.ResponseWriter, r *http.Request) {
+	a.SetClientForTest(testSlackAPI(t, func(_ http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		close(apiEntered)
 		select {
@@ -93,12 +94,12 @@ func TestSlackSocketHTTPQueryDoesNotBlockPingOrShutdown(t *testing.T) {
 		case <-release:
 		}
 		close(apiExited)
-	})
+	}))
 	conn, done, cancel := startSlackSocketTest(t, a, identity)
 	if err := conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
 		t.Fatal(err)
 	}
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
 	now := time.Now()
 	ts := fmt.Sprintf("%d.%06d", now.Unix(), now.Nanosecond()/1000)
 	if err := conn.WriteJSON(map[string]any{
@@ -120,7 +121,7 @@ func TestSlackSocketHTTPQueryDoesNotBlockPingOrShutdown(t *testing.T) {
 	if err := conn.WriteJSON(map[string]string{"type": "interactive", "envelope_id": "reader-still-active"}); err != nil {
 		t.Fatal(err)
 	}
-	// events_api is ACKed immediately, so its ACK frame precedes the pong on
+	// events_api is ACKed immediately, so its slack.ACK frame precedes the pong on
 	// the wire. Read it first, then read again so the ping handler runs in a
 	// later read while the conversation lookup is still blocked.
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
@@ -157,9 +158,9 @@ func TestSlackReceiptDoesNotACKUncertainOrRetryable(t *testing.T) {
 		t.Run(string(disposition), func(t *testing.T) {
 			future := make(chan im.ReceiveResult, 1)
 			future <- im.ReceiveResult{Disposition: disposition}
-			queue := make(chan slackACK, 1)
-			receipt := slackReceipt{Frame: slackSocketFrame{Type: "slash_commands", EnvelopeID: "uncommitted", AcceptsResponsePayload: true}, ReceivedAt: time.Now(), Future: future}
-			(&SlackAdapter{}).slackReceiptACK(t.Context(), 1, receipt, queue)
+			queue := make(chan slack.ACK, 1)
+			receipt := slack.Receipt{Frame: slack.SocketFrame{Type: "slash_commands", EnvelopeID: "uncommitted", AcceptsResponsePayload: true}, ReceivedAt: time.Now(), Future: future}
+			(&slack.SlackAdapter{}).ReceiptACKForTest(t.Context(), 1, receipt, queue)
 			if len(queue) != 0 {
 				t.Fatal("uncommitted result was acknowledged")
 			}
@@ -183,10 +184,10 @@ func TestSlackReceiptAcceptanceHintMatchesIntakeDisposition(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			future := make(chan im.ReceiveResult, 1)
 			future <- tc.result
-			queue := make(chan slackACK, 1)
+			queue := make(chan slack.ACK, 1)
 			done := make(chan struct{})
-			receipt := slackReceipt{Frame: slackSocketFrame{Type: "slash_commands", EnvelopeID: "disposition-envelope", AcceptsResponsePayload: tc.canReply}, ReceivedAt: time.Now(), Future: future}
-			go func() { defer close(done); (&SlackAdapter{}).slackReceiptACK(t.Context(), 1, receipt, queue) }()
+			receipt := slack.Receipt{Frame: slack.SocketFrame{Type: "slash_commands", EnvelopeID: "disposition-envelope", AcceptsResponsePayload: tc.canReply}, ReceivedAt: time.Now(), Future: future}
+			go func() { defer close(done); (&slack.SlackAdapter{}).ReceiptACKForTest(t.Context(), 1, receipt, queue) }()
 			select {
 			case ack := <-queue:
 				var body map[string]json.RawMessage
@@ -213,12 +214,12 @@ func TestSlackReceiptAcceptanceHintMatchesIntakeDisposition(t *testing.T) {
 func TestSlackReceiptShutdownInterruptsACKCompletionWait(t *testing.T) {
 	future := make(chan im.ReceiveResult, 1)
 	future <- im.ReceiveResult{Disposition: im.ReceiveAccepted}
-	queue := make(chan slackACK, 1)
+	queue := make(chan slack.ACK, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan struct{})
-	receipt := slackReceipt{Frame: slackSocketFrame{Type: "slash_commands", EnvelopeID: "accepted", AcceptsResponsePayload: true}, ReceivedAt: time.Now(), Future: future}
-	go func() { defer close(done); (&SlackAdapter{}).slackReceiptACK(ctx, 1, receipt, queue) }()
+	receipt := slack.Receipt{Frame: slack.SocketFrame{Type: "slash_commands", EnvelopeID: "accepted", AcceptsResponsePayload: true}, ReceivedAt: time.Now(), Future: future}
+	go func() { defer close(done); (&slack.SlackAdapter{}).ReceiptACKForTest(ctx, 1, receipt, queue) }()
 	select {
 	case ack := <-queue:
 		var payload struct {
@@ -248,9 +249,9 @@ func TestSlackReceiptDeadlineDoesNotInventRetryableOutcome(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	future := make(chan im.ReceiveResult, 1)
-	queue := make(chan slackACK, 1)
-	receipt := slackReceipt{Frame: slackSocketFrame{Type: "events_api", EnvelopeID: "late-commit"}, ReceivedAt: time.Now(), Future: future}
-	(&SlackAdapter{}).slackReceiptACK(ctx, 1, receipt, queue)
+	queue := make(chan slack.ACK, 1)
+	receipt := slack.Receipt{Frame: slack.SocketFrame{Type: "events_api", EnvelopeID: "late-commit"}, ReceivedAt: time.Now(), Future: future}
+	(&slack.SlackAdapter{}).ReceiptACKForTest(ctx, 1, receipt, queue)
 	if len(queue) != 0 || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatal("unconfirmed future received an ACK")
 	}
@@ -266,7 +267,7 @@ func TestSlackReceiptDeadlineDoesNotInventRetryableOutcome(t *testing.T) {
 // reader must count it like every other discard before Slack redelivers it.
 func TestSlackSocketSubmitFailureRecordsLostIntake(t *testing.T) {
 	a, identity := slackSocketTestAdapter(t)
-	router := a.router.(*NotificationRouter)
+	router := a.HostForTest().(*NotificationRouter)
 	gate := make(chan struct{})
 	defer close(gate)
 	for i := range ingressNormalizationCapacity {
@@ -281,7 +282,7 @@ func TestSlackSocketSubmitFailureRecordsLostIntake(t *testing.T) {
 	if err := conn.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
 		t.Fatal(err)
 	}
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
 	now := time.Now()
 	ts := fmt.Sprintf("%d.%06d", now.Unix(), now.Nanosecond()/1000)
 	if err := conn.WriteJSON(map[string]any{
@@ -305,11 +306,12 @@ func TestSlackSocketSubmitFailureRecordsLostIntake(t *testing.T) {
 func TestSlackReceiptTimeoutIsObservableBeforeACKDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewIngressStore()
-		adapter := &SlackAdapter{router: &NotificationRouter{ingressStore: store}}
-		acks := make(chan slackACK, 1)
+		adapter := &slack.SlackAdapter{}
+		adapter.SetHostForTest(&NotificationRouter{ingressStore: store})
+		acks := make(chan slack.ACK, 1)
 		start := time.Now()
-		adapter.slackReceiptACK(t.Context(), 1, slackReceipt{
-			Frame: slackSocketFrame{EnvelopeID: "slow-normalization"}, ReceivedAt: start,
+		adapter.ReceiptACKForTest(t.Context(), 1, slack.Receipt{
+			Frame: slack.SocketFrame{EnvelopeID: "slow-normalization"}, ReceivedAt: start,
 			Future: make(chan im.ReceiveResult),
 		}, acks)
 		if elapsed := time.Since(start); elapsed != 2*time.Second {

@@ -14,10 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slack-go/slack"
+	slackapi "github.com/slack-go/slack"
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/slack"
 )
 
 type slackIntegrationAdapter struct{ pairingTestAdapter }
@@ -27,7 +28,7 @@ func (*slackIntegrationAdapter) Type() string { return "slack" }
 type slackIntegrationHarness struct {
 	router  *NotificationRouter
 	service *IngressService
-	inbound *slackInbound
+	inbound *slack.Inbound
 	code    string
 	mu      sync.Mutex
 	lookup  func(http.ResponseWriter, *http.Request)
@@ -75,7 +76,7 @@ func newSlackIntegrationHarness(t *testing.T) *slackIntegrationHarness {
 		h.mu.Unlock()
 		lookup(w, r)
 	}))
-	h.inbound = newSlackInbound(slack.New("test-token", slack.OptionAPIURL(server.URL+"/")), slackTestInbound().identity, router)
+	h.inbound = slack.NewInbound(slackapi.New("test-token", slackapi.OptionAPIURL(server.URL+"/")), slackTestIdentity(), router)
 	t.Cleanup(func() {
 		service.Close()
 		router.admission.Close()
@@ -90,7 +91,7 @@ func newSlackIntegrationHarness(t *testing.T) *slackIntegrationHarness {
 
 func (h *slackIntegrationHarness) receive(t *testing.T, kind string, payload json.RawMessage, delivery string) im.ReceiveResult {
 	t.Helper()
-	future, cancel, err := h.inbound.submit(t.Context(), kind, payload, delivery, time.Now())
+	future, cancel, err := h.inbound.SubmitForTest(t.Context(), kind, payload, delivery, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +142,8 @@ func (h *slackIntegrationHarness) attachProcess(t *testing.T, target string) (*C
 	return process, writer
 }
 
-func slackIntegrationEvent(channel, thread, text, fraction string) slackInboundMessage {
-	event := slackInboundMessage{Type: "app_mention", Channel: channel, User: "U1", Text: text, TS: fmt.Sprintf("%d.%s", time.Now().Unix(), fraction), ThreadTS: thread}
+func slackIntegrationEvent(channel, thread, text, fraction string) slack.InboundMessage {
+	event := slack.InboundMessage{Type: "app_mention", Channel: channel, User: "U1", Text: text, TS: fmt.Sprintf("%d.%s", time.Now().Unix(), fraction), ThreadTS: thread}
 	if strings.HasPrefix(channel, "D") {
 		event.Type, event.ChannelType = "message", "im"
 	}
@@ -207,7 +208,7 @@ func TestSlackIntegrationThreadBindingDoesNotBindSlashRoot(t *testing.T) {
 	h := newSlackIntegrationHarness(t)
 	h.bindDM(t)
 	thread := fmt.Sprintf("%d.000000", time.Now().Unix())
-	target, _ := slackTarget("C1", thread)
+	target, _ := slack.Target("C1", thread)
 	bind := slackIntegrationEvent("C1", thread, fmt.Sprintf("<@UBOT> /bind %q", t.TempDir()), "000001")
 	result := h.receive(t, "events_api", slackTestEvent(bind, "THREADBIND"), "ENVTHREADBIND")
 	if result.Disposition != im.ReceiveAccepted {
@@ -218,7 +219,7 @@ func TestSlackIntegrationThreadBindingDoesNotBindSlashRoot(t *testing.T) {
 		return err == nil && workspace != nil
 	})
 	process, writer := h.attachProcess(t, target)
-	var slash slackSlashPayload
+	var slash slack.SlashPayload
 	_ = json.Unmarshal(slackTestSlash("status", "ROOTSTATUS"), &slash)
 	slash.ChannelID = "C1"
 	payload, _ := json.Marshal(slash)
@@ -240,7 +241,7 @@ func TestSlackIntegrationThreadBindingDoesNotBindSlashRoot(t *testing.T) {
 	process.mu.Unlock()
 	waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 2 })
 	first.Text = "task without mention"
-	if _, _, _, err := h.inbound.decode("events_api", slackTestEvent(first, "UNMENTIONED"), "ENVUNMENTIONED", time.Now()); err != errSlackIgnored {
+	if _, _, _, err := h.inbound.DecodeForTest("events_api", slackTestEvent(first, "UNMENTIONED"), "ENVUNMENTIONED", time.Now()); err != slack.ErrIgnored {
 		t.Fatal("thread task without mention admitted", err)
 	}
 }
@@ -264,10 +265,12 @@ func TestSlackIntegrationFrozenAllowCannotApproveNewConfirmation(t *testing.T) {
 		}
 	}
 	h.mu.Unlock()
-	h.inbound.mu.Lock()
-	h.inbound.cache = make(map[string]slackCachedConversation)
-	h.inbound.mu.Unlock()
-	future, cancel, err := h.inbound.submit(t.Context(), "slash_commands", slackTestSlash("allow", "ALLOW1"), "ENVALLOW", time.Now())
+	h.inbound.CacheForTest(func(cache map[string]slack.CachedConversation) {
+		for key := range cache {
+			delete(cache, key)
+		}
+	})
+	future, cancel, err := h.inbound.SubmitForTest(t.Context(), "slash_commands", slackTestSlash("allow", "ALLOW1"), "ENVALLOW", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

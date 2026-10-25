@@ -14,17 +14,18 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
-func startWechatMonitorTest(t *testing.T, a *WechatAdapter) (context.CancelFunc, <-chan error) {
+func startWechatMonitorTest(t *testing.T, a *wechat.WechatAdapter) (context.CancelFunc, <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		err := a.monitorLoop(ctx)
-		a.closeIngressAccount()
+		err := a.MonitorLoopForTest(ctx)
+		a.CloseIngressAccountForTest()
 		done <- err
 	}()
 	t.Cleanup(func() {
@@ -55,9 +56,9 @@ func wechatMonitorResponse(body string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
 
-func wechatMonitorRequest(t *testing.T, req *http.Request) ilinkGetUpdatesRequest {
+func wechatMonitorRequest(t *testing.T, req *http.Request) wechat.ILinkGetUpdatesRequest {
 	t.Helper()
-	var body ilinkGetUpdatesRequest
+	var body wechat.ILinkGetUpdatesRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		t.Error(err)
 	}
@@ -77,7 +78,7 @@ func (r *wechatMonitorRetryReceiver) Accept(ctx context.Context, envelope im.Ing
 	r.mu.Lock()
 	r.ids = append(r.ids, envelope.Message.MessageID)
 	r.mu.Unlock()
-	if envelope.Message.MessageID == wechatIngressBusinessID("owner", "2") && !r.ready.Load() {
+	if envelope.Message.MessageID == wechat.WechatIngressBusinessID("owner", "2") && !r.ready.Load() {
 		r.once.Do(func() { close(r.blocked) })
 		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "storage_unavailable"}
 	}
@@ -90,7 +91,7 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 		receiver := &wechatMonitorRetryReceiver{service: service, blocked: make(chan struct{})}
 		service.normalizer.receiver = receiver
 		var polls atomic.Int32
-		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != "/ilink/bot/getupdates" {
 				return wechatMonitorResponse(`{"ret":0}`), nil
 			}
@@ -99,8 +100,8 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 				if body.GetUpdatesBuf != "" {
 					t.Error("first batch did not start from committed checkpoint")
 				}
-				messages := []ilinkMessage{wechatTextMessage("1", "owner", "first task", "context"), wechatTextMessage("2", "owner", "second task", "context"), wechatTextMessage("3", "owner", "third task", "context")}
-				encoded, _ := json.Marshal(ilinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: messages})
+				messages := []wechat.ILinkMessage{wechatTextMessage("1", "owner", "first task", "context"), wechatTextMessage("2", "owner", "second task", "context"), wechatTextMessage("3", "owner", "third task", "context")}
+				encoded, _ := json.Marshal(wechat.ILinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: messages})
 				return wechatMonitorResponse(string(encoded)), nil
 			}
 			if body.GetUpdatesBuf != "next" {
@@ -108,7 +109,7 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 			}
 			<-req.Context().Done()
 			return nil, req.Context().Err()
-		})
+		}))
 		cancel, done := startWechatMonitorTest(t, a)
 		select {
 		case <-receiver.blocked:
@@ -128,7 +129,7 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 		if cursor, err := service.store.Cursor("wechat", "bot"); err != nil || cursor.Generation != 0 {
 			t.Fatal(cursor, err)
 		}
-		if records, err := service.store.listAll(); err != nil || len(records) != 1 || records[0].BusinessID != wechatIngressBusinessID("owner", "1") {
+		if records, err := service.store.listAll(); err != nil || len(records) != 1 || records[0].BusinessID != wechat.WechatIngressBusinessID("owner", "1") {
 			t.Fatal(records, err)
 		}
 		receiver.mu.Lock()
@@ -144,7 +145,7 @@ func TestWechatMonitorRetainsBatchAcrossRetryable(t *testing.T) {
 		stopWechatMonitorTest(t, cancel, done)
 		receiver.mu.Lock()
 		defer receiver.mu.Unlock()
-		if len(receiver.ids) != 4 || receiver.ids[0] != wechatIngressBusinessID("owner", "1") || receiver.ids[1] != wechatIngressBusinessID("owner", "2") || receiver.ids[2] != receiver.ids[1] || receiver.ids[3] != wechatIngressBusinessID("owner", "3") {
+		if len(receiver.ids) != 4 || receiver.ids[0] != wechat.WechatIngressBusinessID("owner", "1") || receiver.ids[1] != wechat.WechatIngressBusinessID("owner", "2") || receiver.ids[2] != receiver.ids[1] || receiver.ids[3] != wechat.WechatIngressBusinessID("owner", "3") {
 			t.Fatal(receiver.ids)
 		}
 		if records, err := service.store.listAll(); err != nil || len(records) != 3 {
@@ -162,20 +163,20 @@ func TestWechatMonitorCancellationDoesNotReportUnconfirmedAcceptance(t *testing.
 		ctx, cancel := context.WithCancel(t.Context())
 		receiver := &wechatMonitorCancellingReceiver{service: service, cancel: cancel}
 		service.normalizer.receiver = receiver
-		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != "/ilink/bot/getupdates" {
 				return wechatMonitorResponse(`{"ret":0}`), nil
 			}
-			messages := []ilinkMessage{wechatTextMessage("1", "owner", "first task", "context"), wechatTextMessage("2", "owner", "second task", "context")}
-			encoded, _ := json.Marshal(ilinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: messages})
+			messages := []wechat.ILinkMessage{wechatTextMessage("1", "owner", "first task", "context"), wechatTextMessage("2", "owner", "second task", "context")}
+			encoded, _ := json.Marshal(wechat.ILinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: messages})
 			return wechatMonitorResponse(string(encoded)), nil
-		})
+		}))
 		done := make(chan error, 1)
 		finished := make(chan struct{})
 		go func() {
 			defer close(finished)
-			err := a.monitorLoop(ctx)
-			a.closeIngressAccount()
+			err := a.MonitorLoopForTest(ctx)
+			a.CloseIngressAccountForTest()
 			done <- err
 		}()
 		t.Cleanup(func() {
@@ -208,7 +209,7 @@ type wechatMonitorCancellingReceiver struct {
 }
 
 func (r *wechatMonitorCancellingReceiver) Accept(ctx context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
-	if envelope.Message.MessageID == wechatIngressBusinessID("owner", "2") {
+	if envelope.Message.MessageID == wechat.WechatIngressBusinessID("owner", "2") {
 		// The parent cancellation lands while the batch is in flight.
 		r.cancel()
 		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "storage_unavailable"}
@@ -221,7 +222,7 @@ func TestWechatMonitorMalformedIDDoesNotBlockNextMessage(t *testing.T) {
 		a, service, _, writer := newWechatIngressTest(t)
 		var calls atomic.Int32
 		second := make(chan struct{})
-		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != "/ilink/bot/getupdates" {
 				return wechatMonitorResponse(`{"ret":0}`), nil
 			}
@@ -235,7 +236,7 @@ func TestWechatMonitorMalformedIDDoesNotBlockNextMessage(t *testing.T) {
 			close(second)
 			<-req.Context().Done()
 			return nil, req.Context().Err()
-		})
+		}))
 		cancel, done := startWechatMonitorTest(t, a)
 		select {
 		case <-second:
@@ -243,7 +244,7 @@ func TestWechatMonitorMalformedIDDoesNotBlockNextMessage(t *testing.T) {
 			t.Fatal("malformed ID blocked the valid message")
 		}
 		stopWechatMonitorTest(t, cancel, done)
-		if records, err := service.store.listAll(); err != nil || len(records) != 1 || records[0].BusinessID != wechatIngressBusinessID("owner", "2") {
+		if records, err := service.store.listAll(); err != nil || len(records) != 1 || records[0].BusinessID != wechat.WechatIngressBusinessID("owner", "2") {
 			t.Fatal(records, err)
 		}
 		waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
@@ -253,12 +254,12 @@ func TestWechatMonitorMalformedIDDoesNotBlockNextMessage(t *testing.T) {
 func TestWechatMonitorTokenRenewalReReadsCommittedCheckpoint(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, service, _, _ := newWechatIngressTest(t)
-		initial, _ := nextWechatCursor(im.IngressCursor{}, "bot", "committed")
+		initial, _ := wechat.NextWechatCursor(im.IngressCursor{}, "bot", "committed")
 		if err := service.store.CommitCursor(t.Context(), "wechat", "bot", 0, initial); err != nil {
 			t.Fatal(err)
 		}
 		var calls atomic.Int32
-		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != "/ilink/bot/getupdates" {
 				return wechatMonitorResponse(`{"ret":0}`), nil
 			}
@@ -267,16 +268,16 @@ func TestWechatMonitorTokenRenewalReReadsCommittedCheckpoint(t *testing.T) {
 				t.Error("credential replacement inherited uncommitted response")
 			}
 			if calls.Add(1) == 1 {
-				a.publishToken(&TokenData{AccountID: "bot", Token: "renewed-token", BaseURL: "https://example.invalid"})
-				messages := []ilinkMessage{wechatTextMessage("99", "owner", "stale task", "stale-context")}
-				encoded, _ := json.Marshal(ilinkGetUpdatesResponse{GetUpdatesBuf: "stale-next", Msgs: messages})
+				a.PublishTokenForTest(&wechat.TokenData{AccountID: "bot", Token: "renewed-token", BaseURL: "https://example.invalid"})
+				messages := []wechat.ILinkMessage{wechatTextMessage("99", "owner", "stale task", "stale-context")}
+				encoded, _ := json.Marshal(wechat.ILinkGetUpdatesResponse{GetUpdatesBuf: "stale-next", Msgs: messages})
 				return wechatMonitorResponse(string(encoded)), nil
 			}
 			if req.Header.Get("Authorization") != "Bearer renewed-token" {
 				t.Error("new poll reused old credentials")
 			}
 			return wechatMonitorResponse(`{"get_updates_buf":"renewed-next","msgs":[]}`), nil
-		})
+		}))
 		cancel, done := startWechatMonitorTest(t, a)
 		waitIngressCondition(t, func() bool {
 			cursor, _ := service.store.Cursor("wechat", "bot")
@@ -289,9 +290,7 @@ func TestWechatMonitorTokenRenewalReReadsCommittedCheckpoint(t *testing.T) {
 		if records, err := service.store.listAll(); err != nil || len(records) != 0 {
 			t.Fatal("stale credential response was accepted", records, err)
 		}
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		if len(a.replyContexts) != 0 {
+		if a.ReplyContextCountForTest() != 0 {
 			t.Fatal("stale response updated reply context")
 		}
 	})
@@ -302,7 +301,7 @@ func TestWechatMonitorResetDiscardsInFlightResponse(t *testing.T) {
 		a, service, _, _ := newWechatIngressTest(t)
 		var calls atomic.Int32
 		second := make(chan struct{})
-		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != "/ilink/bot/getupdates" {
 				return wechatMonitorResponse(`{"ret":0}`), nil
 			}
@@ -316,13 +315,13 @@ func TestWechatMonitorResetDiscardsInFlightResponse(t *testing.T) {
 				p.platforms["wechat"].epoch++
 				p.platforms["wechat"].ready = false
 				p.mu.Unlock()
-				encoded, _ := json.Marshal(ilinkGetUpdatesResponse{GetUpdatesBuf: "stale", Msgs: []ilinkMessage{wechatTextMessage("1", "owner", "stale task", "stale-context")}})
+				encoded, _ := json.Marshal(wechat.ILinkGetUpdatesResponse{GetUpdatesBuf: "stale", Msgs: []wechat.ILinkMessage{wechatTextMessage("1", "owner", "stale task", "stale-context")}})
 				return wechatMonitorResponse(string(encoded)), nil
 			}
 			close(second)
 			<-req.Context().Done()
 			return nil, req.Context().Err()
-		})
+		}))
 		cancel, done := startWechatMonitorTest(t, a)
 		select {
 		case <-second:
@@ -343,7 +342,7 @@ func TestWechatMonitorCommittedRecordReReadDoesNotExecuteAgain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, service, _, writer := newWechatIngressTest(t)
 		message := wechatTextMessage("1", "owner", "only once", "context")
-		if result := a.receiveIncomingMessage(t.Context(), message, a.token.Load()); result.Disposition != im.ReceiveAccepted {
+		if result := a.ReceiveIncomingMessageForTest(t.Context(), message, a.TokenForTest()); result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 		waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
@@ -354,7 +353,7 @@ func TestWechatMonitorCommittedRecordReReadDoesNotExecuteAgain(t *testing.T) {
 		}
 		var polls atomic.Int32
 		second := make(chan struct{})
-		a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != "/ilink/bot/getupdates" {
 				return wechatMonitorResponse(`{"ret":0}`), nil
 			}
@@ -363,7 +362,7 @@ func TestWechatMonitorCommittedRecordReReadDoesNotExecuteAgain(t *testing.T) {
 				if body.GetUpdatesBuf != "" {
 					t.Error("re-read did not begin at original checkpoint")
 				}
-				encoded, _ := json.Marshal(ilinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: []ilinkMessage{message}})
+				encoded, _ := json.Marshal(wechat.ILinkGetUpdatesResponse{GetUpdatesBuf: "next", Msgs: []wechat.ILinkMessage{message}})
 				return wechatMonitorResponse(string(encoded)), nil
 			}
 			if body.GetUpdatesBuf != "next" {
@@ -372,7 +371,7 @@ func TestWechatMonitorCommittedRecordReReadDoesNotExecuteAgain(t *testing.T) {
 			close(second)
 			<-req.Context().Done()
 			return nil, req.Context().Err()
-		})
+		}))
 		cancel, done := startWechatMonitorTest(t, a)
 		select {
 		case <-second:
@@ -395,7 +394,7 @@ func TestWechatMonitorCancellationKeepsSharedStoreAvailable(t *testing.T) {
 			a, service, _, _ := newWechatIngressTest(t)
 			started := make(chan struct{})
 			var calls atomic.Int32
-			a.httpClient.Transport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+			a.SetTransportForTest(imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 				if req.URL.Path != "/ilink/bot/getupdates" {
 					return wechatMonitorResponse(`{"ret":0}`), nil
 				}
@@ -411,7 +410,7 @@ func TestWechatMonitorCancellationKeepsSharedStoreAvailable(t *testing.T) {
 				default:
 					return wechatMonitorResponse(`{"msgs":[]}`), nil
 				}
-			})
+			}))
 			cancel, done := startWechatMonitorTest(t, a)
 			select {
 			case <-started:

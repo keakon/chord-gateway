@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/internal/im"
@@ -18,8 +20,8 @@ func (r *NotificationRouter) sendFeishuConfirmCard(target im.DeliveryTarget, sta
 	if state.PendingConfirm == nil {
 		return false, nil
 	}
-	feishu := r.findFeishuAdapter()
-	if feishu == nil {
+	cards := r.findFeishuCardAdapter()
+	if cards == nil {
 		return false, nil
 	}
 	workspaceID, _, _ := parseProcessKey(key)
@@ -34,8 +36,8 @@ func (r *NotificationRouter) sendFeishuQuestionCard(target im.DeliveryTarget, st
 	if state.questionForNotification() == nil || !shouldSendFeishuQuestionCard(state.questionForNotification()) {
 		return false, nil
 	}
-	feishu := r.findFeishuAdapter()
-	if feishu == nil {
+	cards := r.findFeishuCardAdapter()
+	if cards == nil {
 		return false, nil
 	}
 	workspaceID, _, _ := parseProcessKey(key)
@@ -50,8 +52,8 @@ func (r *NotificationRouter) sendFeishuQuestionCard(target im.DeliveryTarget, st
 func (r *NotificationRouter) reportFeishuCardFailure(target im.DeliveryTarget, err error) {
 	log.Warnf("feishu card delivery failed error=%v", err)
 	if errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
-		feishu := r.findFeishuAdapter()
-		if feishu != nil {
+		cards := r.findFeishuCardAdapter()
+		if cards != nil {
 			if err := r.SendBound(context.Background(), target, "Message delivery is unconfirmed; check the chat first. If the question entry is missing, send /status to view it; send /role to view the role menu. The prompt is not resent as text automatically."); err != nil {
 				log.Warnf("feishu card delivery notice failed error=%v", err)
 			} else {
@@ -65,8 +67,8 @@ func (r *NotificationRouter) reportFeishuCardFailure(target im.DeliveryTarget, e
 // On card-send failure sendCardToTarget emits the text menu fallback and
 // reports a nil handle, so the boolean only reports an interactive card.
 func (r *NotificationRouter) sendFeishuRoleMenu(chatID, procKey, current string, roles []RoleInfo, instance ...string) bool {
-	feishu := r.findFeishuAdapter()
-	if feishu == nil {
+	cards := r.findFeishuCardAdapter()
+	if cards == nil {
 		return false
 	}
 	reqID := newRoleMenuRequestID()
@@ -342,18 +344,18 @@ func buildFeishuQuestionForm(q *QuestionPayload, baseValue map[string]any) map[s
 		}
 		formElements = append(formElements, map[string]any{
 			"tag":     "checker",
-			"name":    feishuQuestionOptionName(i + 1),
+			"name":    feishu.FeishuQuestionOptionName(i + 1),
 			"checked": false,
 			"text":    map[string]any{"tag": "lark_md", "content": text},
 		})
 	}
 	submit := feishuCardButton("Submit", "primary", baseValue)
-	submit["name"] = feishuQuestionSubmitName
+	submit["name"] = feishu.FeishuQuestionSubmitName
 	submit["form_action_type"] = "submit"
 	formElements = append(formElements, submit)
 	return map[string]any{
 		"tag":      "form",
-		"name":     feishuQuestionFormName,
+		"name":     feishu.FeishuQuestionFormName,
 		"elements": formElements,
 	}
 }

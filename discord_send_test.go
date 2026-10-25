@@ -16,16 +16,18 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/disgoorg/disgo/discord"
+	disgo "github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
 func discordTestSender(t *testing.T, send func(context.Context, string, string) error) *im.IMTextSender {
 	t.Helper()
-	sender, err := newDiscordTextSender(send)
+	sender, err := discord.NewDiscordTextSender(send)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestDiscordTextSenderRenderedUTF16Boundary(t *testing.T) {
 			}
 		})
 	}
-	if got := discordEscapeMarkdown("*bold* _italic_ ~strike~ `code` \\ >quote"); got != `\*bold\* \_italic\_ \~strike\~ \`+"`code\\`"+` \\ \>quote` {
+	if got := discord.EscapeMarkdown("*bold* _italic_ ~strike~ `code` \\ >quote"); got != `\*bold\* \_italic\_ \~strike\~ \`+"`code\\`"+` \\ \>quote` {
 		t.Fatalf("Markdown controls retained: %q", got)
 	}
 }
@@ -186,16 +188,16 @@ func TestDiscordTextSenderTargetOrderingAndQueuedCancellation(t *testing.T) {
 	}
 }
 
-func discordRESTTestAdapter(t *testing.T, server *httptest.Server) *DiscordAdapter {
+func discordRESTTestAdapter(t *testing.T, server *httptest.Server) *discord.DiscordAdapter {
 	t.Helper()
-	adapter, err := NewDiscordAdapter(&config.Config{}, config.IMAdapterConfig{Discord: &config.DiscordConfig{BotToken: "placeholder", ApplicationID: "800"}}, &config.Paths{StateDir: t.TempDir()}, nil)
+	adapter, err := discord.NewDiscordAdapter(&config.Config{}, config.IMAdapterConfig{Discord: &config.DiscordConfig{BotToken: "placeholder", ApplicationID: "800"}}, &config.Paths{StateDir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter.rest.Close(t.Context())
+	adapter.RESTForTest().Close(t.Context())
 	client := *server.Client()
-	client.Transport = discordRateLimitTransport{base: client.Transport}
-	adapter.rest = rest.New(rest.NewClient("placeholder", rest.WithURL(server.URL), rest.WithHTTPClient(&client), rest.WithRateLimiter(newDiscordRateLimiter(adapter.ctx)), rest.WithLogger(slog.New(discordSafeLogHandler{}))))
+	client.Transport = discord.NewRateLimitTransportForTest(client.Transport)
+	adapter.SetRESTForTest(rest.New(rest.NewClient("placeholder", rest.WithURL(server.URL), rest.WithHTTPClient(&client), rest.WithRateLimiter(discord.NewDiscordRateLimiter(adapter.ContextForTest())), rest.WithLogger(slog.New(discord.SafeLogHandlerForTest())))))
 	t.Cleanup(adapter.Disconnect)
 	return adapter
 }
@@ -230,8 +232,8 @@ func TestDiscordRESTTextPayloadPreventsMentionsAndEmbeds(t *testing.T) {
 	if string(mentions["replied_user"]) != "false" {
 		t.Fatal("reply notification not disabled")
 	}
-	var flags discord.MessageFlags
-	if err := json.Unmarshal(got["flags"], &flags); err != nil || !flags.Has(discord.MessageFlagSuppressEmbeds) {
+	var flags disgo.MessageFlags
+	if err := json.Unmarshal(got["flags"], &flags); err != nil || !flags.Has(disgo.MessageFlagSuppressEmbeds) {
 		t.Fatal("link previews not suppressed")
 	}
 	for _, key := range []string{"message_reference", "embeds", "components"} {

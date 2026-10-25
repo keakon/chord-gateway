@@ -14,7 +14,7 @@ func TestWechatFullWaitingQueueAcceptsStatusAndWakesFIFO(t *testing.T) {
 	a, service, process, writer := newWechatIngressTest(t)
 	var first im.ReceiveResult
 	for i := range 64 {
-		result := a.receiveIncomingMessage(t.Context(), wechatTextMessage(fmt.Sprint(i+1), "owner", fmt.Sprintf("waiting task %d", i), ""), a.token.Load())
+		result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage(fmt.Sprint(i+1), "owner", fmt.Sprintf("waiting task %d", i), ""), a.TokenForTest())
 		if result.Disposition != im.ReceiveAccepted {
 			t.Fatalf("input %d: %+v", i, result)
 		}
@@ -25,7 +25,7 @@ func TestWechatFullWaitingQueueAcceptsStatusAndWakesFIFO(t *testing.T) {
 	if writes := wechatTaskWrites(writer); len(writes) != 0 {
 		t.Fatal("waiting inputs executed without reply context", writes)
 	}
-	status := a.receiveIncomingMessage(t.Context(), wechatTextMessage("65", "owner", "/status", "fresh-context"), a.token.Load())
+	status := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("65", "owner", "/status", "fresh-context"), a.TokenForTest())
 	if status.Disposition != im.ReceiveAccepted {
 		t.Fatalf("full queue prevented context recovery: %+v", status)
 	}

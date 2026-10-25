@@ -7,36 +7,37 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
 func TestWechatAccountCredentialRotationKeepsCursor(t *testing.T) {
 	a, service, _, _ := newWechatIngressTest(t)
-	t.Cleanup(a.closeIngressAccount)
-	old := a.token.Load()
-	cursor, err := a.prepareIngressAccount(t.Context(), old)
+	t.Cleanup(a.CloseIngressAccountForTest)
+	old := a.TokenForTest()
+	cursor, err := a.PrepareIngressAccountForTest(t.Context(), old)
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := nextWechatCursor(cursor, "bot", "committed")
+	next, err := wechat.NextWechatCursor(cursor, "bot", "committed")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := service.store.CommitCursor(t.Context(), "wechat", "bot", cursor.Generation, next); err != nil {
 		t.Fatal(err)
 	}
-	lock := a.accountLock
-	request, cancel := a.pollingContext(t.Context(), old)
+	lock := a.AccountLockForTest()
+	request, cancel := a.PollingContextForTest(t.Context(), old)
 	defer cancel()
-	renewed := &TokenData{AccountID: "bot", Token: "renewed-token"}
-	a.swapPollingToken(renewed)
+	renewed := &wechat.TokenData{AccountID: "bot", Token: "renewed-token"}
+	a.SwapPollingTokenForTest(renewed)
 	if request.Err() == nil {
 		t.Fatal("token rotation left old credential request active")
 	}
-	if _, err := a.prepareIngressAccount(t.Context(), old); err == nil {
+	if _, err := a.PrepareIngressAccountForTest(t.Context(), old); err == nil {
 		t.Fatal("stale credential snapshot prepared an account")
 	}
-	actual, err := a.prepareIngressAccount(t.Context(), renewed)
-	if err != nil || !equalWechatCursor(actual, next) || a.accountLock != lock {
+	actual, err := a.PrepareIngressAccountForTest(t.Context(), renewed)
+	if err != nil || !wechat.EqualWechatCursor(actual, next) || a.AccountLockForTest() != lock {
 		t.Fatalf("same-account renewal lost committed progress or lock: %+v, %v", actual, err)
 	}
 }
@@ -44,46 +45,46 @@ func TestWechatAccountCredentialRotationKeepsCursor(t *testing.T) {
 func TestWechatAccountAccountLockAcrossDatabases(t *testing.T) {
 	first, _, _, _ := newWechatIngressTest(t)
 	second, _, _, _ := newWechatIngressTest(t)
-	t.Cleanup(first.closeIngressAccount)
-	t.Cleanup(second.closeIngressAccount)
-	if _, err := first.prepareIngressAccount(t.Context(), first.token.Load()); err != nil {
+	t.Cleanup(first.CloseIngressAccountForTest)
+	t.Cleanup(second.CloseIngressAccountForTest)
+	if _, err := first.PrepareIngressAccountForTest(t.Context(), first.TokenForTest()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.prepareIngressAccount(t.Context(), second.token.Load()); !errors.Is(err, im.ErrInstanceRunning) {
+	if _, err := second.PrepareIngressAccountForTest(t.Context(), second.TokenForTest()); !errors.Is(err, im.ErrInstanceRunning) {
 		t.Fatalf("distinct databases bypassed account lock: %v", err)
 	}
-	first.closeIngressAccount()
-	if _, err := second.prepareIngressAccount(t.Context(), second.token.Load()); err != nil {
+	first.CloseIngressAccountForTest()
+	if _, err := second.PrepareIngressAccountForTest(t.Context(), second.TokenForTest()); err != nil {
 		t.Fatalf("released account lock prevented second deployment: %v", err)
 	}
 }
 
 func TestWechatAccountOversizedTextDoesNotBlockBatchProgress(t *testing.T) {
 	a, service, _, writer := newWechatIngressTest(t)
-	t.Cleanup(a.closeIngressAccount)
-	token := a.token.Load()
-	cursor, err := a.prepareIngressAccount(t.Context(), token)
+	t.Cleanup(a.CloseIngressAccountForTest)
+	token := a.TokenForTest()
+	cursor, err := a.PrepareIngressAccountForTest(t.Context(), token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch := wechatPollingBatch{response: &ilinkGetUpdatesResponse{
+	batch := wechat.WechatPollingBatch{Response: &wechat.ILinkGetUpdatesResponse{
 		GetUpdatesBuf: "after-rejected-message",
-		Msgs: []ilinkMessage{
+		Msgs: []wechat.ILinkMessage{
 			wechatTextMessage("200", "owner", strings.Repeat("x", (64<<10)+1), ""),
 			wechatTextMessage("201", "owner", "next task", ""),
 		},
 	}}
 	var results []im.ReceiveResult
-	receive := func(ctx context.Context, msg ilinkMessage, _ im.ReceiveResult) im.ReceiveResult {
-		result := a.receiveIncomingMessage(ctx, msg, token)
+	receive := func(ctx context.Context, msg wechat.ILinkMessage, _ im.ReceiveResult) im.ReceiveResult {
+		result := a.ReceiveIncomingMessageForTest(ctx, msg, token)
 		results = append(results, result)
 		return result
 	}
-	resolve := func(ctx context.Context, msg ilinkMessage, result im.ReceiveResult) im.ReceiveResult {
-		return a.resolveIncomingMessage(ctx, msg, token, result)
+	resolve := func(ctx context.Context, msg wechat.ILinkMessage, result im.ReceiveResult) im.ReceiveResult {
+		return a.ResolveIncomingMessageForTest(ctx, msg, token, result)
 	}
-	if !batch.advance(t.Context(), receive, resolve) || batch.position != 2 || len(results) != 2 {
-		t.Fatalf("permanent size rejection blocked the batch: position=%d results=%+v", batch.position, results)
+	if !batch.Advance(t.Context(), receive, resolve) || batch.Position != 2 || len(results) != 2 {
+		t.Fatalf("permanent size rejection blocked the batch: position=%d results=%+v", batch.Position, results)
 	}
 	if results[0].Disposition != im.ReceiveRejected || results[0].RecordID == "" || results[1].Disposition != im.ReceiveAccepted {
 		t.Fatalf("unexpected batch results: %+v", results)
@@ -92,19 +93,19 @@ func TestWechatAccountOversizedTextDoesNotBlockBatchProgress(t *testing.T) {
 	if err != nil || rejected.State != "rejected" || rejected.Text != "" {
 		t.Fatalf("permanent rejection did not preserve a private tombstone: %+v, %v", rejected, err)
 	}
-	next, err := nextWechatCursor(cursor, token.AccountID, batch.response.GetUpdatesBuf)
+	next, err := wechat.NextWechatCursor(cursor, token.AccountID, batch.Response.GetUpdatesBuf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	epoch, ok := a.currentPollingEpoch(token)
+	epoch, ok := a.CurrentPollingEpochForTest(token)
 	if !ok {
 		t.Fatal("account epoch unavailable")
 	}
-	if err := a.commitPollingCursor(t.Context(), token, epoch, cursor, next); err != nil {
+	if err := a.CommitPollingCursorForTest(t.Context(), token, epoch, cursor, next); err != nil {
 		t.Fatal(err)
 	}
 	actual, err := service.store.Cursor("wechat", token.AccountID)
-	if err != nil || !equalWechatCursor(actual, next) {
+	if err != nil || !wechat.EqualWechatCursor(actual, next) {
 		t.Fatalf("determinate batch did not advance checkpoint: %+v, %v", actual, err)
 	}
 	if len(wechatTaskWrites(writer)) != 0 {

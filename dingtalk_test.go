@@ -20,10 +20,12 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+
+	dingtalk "github.com/keakon/chord-gateway/internal/platform/dingtalk"
 )
 
 type dingtalkAdapterFixture struct {
-	a        *DingtalkAdapter
+	a        *dingtalk.DingtalkAdapter
 	r        *NotificationRouter
 	s        *IngressService
 	terminal *bytes.Buffer
@@ -44,7 +46,7 @@ func newDingtalkAdapterFixture(t *testing.T) dingtalkAdapterFixture {
 	if err := s.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	a, err := NewDingtalkAdapter(store.Snapshot(), *store.Snapshot().IMConfigByType("dingtalk"), &config.Paths{StateDir: t.TempDir()}, r)
+	a, err := dingtalk.NewDingtalkAdapter(store.Snapshot(), *store.Snapshot().IMConfigByType("dingtalk"), &config.Paths{StateDir: t.TempDir()}, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,19 +55,19 @@ func newDingtalkAdapterFixture(t *testing.T) dingtalkAdapterFixture {
 	return dingtalkAdapterFixture{a, r, s, terminal, store}
 }
 
-func dingtalkAdapterFrame(t *testing.T, callback dingtalkCallback, delivery string) dingtalkFrame {
+func dingtalkAdapterFrame(t *testing.T, callback dingtalk.DingtalkCallback, delivery string) dingtalk.DingtalkFrame {
 	t.Helper()
-	return dingtalkFrame{SpecVersion: "1.0", Type: "CALLBACK", Headers: map[string]json.RawMessage{
-		"topic": json.RawMessage(fmt.Sprintf("%q", dingtalkRobotTopic)), "messageId": json.RawMessage(fmt.Sprintf("%q", delivery)),
+	return dingtalk.DingtalkFrame{SpecVersion: "1.0", Type: "CALLBACK", Headers: map[string]json.RawMessage{
+		"topic": json.RawMessage(fmt.Sprintf("%q", dingtalk.DingtalkRobotTopic)), "messageId": json.RawMessage(fmt.Sprintf("%q", delivery)),
 		"time": json.RawMessage(fmt.Sprintf("%d", time.Now().UnixMilli())),
-	}, Data: dingtalkIdentityTestPayload(t, callback)}
+	}, Data: dingtalk.IdentityTestPayloadForTest(t, callback)}
 }
 
-func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkCallback, delivery string) im.ReceiveResult {
+func dingtalkAdapterReceive(t *testing.T, a *dingtalk.DingtalkAdapter, callback dingtalk.DingtalkCallback, delivery string) im.ReceiveResult {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		future, err := a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, delivery))
+		future, err := a.OnCallbackForTest(t.Context(), dingtalkAdapterFrame(t, callback, delivery))
 		if err == nil {
 			return receiveNormalization(t, future)
 		}
@@ -84,10 +86,10 @@ func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkC
 
 func dingtalkAdapterVerify(t *testing.T, f dingtalkAdapterFixture) {
 	t.Helper()
-	if err := f.a.onConnected(t.Context()); err != nil {
+	if err := f.a.OnConnectedForTest(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.MsgID, callback.Text.Content = "identity-hello", "hello"
 	if result := dingtalkAdapterReceive(t, f.a, callback, "identity-delivery"); result.Disposition != im.ReceiveRejected || result.Reason != "identity_probe" {
 		t.Fatalf("probe result: %+v", result)
@@ -103,13 +105,13 @@ func dingtalkAdapterNonce(f dingtalkAdapterFixture) string {
 
 func TestDingtalkAdapterProbeNeverExecutesOrAuthorizesOwner(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
-	if err := f.a.onConnected(t.Context()); err != nil {
+	if err := f.a.OnConnectedForTest(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(f.terminal.String(), "Valid for 10 minutes") {
 		t.Fatal("pairing code was shown before verified enterprise identity")
 	}
-	group := dingtalkIdentityTestCallback()
+	group := dingtalk.IdentityTestCallbackForTest()
 	group.MsgID, group.ConversationType, group.IsInAtList = "first-group", "2", true
 	group.Text.Content = "sensitive unverified task"
 	result := dingtalkAdapterReceive(t, f.a, group, "group-delivery")
@@ -117,29 +119,29 @@ func TestDingtalkAdapterProbeNeverExecutesOrAuthorizesOwner(t *testing.T) {
 		t.Fatal(result)
 	}
 	groupRecordID := result.RecordID
-	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "any"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "any"}).Ready {
 		t.Fatal("group callback verified enterprise identity")
 	}
-	probe := dingtalkIdentityTestCallback()
+	probe := dingtalk.IdentityTestCallbackForTest()
 	probe.MsgID, probe.Text.Content = "probe-bind-body", "/bind \"/project\" invalid-nonce"
 	result = dingtalkAdapterReceive(t, f.a, probe, "probe-delivery")
 	if result.Disposition != im.ReceiveRejected || result.Reason != "identity_probe" {
 		t.Fatal(result)
 	}
-	if !f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "any"}).Ready || !strings.Contains(f.terminal.String(), "Valid for 10 minutes") {
+	if !f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "any"}).Ready || !strings.Contains(f.terminal.String(), "Valid for 10 minutes") {
 		t.Fatal("successful identity probe did not unlock pairing")
 	}
 	if strings.Contains(f.terminal.String(), "@robot /bind") {
 		t.Fatal("private pairing instructions require a group mention")
 	}
-	privateTarget, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", probe.SenderStaffID)
+	privateTarget, _ := dingtalk.EncodeTargetForTest(f.a.ConfigForTest().CorpID, "private", probe.SenderStaffID)
 	if hint := f.r.commandHint("dingtalk", im.CommandTargetForChat("dingtalk", privateTarget), "/bind /project"); hint != "/bind /project" {
 		t.Fatalf("private reply hint: %q", hint)
 	}
 	if f.store.Snapshot().IMConfigByType("dingtalk").OwnerIdentity() != nil {
 		t.Fatal("identity probe registered an owner")
 	}
-	if valid := f.a.verified; !valid {
+	if valid := f.a.VerifiedForTest(); !valid {
 		t.Fatalf("unexpected identity verification: %v", valid)
 	}
 	records, err := f.s.store.listAll()
@@ -164,25 +166,25 @@ func TestDingtalkAdapterProbeNeverExecutesOrAuthorizesOwner(t *testing.T) {
 
 func TestDingtalkAdapterRejectsUnsupportedSenderAndTenant(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
-	if err := f.a.onConnected(t.Context()); err != nil {
+	if err := f.a.OnConnectedForTest(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.SenderStaffID = ""
 	frame := dingtalkAdapterFrame(t, callback, "fallback-delivery")
 	frame.Data = strings.TrimSuffix(frame.Data, "}") + `,"senderId":"fallback-owner","isAdmin":true}`
-	future, err := f.a.onCallback(t.Context(), frame)
+	future, err := f.a.OnCallbackForTest(t.Context(), frame)
 	if err != nil || receiveNormalization(t, future).Disposition != im.ReceiveRejected {
 		t.Fatalf("unsupported sender accepted: %v", err)
 	}
-	callback = dingtalkIdentityTestCallback()
+	callback = dingtalk.IdentityTestCallbackForTest()
 	callback.RobotCode = "other-robot"
-	future, err = f.a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, "wrong-robot"))
-	assertDingtalkIdentityCategory(t, err, "tenant_mismatch", true)
+	future, err = f.a.OnCallbackForTest(t.Context(), dingtalkAdapterFrame(t, callback, "wrong-robot"))
+	dingtalk.AssertIdentityCategoryForTest(t, err, "tenant_mismatch", true)
 	if future != nil {
 		t.Fatal("mismatched tenant was enqueued")
 	}
-	if valid := f.a.verified; valid {
+	if valid := f.a.VerifiedForTest(); valid {
 		t.Fatalf("unexpected identity verification: %v", valid)
 	}
 }
@@ -221,9 +223,9 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 		fmt.Fprint(w, `{"processQueryKey":"accepted-probe"}`)
 	}))
 	defer server.Close()
-	f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
-	f.a.api.targetInterval, f.a.api.accountInterval = 0, 0
-	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()))
+	f.a.SetAPIServerForTest(server.URL, server.Client())
+	f.a.SetAPIPacingForTest(0, 0)
+	msg, err := dingtalk.NormalizeCallbackForTest(f.a.ConfigForTest(), dingtalk.IdentityTestPayloadForTest(t, dingtalk.IdentityTestCallbackForTest()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +290,7 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 			}
 		}
 	})
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.MsgID, callback.Text.Content = "bound-task", "run this task once"
 	accepted := dingtalkAdapterReceive(t, f.a, callback, "task-delivery-one")
 	if accepted.Disposition != im.ReceiveAccepted {
@@ -306,13 +308,13 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 	}
 	// A binding switch cancels the shared delivery lease after the first accepted
 	// segment. Later segments must never enter even the adapter's HTTP transport.
-	f.a.onUnavailable() // HTTP output keeps its lease through a Stream outage.
+	f.a.OnUnavailableForTest() // HTTP output keeps its lease through a Stream outage.
 	target, ok := f.r.targetForKey(key)
 	if !ok {
 		t.Fatal("bound delivery target unavailable")
 	}
-	original := f.a.sender.SendSegmentForTest()
-	f.a.sender.SetSendSegmentForTest(func(ctx context.Context, chat, text string) error {
+	original := f.a.SenderForTest().SendSegmentForTest()
+	f.a.SenderForTest().SetSendSegmentForTest(func(ctx context.Context, chat, text string) error {
 		err := original(ctx, chat, text)
 		if err == nil {
 			ticket.Gate.Switching()
@@ -336,25 +338,21 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 func TestDingtalkAdapterUnboundSendAndOldGenerationDenied(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
-	target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
+	target, _ := dingtalk.EncodeTargetForTest(f.a.ConfigForTest().CorpID, "private", "test-staff")
 	if err := f.a.SendText(target, "must not send"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("unbound send: %v", err)
 	}
-	f.a.mu.Lock()
-	generation := f.a.generation
-	f.a.mu.Unlock()
-	f.a.onUnavailable()
-	if err := f.a.activate(t.Context(), generation); !errors.Is(err, context.Canceled) {
+	generation := f.a.GenerationForTest()
+	f.a.OnUnavailableForTest()
+	if err := f.a.ActivateForTest(t.Context(), generation); !errors.Is(err, context.Canceled) {
 		t.Fatalf("old generation activated: %v", err)
 	}
-	f.a.mu.Lock()
-	ready := f.a.ready
-	f.a.mu.Unlock()
+	ready := f.a.ReadyForTest()
 	if ready {
 		t.Fatal("old connection enabled new admission")
 	}
 	f.a.Disconnect()
-	if err := f.a.onConnected(t.Context()); !errors.Is(err, context.Canceled) {
+	if err := f.a.OnConnectedForTest(t.Context()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("stopped adapter connected: %v", err)
 	}
 }
@@ -364,7 +362,7 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 		t.Run(scenario, func(t *testing.T) {
 			f := newDingtalkAdapterFixture(t)
 			dingtalkAdapterVerify(t, f)
-			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account))
+			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.AccountForTest()))
 			defer cancel()
 			var mu sync.Mutex
 			var segments []string
@@ -401,11 +399,11 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 				fmt.Fprint(w, `{"processQueryKey":"accepted-segment"}`)
 			}))
 			defer server.Close()
-			f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
-			f.a.api.targetInterval, f.a.api.accountInterval = 0, 0
+			f.a.SetAPIServerForTest(server.URL, server.Client())
+			f.a.SetAPIPacingForTest(0, 0)
 			if scenario == "cancel_after_first" {
-				original := f.a.sender.SendSegmentForTest()
-				f.a.sender.SetSendSegmentForTest(func(ctx context.Context, target, text string) error {
+				original := f.a.SenderForTest().SendSegmentForTest()
+				f.a.SenderForTest().SetSendSegmentForTest(func(ctx context.Context, target, text string) error {
 					err := original(ctx, target, text)
 					if err == nil {
 						cancel()
@@ -413,7 +411,7 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 					return err
 				})
 			}
-			target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "group", "original/group:id")
+			target, _ := dingtalk.EncodeTargetForTest(f.a.ConfigForTest().CorpID, "group", "original/group:id")
 			text := strings.Repeat("测试🙂", 250)
 			err := f.a.SendTextContext(ctx, target, text)
 			mu.Lock()
@@ -442,7 +440,7 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 
 func TestDingtalkAdapterConnectCachedIdentityAndDisconnect(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
-	f.a.verified = true
+	f.a.SetVerifiedForTest(true)
 	connections := make(chan *websocket.Conn, 1)
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -458,8 +456,8 @@ func TestDingtalkAdapterConnectCachedIdentityAndDisconnect(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
-	f.a.stream.dialer.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	f.a.SetAPIServerForTest(server.URL, server.Client())
+	f.a.SetStreamTLSConfigForTest(server.Client().Transport.(*http.Transport).TLSClientConfig.Clone())
 	done := make(chan error, 1)
 	go func() { done <- f.a.Connect() }()
 	var conn *websocket.Conn
@@ -470,7 +468,7 @@ func TestDingtalkAdapterConnectCachedIdentityAndDisconnect(t *testing.T) {
 	}
 	defer conn.Close()
 	waitIngressCondition(t, func() bool {
-		return f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready
+		return f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready
 	})
 	f.a.Disconnect()
 	select {
@@ -481,7 +479,7 @@ func TestDingtalkAdapterConnectCachedIdentityAndDisconnect(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Disconnect did not join Connect")
 	}
-	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready {
 		t.Fatal("disconnected adapter remained ready")
 	}
 }
@@ -504,9 +502,9 @@ func TestDingtalkAdapterConnectTenantMismatchStopsReconnect(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
-	f.a.stream.dialer.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
-	f.a.stream.backoff = func(int) time.Duration { return time.Millisecond }
+	f.a.SetAPIServerForTest(server.URL, server.Client())
+	f.a.SetStreamTLSConfigForTest(server.Client().Transport.(*http.Transport).TLSClientConfig.Clone())
+	f.a.SetStreamBackoffForTest(func(int) time.Duration { return time.Millisecond })
 	done := make(chan error, 1)
 	go func() { done <- f.a.Connect() }()
 	var conn *websocket.Conn
@@ -516,21 +514,21 @@ func TestDingtalkAdapterConnectTenantMismatchStopsReconnect(t *testing.T) {
 		t.Fatal("no Stream handshake")
 	}
 	defer conn.Close()
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.ChatbotCorpID = "unexpected-corp"
 	if err := conn.WriteJSON(dingtalkAdapterFrame(t, callback, "tenant-mismatch")); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case err := <-done:
-		assertDingtalkIdentityCategory(t, err, "tenant_mismatch", true)
+		dingtalk.AssertIdentityCategoryForTest(t, err, "tenant_mismatch", true)
 	case <-time.After(2 * time.Second):
 		t.Fatal("tenant mismatch did not terminate supervisor")
 	}
 	if registrations.Load() != 1 {
 		t.Fatalf("terminal mismatch reconnected %d times", registrations.Load())
 	}
-	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready {
 		t.Fatal("mismatched tenant became ready")
 	}
 }
@@ -540,8 +538,8 @@ func TestDingtalkAdapterBindingProbeRechecksNonceAndRoute(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			f := newDingtalkAdapterFixture(t)
 			dingtalkAdapterVerify(t, f)
-			callback := dingtalkIdentityTestCallback()
-			msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, callback))
+			callback := dingtalk.IdentityTestCallbackForTest()
+			msg, err := dingtalk.NormalizeCallbackForTest(f.a.ConfigForTest(), dingtalk.IdentityTestPayloadForTest(t, callback))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -569,7 +567,7 @@ func TestDingtalkAdapterBindingProbeRechecksNonceAndRoute(t *testing.T) {
 				fmt.Fprint(w, `{"processQueryKey":"accepted-but-authority-changed"}`)
 			}))
 			defer server.Close()
-			f.a.api.baseURL, f.a.api.client = server.URL, server.Client()
+			f.a.SetAPIServerForTest(server.URL, server.Client())
 			_, err = (&BindingService{router: f.r}).Bind(t.Context(), msg, ticket, []string{dir, code})
 			if !errors.Is(err, im.ErrPairingDenied) {
 				t.Fatalf("authority changed during probe: %v", err)
@@ -586,10 +584,10 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 	for _, scenario := range []string{"missing", "integer", "decimal_string", "boolean", "object", "null", "empty_string", "fraction", "old", "future", "exponent_string", "huge", "negative_huge"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newDingtalkAdapterFixture(t)
-			if err := f.a.onConnected(t.Context()); err != nil {
+			if err := f.a.OnConnectedForTest(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			frame := dingtalkAdapterFrame(t, dingtalkIdentityTestCallback(), "timestamp-delivery")
+			frame := dingtalkAdapterFrame(t, dingtalk.IdentityTestCallbackForTest(), "timestamp-delivery")
 			ms := time.Now().UnixMilli()
 			valid := scenario == "missing" || scenario == "integer" || scenario == "decimal_string"
 			switch scenario {
@@ -620,7 +618,7 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 			case "negative_huge":
 				frame.Headers["time"] = json.RawMessage(`-9223372036854775808`)
 			}
-			future, err := f.a.onCallback(t.Context(), frame)
+			future, err := f.a.OnCallbackForTest(t.Context(), frame)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -631,7 +629,7 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 			if valid && result.Reason != "identity_probe" || !valid && result.Reason != "source_time_out_of_range" {
 				t.Fatalf("timestamp %s: %+v", scenario, result)
 			}
-			if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready != valid {
+			if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready != valid {
 				t.Fatal("invalid timestamp established identity readiness")
 			}
 			record, err := f.s.store.Get(result.RecordID)
@@ -649,7 +647,7 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 				// rejected business message into identity evidence on redelivery.
 				frame.Headers["time"] = json.RawMessage(fmt.Sprintf("%d", time.Now().UnixMilli()))
 				frame.Headers["messageId"] = json.RawMessage(`"replacement-delivery"`)
-				future, err := f.a.onCallback(t.Context(), frame)
+				future, err := f.a.OnCallbackForTest(t.Context(), frame)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -657,12 +655,103 @@ func TestDingtalkAdapterSourceTimeStrictlyAcceptsMilliseconds(t *testing.T) {
 				if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != result.RecordID || duplicate.Reason != "source_time_out_of_range" {
 					t.Fatal(duplicate)
 				}
-				if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
+				if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready {
 					t.Fatal("previously rejected business ID established identity")
 				}
-				if valid := f.a.verified; valid {
+				if valid := f.a.VerifiedForTest(); valid {
 					t.Fatalf("unexpected identity verification: %v", valid)
 				}
+			}
+		})
+	}
+}
+
+func TestDingtalkLiteralGroupCallback(t *testing.T) {
+	// Independent wire fixture following the official Stream protocol example:
+	// https://open-dingtalk.github.io/developerpedia/docs/learn/stream/protocol/
+	// Group mentions are represented by isInAtList/atUsers; text has no bot prefix.
+	const payload = `{
+		"conversationId":"test-group", "conversationType":"2",
+		"chatbotCorpId":"test-corp", "chatbotUserId":"test-bot-user",
+		"senderCorpId":"test-corp", "senderStaffId":"test-staff",
+		"senderId":"test-user", "robotCode":"test-robot", "msgId":"test-message",
+		"isInAtList":true, "atUsers":[{"dingtalkId":"test-bot-user"}],
+		"msgtype":"text", "text":{"content":" /bind /project/path"}
+	}`
+	msg, err := dingtalk.NormalizeCallbackForTest(dingtalk.IdentityTestConfigForTest(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.ChatKind != "group" || msg.SenderID != "test-staff" || parseIMCommand(msg.Text).Type != "bind" {
+		t.Fatalf("group command did not normalize: %+v", msg)
+	}
+	// Literal mentions in the user's task must not be stripped speculatively.
+	msg, err = dingtalk.NormalizeCallbackForTest(dingtalk.IdentityTestConfigForTest(), strings.Replace(payload, "/bind /project/path", "@someone review this", 1))
+	if err != nil || msg.Text != "@someone review this" {
+		t.Fatal(msg.Text, err)
+	}
+}
+
+func TestDingtalkAdapterReportsActualRateWaits(t *testing.T) {
+	for _, scenario := range []string{"target", "account", "retry", "cancel"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newDingtalkAdapterFixture(t)
+			dingtalkAdapterVerify(t, f)
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1.0/oauth2/accessToken" {
+					dingtalk.WriteTokenForTest(w)
+					return
+				}
+				if calls.Add(1) == 1 && scenario == "retry" {
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				fmt.Fprint(w, `{"processQueryKey":"accepted"}`)
+			}))
+			defer server.Close()
+			f.a.SetAPIServerForTest(server.URL, server.Client())
+			f.a.SetAPIPacingForTest(0, 0)
+			f.a.SetAPIRetryBaseForTest(20 * time.Millisecond)
+			if scenario == "cancel" {
+				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+				defer cancel()
+				if err := f.a.WaitRateLimitForTest(ctx, time.Hour); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal(err)
+				}
+			} else {
+				target, _ := dingtalk.EncodeTargetForTest(f.a.ConfigForTest().CorpID, "private", "test-staff")
+				ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.AccountForTest())
+				if err := f.a.SendTextContext(ctx, target, "first output"); err != nil {
+					t.Fatal(err)
+				}
+				if scenario != "retry" {
+					// Place the next slot in the future deterministically; the HTTP
+					// test server's scheduling cannot consume the intended wait.
+					if scenario == "target" {
+						f.a.HoldTargetSlotForTest("private:test-staff", time.Now().Add(20*time.Millisecond))
+					} else {
+						f.a.HoldAccountSlotForTest(time.Now().Add(20 * time.Millisecond))
+					}
+					if err := f.a.SendTextContext(ctx, target, "second output"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if calls.Load() != 2 {
+					t.Fatalf("unexpected HTTP sends: %d", calls.Load())
+				}
+			}
+			metrics := f.a.TextSendMetrics()
+			if metrics.RateLimitWaits != 1 || metrics.RateLimitWaitTotal <= 0 || metrics.RateLimitWaitMax != metrics.RateLimitWaitTotal || metrics.RateLimitWaitTotal >= time.Second {
+				t.Fatalf("actual wait missing or requested delay counted: %+v", metrics)
+			}
+			before := metrics
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_ = f.a.WaitRateLimitForTest(ctx, time.Hour)
+			_ = f.a.WaitRateLimitForTest(t.Context(), 0)
+			if after := f.a.TextSendMetrics(); after != before {
+				t.Fatalf("non-waits changed metrics: before=%+v after=%+v", before, after)
 			}
 		})
 	}

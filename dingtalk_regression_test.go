@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
+
+	dingtalk "github.com/keakon/chord-gateway/internal/platform/dingtalk"
 )
 
 // A receive lock must protect the application's entire lifecycle, including a
@@ -18,36 +20,36 @@ func TestDingtalkRegressionAccountLocksCoverSendJoin(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
 	registration := make(chan struct{})
-	f.a.stream.openConnection = func(ctx context.Context) (string, string, error) {
+	f.a.SetStreamOpenConnectionForTest(func(ctx context.Context) (string, string, error) {
 		close(registration)
 		<-ctx.Done()
 		return "", "", ctx.Err()
-	}
+	})
 	connectDone := make(chan error, 1)
 	go func() { connectDone <- f.a.Connect() }()
-	dingtalkWaitTest(t, registration)
+	dingtalk.WaitTestForTest(t, registration)
 	sendEntered, sendRelease := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(sendRelease) }) }
 	defer release()
-	f.a.sender.SetSendSegmentForTest(func(context.Context, string, string) error {
+	f.a.SenderForTest().SetSendSegmentForTest(func(context.Context, string, string) error {
 		close(sendEntered)
 		<-sendRelease
 		return context.Canceled
 	})
-	target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
-	sendCtx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
+	target, _ := dingtalk.EncodeTargetForTest(f.a.ConfigForTest().CorpID, "private", "test-staff")
+	sendCtx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.AccountForTest())
 	sendDone := make(chan error, 1)
 	go func() { sendDone <- f.a.SendTextContext(sendCtx, target, "test response") }()
-	dingtalkWaitTest(t, sendEntered)
+	dingtalk.WaitTestForTest(t, sendEntered)
 	disconnectDone := make(chan struct{})
 	go func() { f.a.Disconnect(); close(disconnectDone) }()
-	dingtalkWaitTest(t, f.a.ctx.Done())
+	dingtalk.WaitTestForTest(t, f.a.ContextForTest().Done())
 	// Continue checking across scheduler turns, so an early unlock in Connect's
 	// defer chain cannot hide behind the initial cancellation notification.
 	deadline := time.Now().Add(40 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		locks, err := acquireDingtalkAccountLocks(f.a.cfg)
+		locks, err := dingtalk.AcquireAccountLocksForTest(f.a.ConfigForTest())
 		if err == nil {
 			locks.Close()
 			t.Fatal("account locks released before admitted send joined")
@@ -62,12 +64,12 @@ func TestDingtalkRegressionAccountLocksCoverSendJoin(t *testing.T) {
 		}
 	}
 	release()
-	dingtalkWaitTest(t, sendDone)
-	dingtalkWaitTest(t, disconnectDone)
-	if err := dingtalkWaitTest(t, connectDone); err != nil {
+	dingtalk.WaitTestForTest(t, sendDone)
+	dingtalk.WaitTestForTest(t, disconnectDone)
+	if err := dingtalk.WaitTestForTest(t, connectDone); err != nil {
 		t.Fatal(err)
 	}
-	locks, err := acquireDingtalkAccountLocks(f.a.cfg)
+	locks, err := dingtalk.AcquireAccountLocksForTest(f.a.ConfigForTest())
 	if err != nil {
 		t.Fatalf("account lock retained after all workers joined: %v", err)
 	}
@@ -76,35 +78,31 @@ func TestDingtalkRegressionAccountLocksCoverSendJoin(t *testing.T) {
 
 func TestDingtalkRegressionCurrentProbeActivatesVerifiedButUnreadyConnection(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
-	if err := f.a.onConnected(t.Context()); err != nil {
+	if err := f.a.OnConnectedForTest(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	// Evidence can survive an interrupted activation. It proves enterprise
 	// identity but cannot itself publish readiness for a different generation.
-	f.a.verified = true
-	f.a.mu.Lock()
-	f.a.verified = true
-	oldGeneration := f.a.generation
-	f.a.mu.Unlock()
-	f.a.onUnavailable()
+	f.a.SetVerifiedForTest(true)
+	f.a.SetVerifiedForTest(true)
+	oldGeneration := f.a.GenerationForTest()
+	f.a.OnUnavailableForTest()
 	// Model a current handshake that has not yet published PlatformReady.
-	f.a.mu.Lock()
-	f.a.connected = true
-	f.a.generation++
-	f.a.mu.Unlock()
-	if err := f.a.activate(t.Context(), oldGeneration); !errors.Is(err, context.Canceled) {
+	f.a.SetConnectedForTest(true)
+	f.a.AdvanceGenerationForTest()
+	if err := f.a.ActivateForTest(t.Context(), oldGeneration); !errors.Is(err, context.Canceled) {
 		t.Fatalf("old generation activated: %v", err)
 	}
-	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
+	if f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready {
 		t.Fatal("old evidence activated current connection")
 	}
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.MsgID, callback.Text.Content = "current-generation-probe", "hello"
 	result := dingtalkAdapterReceive(t, f.a, callback, "current-generation-delivery")
 	if result.Disposition != im.ReceiveRejected || result.Reason != "identity_probe" {
 		t.Fatalf("current private probe refused: %+v", result)
 	}
-	if !f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.account, ChatID: "chat"}).Ready {
+	if !f.a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "dingtalk", AccountID: f.a.AccountForTest(), ChatID: "chat"}).Ready {
 		t.Fatal("verified but unready connection could not recover from a current private probe")
 	}
 	if f.store.Snapshot().IMConfigByType("dingtalk").OwnerIdentity() != nil {
@@ -116,7 +114,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
 	var sends atomic.Int32
-	f.a.sender.SetSendSegmentForTest(func(ctx context.Context, _ string, text string) error {
+	f.a.SenderForTest().SetSendSegmentForTest(func(ctx context.Context, _ string, text string) error {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Error("send has no deadline")
@@ -130,7 +128,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 		sends.Add(1)
 		return nil
 	})
-	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, dingtalkIdentityTestCallback()))
+	msg, err := dingtalk.NormalizeCallbackForTest(f.a.ConfigForTest(), dingtalk.IdentityTestPayloadForTest(t, dingtalk.IdentityTestCallbackForTest()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,12 +173,12 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	f.s.mu.Lock()
 	f.s.blocked[id] = ingressBlocked{since: time.Now(), reason: "test"}
 	f.s.mu.Unlock()
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.MsgID, callback.Text.Content = "accepted-before-outage", "run accepted task"
 	if result := dingtalkAdapterReceive(t, f.a, callback, "delivery-before-outage"); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
-	f.a.onUnavailable()
+	f.a.OnUnavailableForTest()
 	if !f.r.admission.Valid(ticket) || !f.a.IngressDeliveryReadiness(id).Ready {
 		t.Fatal("temporary outage revoked accepted work")
 	}
@@ -188,7 +186,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 		t.Fatal("other account became available")
 	}
 	callback.MsgID = "new-input-during-outage"
-	if _, err := f.a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, "outage-delivery")); !errors.Is(err, im.ErrIngressClosed) {
+	if _, err := f.a.OnCallbackForTest(t.Context(), dingtalkAdapterFrame(t, callback, "outage-delivery")); !errors.Is(err, im.ErrIngressClosed) {
 		t.Fatalf("outage admitted new input: %v", err)
 	}
 	f.s.mu.Lock()
@@ -200,7 +198,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	if !ok {
 		t.Fatal("bound target unavailable")
 	}
-	ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
+	ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.AccountForTest())
 	if err := f.r.SendBound(ctx, target, "background result during reconnect"); err != nil {
 		t.Fatal(err)
 	}
@@ -219,18 +217,16 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 func TestDingtalkNotReadySendIsCategorized(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
-	target, err := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
+	target, err := dingtalk.EncodeTargetForTest(f.a.ConfigForTest().CorpID, "private", "test-staff")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendCtx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
-	f.a.mu.Lock()
-	f.a.stopping = true
-	f.a.mu.Unlock()
+	sendCtx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.AccountForTest())
+	f.a.SetStoppingForTest(true)
 	// A definite non-delivery must use the shared category vocabulary instead
 	// of an unobserved bare error, so operators can see it in text metrics.
 	err = f.a.SendTextContext(sendCtx, target, "output")
-	var failure *dingtalkAPIError
+	var failure *dingtalk.DingtalkAPIError
 	if !errors.As(err, &failure) || failure.Category != "connection_unavailable" {
 		t.Fatalf("not-ready send error: %v", err)
 	}
@@ -243,10 +239,10 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	dingtalkAdapterVerify(t, f)
 	// Bind the callback's chat: capture only freezes state for a bound target.
-	f.a.sender.SetSendSegmentForTest(func(context.Context, string, string) error { return nil })
-	binding := dingtalkIdentityTestCallback()
+	f.a.SenderForTest().SetSendSegmentForTest(func(context.Context, string, string) error { return nil })
+	binding := dingtalk.IdentityTestCallbackForTest()
 	binding.MsgID = "busy-bind"
-	msg, err := normalizeDingtalkCallback(f.a.cfg, dingtalkIdentityTestPayload(t, binding))
+	msg, err := dingtalk.NormalizeCallbackForTest(f.a.ConfigForTest(), dingtalk.IdentityTestPayloadForTest(t, binding))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +257,7 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 	}
 	// A takeover command captures through the transfer store without waiting;
 	// holding it models a delivery racing the target's state write.
-	callback := dingtalkIdentityTestCallback()
+	callback := dingtalk.IdentityTestCallbackForTest()
 	callback.MsgID, callback.Text.Content = "busy-delivery", "/takeover status"
 	frame := dingtalkAdapterFrame(t, callback, "busy-delivery")
 	transfers := f.r.mgr.transfers
@@ -269,7 +265,7 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 		t.Fatal("transfer store unavailable")
 	}
 	transfers.mu.Lock()
-	future, err := f.a.onCallback(t.Context(), frame)
+	future, err := f.a.OnCallbackForTest(t.Context(), frame)
 	transfers.mu.Unlock()
 	// A delivery that races the target's state write must be refused as
 	// target_busy with the loss visible in the metrics; robot callbacks are
@@ -291,13 +287,11 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 func TestDingtalkTrackAcceptanceRefusesAfterStopping(t *testing.T) {
 	f := newDingtalkAdapterFixture(t)
 	future := make(chan im.ReceiveResult, 1)
-	f.a.mu.Lock()
-	f.a.stopping = true
-	f.a.mu.Unlock()
+	f.a.SetStoppingForTest(true)
 	// The reservation and the shutdown seal share one lock, so Wait can never
 	// race a late Add. The stream's 500 for this frame can no longer reach the
 	// platform, so the unobserved outcome is counted here instead.
-	if got := f.a.trackAcceptance(future, im.IncomingMessage{}); got != nil {
+	if got := f.a.TrackAcceptanceForTest(future, im.IncomingMessage{}); got != nil {
 		t.Fatal("accepted work after the shutdown seal")
 	}
 	var count uint64

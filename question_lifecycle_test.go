@@ -57,7 +57,7 @@ func TestFeishuQuestionCallbackKeepsCardUntilResolved(t *testing.T) {
 		event := makeFeishuCardActionEvent("ou_owner", "oc_chat1", requestID, "answer")
 		event.Event.Action.Value["type"] = "question"
 		event.Event.Action.Value["value"] = "first"
-		response, err := a.handleCardActionEvent(context.Background(), event)
+		response, err := handleCardActionEvent(context.Background(), a, event)
 		if err != nil || response == nil || response.Toast == nil || response.Card != nil || response.Toast.Type != "info" {
 			t.Fatalf("response=%+v err=%v", response, err)
 		}

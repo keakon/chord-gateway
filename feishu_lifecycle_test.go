@@ -9,13 +9,15 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
 
 // This fixture keeps the actual intake workers and dispatcher. Only the network
 // connection is replaced, so migration/account ownership exercise production.
-func lifecycleFeishuAdapter(t *testing.T, account string) (*FeishuAdapter, *IngressService, string) {
+func lifecycleFeishuAdapter(t *testing.T, account string) (*feishu.FeishuAdapter, *IngressService, string) {
 	t.Helper()
 	dir := t.TempDir()
 	fc := &config.FeishuConfig{AppID: account, Owner: &config.OwnerIdentity{AccountID: account, UserID: "owner"}, ChatBindings: map[string]string{"chat": "workspace"}}
@@ -34,11 +36,11 @@ func lifecycleFeishuAdapter(t *testing.T, account string) (*FeishuAdapter, *Ingr
 	if err := service.Start(serviceCtx); err != nil {
 		t.Fatal(err)
 	}
-	a, err := NewFeishuAdapter(cfg, cfg.IMs[0], paths, router)
+	a, err := feishu.NewFeishuAdapter(cfg, cfg.IMs[0], paths, router)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.accessToken, a.tokenExpireAt = "cached-lifecycle-token", time.Now().Add(time.Hour)
+	a.SetTokenForTest("cached-lifecycle-token", time.Now().Add(time.Hour))
 	router.SetAdapter(a)
 	t.Cleanup(func() {
 		a.Disconnect()
@@ -92,19 +94,19 @@ func TestFeishuLifecycleAccountLockAndRepeatedDisconnectJoin(t *testing.T) {
 			close(release)
 		}
 	})
-	a.runLongConn = func(ctx context.Context) error {
+	a.SetLongConnForTest(func(ctx context.Context) error {
 		close(started)
 		<-ctx.Done()
 		close(cancelled)
 		<-release
 		close(exited)
 		return ctx.Err()
-	}
+	})
 	connected := make(chan error, 1)
 	go func() { connected <- a.Connect() }()
 	waitFeishuLifecycle(t, started)
 	var secondCalls atomic.Int32
-	b.runLongConn = func(context.Context) error { secondCalls.Add(1); return nil }
+	b.SetLongConnForTest(func(context.Context) error { secondCalls.Add(1); return nil })
 	if err := b.Connect(); !errors.Is(err, im.ErrInstanceRunning) || secondCalls.Load() != 0 {
 		t.Fatalf("same account accepted with a different state directory: %v calls=%d", err, secondCalls.Load())
 	}
@@ -137,17 +139,17 @@ func TestFeishuLifecycleAccountLockAndRepeatedDisconnectJoin(t *testing.T) {
 
 func TestFeishuLifecycleReconnectAndDisconnectKeepSharedStoreOpen(t *testing.T) {
 	a, service, _ := lifecycleFeishuAdapter(t, "lifecycle-shared-store")
-	a.reconnectInterval = time.Millisecond
+	a.SetReconnectIntervalForTest(time.Millisecond)
 	var calls atomic.Int32
 	reconnected := make(chan struct{})
-	a.runLongConn = func(ctx context.Context) error {
+	a.SetLongConnForTest(func(ctx context.Context) error {
 		if calls.Add(1) == 1 {
 			return errors.New("temporary connection failure")
 		}
 		close(reconnected)
 		<-ctx.Done()
 		return ctx.Err()
-	}
+	})
 	connected := make(chan error, 1)
 	go func() { connected <- a.Connect() }()
 	waitFeishuLifecycle(t, reconnected)

@@ -7,20 +7,22 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
+
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
 )
 
 func TestWecomRecoveryCaptureCannotApproveReplacementRuntime(t *testing.T) {
-	a, msg, store := wecomAdapterFixture(t)
+	a, msg, store, r := wecomAdapterFixture(t)
 	key := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
-	p := a.router.mgr.GetProcessForKey(key)
+	p := r.mgr.GetProcessForKey(key)
 	p.mu.Lock()
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "old-confirm"}
 	p.mu.Unlock()
 	raw := []byte(strings.Replace(string(wecomAdapterCallback("bot", "delayed-delivery", "freeze-control")), `"content":"task"`, `"content":"/allow"`, 1))
 	firstReceived := time.Now().Add(-2 * time.Second)
-	readerCtx := context.WithValue(a.ctx, wecomReceivedAtContextKey{}, firstReceived)
-	frozenCtx := a.captureFrame(readerCtx, raw)
-	e, ok := frozenCtx.Value(wecomCapturedEnvelopeContextKey{}).(im.IngressEnvelope)
+	readerCtx := context.WithValue(a.ContextForTest(), wecom.ReceivedAtContextKey{}, firstReceived)
+	frozenCtx := a.CaptureFrameForTest(readerCtx, raw)
+	e, ok := frozenCtx.Value(wecom.CapturedEnvelopeContextKey{}).(im.IngressEnvelope)
 	if !ok || e.Capture == nil || e.Capture.Target == nil || e.Capture.Target.RuntimeID != "runtime" || e.Capture.Target.RequestID != "old-confirm" {
 		t.Fatalf("reader did not capture original control: %+v", e.Capture)
 	}
@@ -32,7 +34,7 @@ func TestWecomRecoveryCaptureCannotApproveReplacementRuntime(t *testing.T) {
 	p.state.PendingConfirm = &ConfirmPayload{RequestID: "new-confirm"}
 	writer := p.stdin.(*ingressTestWriter)
 	p.mu.Unlock()
-	if err := a.receiveFrame(frozenCtx, raw); err != nil {
+	if err := a.ReceiveFrameForTest(frozenCtx, raw); err != nil {
 		t.Fatal(err)
 	}
 	var rec IngressRecord

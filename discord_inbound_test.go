@@ -10,57 +10,58 @@ import (
 	"testing"
 	"time"
 
-	"github.com/disgoorg/disgo/discord"
+	disgo "github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
 	"github.com/keakon/golog/log"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
 const discordTestBotID = "9007199254740993"
 
-func discordTestChannel(t *testing.T, kind discord.ChannelType, id string) discord.Channel {
+func discordTestChannel(t *testing.T, kind disgo.ChannelType, id string) disgo.Channel {
 	t.Helper()
-	var channel discord.UnmarshalChannel
+	var channel disgo.UnmarshalChannel
 	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"id":%q,"type":%d,"guild_id":"700","parent_id":"400","name":"sample"}`, id, kind)), &channel); err != nil {
 		t.Fatal(err)
 	}
 	return channel.Channel
 }
 
-func discordTestMessage() discord.Message {
-	return discord.Message{
+func discordTestMessage() disgo.Message {
+	return disgo.Message{
 		ID: snowflake.ID(9007199254740995), ChannelID: snowflake.ID(500),
-		Author:    discord.User{ID: snowflake.ID(9007199254740997), Username: "sample-user"},
-		CreatedAt: time.Now(), Content: "sample task", Type: discord.MessageTypeDefault,
+		Author:    disgo.User{ID: snowflake.ID(9007199254740997), Username: "sample-user"},
+		CreatedAt: time.Now(), Content: "sample task", Type: disgo.MessageTypeDefault,
 	}
 }
 
-func discordTestGuildMessage(text string) discord.Message {
+func discordTestGuildMessage(text string) disgo.Message {
 	message := discordTestMessage()
 	guildID := snowflake.ID(700)
 	message.GuildID, message.Content = &guildID, text
-	message.Mentions = []discord.User{{ID: snowflake.ID(9007199254740993)}}
+	message.Mentions = []disgo.User{{ID: snowflake.ID(9007199254740993)}}
 	return message
 }
 
 func TestDiscordInboundChannelClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		kind  discord.ChannelType
+		kind  disgo.ChannelType
 		guild bool
 		want  string
 	}{
-		{"dm", discord.ChannelTypeDM, false, "private"},
-		{"guild_text", discord.ChannelTypeGuildText, true, "group"},
-		{"public_thread", discord.ChannelTypeGuildPublicThread, true, "group"},
-		{"private_thread", discord.ChannelTypeGuildPrivateThread, true, "group"},
-		{"group_dm", discord.ChannelTypeGroupDM, false, "unsupported"},
-		{"voice", discord.ChannelTypeGuildVoice, true, "unsupported"},
-		{"forum_root", discord.ChannelTypeGuildForum, true, "unsupported"},
-		{"announcement", discord.ChannelTypeGuildNews, true, "unsupported"},
-		{"missing_guild_evidence", discord.ChannelTypeGuildText, false, "unsupported"},
-		{"contradictory_dm", discord.ChannelTypeDM, true, "unsupported"},
+		{"dm", disgo.ChannelTypeDM, false, "private"},
+		{"guild_text", disgo.ChannelTypeGuildText, true, "group"},
+		{"public_thread", disgo.ChannelTypeGuildPublicThread, true, "group"},
+		{"private_thread", disgo.ChannelTypeGuildPrivateThread, true, "group"},
+		{"group_dm", disgo.ChannelTypeGroupDM, false, "unsupported"},
+		{"voice", disgo.ChannelTypeGuildVoice, true, "unsupported"},
+		{"forum_root", disgo.ChannelTypeGuildForum, true, "unsupported"},
+		{"announcement", disgo.ChannelTypeGuildNews, true, "unsupported"},
+		{"missing_guild_evidence", disgo.ChannelTypeGuildText, false, "unsupported"},
+		{"contradictory_dm", disgo.ChannelTypeDM, true, "unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got im.IngressEnvelope
@@ -75,7 +76,7 @@ func TestDiscordInboundChannelClassification(t *testing.T) {
 				return nil, err
 			}
 			channel := discordTestChannel(t, tc.kind, "500")
-			inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", submit, func(context.Context, string) (discord.Channel, error) { return channel, nil }, func(generation uint64) bool { return generation == 3 }, func(generation uint64) bool { return generation == 3 }, nil)
+			inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", submit, func(context.Context, string) (disgo.Channel, error) { return channel, nil }, func(generation uint64) bool { return generation == 3 }, func(generation uint64) bool { return generation == 3 }, nil)
 			message := discordTestMessage()
 			if tc.guild {
 				message = discordTestGuildMessage("<@" + discordTestBotID + "> sample task")
@@ -111,7 +112,7 @@ func TestDiscordInboundInvocationPreservesBody(t *testing.T) {
 				got = e.Message
 				return nil, nil
 			}
-			inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
+			inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
 			if err := inbound.HandleMessage(1, discordTestGuildMessage(tc.text)); err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +129,7 @@ func TestDiscordInboundInvocationPreservesBody(t *testing.T) {
 		got = e.Message
 		return nil, nil
 	}
-	inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
+	inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
 	message := discordTestMessage()
 	message.Content = "<@" + discordTestBotID + ">  /bind /project"
 	if err := inbound.HandleMessage(1, message); err != nil {
@@ -152,11 +153,11 @@ func TestDiscordInboundFiltersBeforeLookup(t *testing.T) {
 				id := snowflake.ID(123)
 				message.WebhookID = &id
 			case "system_message":
-				message.Type = discord.MessageTypeUserJoin
+				message.Type = disgo.MessageTypeUserJoin
 			case "interaction":
-				message.Type = discord.MessageTypeSlashCommand
+				message.Type = disgo.MessageTypeSlashCommand
 			case "not_mentioned":
-				message.Mentions = []discord.User{{ID: snowflake.ID(123)}}
+				message.Mentions = []disgo.User{{ID: snowflake.ID(123)}}
 			case "text_mention_only":
 				message.Mentions = nil
 			}
@@ -164,7 +165,7 @@ func TestDiscordInboundFiltersBeforeLookup(t *testing.T) {
 				t.Fatal("irrelevant message submitted")
 				return nil, nil
 			}
-			inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
+			inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
 			if err := inbound.HandleMessage(1, message); err != nil {
 				t.Fatal(err)
 			}
@@ -188,14 +189,14 @@ func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t
 	entered, release := make(chan struct{}), make(chan struct{})
 	var generation atomic.Uint64
 	generation.Store(1)
-	resolve := func(ctx context.Context, id string) (discord.Channel, error) {
+	resolve := func(ctx context.Context, id string) (disgo.Channel, error) {
 		close(entered)
 		select {
 		case <-release:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		return discordTestChannel(t, discord.ChannelTypeDM, id), nil
+		return discordTestChannel(t, disgo.ChannelTypeDM, id), nil
 	}
 	results := make(chan (<-chan im.ReceiveResult), 1)
 	submit := func(ctx context.Context, key string, e im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
@@ -203,7 +204,7 @@ func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t
 		results <- future
 		return future, err
 	}
-	inbound := newDiscordInbound(ctx, discordTestBotID, "800", submit, resolve, func(g uint64) bool { return generation.Load() == g }, func(g uint64) bool { return true }, nil)
+	inbound := discord.NewDiscordInbound(ctx, discordTestBotID, "800", submit, resolve, func(g uint64) bool { return generation.Load() == g }, func(g uint64) bool { return true }, nil)
 	returned := make(chan error, 1)
 	go func() { returned <- inbound.HandleMessage(1, discordTestMessage()) }()
 	select {
@@ -233,23 +234,23 @@ func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t
 	default:
 		t.Fatal("captured message not admitted")
 	}
-	if err := inbound.HandleMessage(1, discordTestMessage()); !errors.Is(err, errDiscordStaleGeneration) {
+	if err := inbound.HandleMessage(1, discordTestMessage()); !errors.Is(err, discord.ErrDiscordStaleGeneration) {
 		t.Fatal(err)
 	}
 }
 
 func TestDiscordInboundChannelCacheAndBoundedSubmission(t *testing.T) {
 	lookups := 0
-	resolve := func(context.Context, string) (discord.Channel, error) {
+	resolve := func(context.Context, string) (disgo.Channel, error) {
 		lookups++
-		return discordTestChannel(t, discord.ChannelTypeDM, "500"), nil
+		return discordTestChannel(t, disgo.ChannelTypeDM, "500"), nil
 	}
 	submit := func(ctx context.Context, _ string, e im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		_, err := normalize(ctx, e)
 		return nil, err
 	}
-	inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", submit, resolve, func(g uint64) bool { return g == 1 }, func(g uint64) bool { return g == 1 }, nil)
-	inbound.CacheChannel(1, discordTestChannel(t, discord.ChannelTypeDM, "500"))
+	inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", submit, resolve, func(g uint64) bool { return g == 1 }, func(g uint64) bool { return g == 1 }, nil)
+	inbound.CacheChannel(1, discordTestChannel(t, disgo.ChannelTypeDM, "500"))
 	if err := inbound.HandleMessage(1, discordTestMessage()); err != nil {
 		t.Fatal(err)
 	}
@@ -270,15 +271,13 @@ func TestDiscordInboundChannelCacheAndBoundedSubmission(t *testing.T) {
 	if lookups != 1 {
 		t.Fatal("deleted channel not refreshed")
 	}
-	for index := range discordChannelCacheCapacity + 50 {
-		inbound.cacheChannel(fmt.Sprint(index), discordChannelMetadata{discord.ChannelTypeDM})
-	}
-	if len(inbound.channels) != discordChannelCacheCapacity {
+	inbound.FillChannelCacheForTest(discord.DiscordChannelCacheCapacity+50, disgo.ChannelTypeDM)
+	if inbound.CacheSizeForTest() != discord.DiscordChannelCacheCapacity {
 		t.Fatal("channel cache unbounded")
 	}
-	inbound.submit = func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
+	inbound.SetSubmitForTest(func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		return nil, im.ErrIngressCapacity
-	}
+	})
 	if err := inbound.HandleMessage(1, discordTestMessage()); !errors.Is(err, im.ErrIngressCapacity) {
 		t.Fatal("capacity error lost", err)
 	}
@@ -308,8 +307,8 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 		}
 		return future, err
 	}
-	inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
-	inbound.CacheChannel(1, discordTestChannel(t, discord.ChannelTypeGuildPrivateThread, "500"))
+	inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", submit, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
+	inbound.CacheChannel(1, discordTestChannel(t, disgo.ChannelTypeGuildPrivateThread, "500"))
 	message := discordTestGuildMessage("/bind /another-project <@" + discordTestBotID + ">")
 	if err := inbound.HandleMessage(1, message); err != nil {
 		t.Fatal(err)
@@ -357,7 +356,7 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 	message.Author.ID = snowflake.ID(9007199254740997)
 	message.GuildID = nil
 	message.Content = "/bind /another-project"
-	inbound.CacheChannel(2, discordTestChannel(t, discord.ChannelTypeGroupDM, "600"))
+	inbound.CacheChannel(2, discordTestChannel(t, disgo.ChannelTypeGroupDM, "600"))
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
@@ -384,8 +383,8 @@ func TestDiscordInboundIgnoresEmptyAndAttachmentOnlyMessages(t *testing.T) {
 			} else {
 				message.Content = tc.text
 			}
-			message.Attachments = []discord.Attachment{{Filename: "sample.txt"}}
-			inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
+			message.Attachments = []disgo.Attachment{{Filename: "sample.txt"}}
+			inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 				t.Fatal("unsupported empty text submitted")
 				return nil, nil
 			}, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, nil)
@@ -402,13 +401,8 @@ func TestDiscordInboundIgnoresEmptyAndAttachmentOnlyMessages(t *testing.T) {
 
 func discordContentlessReset(t *testing.T) {
 	t.Helper()
-	reset := func() {
-		discordContentless.mu.Lock()
-		defer discordContentless.mu.Unlock()
-		discordContentless.last, discordContentless.reported = time.Time{}, 0
-	}
-	reset()
-	t.Cleanup(reset)
+	discord.SetDiscordContentlessStateForTest(time.Time{}, 0)
+	t.Cleanup(func() { discord.SetDiscordContentlessStateForTest(time.Time{}, 0) })
 }
 
 func TestDiscordInboundReportsContentlessMentionWithoutFlooding(t *testing.T) {
@@ -423,7 +417,7 @@ func TestDiscordInboundReportsContentlessMentionWithoutFlooding(t *testing.T) {
 	}
 	t.Cleanup(func() { log.Warnf = original })
 	submitted := 0
-	inbound := newDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
+	inbound := discord.NewDiscordInbound(t.Context(), discordTestBotID, "800", func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
 		submitted++
 		return nil, nil
 	}, nil, func(uint64) bool { return true }, func(uint64) bool { return true }, func(event, reason string) {
@@ -446,9 +440,8 @@ func TestDiscordInboundReportsContentlessMentionWithoutFlooding(t *testing.T) {
 	if logs, metrics := reported(); logs != 1 || metrics != 3 || submitted != 0 {
 		t.Fatalf("contentless mention reported incorrectly: logs=%d metrics=%d submitted=%d", logs, metrics, submitted)
 	}
-	discordContentless.mu.Lock()
-	discordContentless.last = time.Now().Add(-2 * discordContentlessInterval)
-	discordContentless.mu.Unlock()
+	_, budgetReported := discord.DiscordContentlessStateForTest()
+	discord.SetDiscordContentlessStateForTest(time.Now().Add(-2*discord.DiscordContentlessInterval), budgetReported)
 	message := discordTestMessage()
 	message.Content = " \t\n"
 	if err := inbound.HandleMessage(1, message); err != nil {
@@ -457,9 +450,7 @@ func TestDiscordInboundReportsContentlessMentionWithoutFlooding(t *testing.T) {
 	if logs, metrics := reported(); logs != 2 || metrics != 4 {
 		t.Fatalf("later interval did not report: logs=%d metrics=%d", logs, metrics)
 	}
-	discordContentless.mu.Lock()
-	discordContentless.reported, discordContentless.last = discordContentlessBudget, time.Time{}
-	discordContentless.mu.Unlock()
+	discord.SetDiscordContentlessStateForTest(time.Time{}, discord.DiscordContentlessBudget)
 	if err := inbound.HandleMessage(1, discordTestGuildMessage("<@!"+discordTestBotID+">")); err != nil {
 		t.Fatal(err)
 	}

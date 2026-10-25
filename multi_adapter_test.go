@@ -2,11 +2,12 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
 func TestMultiAdapter_Connect(t *testing.T) {
@@ -176,7 +177,10 @@ func TestNewMultiAdapter_CreatesConfiguredAdapters(t *testing.T) {
 	if len(m.adapters) != 2 {
 		t.Fatalf("len(adapters) = %d", len(m.adapters))
 	}
-	if got := fmt.Sprintf("%T,%T", m.adapters[0], m.adapters[1]); got != "*main.WechatAdapter,*main.FeishuAdapter" {
-		t.Fatalf("adapter types = %s", got)
+	if _, ok := m.adapters[0].(*wechat.WechatAdapter); !ok {
+		t.Fatalf("adapter[0] type = %T", m.adapters[0])
+	}
+	if _, ok := m.adapters[1].(*feishu.FeishuAdapter); !ok {
+		t.Fatalf("adapter[1] type = %T", m.adapters[1])
 	}
 }

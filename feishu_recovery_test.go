@@ -34,13 +34,13 @@ func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d/persistent=%t", phase, tc.status, tc.persistent), func(t *testing.T) {
 				a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
 
-				a.accessToken, a.tokenExpireAt = "old-token", time.Now().Add(time.Hour)
+				a.SetTokenForTest("old-token", time.Now().Add(time.Hour))
 				var tokens, targetRequests atomic.Int32
 				target := "/open-apis/im/v1/messages"
 				if phase == "upload" {
 					target = "/open-apis/im/v1/images"
 				}
-				a.httpClient = &http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+				a.SetHTTPClientForTest(&http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 					defer req.Body.Close()
 					_, _ = io.Copy(io.Discard, req.Body)
 					status, body := http.StatusOK, `{"code":0,"data":{"message_id":"sample-message","image_key":"sample-image"}}`
@@ -57,7 +57,7 @@ func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
 						}
 					}
 					return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
-				})}
+				})})
 				err := a.SendImage("sample-chat", imageForUpload(t))
 				recoverable := tc.status == http.StatusOK || tc.status == http.StatusBadRequest || tc.status == http.StatusUnauthorized
 				wantTokens, wantRequests := int32(0), int32(1)
@@ -83,7 +83,7 @@ func TestFeishuTokenCallerCancellationKeepsSharedRefresh(t *testing.T) {
 
 	started, release := make(chan struct{}), make(chan struct{})
 	var requests atomic.Int32
-	a.httpClient = &http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+	a.SetHTTPClientForTest(&http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		if requests.Add(1) != 1 {
 			t.Error("shared refresh was replayed")
@@ -96,13 +96,13 @@ func TestFeishuTokenCallerCancellationKeepsSharedRefresh(t *testing.T) {
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
 		}
-	})}
+	})})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	defer close(release)
 	done := make(chan error, 1)
 	go func() {
-		_, err := a.getAccessToken(ctx)
+		_, err := a.GetAccessTokenForTest(ctx)
 		done <- err
 	}()
 	select {
@@ -110,9 +110,7 @@ func TestFeishuTokenCallerCancellationKeepsSharedRefresh(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("refresh did not start")
 	}
-	a.mu.Lock()
-	refresh := a.tokenRefresh
-	a.mu.Unlock()
+	refresh := a.TokenRefreshForTest()
 	cancel()
 	select {
 	case err := <-done:
@@ -123,18 +121,18 @@ func TestFeishuTokenCallerCancellationKeepsSharedRefresh(t *testing.T) {
 		t.Fatal("token caller did not cancel")
 	}
 	select {
-	case <-refresh.done:
+	case <-refresh.TokenRefreshDoneForTest():
 		t.Fatal("caller cancelled the shared refresh")
 	default:
 	}
 	// A caller joining the existing refresh can stop waiting independently too.
 	waitCtx, cancelWait := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancelWait()
-	if _, err := a.getAccessToken(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := a.GetAccessTokenForTest(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancelled shared-refresh waiter = %v", err)
 	}
 	release <- struct{}{}
-	token, err := a.getAccessToken(t.Context())
+	token, err := a.GetAccessTokenForTest(t.Context())
 	if err != nil || token != "shared-token" || requests.Load() != 1 {
 		t.Fatalf("shared refresh: token=%q requests=%d err=%v", token, requests.Load(), err)
 	}

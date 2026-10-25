@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/chord-gateway/internal/im"
+
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
 // This exercises the actual local Gateway, adapter, REST channel lookup,
@@ -54,7 +56,7 @@ func TestDiscordGatewayDurableIngressAndResumeDelivery(t *testing.T) {
 		}
 		return false
 	})
-	adapter, service := discordAdapterFixture(t, api.URL)
+	adapter, service, router := discordAdapterFixture(t, api.URL)
 	notifications := make(chan struct{}, 16)
 	adapter.SetIngressReadinessNotifier(func() {
 		select {
@@ -65,7 +67,7 @@ func TestDiscordGatewayDurableIngressAndResumeDelivery(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- adapter.Connect() }()
 	discordAdapterWaitReady(t, adapter, notifications, result)
-	writer, process, identity := discordIntegrationProcess(t, adapter, service)
+	writer, process, identity := discordIntegrationProcess(t, router, adapter, service)
 	close(sendTask)
 	waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
 	records, err := service.store.ListRouteRecords(identity)
@@ -94,7 +96,7 @@ func TestDiscordGatewayDurableIngressAndResumeDelivery(t *testing.T) {
 		}
 		return false
 	})
-	if adapter.currentGeneration(1) || !adapter.currentGeneration(2) {
+	if adapter.CurrentGenerationForTest(1) || !adapter.CurrentGenerationForTest(2) {
 		t.Fatal("Resume did not move readiness to new generation")
 	}
 	if len(writer.snapshot()) != 1 {
@@ -131,9 +133,8 @@ func discordIntegrationMessageContent(t *testing.T, conn *websocket.Conn, sequen
 	}})
 }
 
-func discordIntegrationProcess(t *testing.T, adapter *DiscordAdapter, service *IngressService) (*ingressTestWriter, *ChordProcess, im.ChatIdentity) {
+func discordIntegrationProcess(t *testing.T, router *NotificationRouter, adapter *discord.DiscordAdapter, service *IngressService) (*ingressTestWriter, *ChordProcess, im.ChatIdentity) {
 	t.Helper()
-	router := adapter.router
 	message := im.IncomingMessage{IMType: "discord", AccountID: discordAdapterAccountID(t), ChatID: "500", SenderID: "789", ChatKind: "group", MessageID: "integration-bind", Text: fmt.Sprintf("/bind %q", t.TempDir())}
 	if !dispatchPairingTest(router, message) {
 		t.Fatal("thread binding failed")
@@ -187,7 +188,7 @@ func TestDiscordContentlessGuildReplyIsReportedAndNotIngested(t *testing.T) {
 		}
 		return false
 	})
-	adapter, service := discordAdapterFixture(t, api.URL)
+	adapter, service, _ := discordAdapterFixture(t, api.URL)
 	notifications := make(chan struct{}, 16)
 	adapter.SetIngressReadinessNotifier(func() {
 		select {
@@ -253,7 +254,7 @@ func TestDiscordCapturedLookupSurvivesGatewayResume(t *testing.T) {
 		}
 		return false
 	})
-	adapter, service := discordAdapterFixture(t, api.URL)
+	adapter, service, router := discordAdapterFixture(t, api.URL)
 	notifications := make(chan struct{}, 16)
 	adapter.SetIngressReadinessNotifier(func() {
 		select {
@@ -264,11 +265,11 @@ func TestDiscordCapturedLookupSurvivesGatewayResume(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- adapter.Connect() }()
 	discordAdapterWaitReady(t, adapter, notifications, result)
-	writer, _, identity := discordIntegrationProcess(t, adapter, service)
+	writer, _, identity := discordIntegrationProcess(t, router, adapter, service)
 	close(sendTask)
 	discordAdapterSignal(t, lookupEntered)
 	close(reconnect)
-	waitIngressCondition(t, func() bool { return adapter.currentGeneration(2) })
+	waitIngressCondition(t, func() bool { return adapter.CurrentGenerationForTest(2) })
 	close(releaseLookup)
 	waitIngressCondition(t, func() bool { return len(writer.snapshot()) == 1 })
 	records, err := service.store.ListRouteRecords(identity)
@@ -310,7 +311,7 @@ func TestDiscordResumeCapturesControlBeforeResumed(t *testing.T) {
 		}
 		return false
 	})
-	adapter, service := discordAdapterFixture(t, api.URL)
+	adapter, service, router := discordAdapterFixture(t, api.URL)
 	notifications := make(chan struct{}, 16)
 	adapter.SetIngressReadinessNotifier(func() {
 		select {
@@ -321,15 +322,13 @@ func TestDiscordResumeCapturesControlBeforeResumed(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- adapter.Connect() }()
 	discordAdapterWaitReady(t, adapter, notifications, result)
-	writer, process, identity := discordIntegrationProcess(t, adapter, service)
+	writer, process, identity := discordIntegrationProcess(t, router, adapter, service)
 	process.mu.Lock()
 	process.state.PendingConfirm = &ConfirmPayload{RequestID: "original-confirm", ToolName: "Write"}
 	process.mu.Unlock()
 	close(reconnect)
 	waitIngressCondition(t, func() bool {
-		adapter.mu.Lock()
-		g := adapter.gw
-		adapter.mu.Unlock()
+		g := adapter.GatewayForTest()
 		seq := g.LastSequenceReceived()
 		return g.Generation() == 2 && seq != nil && *seq == 3
 	})
@@ -432,7 +431,7 @@ func TestDiscordGatewayCaptureContentionDoesNotBlockTransport(t *testing.T) {
 				}
 				return false
 			})
-			adapter, service := discordAdapterFixture(t, api.URL)
+			adapter, service, router := discordAdapterFixture(t, api.URL)
 			notifications := make(chan struct{}, 16)
 			adapter.SetIngressReadinessNotifier(func() {
 				select {
@@ -443,7 +442,7 @@ func TestDiscordGatewayCaptureContentionDoesNotBlockTransport(t *testing.T) {
 			result := make(chan error, 1)
 			go func() { result <- adapter.Connect() }()
 			discordAdapterWaitReady(t, adapter, notifications, result)
-			writer, process, identity := discordIntegrationProcess(t, adapter, service)
+			writer, process, identity := discordIntegrationProcess(t, router, adapter, service)
 			process.mu.Lock()
 			var unlock sync.Once
 			defer unlock.Do(process.mu.Unlock)
@@ -453,9 +452,7 @@ func TestDiscordGatewayCaptureContentionDoesNotBlockTransport(t *testing.T) {
 			}
 			close(sendMessage)
 			waitIngressCondition(t, func() bool {
-				adapter.mu.Lock()
-				g := adapter.gw
-				adapter.mu.Unlock()
+				g := adapter.GatewayForTest()
 				sequence := g.LastSequenceReceived()
 				return sequence != nil && *sequence == 3
 			})

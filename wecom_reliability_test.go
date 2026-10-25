@@ -10,20 +10,22 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/chord-gateway/internal/im"
+
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
 )
 
 func TestWecomDuplicateMustNotPromptResend(t *testing.T) {
-	a, _, store := wecomAdapterFixture(t)
+	a, _, store, r := wecomAdapterFixture(t)
 	replies := make(chan string, 8)
 	startWecomAdapterTestWS(t, a, func(_, body string) int { replies <- body; return 0 })
-	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "first", "same-business")); err != nil {
+	if err := a.ReceiveFrameForTest(a.ContextForTest(), wecomAdapterCallback("bot", "first", "same-business")); err != nil {
 		t.Fatal(err)
 	}
 	waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "received") == 1 })
-	a.router.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, im.IngressEnvelope) im.ReceiveResult {
+	r.ingress.normalizer.receiver = testIngressReceiverFunc(func(context.Context, im.IngressEnvelope) im.ReceiveResult {
 		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "ingress_unavailable"}
 	})
-	if err := a.receiveFrame(a.ctx, wecomAdapterCallback("bot", "redelivery", "same-business")); err != nil {
+	if err := a.ReceiveFrameForTest(a.ContextForTest(), wecomAdapterCallback("bot", "redelivery", "same-business")); err != nil {
 		t.Fatal(err)
 	}
 	waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "acceptance_unconfirmed") == 1 })
@@ -43,12 +45,12 @@ func TestWecomDuplicateMustNotPromptResend(t *testing.T) {
 func TestWecomHeartbeatDuringRecovery(t *testing.T) {
 	preparing, release := make(chan struct{}), make(chan struct{})
 	pings := make(chan struct{}, 8)
-	w, _ := wecomTestWS(t, func(c *websocket.Conn) {
-		if wecomTestSubscribe(c) != nil {
+	w, _ := wecom.StartWSForTest(t, func(c *websocket.Conn) {
+		if wecom.SubscribeWSForTest(c) != nil {
 			return
 		}
 		for {
-			f, err := wecomReadTestFrame(c)
+			f, err := wecom.ReadWSFrameForTest(c)
 			if err != nil {
 				return
 			}
@@ -56,9 +58,9 @@ func TestWecomHeartbeatDuringRecovery(t *testing.T) {
 				pings <- struct{}{}
 			}
 			code := 0
-			_ = wecomTestACK(c, f.Headers.ReqID, &code)
+			_ = wecom.WriteWSACKForTest(c, f.Headers.ReqID, &code)
 		}
-	}, wecomWSCallbacks{OnAuthenticated: func(ctx context.Context) error {
+	}, wecom.WecomWSCallbacks{OnAuthenticated: func(ctx context.Context) error {
 		close(preparing)
 		select {
 		case <-release:
@@ -66,7 +68,7 @@ func TestWecomHeartbeatDuringRecovery(t *testing.T) {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-	}}, func(w *wecomWS) { w.timing.heartbeat = 20 * time.Millisecond })
+	}}, func(w *wecom.WecomWS) { w.SetHeartbeatIntervalForTest(20 * time.Millisecond) })
 	defer w.Stop()
 	defer close(release)
 	<-preparing
@@ -78,33 +80,33 @@ func TestWecomHeartbeatDuringRecovery(t *testing.T) {
 }
 
 func TestWecomCaptureLockMustNotBlockACKOrStop(t *testing.T) {
-	a, msg, _ := wecomAdapterFixture(t)
+	a, msg, _, r := wecomAdapterFixture(t)
 	key := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
-	p := a.router.mgr.GetProcessForKey(key)
+	p := r.mgr.GetProcessForKey(key)
 	trigger, captured := make(chan struct{}), make(chan struct{})
-	w, _ := wecomTestWS(t, func(c *websocket.Conn) {
-		if wecomTestSubscribe(c) != nil {
+	w, _ := wecom.StartWSForTest(t, func(c *websocket.Conn) {
+		if wecom.SubscribeWSForTest(c) != nil {
 			return
 		}
 		<-trigger
 		_ = c.WriteMessage(websocket.TextMessage, wecomAdapterCallback("bot", "callback", "business"))
 		for {
-			f, err := wecomReadTestFrame(c)
+			f, err := wecom.ReadWSFrameForTest(c)
 			if err != nil {
 				return
 			}
 			code := 0
-			_ = wecomTestACK(c, f.Headers.ReqID, &code)
+			_ = wecom.WriteWSACKForTest(c, f.Headers.ReqID, &code)
 		}
-	}, wecomWSCallbacks{CaptureFrame: func(ctx context.Context, raw []byte) context.Context {
+	}, wecom.WecomWSCallbacks{CaptureFrame: func(ctx context.Context, raw []byte) context.Context {
 		close(captured)
-		return a.captureFrame(ctx, raw)
-	}}, func(w *wecomWS) { w.botID = "bot" })
-	wecomWaitReady(t, w)
+		return a.CaptureFrameForTest(ctx, raw)
+	}}, func(w *wecom.WecomWS) { w.SetBotIDForTest("bot") })
+	wecom.WaitWSReadyForTest(t, w)
 	p.mu.Lock()
 	close(trigger)
 	<-captured
-	err := w.SendMarkdown(context.Background(), wecomSendTarget{ChatID: "owner", ChatType: 1}, "output")
+	err := w.SendMarkdown(context.Background(), wecom.WecomSendTarget{ChatID: "owner", ChatType: 1}, "output")
 	if err != nil {
 		t.Errorf("server ACK was blocked behind business state lock: %v", err)
 	}
@@ -122,20 +124,20 @@ func TestWecomCaptureLockMustNotBlockACKOrStop(t *testing.T) {
 func TestWecomBusyCaptureRemainsRejectedAfterStateChanges(t *testing.T) {
 	for _, text := range []string{"/allow", "ordinary input"} {
 		t.Run(text, func(t *testing.T) {
-			a, msg, store := wecomAdapterFixture(t)
+			a, msg, store, r := wecomAdapterFixture(t)
 			key := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
-			p := a.router.mgr.GetProcessForKey(key)
+			p := r.mgr.GetProcessForKey(key)
 			raw := []byte(strings.Replace(string(wecomAdapterCallback("bot", "busy-delivery", "busy-business")), `"content":"task"`, `"content":"`+text+`"`, 1))
 			p.mu.Lock()
-			ctx := a.captureFrame(a.ctx, raw)
+			ctx := a.CaptureFrameForTest(a.ContextForTest(), raw)
 			p.state.PendingConfirm = &ConfirmPayload{RequestID: "replacement-confirm", ToolName: "Done"}
 			writer := p.stdin.(*ingressTestWriter)
 			p.mu.Unlock()
-			e := ctx.Value(wecomCapturedEnvelopeContextKey{}).(im.IngressEnvelope)
+			e := ctx.Value(wecom.CapturedEnvelopeContextKey{}).(im.IngressEnvelope)
 			if e.Capture == nil || !e.Capture.Unavailable {
 				t.Fatal("busy state was not frozen as unavailable")
 			}
-			if err := a.receiveFrame(ctx, raw); err != nil {
+			if err := a.ReceiveFrameForTest(ctx, raw); err != nil {
 				t.Fatal(err)
 			}
 			waitIngressCondition(t, func() bool {
@@ -146,7 +148,7 @@ func TestWecomBusyCaptureRemainsRejectedAfterStateChanges(t *testing.T) {
 				t.Fatal("busy callback executed under replacement state")
 			}
 			// A fresh capture on redelivery must not revive the rejected business ID.
-			if err := a.receiveFrame(a.captureFrame(a.ctx, raw), raw); err != nil {
+			if err := a.ReceiveFrameForTest(a.CaptureFrameForTest(a.ContextForTest(), raw), raw); err != nil {
 				t.Fatal(err)
 			}
 			waitIngressCondition(t, func() bool { return countWecomIngressEvent(store, "duplicate") == 1 })
@@ -160,8 +162,8 @@ func TestWecomBusyCaptureRemainsRejectedAfterStateChanges(t *testing.T) {
 func TestWecomCaptureDoesNotWaitForManagerTransferOrPins(t *testing.T) {
 	for _, resource := range []string{"manager", "transfer", "pins"} {
 		t.Run(resource, func(t *testing.T) {
-			a, msg, _ := wecomAdapterFixture(t)
-			mgr := a.router.mgr
+			_, msg, _, r := wecomAdapterFixture(t)
+			mgr := r.mgr
 			key := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
 			msg.Text = "/status"
 			var unlock func()
@@ -181,7 +183,7 @@ func TestWecomCaptureDoesNotWaitForManagerTransferOrPins(t *testing.T) {
 				unlock = mgr.pins.mu.Unlock
 			}
 			done := make(chan bool, 1)
-			go func() { _, _, ok := a.router.tryCaptureIngress(msg); done <- ok }()
+			go func() { _, _, ok := r.tryCaptureIngress(msg); done <- ok }()
 			select {
 			case ok := <-done:
 				if ok {
@@ -197,24 +199,24 @@ func TestWecomCaptureDoesNotWaitForManagerTransferOrPins(t *testing.T) {
 
 func TestWecomHeartbeatTimeoutCancelsRecovery(t *testing.T) {
 	preparing, cancelled := make(chan struct{}, 1), make(chan struct{}, 1)
-	w, _ := wecomTestWS(t, func(c *websocket.Conn) {
-		if wecomTestSubscribe(c) != nil {
+	w, _ := wecom.StartWSForTest(t, func(c *websocket.Conn) {
+		if wecom.SubscribeWSForTest(c) != nil {
 			return
 		}
 		for {
-			if _, err := wecomReadTestFrame(c); err != nil {
+			if _, err := wecom.ReadWSFrameForTest(c); err != nil {
 				return
 			}
 		}
-	}, wecomWSCallbacks{OnAuthenticated: func(ctx context.Context) error {
+	}, wecom.WecomWSCallbacks{OnAuthenticated: func(ctx context.Context) error {
 		preparing <- struct{}{}
 		<-ctx.Done()
 		cancelled <- struct{}{}
 		return ctx.Err()
-	}}, func(w *wecomWS) {
-		w.timing.heartbeat = 10 * time.Millisecond
-		w.timing.heartbeatACK = 20 * time.Millisecond
-		w.timing.backoff = time.Hour
+	}}, func(w *wecom.WecomWS) {
+		w.SetHeartbeatIntervalForTest(10 * time.Millisecond)
+		w.SetHeartbeatACKTimeoutForTest(20 * time.Millisecond)
+		w.SetHeartbeatBackoffForTest(time.Hour)
 	})
 	<-preparing
 	select {
@@ -229,8 +231,8 @@ func TestWecomReconnectBackoffResetsOnlyAfterStability(t *testing.T) {
 	ready := make(chan struct{}, 1)
 	delays := make(chan time.Duration, 8)
 	var attempts atomic.Int32
-	w, _ := wecomTestWS(t, func(c *websocket.Conn) {
-		if wecomTestSubscribe(c) != nil {
+	w, _ := wecom.StartWSForTest(t, func(c *websocket.Conn) {
+		if wecom.SubscribeWSForTest(c) != nil {
 			return
 		}
 		<-ready
@@ -239,9 +241,9 @@ func TestWecomReconnectBackoffResetsOnlyAfterStability(t *testing.T) {
 		} else {
 			time.Sleep(5 * time.Millisecond)
 		}
-	}, wecomWSCallbacks{OnReady: func(context.Context) error { ready <- struct{}{}; return nil }}, func(w *wecomWS) {
-		w.stableAfter = 50 * time.Millisecond
-		w.jitter = func(delay time.Duration) time.Duration { delays <- delay; return time.Millisecond }
+	}, wecom.WecomWSCallbacks{OnReady: func(context.Context) error { ready <- struct{}{}; return nil }}, func(w *wecom.WecomWS) {
+		w.SetStableAfterForTest(50 * time.Millisecond)
+		w.SetJitterForTest(func(delay time.Duration) time.Duration { delays <- delay; return time.Millisecond })
 	})
 	defer w.Stop()
 	for _, want := range []time.Duration{20 * time.Millisecond, 40 * time.Millisecond, 20 * time.Millisecond} {
@@ -257,10 +259,10 @@ func TestWecomReconnectBackoffResetsOnlyAfterStability(t *testing.T) {
 }
 
 func TestWecomReconnectJitterBounds(t *testing.T) {
-	w := newWecomWS("bot", "secret", wecomWSCallbacks{})
+	w := wecom.NewWSForTest("bot", "secret", wecom.WecomWSCallbacks{})
 	seen := make(map[time.Duration]bool)
 	for range 100 {
-		delay := w.jitter(time.Second)
+		delay := w.JitterForTest(time.Second)
 		if delay < 800*time.Millisecond || delay > 1200*time.Millisecond {
 			t.Fatalf("jitter outside bounds: %s", delay)
 		}

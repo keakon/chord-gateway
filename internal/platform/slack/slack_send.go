@@ -1,0 +1,233 @@
+package slack
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"path"
+	"strconv"
+	"strings"
+	"time"
+
+	slackapi "github.com/slack-go/slack"
+
+	"github.com/keakon/chord-gateway/internal/im"
+)
+
+const slackTextBudget = 3500
+
+type slackPostClient interface {
+	PostMessageContext(context.Context, string, ...slackapi.MsgOption) (string, string, error)
+}
+
+// Sender sends one workspace's text output through the Web API with shared
+// per-channel and per-installation pacing. Exported for the root package test
+// suite, which drives it against stub API servers.
+type Sender struct {
+	client slackPostClient
+	text   *im.IMTextSender
+	limits *slackSendLimits
+}
+
+// NewSender builds a sender for one API client.
+func NewSender(client slackPostClient) (*Sender, error) {
+	if client == nil {
+		return nil, errors.New("slack sender requires an API client")
+	}
+	s := &Sender{client: client, limits: newSlackSendLimits()}
+	text, err := im.NewIMTextSender(im.IMTextSendOptions{
+		Platform: "slack", Budget: slackTextBudget,
+		Render: escapeSlackText, Measure: im.UTF16Units, SendSegment: s.sendSegment,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create slack text sender: %w", err)
+	}
+	s.text = text
+	return s, nil
+}
+
+func (s *Sender) Send(ctx, lifecycle context.Context, target, text string) error {
+	if _, _, err := DecodeTarget(target); err != nil {
+		return &im.IMTextSendError{Category: "invalid_target", Cause: errors.New("invalid slack output target")}
+	}
+	return s.text.Send(ctx, lifecycle, nil, target, text, false)
+}
+
+func escapeSlackText(text string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+}
+
+func (s *Sender) sendSegment(ctx context.Context, target, text string) error {
+	channel, thread, err := DecodeTarget(target)
+	if err != nil {
+		return errors.New("invalid slack output target")
+	}
+	if err = s.limits.wait(ctx, channel); err != nil {
+		return err
+	}
+	options := []slackapi.MsgOption{
+		slackapi.MsgOptionText(text, false), slackapi.MsgOptionDisableMarkdown(),
+		slackapi.MsgOptionParse(false), slackapi.MsgOptionLinkNames(false),
+		slackapi.MsgOptionDisableLinkUnfurl(), slackapi.MsgOptionDisableMediaUnfurl(),
+	}
+	if thread != "" {
+		options = append(options, slackapi.MsgOptionTS(thread))
+	}
+	responseChannel, ts, err := s.client.PostMessageContext(ctx, channel, options...)
+	if err != nil {
+		var limited *slackapi.RateLimitedError
+		if errors.As(err, &limited) && limited.RetryAfter > 0 {
+			// The receipt transport already published the method cooldown.
+			return &im.IMRateLimitError{RetryAfter: limited.RetryAfter}
+		}
+		return sanitizeSlackSendError(err)
+	}
+	if !ValidTimestamp(ts) || responseChannel != channel {
+		return fmt.Errorf("%w: slack message receipt is missing or inconsistent", im.ErrDeliveryOutcomeUnknown)
+	}
+	return nil
+}
+
+// slackSendRefusal carries the bounded failure category for a definite
+// platform rejection, so partial-send diagnostics and metrics distinguish an
+// explicit refusal from an unconfirmed outcome instead of reporting
+// delivery_failed for every Slack failure.
+type slackSendRefusal struct {
+	category string
+	cause    error
+}
+
+func (e *slackSendRefusal) Error() string                     { return e.cause.Error() }
+func (e *slackSendRefusal) Unwrap() error                     { return e.cause }
+func (e *slackSendRefusal) IMTextSendFailureCategory() string { return e.category }
+
+func slackRejection(category string, format string, args ...any) error {
+	return &slackSendRefusal{category: category, cause: fmt.Errorf(format, args...)}
+}
+
+func sanitizeSlackSendError(err error) error {
+	var unsent *slackUnsentRequestError
+	if errors.As(err, &unsent) {
+		return unsent.cause
+	}
+	var apiError slackapi.SlackErrorResponse
+	if errors.As(err, &apiError) {
+		switch apiError.Err {
+		case "internal_error", "fatal_error":
+			return fmt.Errorf("%w: slack message operation %s", im.ErrDeliveryOutcomeUnknown, apiError.Err)
+		case "channel_not_found":
+			return slackRejection("invalid_target", "slack message rejected: %s", apiError.Err)
+		case "not_in_channel", "is_archived", "missing_scope":
+			return slackRejection("forbidden", "slack message rejected: %s", apiError.Err)
+		case "invalid_auth", "account_inactive", "token_revoked", "not_authed":
+			return slackRejection("credentials", "slack message rejected: %s", apiError.Err)
+		default:
+			return slackRejection("api_rejected", "slack message rejected: slack_api_rejected")
+		}
+	}
+	var status slackapi.StatusCodeError
+	if errors.As(err, &status) && !im.IsAmbiguousDeliveryStatus(status.Code) {
+		return slackRejection("platform_rejected", "slack message rejected: HTTP %d", status.Code)
+	}
+	if errors.Is(err, context.Canceled) {
+		return errors.Join(im.ErrDeliveryOutcomeUnknown, context.Canceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errors.Join(im.ErrDeliveryOutcomeUnknown, context.DeadlineExceeded)
+	}
+	// SDK errors may contain request URLs, response bodies or credentials.
+	return fmt.Errorf("%w: slack message request was not confirmed", im.ErrDeliveryOutcomeUnknown)
+}
+
+// Slack's SDK accepts an HTTP 200 with ok:false and no error as successful.
+// Verify the receipt before its parser sees it, without modifying its source.
+type slackReceiptTransport struct {
+	base   http.RoundTripper
+	limits *slackMethodLimits
+}
+
+// Cancellation while waiting for a method cooldown has no delivery ambiguity.
+type slackUnsentRequestError struct{ cause error }
+
+func (e *slackUnsentRequestError) Error() string { return "slack request cancelled before transport" }
+func (e *slackUnsentRequestError) Unwrap() error { return e.cause }
+
+func (t slackReceiptTransport) CloseIdleConnections() {
+	if closer, ok := t.base.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+func (t slackReceiptTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	method := path.Base(req.URL.Path)
+	resp, err := t.base.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
+		seconds, parseErr := strconv.ParseInt(resp.Header.Get("Retry-After"), 10, 64)
+		if parseErr == nil && seconds > 0 && seconds <= int64(time.Duration(1<<63-1)/time.Second) {
+			t.limits.block(method, time.Duration(seconds)*time.Second)
+		}
+	}
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	_ = resp.Body.Close()
+	if readErr != nil || len(body) > 1<<20 {
+		return nil, errors.New("slack receipt could not be read")
+	}
+	var receipt struct {
+		OK    *bool  `json:"ok"`
+		Error string `json:"error"`
+		TS    string `json:"ts"`
+	}
+	if json.Unmarshal(body, &receipt) != nil || receipt.OK == nil ||
+		!*receipt.OK && strings.TrimSpace(receipt.Error) == "" ||
+		*receipt.OK && strings.HasSuffix(req.URL.Path, "/chat.postMessage") && !ValidTimestamp(receipt.TS) {
+		return nil, errors.New("slack receipt was not confirmed")
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return resp, nil
+}
+
+// Wait outside http.Client.Do: its Timeout must bound the network operation,
+// not erase the unsent evidence of a cancelled cooldown wait.
+type slackHTTPClient struct {
+	client *http.Client
+	limits *slackMethodLimits
+}
+
+func (c *slackHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if err := c.limits.wait(req.Context(), path.Base(req.URL.Path)); err != nil {
+		return nil, &slackUnsentRequestError{cause: err}
+	}
+	return c.client.Do(req)
+}
+
+// closeIdleConnections releases pooled sockets on adapter shutdown. It is
+// nil-safe so a partially constructed adapter can still be stopped.
+func (c *slackHTTPClient) closeIdleConnections() {
+	if c == nil || c.client == nil {
+		return
+	}
+	if closer, ok := c.client.Transport.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+func NewHTTPClient(base *http.Client, proxyFunc func(*http.Request) (*url.URL, error)) *slackHTTPClient {
+	client := im.MessageHTTPClient(base)
+	client.Timeout = 15 * time.Second
+	// A configured proxy always wins over an injected transport. Production
+	// passes a nil base, so proxyFunc also supplies the direct-connection default.
+	if proxyFunc != nil || client.Transport == nil {
+		client.Transport = im.ProxiedTransport(proxyFunc)
+	}
+	limits := &slackMethodLimits{blocked: make(map[string]time.Time)}
+	client.Transport = slackReceiptTransport{base: client.Transport, limits: limits}
+	return &slackHTTPClient{client: client, limits: limits}
+}

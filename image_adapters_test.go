@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -49,7 +52,7 @@ func TestEncryptILinkImagePadsInPlace(t *testing.T) {
 	for _, spare := range []int{0, aes.BlockSize} {
 		buf := make([]byte, len(plain), len(plain)+spare)
 		copy(buf, plain)
-		ciphertext, err := encryptILinkImage(buf, key)
+		ciphertext, err := wechat.EncryptILinkImageForTest(buf, key)
 		if err != nil {
 			t.Fatalf("spare=%d: encrypt: %v", spare, err)
 		}
@@ -115,7 +118,7 @@ func TestWechatImageUploadEncryptionAndContext(t *testing.T) {
 			}
 			w.Header().Set("x-encrypted-param", "download-param")
 		case "/ilink/bot/sendmessage":
-			var p ilinkSendMessageRequest
+			var p wechat.ILinkSendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			sent++
 			// The adapter resolves the chat's reply token itself.
@@ -124,7 +127,7 @@ func TestWechatImageUploadEncryptionAndContext(t *testing.T) {
 			}
 			item := p.Msg.ItemList[0]
 			decoded, _ := base64.StdEncoding.DecodeString(item.ImageItem.Media.AESKey)
-			if item.Type != ilinkItemTypeImage || item.ImageItem.Media.EncryptQueryParam != "download-param" {
+			if item.Type != wechat.ILinkItemTypeImage || item.ImageItem.Media.EncryptQueryParam != "download-param" {
 				t.Error("media reference lost")
 			}
 			// Both spellings are sent: the raw key base64-encoded under media, and
@@ -139,9 +142,9 @@ func TestWechatImageUploadEncryptionAndContext(t *testing.T) {
 	}))
 	defer server.Close()
 	a := newTestWechatAdapter(t)
-	a.imCfg.Wechat.BaseURL = server.URL
-	a.token.Store(&TokenData{AccountID: "bot"})
-	a.cachePairedContext("bot", "sample-user", "new-context", true)
+	a.SetBaseURLForTest(server.URL)
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot"})
+	a.CachePairedContextForTest("bot", "sample-user", "new-context", true)
 	if err := a.SendImage("sample-user", image); err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +205,11 @@ func TestFeishuImageUploadTenantTokenAndRefresh(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	originalURL := feishuOpenBaseURL
-	feishuOpenBaseURL = server.URL
-	defer func() { feishuOpenBaseURL = originalURL }()
+	originalURL := feishu.OpenBaseURL
+	feishu.OpenBaseURL = server.URL
+	defer func() { feishu.OpenBaseURL = originalURL }()
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
-	a.httpClient = server.Client()
+	a.SetHTTPClientForTest(server.Client())
 	if err := a.SendImage("sample-chat", image); err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +225,8 @@ func TestWechatSendResponseFailureIsNotRetried(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); io.WriteString(w, raw) }))
 			defer srv.Close()
 			a := newTestWechatAdapter(t)
-			a.imCfg.Wechat.BaseURL = srv.URL
-			if a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{}) == nil {
+			a.SetBaseURLForTest(srv.URL)
+			if a.SendMessageForTest(t.Context(), a.TokenForTest(), wechat.ILinkSendMessageRequest{}) == nil {
 				t.Fatal("invalid or rejected receipt reported success")
 			}
 			if requests.Load() != 1 {
@@ -296,13 +299,13 @@ func TestFeishuImageSendRequiresConfirmedReceipt(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			oldURL := feishuOpenBaseURL
-			feishuOpenBaseURL = srv.URL
-			defer func() { feishuOpenBaseURL = oldURL }()
+			oldURL := feishu.OpenBaseURL
+			feishu.OpenBaseURL = srv.URL
+			defer func() { feishu.OpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
 
-			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-			a.httpClient = srv.Client()
+			a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+			a.SetHTTPClientForTest(srv.Client())
 			err := a.SendImage("sample-chat", imageForUpload(t))
 			if err == nil || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown {
 				t.Fatalf("receipt error = %v", err)
@@ -343,8 +346,8 @@ func TestWechatSendRequiresExplicitReceipt(t *testing.T) {
 			}))
 			defer srv.Close()
 			a := newTestWechatAdapter(t)
-			a.imCfg.Wechat.BaseURL = srv.URL
-			err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{})
+			a.SetBaseURLForTest(srv.URL)
+			err := a.SendMessageForTest(t.Context(), a.TokenForTest(), wechat.ILinkSendMessageRequest{})
 			if err == nil || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown {
 				t.Fatalf("receipt error = %v", err)
 			}
@@ -378,13 +381,13 @@ func TestFeishuImageSendRefreshRequiresFreshReceipt(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			oldURL := feishuOpenBaseURL
-			feishuOpenBaseURL = srv.URL
-			defer func() { feishuOpenBaseURL = oldURL }()
+			oldURL := feishu.OpenBaseURL
+			feishu.OpenBaseURL = srv.URL
+			defer func() { feishu.OpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
 
-			a.accessToken, a.tokenExpireAt = "old-token", time.Now().Add(time.Hour)
-			a.httpClient = srv.Client()
+			a.SetTokenForTest("old-token", time.Now().Add(time.Hour))
+			a.SetHTTPClientForTest(srv.Client())
 			err := a.SendImage("sample-chat", imageForUpload(t))
 			success := strings.Contains(body, "sample-message")
 			if success && err != nil || !success && !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
@@ -416,15 +419,15 @@ func TestFeishuUploadRequiresExplicitSuccess(t *testing.T) {
 				io.WriteString(w, tc.body)
 			}))
 			defer srv.Close()
-			oldURL := feishuOpenBaseURL
-			feishuOpenBaseURL = srv.URL
-			defer func() { feishuOpenBaseURL = oldURL }()
+			oldURL := feishu.OpenBaseURL
+			feishu.OpenBaseURL = srv.URL
+			defer func() { feishu.OpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
 
-			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-			a.httpClient = srv.Client()
+			a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+			a.SetHTTPClientForTest(srv.Client())
 			data := testImageBytes(t)
-			if _, err := a.uploadImage(context.Background(), bytes.NewReader(data), int64(len(data)), "sample.png", "image/png", false); err == nil {
+			if _, err := a.UploadImageForTest(context.Background(), bytes.NewReader(data), int64(len(data)), "sample.png", "image/png", false); err == nil {
 				t.Fatal("invalid upload receipt accepted")
 			}
 			if requests.Load() != 1 {
@@ -442,7 +445,7 @@ func TestFeishuPreviewNoteFailureKeepsConfirmedDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := make([]byte, feishuImageUploadLimit)
+	chunk := make([]byte, feishu.ImageUploadLimitForTest())
 	binary.BigEndian.PutUint32(chunk[:4], uint32(len(chunk)-12))
 	copy(chunk[4:8], "teSt")
 	binary.BigEndian.PutUint32(chunk[len(chunk)-4:], crc32.ChecksumIEEE(chunk[4:len(chunk)-4]))
@@ -475,13 +478,13 @@ func TestFeishuPreviewNoteFailureKeepsConfirmedDelivery(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	oldURL := feishuOpenBaseURL
-	feishuOpenBaseURL = srv.URL
-	defer func() { feishuOpenBaseURL = oldURL }()
+	oldURL := feishu.OpenBaseURL
+	feishu.OpenBaseURL = srv.URL
+	defer func() { feishu.OpenBaseURL = oldURL }()
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "sample-app", AppSecret: "sample-secret"})
 
-	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-	a.httpClient = srv.Client()
+	a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+	a.SetHTTPClientForTest(srv.Client())
 	if err := a.SendImage("sample-chat", img); err != nil {
 		t.Fatalf("confirmed preview reported as failed: %v", err)
 	}
@@ -496,8 +499,8 @@ func TestWechatSendAcceptsExplicitSuccessStatus(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
 			defer srv.Close()
 			a := newTestWechatAdapter(t)
-			a.imCfg.Wechat.BaseURL = srv.URL
-			if err := a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{}); err != nil {
+			a.SetBaseURLForTest(srv.URL)
+			if err := a.SendMessageForTest(t.Context(), a.TokenForTest(), wechat.ILinkSendMessageRequest{}); err != nil {
 				t.Fatalf("explicit success rejected: %v", err)
 			}
 		})
@@ -508,7 +511,7 @@ func TestWechatSendAcceptsExplicitSuccessStatus(t *testing.T) {
 // 4xx rejection may not, because repeating an invalid request cannot succeed.
 func TestWechatMediaUploadRetryPolicy(t *testing.T) {
 	// Attempts, not the spacing, are under test.
-	swapTestValue(t, &ilinkCDNUploadBackoff, time.Millisecond)
+	swapTestValue(t, &wechat.ILinkCDNUploadBackoff, time.Millisecond)
 	for _, tc := range []struct {
 		name         string
 		failStatus   int
@@ -545,8 +548,8 @@ func TestWechatMediaUploadRetryPolicy(t *testing.T) {
 			}))
 			defer server.Close()
 			a := newTestWechatAdapter(t)
-			a.imCfg.Wechat.BaseURL = server.URL
-			a.cachePairedContext("bot", "sample-user", "context", true)
+			a.SetBaseURLForTest(server.URL)
+			a.CachePairedContextForTest("bot", "sample-user", "context", true)
 			err := a.SendImage("sample-user", imageForUpload(t))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("upload error = %v", err)

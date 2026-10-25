@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -22,9 +24,9 @@ func (f imageRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 func TestFeishuImageUploadOutlivesJSONTimeout(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{})
 
-	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
+	a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
 	uploads, sends := 0, 0
-	a.httpClient = &http.Client{
+	a.SetHTTPClientForTest(&http.Client{
 		Timeout: 10 * time.Millisecond,
 		Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
@@ -33,7 +35,7 @@ func TestFeishuImageUploadOutlivesJSONTimeout(t *testing.T) {
 			if req.URL.Path == "/open-apis/im/v1/images" {
 				uploads++
 				deadline, ok := req.Context().Deadline()
-				if !ok || time.Until(deadline) <= time.Minute || time.Until(deadline) > feishuMediaUploadTimeout {
+				if !ok || time.Until(deadline) <= time.Minute || time.Until(deadline) > feishu.MediaUploadTimeoutForTest {
 					t.Error("upload does not have its independent media deadline")
 				}
 				timer := time.NewTimer(50 * time.Millisecond)
@@ -49,7 +51,7 @@ func TestFeishuImageUploadOutlivesJSONTimeout(t *testing.T) {
 			}
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 		}),
-	}
+	})
 	if err := a.SendImage("sample-chat", imageForUpload(t)); err != nil {
 		t.Fatalf("media upload inherited the short JSON timeout: %v", err)
 	}
@@ -62,13 +64,13 @@ func TestFeishuDisconnectCancelsImageUpload(t *testing.T) {
 	for _, phase := range []string{"waiting", "token", "uploading", "sending", "uploaded"} {
 		t.Run(phase, func(t *testing.T) {
 			a := testFeishuAdapter(t, &config.FeishuConfig{})
-			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
+			a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
 			connected := make(chan struct{})
-			a.runLongConn = func(ctx context.Context) error {
+			a.SetLongConnForTest(func(ctx context.Context) error {
 				close(connected)
 				<-ctx.Done()
 				return ctx.Err()
-			}
+			})
 			connectDone := make(chan error, 1)
 			go func() { connectDone <- a.Connect() }()
 			defer a.Disconnect()
@@ -79,11 +81,9 @@ func TestFeishuDisconnectCancelsImageUpload(t *testing.T) {
 			}
 			started := make(chan struct{})
 			if phase == "token" {
-				a.mu.Lock()
-				a.accessToken = ""
-				a.mu.Unlock()
+				a.ClearTokenForTest()
 			}
-			a.httpClient = &http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+			a.SetHTTPClientForTest(&http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
 				defer req.Body.Close()
 				if (phase == "sending" || phase == "uploaded") && req.URL.Path == "/open-apis/im/v1/images" {
 					if phase == "uploaded" {
@@ -102,7 +102,7 @@ func TestFeishuDisconnectCancelsImageUpload(t *testing.T) {
 				close(started)
 				<-req.Context().Done()
 				return nil, req.Context().Err()
-			})}
+			})})
 			if phase == "waiting" {
 				release, err := im.AcquireImageUpload(t.Context())
 				if err != nil {

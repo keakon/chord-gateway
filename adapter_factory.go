@@ -6,6 +6,14 @@ package main
 import (
 	"fmt"
 
+	dingtalk "github.com/keakon/chord-gateway/internal/platform/dingtalk"
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+	slack "github.com/keakon/chord-gateway/internal/platform/slack"
+	telegram "github.com/keakon/chord-gateway/internal/platform/telegram"
+	wechat "github.com/keakon/chord-gateway/internal/platform/wechat"
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -23,19 +31,19 @@ func NewIMAdapter(cfg *config.Config, paths *config.Paths, router *NotificationR
 func newAdapterFromConfig(imCfg config.IMAdapterConfig, cfg *config.Config, paths *config.Paths, router *NotificationRouter) (im.IMAdapter, error) {
 	switch imCfg.Type() {
 	case "wechat":
-		return NewWechatAdapter(cfg, imCfg, paths, router)
+		return wechat.NewWechatAdapter(cfg, imCfg, paths, router)
 	case "feishu":
-		return NewFeishuAdapter(cfg, imCfg, paths, router)
+		return feishu.NewFeishuAdapter(cfg, imCfg, paths, router)
 	case "wecom":
-		return NewWecomAdapter(cfg, imCfg, paths, router)
+		return wecom.NewWecomAdapter(cfg, imCfg, paths, router)
 	case "dingtalk":
-		return NewDingtalkAdapter(cfg, imCfg, paths, router)
+		return dingtalk.NewDingtalkAdapter(cfg, imCfg, paths, router)
 	case "discord":
-		return NewDiscordAdapter(cfg, imCfg, paths, router)
+		return discord.NewDiscordAdapter(cfg, imCfg, paths, router)
 	case "slack":
-		return NewSlackAdapter(cfg, imCfg, paths, router)
+		return slack.NewSlackAdapter(cfg, imCfg, paths, router)
 	case "telegram":
-		return NewTelegramAdapter(cfg, imCfg, paths, router)
+		return telegram.NewTelegramAdapter(cfg, imCfg, paths, router)
 	default:
 		return nil, fmt.Errorf("unsupported IM type: %s", imCfg.Type())
 	}

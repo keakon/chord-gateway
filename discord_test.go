@@ -17,12 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/disgoorg/disgo/discord"
+	disgo "github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
 	"github.com/gorilla/websocket"
 
 	gateway "github.com/keakon/chord-gateway/internal/discordgateway"
 	"github.com/keakon/chord-gateway/internal/im"
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
 // Fixture accounts must not contend on the production machine-wide account lock
@@ -103,7 +104,7 @@ func discordAdapterResult(t *testing.T, result <-chan error) error {
 		return nil
 	}
 }
-func discordAdapterFixture(t *testing.T, apiURL string) (*DiscordAdapter, *IngressService) {
+func discordAdapterFixture(t *testing.T, apiURL string) (*discord.DiscordAdapter, *IngressService, *NotificationRouter) {
 	t.Helper()
 	router, _ := pairedTestRouterWithConfig(t, fmt.Sprintf("ims: {wechat: {}, discord: {bot_token: placeholder, application_id: '456', owner: {account_id: %q, user_id: '789'}}}\n", discordAdapterAccountID(t)))
 	service := NewIngressService(testIngressStore(t), router)
@@ -112,14 +113,14 @@ func discordAdapterFixture(t *testing.T, apiURL string) (*DiscordAdapter, *Ingre
 	}
 	t.Cleanup(service.Close)
 	imCfg := router.getConfig().IMConfigByType("discord")
-	adapter, err := NewDiscordAdapter(router.getConfig(), *imCfg, nil, router)
+	adapter, err := discord.NewDiscordAdapter(router.getConfig(), *imCfg, nil, router)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter.rest = newDiscordRESTClient(adapter.ctx, &http.Client{Timeout: 3 * time.Second}, "test-token", rest.WithURL(apiURL))
+	adapter.SetRESTForTest(discord.NewDiscordRESTClient(adapter.ContextForTest(), &http.Client{Timeout: 3 * time.Second}, "test-token", rest.WithURL(apiURL)))
 	router.SetAdapter(adapter)
 	t.Cleanup(adapter.Disconnect)
-	return adapter, service
+	return adapter, service, router
 }
 func discordAdapterREST(t *testing.T, wsURL string, override func(http.ResponseWriter, *http.Request) bool) *httptest.Server {
 	t.Helper()
@@ -142,7 +143,7 @@ func discordAdapterREST(t *testing.T, wsURL string, override func(http.ResponseW
 	t.Cleanup(server.Close)
 	return server
 }
-func discordAdapterWaitReady(t *testing.T, a *DiscordAdapter, notifications <-chan struct{}, result <-chan error) {
+func discordAdapterWaitReady(t *testing.T, a *discord.DiscordAdapter, notifications <-chan struct{}, result <-chan error) {
 	t.Helper()
 	timeout := time.NewTimer(3 * time.Second)
 	defer timeout.Stop()
@@ -155,9 +156,8 @@ func discordAdapterWaitReady(t *testing.T, a *DiscordAdapter, notifications <-ch
 		case err := <-result:
 			t.Fatalf("Connect returned before readiness: %v", err)
 		case <-timeout.C:
-			a.mu.Lock()
-			account, generation, ready, stopping, g := a.accountID, a.generation, a.ready, a.stopping, a.gw
-			a.mu.Unlock()
+			account, generation, ready, stopping := a.StateForTest()
+			g := a.GatewayForTest()
 			state := "not constructed"
 			if g != nil {
 				state = g.Status().String()
@@ -168,8 +168,9 @@ func discordAdapterWaitReady(t *testing.T, a *DiscordAdapter, notifications <-ch
 }
 
 func TestDiscordAdapterAuthenticatesAndRecoversBeforeReady(t *testing.T) {
-	var adapter *DiscordAdapter
+	var adapter *discord.DiscordAdapter
 	var service *IngressService
+	var router *NotificationRouter
 	identified := make(chan map[string]any, 1)
 	preparedAtIdentify := make(chan bool, 1)
 	wsURL, _ := discordAdapterTestWS(t, func(conn *websocket.Conn, _ int) {
@@ -203,7 +204,7 @@ func TestDiscordAdapterAuthenticatesAndRecoversBeforeReady(t *testing.T) {
 		sequenceMu.Unlock()
 		return false
 	})
-	adapter, service = discordAdapterFixture(t, api.URL)
+	adapter, service, router = discordAdapterFixture(t, api.URL)
 	notifications := make(chan struct{}, 16)
 	adapter.SetIngressReadinessNotifier(func() {
 		select {
@@ -223,10 +224,10 @@ func TestDiscordAdapterAuthenticatesAndRecoversBeforeReady(t *testing.T) {
 	if !<-preparedAtIdentify {
 		t.Fatal("Gateway Identify preceded ingress recovery")
 	}
-	adapter.router.admission.pairing.mu.Lock()
-	platform := adapter.router.admission.pairing.platforms["discord"]
+	router.admission.pairing.mu.Lock()
+	platform := router.admission.pairing.platforms["discord"]
 	account, ready := platform.account, platform.ready
-	adapter.router.admission.pairing.mu.Unlock()
+	router.admission.pairing.mu.Unlock()
 	if account != discordAdapterAccountID(t) || !ready {
 		t.Fatalf("pairing identity = %s/%v", account, ready)
 	}
@@ -284,15 +285,15 @@ func TestDiscordAdapterRejectsRESTIdentityAndSharding(t *testing.T) {
 				_, _ = w.Write([]byte(strings.ReplaceAll(tc.body, `"123"`, `"`+discordAdapterAccountID(t)+`"`)))
 				return true
 			})
-			adapter, _ := discordAdapterFixture(t, api.URL)
+			adapter, _, _ := discordAdapterFixture(t, api.URL)
 			err := adapter.Connect()
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Connect = %v, want %s", err, tc.want)
 			}
-			if adapter.currentGeneration(1) {
+			if adapter.CurrentGenerationForTest(1) {
 				t.Fatal("rejected identity became ready")
 			}
-			if adapter.accountID != "" {
+			if adapter.AccountIDForTest() != "" {
 				lock, err := im.AcquireIMAccountLock("discord", discordAdapterAccountID(t))
 				if err != nil {
 					t.Fatalf("account lock leaked: %v", err)
@@ -311,7 +312,7 @@ func TestDiscordAdapterAccountLockCoversWorkerExit(t *testing.T) {
 		discordAdapterDrain(conn)
 	})
 	api := discordAdapterREST(t, wsURL, nil)
-	adapter, _ := discordAdapterFixture(t, api.URL)
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	adapter.SetIngressReadinessNotifier(func() {
@@ -324,7 +325,7 @@ func TestDiscordAdapterAccountLockCoversWorkerExit(t *testing.T) {
 	discordAdapterSignal(t, entered)
 	disconnected := make(chan struct{})
 	go func() { adapter.Disconnect(); close(disconnected) }()
-	discordAdapterSignal(t, adapter.ctx.Done())
+	discordAdapterSignal(t, adapter.ContextForTest().Done())
 	if lock, err := im.AcquireIMAccountLock("discord", discordAdapterAccountID(t)); err == nil {
 		lock.Close()
 		t.Error("account lock released while gateway callback worker was active")
@@ -369,7 +370,7 @@ func TestDiscordAdapterReadyMismatchAndFatalCloseStop(t *testing.T) {
 				discordAdapterDrain(conn)
 			})
 			api := discordAdapterREST(t, wsURL, nil)
-			adapter, _ := discordAdapterFixture(t, api.URL)
+			adapter, _, _ := discordAdapterFixture(t, api.URL)
 			notifications := make(chan struct{}, 16)
 			adapter.SetIngressReadinessNotifier(func() {
 				select {
@@ -409,7 +410,7 @@ func TestDiscordAdapterConcurrentConnectDisconnect(t *testing.T) {
 		<-r.Context().Done()
 		return true
 	})
-	adapter, _ := discordAdapterFixture(t, api.URL)
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
 	result := make(chan error, 1)
 	go func() { result <- adapter.Connect() }()
 	discordAdapterSignal(t, entered)
@@ -435,7 +436,7 @@ func TestDiscordAdapterConcurrentConnectDisconnect(t *testing.T) {
 
 func TestDiscordAdapterDisconnectBeforeConnect(t *testing.T) {
 	api := discordAdapterREST(t, "ws://127.0.0.1/unused", nil)
-	adapter, _ := discordAdapterFixture(t, api.URL)
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
 	var workers sync.WaitGroup
 	for range 4 {
 		workers.Add(1)
@@ -449,14 +450,10 @@ func TestDiscordAdapterDisconnectBeforeConnect(t *testing.T) {
 
 func TestDiscordAdapterReadinessScopeAndOldGeneration(t *testing.T) {
 	api := discordAdapterREST(t, "ws://127.0.0.1/unused", nil)
-	adapter, _ := discordAdapterFixture(t, api.URL)
-	adapter.mu.Lock()
-	adapter.accountID = discordAdapterAccountID(t)
-	adapter.generation = 2
-	adapter.ready = true
-	adapter.mu.Unlock()
-	adapter.onStateChange(gateway.StatusDisconnected, 1)
-	if !adapter.currentGeneration(2) {
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
+	adapter.SetSessionForTest(discordAdapterAccountID(t), 2, true)
+	adapter.OnStateChangeForTest(gateway.StatusDisconnected, 1)
+	if !adapter.CurrentGenerationForTest(2) {
 		t.Fatal("old generation invalidated current readiness")
 	}
 	for _, id := range []im.ChatIdentity{{Platform: "wechat", AccountID: discordAdapterAccountID(t), ChatID: "500"}, {Platform: "discord", AccountID: "999", ChatID: "500"}} {
@@ -476,8 +473,8 @@ func TestDiscordAdapterAcceptsOptionalApplicationBotFields(t *testing.T) {
 				_, _ = w.Write([]byte(strings.ReplaceAll(body, `"123"`, `"`+discordAdapterAccountID(t)+`"`)))
 				return true
 			})
-			adapter, _ := discordAdapterFixture(t, api.URL)
-			account, err := adapter.authenticate(t.Context())
+			adapter, _, _ := discordAdapterFixture(t, api.URL)
+			account, err := adapter.AuthenticateForTest(t.Context())
 			if err != nil || account != discordAdapterAccountID(t) {
 				t.Fatalf("valid optional application fields rejected: %s %v", account, err)
 			}
@@ -533,7 +530,7 @@ func TestDiscordAdapterRefreshesIdentifyQuotaBeforeDial(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"url": wsURL, "shards": shards, "session_start_limit": map[string]any{"total": 100, "remaining": remaining, "reset_after": reset, "max_concurrency": 1}})
 				return true
 			})
-			adapter, _ := discordAdapterFixture(t, api.URL)
+			adapter, _, _ := discordAdapterFixture(t, api.URL)
 			notifications := make(chan struct{}, 16)
 			adapter.SetIngressReadinessNotifier(func() {
 				select {
@@ -583,7 +580,7 @@ func TestDiscordAdapterIdentifyQuotaRefreshCancellation(t *testing.T) {
 		<-r.Context().Done()
 		return true
 	})
-	adapter, _ := discordAdapterFixture(t, api.URL)
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
 	result := make(chan error, 1)
 	go func() { result <- adapter.Connect() }()
 	discordAdapterSignal(t, entered)
@@ -598,57 +595,48 @@ func TestDiscordAdapterIdentifyQuotaRefreshCancellation(t *testing.T) {
 
 func TestDiscordAdapterChannelCacheSurvivesReconnectAndIdentifies(t *testing.T) {
 	api := discordAdapterREST(t, "ws://127.0.0.1/unused", nil)
-	adapter, _ := discordAdapterFixture(t, api.URL)
-	adapter.inbound = newDiscordInbound(t.Context(), discordAdapterAccountID(t), "456", nil, nil, adapter.currentGeneration, adapter.connectionLive, adapter.observeIngress)
-	channel := discordTestGuildChannel(t, discord.ChannelTypeGuildText, "500")
-	adapter.mu.Lock()
-	adapter.accountID, adapter.generation, adapter.ready = discordAdapterAccountID(t), 1, true
-	adapter.mu.Unlock()
-	adapter.inbound.CacheChannel(1, channel)
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
+	current, live, observe := adapter.GenerationGuardsForTest()
+	inbound := discord.NewDiscordInbound(t.Context(), discordAdapterAccountID(t), "456", nil, nil, current, live, observe)
+	adapter.SetInboundForTest(inbound)
+	channel := discordTestGuildChannel(t, disgo.ChannelTypeGuildText, "500")
+	adapter.SetSessionForTest(discordAdapterAccountID(t), 1, true)
+	inbound.CacheChannel(1, channel)
 	cached := func() bool {
-		adapter.inbound.mu.Lock()
-		defer adapter.inbound.mu.Unlock()
-		_, exists := adapter.inbound.channels["500"]
+		_, exists := inbound.ChannelForTest("500")
 		return exists
 	}
 	// Every transient state of the next connection attempt keeps classification,
 	// including the Resume handshake that replays the missed window.
 	for _, state := range []gateway.Status{gateway.StatusDisconnected, gateway.StatusConnecting, gateway.StatusWaitingForHello, gateway.StatusResuming, gateway.StatusWaitingForReady} {
-		adapter.onStateChange(state, 2)
+		adapter.OnStateChangeForTest(state, 2)
 		if !cached() {
 			t.Fatalf("%s discarded channel classification", state)
 		}
 	}
 	// A replayed metadata dispatch refreshes classification before the resume
 	// barrier opens for input.
-	adapter.applyChannelMetadata(gateway.EventChannelCreate{GuildChannel: discordTestGuildChannel(t, discord.ChannelTypeGuildText, "600")}, 2)
-	adapter.inbound.mu.Lock()
-	metadata, exists := adapter.inbound.channels["600"]
-	adapter.inbound.mu.Unlock()
-	if !exists || metadata.kind != discord.ChannelTypeGuildText {
-		t.Fatal("replay discarded channel classification", metadata)
+	adapter.ApplyChannelMetadataForTest(gateway.EventChannelCreate{GuildChannel: discordTestGuildChannel(t, disgo.ChannelTypeGuildText, "600")}, 2)
+	kind, exists := inbound.ChannelForTest("600")
+	if !exists || kind != disgo.ChannelTypeGuildText {
+		t.Fatal("replay discarded channel classification", kind, exists)
 	}
 	// A generation that lost the connection cannot write to the cache.
-	adapter.applyChannelMetadata(gateway.EventChannelCreate{GuildChannel: discordTestGuildChannel(t, discord.ChannelTypeGuildText, "700")}, 1)
-	adapter.inbound.mu.Lock()
-	_, stale := adapter.inbound.channels["700"]
-	adapter.inbound.mu.Unlock()
-	if stale {
+	adapter.ApplyChannelMetadataForTest(gateway.EventChannelCreate{GuildChannel: discordTestGuildChannel(t, disgo.ChannelTypeGuildText, "700")}, 1)
+	if _, stale := inbound.ChannelForTest("700"); stale {
 		t.Fatal("classification accepted a stale generation")
 	}
 	// A fresh Identify after a ready session replaces classification.
-	adapter.mu.Lock()
-	adapter.generation, adapter.ready = 3, true
-	adapter.mu.Unlock()
-	adapter.onStateChange(gateway.StatusIdentifying, 4)
+	adapter.SetSessionForTest(adapter.AccountIDForTest(), 3, true)
+	adapter.OnStateChangeForTest(gateway.StatusIdentifying, 4)
 	if cached() {
 		t.Fatal("fresh Identify kept the previous session classification")
 	}
 }
 
-func discordTestGuildChannel(t *testing.T, kind discord.ChannelType, id string) discord.GuildChannel {
+func discordTestGuildChannel(t *testing.T, kind disgo.ChannelType, id string) disgo.GuildChannel {
 	t.Helper()
-	channel, ok := discordTestChannel(t, kind, id).(discord.GuildChannel)
+	channel, ok := discordTestChannel(t, kind, id).(disgo.GuildChannel)
 	if !ok {
 		t.Fatalf("channel %s is not a guild channel", id)
 	}
@@ -657,39 +645,36 @@ func discordTestGuildChannel(t *testing.T, kind discord.ChannelType, id string) 
 
 func TestDiscordAdapterClassifiesChannelAndThreadEvents(t *testing.T) {
 	api := discordAdapterREST(t, "ws://127.0.0.1/unused", nil)
-	adapter, _ := discordAdapterFixture(t, api.URL)
-	adapter.inbound = newDiscordInbound(t.Context(), discordAdapterAccountID(t), "456", nil, nil, adapter.currentGeneration, adapter.connectionLive, adapter.observeIngress)
-	adapter.mu.Lock()
-	adapter.accountID, adapter.generation, adapter.ready = discordAdapterAccountID(t), 1, true
-	adapter.mu.Unlock()
-	kindOf := func(id string) (discord.ChannelType, bool) {
-		adapter.inbound.mu.Lock()
-		defer adapter.inbound.mu.Unlock()
-		metadata, exists := adapter.inbound.channels[id]
-		return metadata.kind, exists
+	adapter, _, _ := discordAdapterFixture(t, api.URL)
+	current, live, observe := adapter.GenerationGuardsForTest()
+	inbound := discord.NewDiscordInbound(t.Context(), discordAdapterAccountID(t), "456", nil, nil, current, live, observe)
+	adapter.SetInboundForTest(inbound)
+	adapter.SetSessionForTest(discordAdapterAccountID(t), 1, true)
+	kindOf := func(id string) (disgo.ChannelType, bool) {
+		return inbound.ChannelForTest(id)
 	}
-	text := discordTestGuildChannel(t, discord.ChannelTypeGuildText, "500")
-	thread := discordTestChannel(t, discord.ChannelTypeGuildPublicThread, "501").(discord.GuildThread)
-	adapter.applyChannelMetadata(gateway.EventChannelCreate{GuildChannel: text}, 1)
-	adapter.applyChannelMetadata(gateway.EventChannelUpdate{GuildChannel: discordTestGuildChannel(t, discord.ChannelTypeGuildNews, "500")}, 1)
-	adapter.applyChannelMetadata(gateway.EventThreadCreate{GuildThread: thread}, 1)
-	adapter.applyChannelMetadata(gateway.EventThreadListSync{Threads: []discord.GuildThread{thread}}, 1)
-	adapter.applyChannelMetadata(gateway.EventThreadUpdate{GuildThread: thread}, 1)
-	if kind, exists := kindOf("500"); !exists || kind != discord.ChannelTypeGuildNews {
+	text := discordTestGuildChannel(t, disgo.ChannelTypeGuildText, "500")
+	thread := discordTestChannel(t, disgo.ChannelTypeGuildPublicThread, "501").(disgo.GuildThread)
+	adapter.ApplyChannelMetadataForTest(gateway.EventChannelCreate{GuildChannel: text}, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventChannelUpdate{GuildChannel: discordTestGuildChannel(t, disgo.ChannelTypeGuildNews, "500")}, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventThreadCreate{GuildThread: thread}, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventThreadListSync{Threads: []disgo.GuildThread{thread}}, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventThreadUpdate{GuildThread: thread}, 1)
+	if kind, exists := kindOf("500"); !exists || kind != disgo.ChannelTypeGuildNews {
 		t.Fatalf("channel classification = %v %t", kind, exists)
 	}
-	if kind, exists := kindOf("501"); !exists || kind != discord.ChannelTypeGuildPublicThread {
+	if kind, exists := kindOf("501"); !exists || kind != disgo.ChannelTypeGuildPublicThread {
 		t.Fatalf("thread classification = %v %t", kind, exists)
 	}
 	// A nil payload and a stale generation are refused without touching the cache.
-	adapter.applyChannelMetadata(gateway.EventChannelCreate{}, 1)
-	adapter.applyChannelMetadata(gateway.EventChannelDelete{GuildChannel: discordTestGuildChannel(t, discord.ChannelTypeGuildText, "502")}, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventChannelCreate{}, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventChannelDelete{GuildChannel: discordTestGuildChannel(t, disgo.ChannelTypeGuildText, "502")}, 1)
 	if _, exists := kindOf("502"); exists {
 		t.Fatal("nil channel cached")
 	}
 	deleted := gateway.EventChannelDelete{GuildChannel: text}
-	adapter.applyChannelMetadata(deleted, 1)
-	adapter.applyChannelMetadata(gateway.EventThreadDelete{ID: thread.ID()}, 1)
+	adapter.ApplyChannelMetadataForTest(deleted, 1)
+	adapter.ApplyChannelMetadataForTest(gateway.EventThreadDelete{ID: thread.ID()}, 1)
 	if _, exists := kindOf("500"); exists {
 		t.Fatal("deleted channel retained")
 	}

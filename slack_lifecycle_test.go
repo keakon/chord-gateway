@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/slack-go/slack"
+	slackapi "github.com/slack-go/slack"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/slack"
 )
 
-func slackLifecycleAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
+func slackLifecycleAdapter(t *testing.T) (*slack.SlackAdapter, slack.Identity) {
 	t.Helper()
 	a, identity := slackSocketTestAdapter(t)
 	var random [8]byte
@@ -30,12 +31,12 @@ func slackLifecycleAdapter(t *testing.T) (*SlackAdapter, slackIdentity) {
 	identity.AppID = "ALIFECYCLE" + installation
 	identity.BotUserID = "ULIFECYCLE" + installation
 	identity.AccountID, _ = im.EncodeScopedID("account-v1:", identity.TeamID, identity.BotUserID)
-	a.identity = identity
-	a.verifyIdentity = func(context.Context) (slackIdentity, error) { return identity, nil }
+	a.SetIdentityForTest(identity, true)
+	a.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) { return identity, nil })
 	return a, identity
 }
 
-func connectSlackLifecycle(t *testing.T, a *SlackAdapter) <-chan error {
+func connectSlackLifecycle(t *testing.T, a *slack.SlackAdapter) <-chan error {
 	t.Helper()
 	done := make(chan error, 1)
 	go func() { done <- a.Connect() }()
@@ -43,7 +44,7 @@ func connectSlackLifecycle(t *testing.T, a *SlackAdapter) <-chan error {
 	return done
 }
 
-func disconnectSlackLifecycle(t *testing.T, a *SlackAdapter, done <-chan error) {
+func disconnectSlackLifecycle(t *testing.T, a *slack.SlackAdapter, done <-chan error) {
 	t.Helper()
 	stopped := make(chan struct{})
 	go func() { a.Disconnect(); close(stopped) }()
@@ -55,9 +56,8 @@ func disconnectSlackLifecycle(t *testing.T, a *SlackAdapter, done <-chan error) 
 	if err := waitSlackSocketDone(t, done); err != nil {
 		t.Fatal("intentional disconnect returned an error", err)
 	}
-	a.mu.Lock()
-	ready, conn := a.ready, a.conn
-	a.mu.Unlock()
+	ready := a.ReadyForTest()
+	conn, _ := a.SocketStateForTest()
 	if ready || conn != nil {
 		t.Fatal("disconnected supervisor retained ready socket")
 	}
@@ -68,11 +68,11 @@ func TestSlackLifecycleReceiveLocksAcrossAccountsAndStateDirectories(t *testing.
 		t.Run(fmt.Sprintf("same_account_%v", sameAccount), func(t *testing.T) {
 			first, identity := slackLifecycleAdapter(t)
 			opened := make(chan struct{})
-			first.openSocket = func(ctx context.Context) (string, error) {
+			first.SetOpenSocketForTest(func(ctx context.Context) (string, error) {
 				close(opened)
 				<-ctx.Done()
 				return "", ctx.Err()
-			}
+			})
 			firstDone := connectSlackLifecycle(t, first)
 			select {
 			case <-opened:
@@ -87,13 +87,13 @@ func TestSlackLifecycleReceiveLocksAcrossAccountsAndStateDirectories(t *testing.
 				secondIdentity.TeamID = "TOTHER"
 				secondIdentity.AccountID, _ = im.EncodeScopedID("account-v1:", secondIdentity.TeamID, secondIdentity.BotUserID)
 			}
-			second.identity = secondIdentity
-			second.verifyIdentity = func(context.Context) (slackIdentity, error) { return secondIdentity, nil }
-			second.openSocket = func(context.Context) (string, error) {
+			second.SetIdentityForTest(secondIdentity, true)
+			second.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) { return secondIdentity, nil })
+			second.SetOpenSocketForTest(func(context.Context) (string, error) {
 				t.Error("second receiver opened a socket despite receive-lock conflict")
-				return "", errSlackFatal
-			}
-			if first.router.(*NotificationRouter).mgr.pins.path == second.router.(*NotificationRouter).mgr.pins.path {
+				return "", slack.ErrFatal
+			})
+			if first.HostForTest().(*NotificationRouter).mgr.pins.path == second.HostForTest().(*NotificationRouter).mgr.pins.path {
 				t.Fatal("fixture reused state directory")
 			}
 			if err := second.Connect(); !errors.Is(err, im.ErrInstanceRunning) {
@@ -102,14 +102,14 @@ func TestSlackLifecycleReceiveLocksAcrossAccountsAndStateDirectories(t *testing.
 			disconnectSlackLifecycle(t, first, firstDone)
 			// A fresh supervisor can reacquire after the owner has fully stopped.
 			third, _ := slackLifecycleAdapter(t)
-			third.identity = identity
-			third.verifyIdentity = func(context.Context) (slackIdentity, error) { return identity, nil }
+			third.SetIdentityForTest(identity, true)
+			third.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) { return identity, nil })
 			openedAgain := make(chan struct{})
-			third.openSocket = func(ctx context.Context) (string, error) {
+			third.SetOpenSocketForTest(func(ctx context.Context) (string, error) {
 				close(openedAgain)
 				<-ctx.Done()
 				return "", ctx.Err()
-			}
+			})
 			thirdDone := connectSlackLifecycle(t, third)
 			select {
 			case <-openedAgain:
@@ -138,28 +138,27 @@ func TestSlackLifecycleDisconnectCancelsStartupAndBackoff(t *testing.T) {
 					}
 				}))
 				t.Cleanup(func() { close(release); server.Close() })
-				client := slack.New("test-token", slack.OptionAPIURL(server.URL+"/"), slack.OptionHTTPClient(newSlackHTTPClient(server.Client(), nil)))
-				a.verifyIdentity = func(ctx context.Context) (slackIdentity, error) {
-					return verifySlackIdentity(ctx, client, identity.TeamID, identity.AppID)
-				}
+				client := slackapi.New("test-token", slackapi.OptionAPIURL(server.URL+"/"), slackapi.OptionHTTPClient(slack.NewHTTPClient(server.Client(), nil)))
+				a.SetVerifyIdentityForTest(func(ctx context.Context) (slack.Identity, error) {
+					return slack.VerifyIdentity(ctx, client, identity.TeamID, identity.AppID)
+				})
 			case "socket_open":
-				a.openSocket = func(ctx context.Context) (string, error) {
+				a.SetSocketHooksForTest(func(ctx context.Context) (string, error) {
 					close(started)
 					<-ctx.Done()
 					return "", ctx.Err()
-				}
+				}, nil)
 			case "socket_dial":
-				a.openSocket = func(context.Context) (string, error) { return "ws://test.invalid", nil }
-				a.dialSocket = func(ctx context.Context, address string) (*websocket.Conn, error) {
+				a.SetSocketHooksForTest(func(context.Context) (string, error) { return "ws://test.invalid", nil }, func(ctx context.Context, address string) (*websocket.Conn, error) {
 					close(started)
 					<-ctx.Done()
 					return nil, ctx.Err()
-				}
+				})
 			case "backoff":
-				a.verifyIdentity = func(context.Context) (slackIdentity, error) {
+				a.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) {
 					close(started)
-					return slackIdentity{}, errors.New("temporary API failure")
-				}
+					return slack.Identity{}, errors.New("temporary API failure")
+				})
 			}
 			done := connectSlackLifecycle(t, a)
 			select {
@@ -188,18 +187,17 @@ func TestSlackLifecycleRefreshRechecksHelloAndJoinsOldGeneration(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	var opens, verifications atomic.Int32
-	a.openSocket = func(context.Context) (string, error) {
+	a.SetSocketHooksForTest(func(context.Context) (string, error) {
 		count := opens.Add(1)
 		return "ws" + strings.TrimPrefix(server.URL, "http") + fmt.Sprintf("/?ticket=%d", count), nil
-	}
-	a.dialSocket = func(ctx context.Context, address string) (*websocket.Conn, error) {
+	}, func(ctx context.Context, address string) (*websocket.Conn, error) {
 		conn, _, err := websocket.DefaultDialer.DialContext(ctx, address, nil)
 		return conn, err
-	}
-	a.verifyIdentity = func(context.Context) (slackIdentity, error) {
+	})
+	a.SetVerifyIdentityForTest(func(context.Context) (slack.Identity, error) {
 		verifications.Add(1)
 		return identity, nil
-	}
+	})
 	done := connectSlackLifecycle(t, a)
 	var first *websocket.Conn
 	select {
@@ -211,10 +209,8 @@ func TestSlackLifecycleRefreshRechecksHelloAndJoinsOldGeneration(t *testing.T) {
 	if err := first.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
 		t.Fatal(err)
 	}
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
-	a.mu.Lock()
-	oldGeneration := a.generation
-	a.mu.Unlock()
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
+	_, oldGeneration := a.SocketStateForTest()
 	if err := first.WriteJSON(map[string]string{"type": "disconnect", "reason": "refresh_requested"}); err != nil {
 		t.Fatal(err)
 	}
@@ -226,20 +222,18 @@ func TestSlackLifecycleRefreshRechecksHelloAndJoinsOldGeneration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = second.Close() })
 	waitIngressCondition(t, func() bool {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.generation > oldGeneration && a.conn != nil
+		conn, generation := a.SocketStateForTest()
+		return generation > oldGeneration && conn != nil
 	})
-	a.mu.Lock()
-	ready, currentGeneration := a.ready, a.generation
-	a.mu.Unlock()
+	ready := a.ReadyForTest()
+	_, currentGeneration := a.SocketStateForTest()
 	if ready || currentGeneration <= oldGeneration || opens.Load() != 2 || verifications.Load() != 3 {
 		t.Fatal("new connection inherited old readiness or skipped identity verification", ready, currentGeneration, opens.Load(), verifications.Load())
 	}
 	if err := second.WriteJSON(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": identity.AppID}}); err != nil {
 		t.Fatal(err)
 	}
-	waitIngressCondition(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.ready })
+	waitIngressCondition(t, func() bool { return a.ReadyForTest() })
 	if verifications.Load() != 4 {
 		t.Fatal("new hello did not cause a fresh auth identity check", verifications.Load())
 	}
@@ -251,17 +245,15 @@ func TestSlackLifecycleRefreshRechecksHelloAndJoinsOldGeneration(t *testing.T) {
 	}
 	// A stale completion submitted to a writer for the new connection cannot
 	// become a confirmation on the new socket.
-	a.mu.Lock()
-	currentConn := a.conn
-	a.mu.Unlock()
+	currentConn, _ := a.SocketStateForTest()
 	ctx, cancel := context.WithCancel(t.Context())
-	queue := make(chan slackACK, 1)
+	queue := make(chan slack.ACK, 1)
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
-		a.slackACKWriter(ctx, currentConn, currentGeneration, queue, func(error) { t.Error("stale ACK caused socket write") })
+		a.ACKWriterForTest(ctx, currentConn, currentGeneration, queue, func(error) { t.Error("stale ACK caused socket write") })
 	}()
-	request := slackACK{Generation: oldGeneration, Deadline: time.Now().Add(time.Second), Data: []byte(`{"envelope_id":"old-generation"}`), Done: make(chan error, 1)}
+	request := slack.ACK{Generation: oldGeneration, Deadline: time.Now().Add(time.Second), Data: []byte(`{"envelope_id":"old-generation"}`), Done: make(chan error, 1)}
 	queue <- request
 	select {
 	case err := <-request.Done:

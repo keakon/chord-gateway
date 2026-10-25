@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
-func newWechatIngressTest(t *testing.T) (*WechatAdapter, *IngressService, *ChordProcess, *ingressTestWriter) {
+func newWechatIngressTest(t *testing.T) (*wechat.WechatAdapter, *IngressService, *ChordProcess, *ingressTestWriter) {
 	t.Helper()
 	s, p, writer, original := ingressTestService(t)
 	r := s.router
@@ -36,12 +37,12 @@ func newWechatIngressTest(t *testing.T) (*WechatAdapter, *IngressService, *Chord
 		t.Fatal(err)
 	}
 	a := newTestWechatAdapter(t)
-	a.msgRouter = r
-	a.token.Store(&TokenData{AccountID: "bot", Token: "sample-token", BaseURL: "https://example.invalid"})
-	a.imCfg = *r.getConfig().IMConfigByType("wechat")
-	a.httpClient.Transport = imageRoundTripper(func(*http.Request) (*http.Response, error) {
+	a.SetHostForTest(r)
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot", Token: "sample-token", BaseURL: "https://example.invalid"})
+	a.SetIMConfigForTest(*r.getConfig().IMConfigByType("wechat"))
+	a.SetTransportForTest(imageRoundTripper(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ret":0}`)), Header: make(http.Header)}, nil
-	})
+	}))
 	p.stdin = &wechatIngressStatusWriter{process: p, writer: writer}
 	r.SetAdapter(a)
 	return a, s, p, writer
@@ -67,25 +68,11 @@ func (w *wechatIngressStatusWriter) Write(data []byte) (int, error) {
 }
 func (w *wechatIngressStatusWriter) Close() error { return nil }
 
-func wechatTextMessage(id, sender, text, reply string) ilinkMessage {
-	return ilinkMessage{MessageID: json.Number(id), MessageType: ilinkMessageTypeUser, FromUserID: sender, ContextToken: reply, ItemList: []ilinkItem{{Type: ilinkItemTypeText, TextItem: &ilinkTextItem{Text: text}}}}
-}
-
-func wechatTaskWrites(writer *ingressTestWriter) []map[string]any {
-	var tasks []map[string]any
-	for _, command := range writer.snapshot() {
-		if command["type"] == "send" {
-			tasks = append(tasks, command)
-		}
-	}
-	return tasks
-}
-
 func TestWechatIngressReplyContextWaitingAndFreshStatusWakesFIFO(t *testing.T) {
 	a, s, p, writer := newWechatIngressTest(t)
 	var accepted []im.ReceiveResult
 	for i, text := range []string{"first task", "second task"} {
-		result := a.receiveIncomingMessage(t.Context(), wechatTextMessage(fmt.Sprint(i+1), "owner", text, ""), a.token.Load())
+		result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage(fmt.Sprint(i+1), "owner", text, ""), a.TokenForTest())
 		if result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
@@ -105,7 +92,7 @@ func TestWechatIngressReplyContextWaitingAndFreshStatusWakesFIFO(t *testing.T) {
 	if len(wechatTaskWrites(writer)) != 0 {
 		t.Fatal("task dispatched without reply context")
 	}
-	status := a.receiveIncomingMessage(t.Context(), wechatTextMessage("3", "owner", "/status", "fresh-context"), a.token.Load())
+	status := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("3", "owner", "/status", "fresh-context"), a.TokenForTest())
 	if status.Disposition != im.ReceiveAccepted {
 		t.Fatal(status)
 	}
@@ -114,7 +101,7 @@ func TestWechatIngressReplyContextWaitingAndFreshStatusWakesFIFO(t *testing.T) {
 		t.Fatal(writes)
 	}
 	// A new ordinary task is accepted behind the received tasks already waiting.
-	third := a.receiveIncomingMessage(t.Context(), wechatTextMessage("4", "owner", "third task", "fresh-context"), a.token.Load())
+	third := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("4", "owner", "third task", "fresh-context"), a.TokenForTest())
 	if third.Disposition != im.ReceiveAccepted {
 		t.Fatal(third)
 	}
@@ -134,7 +121,7 @@ func TestWechatIngressReplyContextWaitingAndFreshStatusWakesFIFO(t *testing.T) {
 func TestWechatIngressUnauthorizedDoesNotRefreshContext(t *testing.T) {
 	a, s, _, writer := newWechatIngressTest(t)
 	for i, sender := range []string{"stranger", "other-sender"} {
-		result := a.receiveIncomingMessage(t.Context(), wechatTextMessage(fmt.Sprint(i+10), sender, "private task", "untrusted-context"), a.token.Load())
+		result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage(fmt.Sprint(i+10), sender, "private task", "untrusted-context"), a.TokenForTest())
 		if result.Disposition != im.ReceiveRejected || result.RecordID == "" {
 			t.Fatal(result)
 		}
@@ -143,16 +130,14 @@ func TestWechatIngressUnauthorizedDoesNotRefreshContext(t *testing.T) {
 			t.Fatal(record, err)
 		}
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if len(a.replyContexts) != 0 || len(wechatTaskWrites(writer)) != 0 {
+	if a.ReplyContextCountForTest() != 0 || len(wechatTaskWrites(writer)) != 0 {
 		t.Fatal("unauthorized context refreshed readiness or dispatched work")
 	}
 }
 
 func TestWechatIngressCredentialsNeverPersist(t *testing.T) {
 	a, s, _, _ := newWechatIngressTest(t)
-	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("21", "owner", "sample task", "private-reply-credential"), a.token.Load())
+	result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("21", "owner", "sample task", "private-reply-credential"), a.TokenForTest())
 	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
@@ -177,37 +162,35 @@ func TestWechatUnpairedHintPreparesReplyContext(t *testing.T) {
 	}
 	t.Cleanup(func() { service.Close(); store.Close() })
 	a := newTestWechatAdapter(t)
-	a.msgRouter = r
-	a.imCfg = *r.getConfig().IMConfigByType("wechat")
-	a.token.Store(&TokenData{AccountID: "bot", Token: "sample-token"})
+	a.SetHostForTest(r)
+	a.SetIMConfigForTest(*r.getConfig().IMConfigByType("wechat"))
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot", Token: "sample-token"})
 	r.SetAdapter(a)
-	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("1", "owner", "hello", "sample-context"), a.token.Load())
+	result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("1", "owner", "hello", "sample-context"), a.TokenForTest())
 	if result.Reason != "pairing_hint_text" {
 		t.Fatal(result)
 	}
-	a.mu.Lock()
-	reply, ok := a.replyContexts[compositeKey("bot", "owner")]
-	a.mu.Unlock()
-	if !ok || reply.token != "sample-context" {
+	reply, ok := a.ReplyContextForTest(compositeKey("bot", "owner"))
+	if !ok || reply.Token != "sample-context" {
 		t.Fatal("hint cannot be sent: verified inbound reply context was not prepared")
 	}
 }
 
 func TestWechatIngressOldTokenAndMalformedTransport(t *testing.T) {
 	a, s, _, _ := newWechatIngressTest(t)
-	old := a.token.Load()
-	a.token.Store(&TokenData{AccountID: old.AccountID, Token: "replacement-token"})
-	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("30", "owner", "sample task", "stale-context"), old)
+	old := a.TokenForTest()
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: old.AccountID, Token: "replacement-token"})
+	result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("30", "owner", "sample task", "stale-context"), old)
 	if result.Disposition != im.ReceiveRetryable || result.Reason != "transport_identity_changed" {
 		t.Fatal(result)
 	}
-	for _, message := range []ilinkMessage{
+	for _, message := range []wechat.ILinkMessage{
 		wechatTextMessage("0", "owner", "sample task", "context"),
 		wechatTextMessage("31", "", "sample task", "context"),
-		{MessageType: ilinkMessageTypeBot, MessageID: "32"},
-		{MessageType: ilinkMessageTypeUser, MessageID: "33", FromUserID: "owner"},
+		{MessageType: wechat.ILinkMessageTypeBot, MessageID: "32"},
+		{MessageType: wechat.ILinkMessageTypeUser, MessageID: "33", FromUserID: "owner"},
 	} {
-		if result := a.receiveIncomingMessage(t.Context(), message, a.token.Load()); result.Disposition != im.ReceiveTransportIgnored {
+		if result := a.ReceiveIncomingMessageForTest(t.Context(), message, a.TokenForTest()); result.Disposition != im.ReceiveTransportIgnored {
 			t.Fatal(result)
 		}
 	}
@@ -230,7 +213,7 @@ func TestWechatIngressPrepareOnlyAfterCommonAuthorization(t *testing.T) {
 func TestWechatIngressOversizedTextCommitsRefusalAndContinues(t *testing.T) {
 	a, s, _, writer := newWechatIngressTest(t)
 	long := wechatTextMessage("41", "owner", strings.Repeat("x", (64<<10)+1), "unaccepted-context")
-	refused := a.receiveIncomingMessage(t.Context(), long, a.token.Load())
+	refused := a.ReceiveIncomingMessageForTest(t.Context(), long, a.TokenForTest())
 	if refused.Disposition != im.ReceiveRejected || refused.RecordID == "" || refused.Reason != "invalid_input" {
 		t.Fatal(refused)
 	}
@@ -241,7 +224,7 @@ func TestWechatIngressOversizedTextCommitsRefusalAndContinues(t *testing.T) {
 	if readiness := a.IngressDeliveryReadiness(im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "owner"}); readiness.Ready {
 		t.Fatal("rejected text opened delivery context")
 	}
-	next := a.receiveIncomingMessage(t.Context(), wechatTextMessage("42", "owner", "next task", "fresh-context"), a.token.Load())
+	next := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("42", "owner", "next task", "fresh-context"), a.TokenForTest())
 	if next.Disposition != im.ReceiveAccepted {
 		t.Fatal(next)
 	}
@@ -278,41 +261,37 @@ func TestWechatIngressDuplicatePairingRefusalDoesNotSpendAttempts(t *testing.T) 
 	}
 	t.Cleanup(func() { s.Close(); store.Close() })
 	a := newTestWechatAdapter(t)
-	a.msgRouter = r
+	a.SetHostForTest(r)
 	p := r.admission.pairing
 	p.mu.Lock()
 	fixed := p.now()
 	p.now = func() time.Time { return fixed }
 	p.mu.Unlock()
 	bad := wechatTextMessage("51", "owner", fmt.Sprintf("/bind %q invalid-code", t.TempDir()), "invalid-context")
-	first := a.receiveIncomingMessage(t.Context(), bad, a.token.Load())
+	first := a.ReceiveIncomingMessageForTest(t.Context(), bad, a.TokenForTest())
 	if first.Disposition != im.ReceiveRejected {
 		t.Fatal(first)
 	}
 	p.mu.Lock()
 	tokens := p.platforms["wechat"].tokens
 	p.mu.Unlock()
-	a.mu.Lock()
-	contexts := len(a.replyContexts)
-	a.mu.Unlock()
+	contexts := a.ReplyContextCountForTest()
 	if contexts == 0 {
 		t.Fatal("fresh refusal must prepare a reply context for its hint")
 	}
 	for range 35 {
-		if duplicate := a.receiveIncomingMessage(t.Context(), bad, a.token.Load()); duplicate.Disposition != im.ReceiveDuplicate || duplicate.State != "rejected" {
+		if duplicate := a.ReceiveIncomingMessageForTest(t.Context(), bad, a.TokenForTest()); duplicate.Disposition != im.ReceiveDuplicate || duplicate.State != "rejected" {
 			t.Fatal(duplicate)
 		}
 	}
 	p.mu.Lock()
 	remaining := p.platforms["wechat"].tokens
 	p.mu.Unlock()
-	a.mu.Lock()
-	after := len(a.replyContexts)
-	a.mu.Unlock()
+	after := a.ReplyContextCountForTest()
 	if remaining != tokens || after != contexts {
 		t.Fatal("replayed refusal spent pairing attempts or prepared a context")
 	}
-	good := a.receiveIncomingMessage(t.Context(), wechatTextMessage("52", "owner", fmt.Sprintf("/bind %q %s", t.TempDir(), code), "pair-context"), a.token.Load())
+	good := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("52", "owner", fmt.Sprintf("/bind %q %s", t.TempDir(), code), "pair-context"), a.TokenForTest())
 	if good.Disposition != im.ReceiveAccepted {
 		t.Fatal(good)
 	}
@@ -324,13 +303,13 @@ func TestWechatIngressDuplicatePairingRefusalDoesNotSpendAttempts(t *testing.T) 
 
 func TestWechatOutgoingUsesOriginalAccountBeforeHTTP(t *testing.T) {
 	a := newTestWechatAdapter(t)
-	a.token.Store(&TokenData{AccountID: "replacement", Token: "replacement-token", BaseURL: "https://example.invalid"})
-	a.cachePairedContext("replacement", "owner", "replacement-context", true)
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: "replacement", Token: "replacement-token", BaseURL: "https://example.invalid"})
+	a.CachePairedContextForTest("replacement", "owner", "replacement-context", true)
 	calls := 0
-	a.httpClient.Transport = imageRoundTripper(func(*http.Request) (*http.Response, error) {
+	a.SetTransportForTest(imageRoundTripper(func(*http.Request) (*http.Response, error) {
 		calls++
 		return nil, fmt.Errorf("unexpected HTTP request")
-	})
+	}))
 	ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, "original")
 	if err := a.SendTextContext(ctx, "owner", "original account result"); err == nil {
 		t.Fatal("text switched account")

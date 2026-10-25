@@ -462,7 +462,7 @@ func (r *NotificationRouter) showRoleMenu(chatID, procKey, current string, roles
 		if r.sendFeishuRoleMenu(chatID, procKey, current, roles, instance...) {
 			return
 		}
-		if r.findFeishuAdapter() != nil {
+		if r.findFeishuCardAdapter() != nil {
 			return
 		}
 	}

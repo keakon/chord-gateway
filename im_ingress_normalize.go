@@ -130,13 +130,6 @@ func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize fu
 	return result, nil
 }
 
-func ingressNormalizationResult(value im.ReceiveResult, ok bool) im.ReceiveResult {
-	if !ok {
-		return im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "normalization_result_unavailable"}
-	}
-	return value
-}
-
 func (n *IngressNormalizer) worker() {
 	for {
 		select {

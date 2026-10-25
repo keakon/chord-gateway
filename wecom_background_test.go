@@ -8,19 +8,21 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/internal/im"
+
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
 )
 
 // No callback is ever submitted in this fixture. These tests verify proactive
 // delivery independently of callback lifetime, not a real-account ten-minute
 // task or the platform's actual quota and product permissions.
-func wecomBackgroundTarget(t *testing.T, a *WecomAdapter, msg im.IncomingMessage, kind string) (key, rawTarget string) {
+func wecomBackgroundTarget(t *testing.T, r *NotificationRouter, a *wecom.WecomAdapter, msg im.IncomingMessage, kind string) (key, rawTarget string) {
 	t.Helper()
 	chat := msg.ChatID
 	rawTarget = "owner"
 	if kind == "group" {
 		rawTarget = "background-group"
-		chat, _ = EncodeWecomTarget(kind, rawTarget)
-		cfg := *a.router.getConfig()
+		chat, _ = wecom.EncodeWecomTarget(kind, rawTarget)
+		cfg := *r.getConfig()
 		cfg.IMs = slices.Clone(cfg.IMs)
 		for i := range cfg.IMs {
 			if cfg.IMs[i].Wecom != nil {
@@ -30,17 +32,17 @@ func wecomBackgroundTarget(t *testing.T, a *WecomAdapter, msg im.IncomingMessage
 				cfg.IMs[i].Wecom = &wc
 			}
 		}
-		a.router.mgr.store.snapshot.Store(&cfg)
-		a.router.ensureOwnedGate("wecom", chat, "project")
+		r.mgr.store.snapshot.Store(&cfg)
+		r.ensureOwnedGate("wecom", chat, "project")
 	}
 	oldKey := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
 	key = (processKey{workspaceID: "project", imType: "wecom", chatID: chat}).String()
 	if key != oldKey {
-		a.router.mgr.mu.Lock()
-		p := a.router.mgr.procs[oldKey]
-		delete(a.router.mgr.procs, oldKey)
-		a.router.mgr.procs[key] = p
-		a.router.mgr.mu.Unlock()
+		r.mgr.mu.Lock()
+		p := r.mgr.procs[oldKey]
+		delete(r.mgr.procs, oldKey)
+		r.mgr.procs[key] = p
+		r.mgr.mu.Unlock()
 		p.mu.Lock()
 		p.key = key
 		p.mu.Unlock()
@@ -51,8 +53,8 @@ func wecomBackgroundTarget(t *testing.T, a *WecomAdapter, msg im.IncomingMessage
 func TestWecomFinalAndBackgroundResultsWithoutAnyCallback(t *testing.T) {
 	for _, kind := range []string{"private", "group"} {
 		t.Run(kind, func(t *testing.T) {
-			a, msg, store := wecomAdapterFixture(t)
-			key, rawTarget := wecomBackgroundTarget(t, a, msg, kind)
+			a, msg, store, r := wecomAdapterFixture(t)
+			key, rawTarget := wecomBackgroundTarget(t, r, a, msg, kind)
 			var mu sync.Mutex
 			var targets, texts []string
 			startWecomAdapterTestWS(t, a, func(target, text string) int {
@@ -64,14 +66,14 @@ func TestWecomFinalAndBackgroundResultsWithoutAnyCallback(t *testing.T) {
 			})
 			final := strings.Repeat("长任务😀", 600)
 			background := ControlState{LastBackgroundResult: &BackgroundResultPayload{Content: "background job finished"}}
-			a.router.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: final})
-			a.router.HandleChordEvent(key, "background_result", background)
-			a.router.Close() // Drain both notifications and their explicit send ACKs.
-			expected, err := a.textSender.Segments(final)
+			r.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: final})
+			r.HandleChordEvent(key, "background_result", background)
+			r.Close() // Drain both notifications and their explicit send ACKs.
+			expected, err := a.TextSenderForTest().Segments(final)
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected = append(expected, renderWecomText(a.router.formatNotification("background_result", background)))
+			expected = append(expected, wecom.RenderTextForTest(r.formatNotification("background_result", background)))
 			mu.Lock()
 			defer mu.Unlock()
 			if len(expected) < 4 || !slices.Equal(texts, expected) {
@@ -96,11 +98,11 @@ func TestWecomBackgroundResultVisibilityUsesHeadlessSubscription(t *testing.T) {
 			name = "disabled"
 		}
 		t.Run(name, func(t *testing.T) {
-			a, msg, _ := wecomAdapterFixture(t)
+			a, msg, _, r := wecomAdapterFixture(t)
 			if !enabled {
-				cfg := *a.router.getConfig()
+				cfg := *r.getConfig()
 				cfg.EventVisibility.BackgroundResult = &enabled
-				a.router.mgr.store.snapshot.Store(&cfg)
+				r.mgr.store.snapshot.Store(&cfg)
 			}
 			var mu sync.Mutex
 			var texts []string
@@ -113,15 +115,15 @@ func TestWecomBackgroundResultVisibilityUsesHeadlessSubscription(t *testing.T) {
 			key := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
 			// Visibility is enforced at the existing subscription boundary. Feed
 			// only subscribed Chord events through the normal router entry point.
-			subscribed := slices.Contains(configuredHeadlessSubscribeEvents(a.router.getConfig()), "background_result")
+			subscribed := slices.Contains(configuredHeadlessSubscribeEvents(r.getConfig()), "background_result")
 			if subscribed != enabled {
 				t.Fatalf("background subscription=%v, want %v", subscribed, enabled)
 			}
 			if subscribed {
-				a.router.HandleChordEvent(key, "background_result", ControlState{LastBackgroundResult: &BackgroundResultPayload{Content: "background visibility sample"}})
+				r.HandleChordEvent(key, "background_result", ControlState{LastBackgroundResult: &BackgroundResultPayload{Content: "background visibility sample"}})
 			}
-			a.router.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: "final remains visible"})
-			a.router.Close()
+			r.HandleChordEvent(key, "assistant_message", ControlState{LastAssistantText: "final remains visible"})
+			r.Close()
 			mu.Lock()
 			defer mu.Unlock()
 			want := 1
@@ -138,7 +140,7 @@ func TestWecomBackgroundResultVisibilityUsesHeadlessSubscription(t *testing.T) {
 func TestWecomBackgroundResultsRejectUnboundAndRetiredTargets(t *testing.T) {
 	for _, scenario := range []string{"unbound", "retired_binding", "queued_replaced_runtime"} {
 		t.Run(scenario, func(t *testing.T) {
-			a, msg, _ := wecomAdapterFixture(t)
+			a, msg, _, r := wecomAdapterFixture(t)
 			var mu sync.Mutex
 			sends := 0
 			startWecomAdapterTestWS(t, a, func(_, _ string) int { mu.Lock(); defer mu.Unlock(); sends++; return 0 })
@@ -146,29 +148,29 @@ func TestWecomBackgroundResultsRejectUnboundAndRetiredTargets(t *testing.T) {
 			state := ControlState{LastBackgroundResult: &BackgroundResultPayload{Content: "must not reach replacement"}}
 			switch scenario {
 			case "unbound":
-				chat, _ := EncodeWecomTarget("group", "unbound-group")
+				chat, _ := wecom.EncodeWecomTarget("group", "unbound-group")
 				key = (processKey{workspaceID: "project", imType: "wecom", chatID: chat}).String()
-				a.router.HandleChordEvent(key, "background_result", state)
+				r.HandleChordEvent(key, "background_result", state)
 			case "retired_binding":
-				target, ok := a.router.targetForKey(key)
+				target, ok := r.targetForKey(key)
 				if !ok {
 					t.Fatal("fixture target missing")
 				}
 				target.Lease.Close()
-				a.router.HandleChordEvent(key, "background_result", state)
+				r.HandleChordEvent(key, "background_result", state)
 			case "queued_replaced_runtime":
 				blocked, release := make(chan struct{}), make(chan struct{})
-				if a.router.outbound.enqueue(key, func() { close(blocked); <-release }) != outboundQueued {
+				if r.outbound.enqueue(key, func() { close(blocked); <-release }) != outboundQueued {
 					t.Fatal("could not block notification shard")
 				}
 				<-blocked
-				a.router.HandleChordEvent(key, "background_result", state)
-				a.router.mgr.mu.Lock()
-				a.router.mgr.procs[key] = &ChordProcess{bindingInstanceID: "replacement-runtime"}
-				a.router.mgr.mu.Unlock()
+				r.HandleChordEvent(key, "background_result", state)
+				r.mgr.mu.Lock()
+				r.mgr.procs[key] = &ChordProcess{bindingInstanceID: "replacement-runtime"}
+				r.mgr.mu.Unlock()
 				close(release)
 			}
-			a.router.Close()
+			r.Close()
 			mu.Lock()
 			defer mu.Unlock()
 			if sends != 0 {

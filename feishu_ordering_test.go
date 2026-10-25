@@ -37,14 +37,14 @@ func TestFeishuSocketMixedTextAndCardPreservesChatOrder(t *testing.T) {
 		return im.ReceiveResult{Disposition: im.ReceiveAccepted, State: "received"}
 	})
 	conn, client := feishuSocketPair(t)
-	generation := a.startGeneration(t.Context(), conn)
-	defer generation.close()
+	generation := a.StartGenerationForTest(t.Context(), conn)
+	defer generation.CloseGenerationForTest()
 	readerDone := make(chan error, 1)
 	go func() {
 		for {
 			_, raw, err := conn.ReadMessage()
 			if err == nil {
-				err = a.handleWSFrame(generation.ctx, conn, raw)
+				err = a.HandleWSFrameForTest(generation.GenerationContextForTest(), conn, raw)
 			}
 			if err != nil {
 				readerDone <- err
@@ -110,7 +110,7 @@ func TestFeishuSocketMixedTextAndCardPreservesChatOrder(t *testing.T) {
 			t.Fatal("response not bound to original delivery", delivery)
 		}
 	}
-	generation.close()
+	generation.CloseGenerationForTest()
 	select {
 	case err := <-readerDone:
 		if err == nil {

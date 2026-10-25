@@ -13,6 +13,7 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
 func testChatOperation(t *testing.T, m *ChordManager, key string) *chatOperation {
@@ -147,7 +148,7 @@ func TestConsoleRepliesWithAdmissionAndMultipleAdapters(t *testing.T) {
 			m.admission = r.admission
 			defer r.Close()
 			defer r.admission.Close()
-			a, err := NewWechatAdapter(s.Snapshot(), *s.Snapshot().IMConfigByType("wechat"), paths, r)
+			a, err := wechat.NewWechatAdapter(s.Snapshot(), *s.Snapshot().IMConfigByType("wechat"), paths, r)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,7 +167,7 @@ func TestConsoleRepliesWithAdmissionAndMultipleAdapters(t *testing.T) {
 			defer func() { os.Stdout = original; reader.Close(); writer.Close() }()
 			r.HandleIncomingMessage(im.IncomingMessage{IMType: "console", ChatID: "console", SenderID: "console", Text: "/sessions"})
 			// An IM login cannot redirect output from an existing console session.
-			a.token.Store(&TokenData{AccountID: "bot", BaseURL: "https://example.invalid"})
+			a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot", BaseURL: "https://example.invalid"})
 			key := (processKey{workspaceID: "main", imType: "console", chatID: "console"}).String()
 			if !r.sendTextForKey(key, "console", "task result") {
 				t.Fatal("console task output failed")

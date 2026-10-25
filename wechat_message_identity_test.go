@@ -7,38 +7,15 @@ import (
 	"testing"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
-
-func TestWechatInboundMessageIdentity(t *testing.T) {
-	for _, tc := range []struct{ name, body, want string }{
-		{"number", `{"message_id":18446744073709551615}`, "18446744073709551615"},
-		{"string", `{"message_id":"18446744073709551615"}`, "18446744073709551615"},
-		{"priority", `{"message_id":123,"client_id":"outbound","item_list":[{"msg_id":"456"}]}`, "123"},
-		{"item", `{"item_list":[{}, {"msg_id":"456"}]}`, "456"},
-		{"outbound only", `{"client_id":"outbound"}`, ""},
-		{"zero", `{"message_id":0}`, ""},
-		{"negative", `{"message_id":-1}`, ""},
-		{"overflow", `{"message_id":18446744073709551616}`, ""},
-		{"fraction", `{"message_id":1.5}`, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var msg ilinkMessage
-			if err := json.Unmarshal([]byte(tc.body), &msg); err != nil {
-				t.Fatal(err)
-			}
-			if got := msg.inboundMessageID(); got != tc.want {
-				t.Fatalf("identity = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
 
 func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 	r, code := pairedTestRouter(t)
 	a := newTestWechatAdapter(t)
-	a.imCfg = *r.getConfig().IMConfigByType("wechat")
-	a.msgRouter = r
-	a.token.Store(&TokenData{AccountID: "bot"})
+	a.SetIMConfigForTest(*r.getConfig().IMConfigByType("wechat"))
+	a.SetHostForTest(r)
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot"})
 	store := NewIngressStore()
 	service := NewIngressService(store, r)
 	if err := service.Start(context.Background()); err != nil {
@@ -51,11 +28,11 @@ func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 	// same server delivery and must not produce another binding reply.
 	for _, identity := range []string{`"message_id":18446744073709551615`, `"message_id":"18446744073709551615"`, `"client_id":"different-outbound-id","message_id":18446744073709551615`} {
 		body := fmt.Sprintf(`{"ret":0,"msgs":[{%s,"from_user_id":"owner","message_type":1,"context_token":"reply-context","item_list":[{"type":1,"text_item":{"text":%s}}]}]}`, identity, text)
-		var response ilinkGetUpdatesResponse
+		var response wechat.ILinkGetUpdatesResponse
 		if err := json.Unmarshal([]byte(body), &response); err != nil {
 			t.Fatal(err)
 		}
-		result := a.receiveIncomingMessage(t.Context(), response.Msgs[0], a.token.Load())
+		result := a.ReceiveIncomingMessageForTest(t.Context(), response.Msgs[0], a.TokenForTest())
 		if result.Disposition != im.ReceiveAccepted && result.Disposition != im.ReceiveDuplicate {
 			t.Fatal(result)
 		}
@@ -82,18 +59,5 @@ func TestWechatServerMessagePairsAndDeduplicates(t *testing.T) {
 	}
 	if len(r.mgr.procs) != 0 {
 		t.Fatal("pairing or redelivery started a process")
-	}
-}
-
-func TestWechatIngressBusinessIdentitySeparatesSenders(t *testing.T) {
-	for _, pair := range [][2]string{{"sender", "id"}, {"sender:other", "id"}, {"sender", "other:id"}, {"sender\"", "id"}} {
-		id := wechatIngressBusinessID(pair[0], pair[1])
-		var parts []string
-		if err := json.Unmarshal([]byte(id[len("message:"):]), &parts); err != nil || len(parts) != 2 || parts[0] != pair[0] || parts[1] != pair[1] {
-			t.Fatal(id, parts, err)
-		}
-	}
-	if wechatIngressBusinessID("first", "42") == wechatIngressBusinessID("second", "42") {
-		t.Fatal("different senders share a business identity")
 	}
 }

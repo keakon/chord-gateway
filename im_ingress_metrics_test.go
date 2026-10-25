@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wecom"
 )
 
 func ingressCounter(snapshot IMIngressMetricsSnapshot, event string) uint64 {
@@ -119,55 +121,67 @@ var (
 // guard still passed. Adapter files are included: most emit metrics directly.
 func producedIngressLabels(t *testing.T) (reasons, events map[string]string) {
 	t.Helper()
-	entries, err := os.ReadDir(".")
+	dirs := []string{"."}
+	platform, err := os.ReadDir("internal/platform")
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, entry := range platform {
+		if entry.IsDir() {
+			dirs = append(dirs, filepath.Join("internal/platform", entry.Name()))
+		}
+	}
 	reasons = make(map[string]string)
 	events = make(map[string]string)
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		switch name {
-		case "im_ingress_metrics.go":
-			// The allowlist itself: scanning it would assert nothing.
-			continue
-		case "process_protocol.go":
-			// NotificationPayload.Reason is not an ingress metric label.
-			continue
-		}
-		source, err := os.ReadFile(name)
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, match := range ingressReasonLiteral.FindAllSubmatch(source, -1) {
-			reasons[string(match[1])] = name
-		}
-		for _, match := range ingressPositionalReason.FindAllSubmatch(source, -1) {
-			reason := match[1]
-			if len(reason) == 0 {
-				reason = match[2]
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
 			}
-			reasons[string(reason)] = name
-		}
-		for _, match := range ingressHelperReason.FindAllSubmatch(source, -1) {
-			reasons[string(match[1])] = name
-		}
-		for _, match := range ingressObservePair.FindAllSubmatch(source, -1) {
-			events[string(match[1])] = name
-			reasons[string(match[2])] = name
-		}
-		for _, match := range ingressRecordPair.FindAllSubmatch(source, -1) {
-			events[string(match[1])] = name
-			reasons[string(match[2])] = name
-		}
-		for _, match := range ingressMetricEvent.FindAllSubmatch(source, -1) {
-			for _, group := range match[1:] {
-				if len(group) > 0 {
-					events[string(group)] = name
-					break
+			switch name {
+			case "im_ingress_metrics.go":
+				// The allowlist itself: scanning it would assert nothing.
+				continue
+			case "process_protocol.go":
+				// NotificationPayload.Reason is not an ingress metric label.
+				continue
+			}
+			source, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, match := range ingressReasonLiteral.FindAllSubmatch(source, -1) {
+				reasons[string(match[1])] = name
+			}
+			for _, match := range ingressPositionalReason.FindAllSubmatch(source, -1) {
+				reason := match[1]
+				if len(reason) == 0 {
+					reason = match[2]
+				}
+				reasons[string(reason)] = name
+			}
+			for _, match := range ingressHelperReason.FindAllSubmatch(source, -1) {
+				reasons[string(match[1])] = name
+			}
+			for _, match := range ingressObservePair.FindAllSubmatch(source, -1) {
+				events[string(match[1])] = name
+				reasons[string(match[2])] = name
+			}
+			for _, match := range ingressRecordPair.FindAllSubmatch(source, -1) {
+				events[string(match[1])] = name
+				reasons[string(match[2])] = name
+			}
+			for _, match := range ingressMetricEvent.FindAllSubmatch(source, -1) {
+				for _, group := range match[1:] {
+					if len(group) > 0 {
+						events[string(group)] = name
+						break
+					}
 				}
 			}
 		}
@@ -203,11 +217,11 @@ func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 		}
 	}
 	for _, err := range []error{
-		fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomSourceTimeOutOfRange),
-		fmt.Errorf("%w: %w", errWecomInvalidCallback, errWecomEmptyText),
-		errWecomInvalidCallback,
+		fmt.Errorf("%w: %w", wecom.ErrWecomInvalidCallbackForTest, wecom.ErrWecomSourceTimeOutOfRangeForTest),
+		fmt.Errorf("%w: %w", wecom.ErrWecomInvalidCallbackForTest, wecom.ErrWecomEmptyTextForTest),
+		wecom.ErrWecomInvalidCallbackForTest,
 	} {
-		reason := wecomCallbackRejectionReason(err)
+		reason := wecom.WecomCallbackRejectionReasonForTest(err)
 		if got := im.MetricReason(reason); got != reason {
 			t.Errorf("wecomCallbackRejectionReason(%v) = %q collapses to %q", err, reason, got)
 		}

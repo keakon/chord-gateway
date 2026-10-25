@@ -14,13 +14,14 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
 func TestWechatPairedReadinessRequiresSuccess(t *testing.T) {
 	// The failing cases need one backoff round to reach the next poll; shrink
 	// the pacing so readiness is not gated on real timers.
-	swapTestValue(t, &ilinkPollInterval, time.Millisecond)
-	swapTestValue(t, &ilinkRetryDelay, time.Millisecond)
+	swapTestValue(t, &wechat.ILinkPollInterval, time.Millisecond)
+	swapTestValue(t, &wechat.ILinkRetryDelay, time.Millisecond)
 	for _, tc := range []struct {
 		name  string
 		body  string
@@ -35,9 +36,9 @@ func TestWechatPairedReadinessRequiresSuccess(t *testing.T) {
 			p := r.admission.pairing
 			p.PlatformUnavailable("wechat")
 			a := newTestWechatAdapter(t)
-			a.imCfg = *r.getConfig().IMConfigByType("wechat")
-			a.msgRouter = r
-			a.token.Store(&TokenData{AccountID: "bot", Token: "test-token", BaseURL: "https://example.invalid"})
+			a.SetIMConfigForTest(*r.getConfig().IMConfigByType("wechat"))
+			a.SetHostForTest(r)
+			a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot", Token: "test-token", BaseURL: "https://example.invalid"})
 			store := NewIngressStore()
 			service := NewIngressService(store, r)
 			if err := service.Start(context.Background()); err != nil {
@@ -45,14 +46,14 @@ func TestWechatPairedReadinessRequiresSuccess(t *testing.T) {
 			}
 			t.Cleanup(func() { service.Close(); store.Close() })
 			calls := 0
-			a.httpClient.Transport = imageRoundTripper(func(*http.Request) (*http.Response, error) {
+			a.SetTransportForTest(imageRoundTripper(func(*http.Request) (*http.Response, error) {
 				calls++
 				if calls > 1 {
-					a.cancel()
+					a.Disconnect()
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
-			})
-			a.monitorLoop(a.ctx)
+			}))
+			a.MonitorLoopForTest(a.AdapterContextForTest())
 			p.mu.Lock()
 			defer p.mu.Unlock()
 			state := p.platforms["wechat"]
@@ -80,13 +81,13 @@ func TestWechatSendOutcomes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			{
 				a := newTestWechatAdapter(t)
-				a.token.Store(&TokenData{AccountID: "bot", BaseURL: "https://example.invalid"})
-				a.cachePairedContext("bot", "chat", "context", true)
+				a.StoreTokenForTest(&wechat.TokenData{AccountID: "bot", BaseURL: "https://example.invalid"})
+				a.CachePairedContextForTest("bot", "chat", "context", true)
 				calls := 0
-				a.httpClient.Transport = imageRoundTripper(func(*http.Request) (*http.Response, error) {
+				a.SetTransportForTest(imageRoundTripper(func(*http.Request) (*http.Response, error) {
 					calls++
 					return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
-				})
+				}))
 				err := a.SendTextContext(context.Background(), "chat", "sample")
 				if (err != nil) != tc.rejected || errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown || calls != 1 {
 					t.Fatalf("error=%v calls=%d", err, calls)
@@ -98,33 +99,14 @@ func TestWechatSendOutcomes(t *testing.T) {
 
 func TestWechatPairedRejectsLateAccountResponse(t *testing.T) {
 	r, _ := pairedTestRouter(t)
-	a := &WechatAdapter{imCfg: *r.getConfig().IMConfigByType("wechat"), msgRouter: r, storageDir: t.TempDir(), replyContexts: map[string]wechatReplyContext{}}
-	old := &TokenData{AccountID: "bot", Token: "old"}
-	a.token.Store(&TokenData{AccountID: "different", Token: "new"})
-	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("101", "sender", "/bind /tmp/project invalid", "context"), old)
-	if result.Disposition != im.ReceiveRetryable || result.Reason != "transport_identity_changed" || len(a.replyContexts) != 0 {
+	a := newTestWechatAdapter(t)
+	a.SetIMConfigForTest(*r.getConfig().IMConfigByType("wechat"))
+	a.SetHostForTest(r)
+	a.StoreTokenForTest(&wechat.TokenData{AccountID: "different", Token: "new"})
+	old := &wechat.TokenData{AccountID: "bot", Token: "old"}
+	result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("101", "sender", "/bind /tmp/project invalid", "context"), old)
+	if result.Disposition != im.ReceiveRetryable || result.Reason != "transport_identity_changed" || a.ReplyContextCountForTest() != 0 {
 		t.Fatal("late response affected account", result)
-	}
-}
-
-func TestWechatPairedContextBounds(t *testing.T) {
-	a := &WechatAdapter{}
-	for i := 0; i < 300; i++ {
-		a.cachePairedContext("bot", fmt.Sprint(i), "context", true)
-	}
-	if len(a.replyContexts) != 256 {
-		t.Fatalf("bound cache size = %d", len(a.replyContexts))
-	}
-	for i := 0; i < 50; i++ {
-		a.cachePairedContext("bot", fmt.Sprint(i+400), "context", false)
-	}
-	if len(a.replyContexts) != 286 {
-		t.Fatalf("combined cache size = %d", len(a.replyContexts))
-	}
-	a.replyContexts["expired"] = wechatReplyContext{expires: time.Now().Add(-time.Second)}
-	a.cachePairedContext("bot", "new", "context", false)
-	if _, ok := a.replyContexts["expired"]; ok {
-		t.Fatal("expired flow context retained")
 	}
 }
 
@@ -161,40 +143,22 @@ func TestWechatBindPreservesBoundReplyContext(t *testing.T) {
 			} else if command == "invalid" {
 				text = "/bind"
 			}
-			a.cachePairedContext("bot", "owner", "task-context", true)
-			result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("102", "owner", text, "bind-context"), a.token.Load())
+			a.CachePairedContextForTest("bot", "owner", "task-context", true)
+			result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("102", "owner", text, "bind-context"), a.TokenForTest())
 			if result.Disposition != im.ReceiveAccepted {
 				t.Fatal(result)
 			}
 			waitIngressCondition(t, func() bool { record, err := s.store.Get(result.RecordID); return err == nil && record.Terminal() })
 			cacheKey := compositeKey("bot", "owner")
-			a.mu.Lock()
-			entry := a.replyContexts[cacheKey]
-			if !entry.bound || entry.token != "bind-context" || !entry.committed {
-				a.mu.Unlock()
+			entry, ok := a.ReplyContextForTest(cacheKey)
+			if !ok || !entry.Bound || entry.Token != "bind-context" || !entry.Committed {
 				t.Fatal("bind demoted or lost bound reply context")
 			}
-			entry.expires = time.Now().Add(-time.Second)
-			a.replyContexts[cacheKey] = entry
-			a.mu.Unlock()
+			entry.Expires = time.Now().Add(-time.Second)
+			a.SetReplyContextForTest(cacheKey, entry)
 			if err := a.SendTextContext(context.Background(), "owner", "task result"); err != nil {
 				t.Fatal(err)
 			}
 		})
-	}
-}
-
-func TestWechatContextPromotionKeepsCacheBounded(t *testing.T) {
-	a := &WechatAdapter{}
-	for i := 0; i < 256; i++ {
-		a.cachePairedContext("bot", fmt.Sprint(i), "context", true)
-	}
-	a.cachePairedContext("bot", "new", "flow-context", false)
-	a.cachePairedContext("bot", "new", "task-context", true)
-	if len(a.replyContexts) != 256 {
-		t.Fatalf("promotion exceeded bound: %d", len(a.replyContexts))
-	}
-	if !a.replyContexts[compositeKey("bot", "new")].bound {
-		t.Fatal("context was not promoted")
 	}
 }

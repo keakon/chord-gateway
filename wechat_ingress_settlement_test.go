@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
 )
 
 func TestWechatIngressFailedAcceptancePreservesCommittedReplyContext(t *testing.T) {
@@ -23,18 +24,16 @@ func TestWechatIngressFailedAcceptancePreservesCommittedReplyContext(t *testing.
 			reply = "confirmed-context"
 		}
 		msg := wechatTextMessage(fmt.Sprint(100+i), "owner", "queued task", reply)
-		if result := a.receiveIncomingMessage(t.Context(), msg, a.token.Load()); result.Disposition != im.ReceiveAccepted {
+		if result := a.ReceiveIncomingMessageForTest(t.Context(), msg, a.TokenForTest()); result.Disposition != im.ReceiveAccepted {
 			t.Fatal(result)
 		}
 	}
-	failed := a.receiveIncomingMessage(t.Context(), wechatTextMessage("200", "owner", "overflow task", "unaccepted-context"), a.token.Load())
+	failed := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("200", "owner", "overflow task", "unaccepted-context"), a.TokenForTest())
 	if failed.Disposition != im.ReceiveRetryable || failed.Reason != "capacity" {
 		t.Fatal(failed)
 	}
-	a.mu.Lock()
-	reply := a.replyContexts[compositeKey("bot", "owner")]
-	a.mu.Unlock()
-	if reply.token != "confirmed-context" || !reply.committed || !a.IngressDeliveryReadiness(id).Ready {
+	reply, _ := a.ReplyContextForTest(compositeKey("bot", "owner"))
+	if reply.Token != "confirmed-context" || !reply.Committed || !a.IngressDeliveryReadiness(id).Ready {
 		t.Fatal("failed acceptance replaced the context of previously accepted work")
 	}
 	service.mu.Lock()
@@ -45,7 +44,7 @@ func TestWechatIngressFailedAcceptancePreservesCommittedReplyContext(t *testing.
 }
 
 type wechatIngressReadinessProbe struct {
-	*WechatAdapter
+	*wechat.WechatAdapter
 	readyChecked chan struct{}
 	once         sync.Once
 }
@@ -64,7 +63,7 @@ func TestWechatIngressStopDuringSessionReadyWaitPreservesReceived(t *testing.T) 
 	process.readySignal = ready
 	probe := &wechatIngressReadinessProbe{WechatAdapter: a, readyChecked: make(chan struct{})}
 	service.router.SetAdapter(probe)
-	result := a.receiveIncomingMessage(t.Context(), wechatTextMessage("301", "owner", "queued task", "confirmed-context"), a.token.Load())
+	result := a.ReceiveIncomingMessageForTest(t.Context(), wechatTextMessage("301", "owner", "queued task", "confirmed-context"), a.TokenForTest())
 	if result.Disposition != im.ReceiveAccepted {
 		close(ready)
 		t.Fatal(result)
@@ -75,9 +74,7 @@ func TestWechatIngressStopDuringSessionReadyWaitPreservesReceived(t *testing.T) 
 		close(ready)
 		t.Fatal("dispatcher did not check readiness")
 	}
-	a.mu.Lock()
-	a.stopped = true
-	a.mu.Unlock()
+	a.SetStoppedForTest(true)
 	close(ready)
 	waitIngressCondition(t, func() bool {
 		service.mu.Lock()
@@ -115,9 +112,7 @@ func TestWechatIngressReconnectRejectsPreviousConnectionCallbacks(t *testing.T) 
 			}
 			oldConnection, cancelOld := context.WithCancel(t.Context())
 			defer cancelOld()
-			a.mu.Lock()
-			a.ctx = oldConnection
-			a.mu.Unlock()
+			a.SetConnectionForTest(oldConnection, nil)
 			started, release := make(chan struct{}), make(chan struct{})
 			if beforePrepare {
 				service.normalizer.receiver = &wechatIngressAcceptanceBarrier{service, started, release}
@@ -125,7 +120,7 @@ func TestWechatIngressReconnectRejectsPreviousConnectionCallbacks(t *testing.T) 
 
 			msg := wechatTextMessage("501", "owner", "old connection task", "old-context")
 			future := make(chan im.ReceiveResult, 1)
-			go func() { future <- a.receiveIncomingMessage(t.Context(), msg, a.token.Load()) }()
+			go func() { future <- a.ReceiveIncomingMessageForTest(t.Context(), msg, a.TokenForTest()) }()
 			select {
 			case <-started:
 			case <-time.After(3 * time.Second):
@@ -135,16 +130,14 @@ func TestWechatIngressReconnectRejectsPreviousConnectionCallbacks(t *testing.T) 
 			cancelOld()
 			newConnection, cancelNew := context.WithCancel(t.Context())
 			defer cancelNew()
-			newPending := &wechatIngressPending{connection: newConnection}
-			key := compositeKey("bot", wechatIngressBusinessID("owner", "501"))
-			a.mu.Lock()
+			newPending := &wechat.WechatIngressPending{Connection: newConnection}
+			key := compositeKey("bot", wechat.WechatIngressBusinessID("owner", "501"))
 			// Recreate the Connect teardown/start state without changing token
 			// or account epoch: only the connection scope distinguishes it.
-			a.ctx = newConnection
-			a.stopped = false
-			a.replyContexts = nil
-			a.ingressPending = map[string]*wechatIngressPending{key: newPending}
-			a.mu.Unlock()
+			a.SetConnectionForTest(newConnection, nil)
+			a.SetStoppedForTest(false)
+			a.ReplaceReplyContextsForTest(nil)
+			a.ReplaceIngressPendingForTest(map[string]*wechat.WechatIngressPending{key: newPending})
 			close(release)
 			select {
 			case result := <-future:
@@ -154,14 +147,12 @@ func TestWechatIngressReconnectRejectsPreviousConnectionCallbacks(t *testing.T) 
 			case <-time.After(3 * time.Second):
 				t.Fatal("old acceptance did not finish")
 			}
-			a.mu.Lock()
-			contexts := len(a.replyContexts)
-			preserved := a.ingressPending[key] == newPending
-			a.mu.Unlock()
+			contexts := a.ReplyContextCountForTest()
+			preserved := a.IngressPendingForTest(key) == newPending
 			if contexts != 0 || !preserved {
 				t.Fatal("old connection modified replacement context or pending receipt")
 			}
-			if _, err := service.store.lookupCommittedBusiness("wechat", "bot", wechatIngressBusinessID("owner", "501")); !errors.Is(err, errIngressMissing) {
+			if _, err := service.store.lookupCommittedBusiness("wechat", "bot", wechat.WechatIngressBusinessID("owner", "501")); !errors.Is(err, errIngressMissing) {
 				t.Fatal("old connection committed its input", err)
 			}
 		})
@@ -178,19 +169,15 @@ func TestWechatIngressReconnectRejectsPreviousConnectionConfirmation(t *testing.
 	pairing.mu.Lock()
 	epoch := pairing.platforms["wechat"].epoch
 	pairing.mu.Unlock()
-	pending := &wechatIngressPending{connection: oldConnection, prepared: true, replyToken: "reused-context", bound: true, accountEpoch: epoch}
-	a.mu.Lock()
-	a.ctx = newConnection
-	a.replyContexts = map[string]wechatReplyContext{
-		compositeKey("bot", "owner"): {token: "reused-context", bound: true, accountEpoch: epoch},
-	}
-	a.mu.Unlock()
+	pending := &wechat.WechatIngressPending{Connection: oldConnection, Prepared: true, ReplyToken: "reused-context", Bound: true, AccountEpoch: epoch}
+	a.SetConnectionForTest(newConnection, nil)
+	a.ReplaceReplyContextsForTest(map[string]wechat.WechatReplyContext{
+		compositeKey("bot", "owner"): {Token: "reused-context", Bound: true, AccountEpoch: epoch},
+	})
 	cancelOld()
-	a.confirmIncomingContext(wechatTextMessage("502", "owner", "old task", "reused-context"), a.token.Load(), im.ReceiveResult{Disposition: im.ReceiveAccepted}, pending)
-	a.mu.Lock()
-	committed := a.replyContexts[compositeKey("bot", "owner")].committed
-	a.mu.Unlock()
-	if committed {
+	a.ConfirmIncomingContextForTest(wechatTextMessage("502", "owner", "old task", "reused-context"), a.TokenForTest(), im.ReceiveResult{Disposition: im.ReceiveAccepted}, pending)
+	committed, ok := a.ReplyContextForTest(compositeKey("bot", "owner"))
+	if !ok || committed.Committed {
 		t.Fatal("late confirmation reopened the replacement connection")
 	}
 }

@@ -33,8 +33,8 @@ if [[ -n "$goimports_diff" ]]; then
   exit 1
 fi
 
-echo "==> go test -short -timeout=${test_timeout} -coverprofile=${coverage_file} ./..."
-go test -short -timeout="$test_timeout" -coverprofile="$coverage_file" ./...
+echo "==> go test -short -timeout=${test_timeout} -coverprofile=${coverage_file} -coverpkg=./... ./..."
+go test -short -timeout="$test_timeout" -coverprofile="$coverage_file" -coverpkg=./... ./...
 
 echo "==> go test -race -short -timeout=${test_timeout} ./..."
 go test -race -short -timeout="$test_timeout" ./...

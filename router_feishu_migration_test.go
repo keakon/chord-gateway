@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
@@ -33,10 +35,11 @@ func migrationFeishuRouter(t *testing.T, handler http.HandlerFunc) (*Notificatio
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(handler)
-	originalURL := feishuOpenBaseURL
-	feishuOpenBaseURL = server.URL
-	a := &FeishuAdapter{imCfg: cfg.IMs[0], httpClient: server.Client(), accessToken: "token", tokenExpireAt: time.Now().Add(time.Hour)}
-	a.msgRouter = r
+	originalURL := feishu.OpenBaseURL
+	feishu.OpenBaseURL = server.URL
+	a := &feishu.FeishuAdapter{}
+	a.WireForTest(cfg.IMs[0], server.Client(), r)
+	a.SetTokenForTest("token", time.Now().Add(time.Hour))
 	r.SetAdapter(a)
 	key := (processKey{workspaceID: "workspace", imType: "feishu", chatID: "chat"}).String()
 	p := &ChordProcess{key: key, runtimeID: "runtime", sessionEpoch: 1, bindingInstanceID: "binding", stdin: &ingressTestWriter{}, state: ControlState{SessionID: "session", BindingInstanceID: "binding"}}
@@ -53,7 +56,7 @@ func migrationFeishuRouter(t *testing.T, handler http.HandlerFunc) (*Notificatio
 		t.Fatal("owner not authorized")
 	}
 	msg.SetAdmissionTicket(&ticket)
-	t.Cleanup(func() { r.Close(); r.admission.Close(); server.Close(); feishuOpenBaseURL = originalURL })
+	t.Cleanup(func() { r.Close(); r.admission.Close(); server.Close(); feishu.OpenBaseURL = originalURL })
 	return r, p, msg
 }
 
@@ -449,12 +452,12 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	p.stdin = writer
 	p.state.Questions = map[string]*QuestionPayload{"q": {RequestID: "q", Version: 7, Options: []string{"Choice"}, OptionIDs: []string{"sensitive-option"}}}
 	p.mu.Unlock()
-	adapter := r.findFeishuAdapter()
+	adapter := findFeishuAdapterForTest(r)
 	var message larkim.P2MessageReceiveV1
 	if err := json.Unmarshal([]byte(`{"schema":"2.0","header":{"app_id":"app","event_id":"text-event"},"event":{"sender":{"sender_type":"user","sender_id":{"open_id":"owner"}},"message":{"message_id":"same","chat_id":"chat","chat_type":"p2p","message_type":"text","content":"{\"text\":\"/help\"}"}}}`), &message); err != nil {
 		t.Fatal(err)
 	}
-	future, err := adapter.submitMessageEvent(t.Context(), &message, "delivery-1")
+	future, err := adapter.SubmitMessageEvent(t.Context(), &message, "delivery-1")
 	if err != nil || future == nil {
 		t.Fatal(err)
 	}
@@ -462,7 +465,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
-	future, err = adapter.submitMessageEvent(t.Context(), &message, "delivery-2")
+	future, err = adapter.SubmitMessageEvent(t.Context(), &message, "delivery-2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +477,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"schema":"2.0","header":{"app_id":"app","event_id":"same"},"event":{"operator":{"open_id":"owner"},"token":"sensitive-token","action":{"tag":"button","value":{"type":"question","action":"answer","request_id":"q","version":7,"binding_instance_id":"binding","chat_id":"chat","im_type":"feishu","value":"sensitive-option"}},"context":{"open_chat_id":"chat","open_message_id":"card"}}}`), &card); err != nil {
 		t.Fatal(err)
 	}
-	future, immediate, err := adapter.submitCardActionEvent(t.Context(), &card, "card-delivery-1")
+	future, immediate, err := adapter.SubmitCardActionEvent(t.Context(), &card, "card-delivery-1")
 	if err != nil || future == nil || immediate != nil {
 		t.Fatal(immediate, err)
 	}
@@ -482,7 +485,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if second.Disposition != im.ReceiveAccepted || second.RecordID == first.RecordID {
 		t.Fatal(second)
 	}
-	future, _, err = adapter.submitCardActionEvent(t.Context(), &card, "card-delivery-2")
+	future, _, err = adapter.SubmitCardActionEvent(t.Context(), &card, "card-delivery-2")
 	if err != nil {
 		t.Fatal(err)
 	}

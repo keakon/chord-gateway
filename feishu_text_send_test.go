@@ -15,20 +15,21 @@ import (
 	"time"
 	"unicode/utf8"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func textSendFeishuAdapter(t *testing.T, transport func(*http.Request) (*http.Response, error)) *FeishuAdapter {
+func textSendFeishuAdapter(t *testing.T, transport func(*http.Request) (*http.Response, error)) *feishu.FeishuAdapter {
 	t.Helper()
 	lifecycle, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	return &FeishuAdapter{
-		imCfg:       config.IMAdapterConfig{Feishu: &config.FeishuConfig{AppID: "text-budget-account"}},
-		httpClient:  &http.Client{Transport: imageRoundTripper(transport)},
-		accessToken: "cached-text-token", tokenExpireAt: time.Now().Add(time.Hour),
-		ctx: lifecycle, cancel: cancel,
-	}
+	a := &feishu.FeishuAdapter{}
+	a.WireForTest(config.IMAdapterConfig{Feishu: &config.FeishuConfig{AppID: "text-budget-account"}}, &http.Client{Transport: imageRoundTripper(transport)}, nil)
+	a.SetLifecycleForTest(lifecycle, cancel)
+	a.SetTokenForTest("cached-text-token", time.Now().Add(time.Hour))
+	return a
 }
 
 func textSendResponse(status int, body string) *http.Response {
@@ -71,7 +72,7 @@ func TestFeishuTextSharedBudgetTruncationAndDeadline(t *testing.T) {
 			t.Fatalf("unbounded or silent truncation: %d segments, %d bytes", len(parts), len(joined))
 		}
 		for _, part := range parts {
-			if !utf8.ValidString(part) || utf8.RuneCountInString(part) > feishuMaxTextLen {
+			if !utf8.ValidString(part) || utf8.RuneCountInString(part) > feishu.MaxTextLenForTest {
 				t.Fatal("segment split damaged Unicode or exceeded existing Feishu budget")
 			}
 		}
@@ -94,7 +95,7 @@ func TestFeishuTextPartialUnknownStopsWithoutReplay(t *testing.T) {
 			}
 			return textSendResponse(response.status, response.body), nil
 		})
-		err := a.SendTextContext(t.Context(), "chat", strings.Repeat("x", feishuMaxTextLen*3))
+		err := a.SendTextContext(t.Context(), "chat", strings.Repeat("x", feishu.MaxTextLenForTest*3))
 		var partial *im.IMTextSendError
 		if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "unknown_send" || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || calls.Load() != 2 {
 			t.Fatalf("unknown output replayed or lost confirmed count: %v calls=%d", err, calls.Load())
@@ -117,7 +118,7 @@ func TestFeishuTextExplicit429RetriesOnlyRejectedSegment(t *testing.T) {
 		}
 		return textSendResponse(http.StatusOK, `{"code":0,"data":{"message_id":"accepted"}}`), nil
 	})
-	first, second := strings.Repeat("a", feishuMaxTextLen), strings.Repeat("b", feishuMaxTextLen)
+	first, second := strings.Repeat("a", feishu.MaxTextLenForTest), strings.Repeat("b", feishu.MaxTextLenForTest)
 	if err := a.SendTextContext(t.Context(), "chat", first+second); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestFeishuTextRetryAfterParsing(t *testing.T) {
 		{"2", 2 * time.Second}, {"9223372036854775807", im.IMTextSendTimeout},
 		{now.Add(3 * time.Second).UTC().Format(http.TimeFormat), 3 * time.Second},
 	} {
-		if got := feishuTextRetryAfter(tc.value, now); got != tc.want {
+		if got := feishu.TextRetryAfterForTest(tc.value, now); got != tc.want {
 			t.Fatalf("%q: %v, want %v", tc.value, got, tc.want)
 		}
 	}

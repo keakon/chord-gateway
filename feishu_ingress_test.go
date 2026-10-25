@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -21,7 +23,7 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 	source := time.Now().Add(-time.Second).Truncate(time.Millisecond)
 	text.Event.Message.CreateTime = stringPtr(timeToMillis(source))
 	for _, delivery := range []string{"delivery-one", "delivery-two"} {
-		future, err := a.submitMessageEvent(t.Context(), text, delivery)
+		future, err := a.SubmitMessageEvent(t.Context(), text, delivery)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +38,7 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 	}
 	card := makeFeishuCardActionEvent("owner", "chat", "request", "allow")
 	card.EventV2Base.Header.EventID = "same"
-	future, immediate, err := a.submitCardActionEvent(t.Context(), card, "delivery-three")
+	future, immediate, err := a.SubmitCardActionEvent(t.Context(), card, "delivery-three")
 	if err != nil || immediate != nil {
 		t.Fatal(immediate, err)
 	}
@@ -66,7 +68,7 @@ func timeToMillis(value time.Time) string { return strconv.FormatInt(value.UnixM
 
 func TestFeishuCardMissingChatTypeKeepsAuthorizationStrict(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "test"}})
-	r := a.msgRouter.(*NotificationRouter)
+	r := a.HostForTest().(*NotificationRouter)
 	valid := im.IncomingMessage{IMType: "feishu", AccountID: "app", ChatID: "chat", SenderID: "owner", MessageID: "card:event", InternalAction: &im.InternalAction{Type: "confirm", Action: "allow", RequestID: "request", BindingInstanceID: "binding"}}
 	if result := r.admission.AuthorizeClassified(valid); result.Disposition != im.AdmissionAllowed {
 		t.Fatal(result)
@@ -103,14 +105,14 @@ func TestFeishuCardMissingChatTypeKeepsAuthorizationStrict(t *testing.T) {
 	valid.AccountID = "unpaired"
 	valid.Text = "/bind /tmp fake"
 	valid.ChatKind = "private"
-	if _, ok := unpaired.msgRouter.(*NotificationRouter).admission.Authorize(valid); ok {
+	if _, ok := unpaired.HostForTest().(*NotificationRouter).admission.Authorize(valid); ok {
 		t.Fatal("card paired an owner")
 	}
 }
 
 func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "test"}})
-	r := a.msgRouter.(*NotificationRouter)
+	r := a.HostForTest().(*NotificationRouter)
 	key := (processKey{workspaceID: "test", imType: "feishu", chatID: "chat"}).String()
 	p := &ChordProcess{runtimeID: "runtime-one", sessionEpoch: 1, bindingInstanceID: "binding", state: ControlState{SessionID: "session", Questions: map[string]*QuestionPayload{"q": {RequestID: "q", Version: 3}}}}
 	r.mgr.mu.Lock()
@@ -119,7 +121,7 @@ func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 	for _, version := range []any{nil, float64(2), "3"} {
 		card := makeFeishuQuestionFormEvent("owner", "chat", "q", map[string]interface{}{"option_1": true})
 		card.Event.Action.Value["version"] = version
-		future, _, err := a.submitCardActionEvent(context.Background(), card, "delivery")
+		future, _, err := a.SubmitCardActionEvent(context.Background(), card, "delivery")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,11 +142,11 @@ func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 func TestFeishuCardAcceptanceNeverOverwritesTerminalCard(t *testing.T) {
 	event := makeFeishuCardActionEvent("owner", "chat", "request", "allow")
 	for _, result := range []im.ReceiveResult{{Disposition: im.ReceiveAccepted}, {Disposition: im.ReceiveDuplicate, State: "submitted"}, {Disposition: im.ReceiveDuplicate, State: "unknown"}, {Disposition: im.ReceiveDuplicate, State: "rejected"}, {Disposition: im.ReceiveRetryable}, {Disposition: im.ReceiveUncertain}} {
-		response := feishuCardIngressResponse(event, result)
+		response := feishu.CardIngressResponseForTest(event, result)
 		if response == nil || response.Toast == nil || response.Card != nil {
 			t.Fatalf("result=%+v response=%+v", result, response)
 		}
-		if (result.Disposition == im.ReceiveUncertain || result.Disposition == im.ReceiveRetryable) && feishuMessageIngressError(result) == nil {
+		if (result.Disposition == im.ReceiveUncertain || result.Disposition == im.ReceiveRetryable) && feishu.MessageIngressErrorForTest(result) == nil {
 			t.Fatal("uncommitted result acknowledged")
 		}
 		if result.Disposition == im.ReceiveUncertain && strings.Contains(response.Toast.Content, "try again") {
@@ -155,7 +157,7 @@ func TestFeishuCardAcceptanceNeverOverwritesTerminalCard(t *testing.T) {
 
 func TestFeishuSourceTimeAndProtocolIgnore(t *testing.T) {
 	for _, raw := range []string{"", "broken", "0", "-1"} {
-		if !feishuSourceTime(raw).IsZero() {
+		if !feishu.SourceTimeForTest(raw).IsZero() {
 			t.Fatal("invented time", raw)
 		}
 	}
@@ -163,29 +165,27 @@ func TestFeishuSourceTimeAndProtocolIgnore(t *testing.T) {
 	for _, kind := range []string{"app", "bot"} {
 		event := makeFeishuMessageEvent("owner", "chat", "id", "task")
 		event.Event.Sender.SenderType = stringPtr(kind)
-		future, err := a.submitMessageEvent(t.Context(), event, "delivery")
+		future, err := a.SubmitMessageEvent(t.Context(), event, "delivery")
 		if future != nil || err != nil {
 			t.Fatal("robot event accepted")
 		}
 	}
 	event := makeFeishuMessageEvent("owner", "chat", "id", "task")
 	event.EventV2Base = &larkevent.EventV2Base{Header: &larkevent.EventHeader{AppID: "wrong-app"}}
-	if future, err := a.submitMessageEvent(t.Context(), event, "delivery"); future != nil || err != nil {
+	if future, err := a.SubmitMessageEvent(t.Context(), event, "delivery"); future != nil || err != nil {
 		t.Fatal("wrong app accepted")
 	}
 }
 
 func TestFeishuIngressRejectsChangedActiveAccount(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}})
-	a.mu.Lock()
-	a.activeAccount = "original-account"
-	a.mu.Unlock()
+	a.SetActiveAccountForTest("original-account")
 	text := makeFeishuMessageEvent("owner", "chat", "id", "task")
-	if future, err := a.submitMessageEvent(t.Context(), text, "delivery"); future != nil || err != nil {
+	if future, err := a.SubmitMessageEvent(t.Context(), text, "delivery"); future != nil || err != nil {
 		t.Fatal("changed account text accepted")
 	}
 	card := makeFeishuCardActionEvent("owner", "chat", "request", "allow")
-	if future, response, err := a.submitCardActionEvent(t.Context(), card, "delivery"); future != nil || response != nil || err != nil {
+	if future, response, err := a.SubmitCardActionEvent(t.Context(), card, "delivery"); future != nil || response != nil || err != nil {
 		t.Fatal("changed account card accepted")
 	}
 }
@@ -193,10 +193,10 @@ func TestFeishuIngressRejectsChangedActiveAccount(t *testing.T) {
 func TestFeishuIngressStopsAcceptingAfterDisconnect(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}})
 	a.Disconnect()
-	if future, err := a.submitMessageEvent(t.Context(), makeFeishuMessageEvent("owner", "chat", "id", "task"), "delivery"); future != nil || err != nil {
+	if future, err := a.SubmitMessageEvent(t.Context(), makeFeishuMessageEvent("owner", "chat", "id", "task"), "delivery"); future != nil || err != nil {
 		t.Fatal("disconnected adapter submitted text")
 	}
-	if future, response, err := a.submitCardActionEvent(t.Context(), makeFeishuCardActionEvent("owner", "chat", "req", "allow"), "delivery"); future != nil || response != nil || err != nil {
+	if future, response, err := a.SubmitCardActionEvent(t.Context(), makeFeishuCardActionEvent("owner", "chat", "req", "allow"), "delivery"); future != nil || response != nil || err != nil {
 		t.Fatal("disconnected adapter submitted card")
 	}
 	raw, _ := feishuTestReceivers.Load(a)
@@ -210,7 +210,7 @@ func TestFeishuIngressStopsAcceptingAfterDisconnect(t *testing.T) {
 
 func TestFeishuUnauthorizedDuplicateCallbackDoesNotExposeStoredOutcome(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "test"}})
-	r := a.msgRouter.(*NotificationRouter)
+	r := a.HostForTest().(*NotificationRouter)
 	store := r.ingressStore
 	original := store.AcceptRecord(t.Context(), IngressRecord{Platform: "feishu", AccountID: "app", ChatID: "chat", SenderID: "owner", BusinessID: "card:shared-event", Kind: "control", State: "received"}, nil)
 	if original.Disposition != im.ReceiveAccepted {
@@ -228,14 +228,14 @@ func TestFeishuUnauthorizedDuplicateCallbackDoesNotExposeStoredOutcome(t *testin
 	}
 	event := makeFeishuCardActionEvent("stranger", "chat", "request", "allow")
 	event.EventV2Base.Header.EventID = "shared-event"
-	response := a.feishuCardIngressResponse(event, result)
+	response := a.CardIngressResponseForTest(event, result)
 	if response.Toast.Content != "This interaction could not be accepted." || response.Card != nil {
 		t.Fatal("stored consumption state exposed", response)
 	}
 	// Exercise the complete SDK callback wrapper against the common receiver.
 	r.ingress.normalizer.Close()
 	r.ingress.normalizer = NewIngressNormalizer(t.Context(), r.ingress)
-	response, err := a.handleCardActionEvent(t.Context(), event)
+	response, err := handleCardActionEvent(t.Context(), a, event)
 	if err != nil || response == nil || response.Toast.Content != "This interaction could not be accepted." {
 		t.Fatal(response, err)
 	}
@@ -249,13 +249,13 @@ func TestFeishuCardOutcomePresentationChecksCurrentOwnerAppAndChat(t *testing.T)
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"chat": "test"}})
 	for _, result := range []im.ReceiveResult{{Disposition: im.ReceiveDuplicate, State: "consumed"}, {Disposition: im.ReceiveDuplicate, State: "unknown"}} {
 		owner := makeFeishuCardActionEvent("owner", "chat", "request", "allow")
-		if content := a.feishuCardIngressResponse(owner, result).Toast.Content; content == "This interaction could not be accepted." {
+		if content := a.CardIngressResponseForTest(owner, result).Toast.Content; content == "This interaction could not be accepted." {
 			t.Fatal("current owner cannot inspect result")
 		}
 		for _, change := range []func(){func() { owner.Event.Operator.OpenID = "stranger" }, func() { owner.Event.Context.OpenChatID = "unbound-chat" }, func() { owner.EventV2Base.Header.AppID = "wrong-app" }} {
 			owner = makeFeishuCardActionEvent("owner", "chat", "request", "allow")
 			change()
-			if response := a.feishuCardIngressResponse(owner, result); response.Toast.Content != "This interaction could not be accepted." || response.Card != nil {
+			if response := a.CardIngressResponseForTest(owner, result); response.Toast.Content != "This interaction could not be accepted." || response.Card != nil {
 				t.Fatal("unauthorized presentation exposed stored state", response)
 			}
 		}
@@ -263,26 +263,26 @@ func TestFeishuCardOutcomePresentationChecksCurrentOwnerAppAndChat(t *testing.T)
 }
 
 // Synchronous test helpers exercise the production submitters.
-func (a *FeishuAdapter) handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+func handleMessageEvent(ctx context.Context, a *feishu.FeishuAdapter, event *larkim.P2MessageReceiveV1) error {
 	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
-	future, err := a.submitMessageEvent(ctx, event, "")
+	future, err := a.SubmitMessageEvent(ctx, event, "")
 	if err != nil || future == nil {
 		return err
 	}
-	return feishuMessageIngressError(im.WaitIngressNormalization(ctx, future))
+	return feishu.MessageIngressErrorForTest(im.WaitIngressNormalization(ctx, future))
 }
 
-func (a *FeishuAdapter) handleCardActionEvent(ctx context.Context, event *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
+func handleCardActionEvent(ctx context.Context, a *feishu.FeishuAdapter, event *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
-	future, immediate, err := a.submitCardActionEvent(ctx, event, "")
+	future, immediate, err := a.SubmitCardActionEvent(ctx, event, "")
 	if err != nil {
-		return feishuCardToast("error", "Not received. Please try again later."), err
+		return feishu.CardToastForTest("error", "Not received. Please try again later."), err
 	}
 	if future == nil {
 		return immediate, nil
 	}
 	result := im.WaitIngressNormalization(ctx, future)
-	return a.feishuCardIngressResponse(event, result), feishuMessageIngressError(result)
+	return a.CardIngressResponseForTest(event, result), feishu.MessageIngressErrorForTest(result)
 }

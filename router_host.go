@@ -265,3 +265,18 @@ func (r *NotificationRouter) AcceptIdentityProbeRecord(ctx context.Context, plat
 	record := IngressRecord{Platform: platform, AccountID: account, ChatID: chatID, SenderID: senderID, BusinessID: businessID, DeliveryID: deliveryID, SourceTime: sourceTime, ReceivedAt: receivedAt, Kind: "control", State: im.IngressRejected, Reason: reason}
 	return r.ingressStore.AcceptRecord(ctx, record, nil)
 }
+
+// PublishPlatformReadinessUnderConfigTx marks the platform ready while holding
+// the config-store transaction lock, as polling transports must do when they
+// publish readiness alongside a checkpoint write.
+func (r *NotificationRouter) PublishPlatformReadinessUnderConfigTx(ctx context.Context, platform, account string) error {
+	if r == nil || r.admission == nil {
+		return im.ErrPairingDenied
+	}
+	p := r.admission.pairing
+	if err := lockIngressMutex(ctx, &p.store.txMu); err != nil {
+		return err
+	}
+	defer p.store.txMu.Unlock()
+	return p.PlatformReady(platform, account)
+}

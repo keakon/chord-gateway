@@ -271,16 +271,16 @@ func (r *NotificationRouter) publishLastKeyChatIDLocked() {
 	r.lastKeyChatIDSnapshot.Store(&snapshot)
 }
 
-// findFeishuAdapter resolves the FeishuAdapter from the adapter chain.
-func (r *NotificationRouter) findFeishuAdapter() *FeishuAdapter {
+// findFeishuCardAdapter resolves the feishu adapter's interactive-card
+// capabilities from the adapter chain; nil when feishu is absent or the
+// attached adapter cannot render cards.
+func (r *NotificationRouter) findFeishuCardAdapter() im.InteractiveCardAdapter {
 	a := r.findAdapterByType("feishu")
 	if a == nil {
 		return nil
 	}
-	if feishu, ok := a.(*FeishuAdapter); ok {
-		return feishu
-	}
-	return nil
+	cards, _ := a.(im.InteractiveCardAdapter)
+	return cards
 }
 
 // HandleIncomingMessage is the primary entry point for IM messages.

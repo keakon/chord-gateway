@@ -15,6 +15,8 @@ import (
 
 	"github.com/keakon/chord-gateway/internal/im"
 
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
+
 	"github.com/gorilla/websocket"
 
 	"github.com/keakon/golog"
@@ -23,9 +25,9 @@ import (
 	"github.com/keakon/chord-gateway/config"
 )
 
-func wecomAdapterFixture(t *testing.T) (*WecomAdapter, im.IncomingMessage, *IngressStore) {
+func wecomAdapterFixture(t *testing.T) (*wecom.WecomAdapter, im.IncomingMessage, *IngressStore, *NotificationRouter) {
 	t.Helper()
-	chat, err := EncodeWecomTarget("private", "owner")
+	chat, err := wecom.EncodeWecomTarget("private", "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +38,7 @@ func wecomAdapterFixture(t *testing.T) (*WecomAdapter, im.IncomingMessage, *Ingr
 	r := NewNotificationRouter(mgr)
 	r.admission = NewAdmission(NewPairingService(store, false, nil))
 	mgr.admission = r.admission
-	a, err := NewWecomAdapter(store.Snapshot(), *store.Snapshot().IMConfigByType("wecom"), paths, r)
+	a, err := wecom.NewWecomAdapter(store.Snapshot(), *store.Snapshot().IMConfigByType("wecom"), paths, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,10 +48,10 @@ func wecomAdapterFixture(t *testing.T) (*WecomAdapter, im.IncomingMessage, *Ingr
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err = a.authenticated(a.ctx); err != nil {
+	if err = a.AuthenticatedForTest(a.ContextForTest()); err != nil {
 		t.Fatal(err)
 	}
-	if err = a.transportReady(a.ctx); err != nil {
+	if err = a.TransportReadyForTest(a.ContextForTest()); err != nil {
 		t.Fatal(err)
 	}
 	msg := im.IncomingMessage{IMType: "wecom", AccountID: "bot", ChatID: chat, ChatKind: "private", SenderID: "owner", MessageID: "message:fixture", Text: "task"}
@@ -82,10 +84,10 @@ func wecomAdapterFixture(t *testing.T) (*WecomAdapter, im.IncomingMessage, *Ingr
 			t.Error(err)
 		}
 	})
-	return a, msg, ingress
+	return a, msg, ingress, r
 }
 
-func startWecomAdapterTestWS(t *testing.T, a *WecomAdapter, send func(string, string) int) {
+func startWecomAdapterTestWS(t *testing.T, a *wecom.WecomAdapter, send func(string, string) int) {
 	t.Helper()
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +97,7 @@ func startWecomAdapterTestWS(t *testing.T, a *WecomAdapter, send func(string, st
 		}
 		defer conn.Close()
 		for {
-			var frame wecomWSFrame
+			var frame wecom.WecomWSFrame
 			if conn.ReadJSON(&frame) != nil {
 				return
 			}
@@ -121,27 +123,20 @@ func startWecomAdapterTestWS(t *testing.T, a *WecomAdapter, send func(string, st
 			}
 		}
 	}))
-	a.ws.endpoint = "ws" + strings.TrimPrefix(server.URL, "http")
-	a.accountInterval = time.Millisecond
-	a.targetInterval = time.Millisecond
+	a.SetWSEndpointForTest("ws" + strings.TrimPrefix(server.URL, "http"))
+	a.SetRatePacingForTest(time.Millisecond, time.Millisecond)
 	done := make(chan error, 1)
-	go func() { done <- a.ws.Run(a.ctx) }()
+	go func() { done <- a.RunWSForTest(a.ContextForTest()) }()
 	t.Cleanup(func() { a.Disconnect(); <-done; server.Close() })
 	waitIngressCondition(t, func() bool {
-		a.mu.Lock()
-		adapterReady := a.ready && !a.stopping
-		a.mu.Unlock()
-		a.ws.mu.Lock()
-		transportReady := a.ws.current != nil && a.ws.current.ready && a.ws.current.deliverReady
-		a.ws.mu.Unlock()
-		return adapterReady && transportReady
+		return a.AdapterReadyForTest() && a.WSTransportReadyForTest()
 	})
 }
 
 func TestWecomRenderedSegmentsStayWithinByteBudget(t *testing.T) {
-	a, _, _ := wecomAdapterFixture(t)
+	a, _, _, _ := wecomAdapterFixture(t)
 	source := strings.Repeat("\\*中文😀<@owner>@all[link](url)\n", 3000)
-	segments, err := a.textSender.Segments(source)
+	segments, err := a.TextSenderForTest().Segments(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,14 +151,14 @@ func TestWecomRenderedSegmentsStayWithinByteBudget(t *testing.T) {
 	if !strings.Contains(segments[31], "Output truncated") {
 		t.Fatal("missing final truncation notice")
 	}
-	got := renderWecomText("\\`*_{}[]()#+-.!|~= <@user> @all")
+	got := wecom.RenderTextForTest("\\`*_{}[]()#+-.!|~= <@user> @all")
 	if !strings.Contains(got, "＜@user＞") || !strings.Contains(got, "@all") || !strings.Contains(got, `\[`) || !strings.HasPrefix(got, "\\\\\\`") {
 		t.Fatalf("render=%q", got)
 	}
 }
 
 func TestWecomBoundSendAndProbeAuthorization(t *testing.T) {
-	a, msg, _ := wecomAdapterFixture(t)
+	a, msg, _, _ := wecomAdapterFixture(t)
 	var mu sync.Mutex
 	var payloads []string
 	startWecomAdapterTestWS(t, a, func(target, text string) int {
@@ -178,7 +173,7 @@ func TestWecomBoundSendAndProbeAuthorization(t *testing.T) {
 	if err := a.SendText(msg.ChatID, "hello"); err != nil {
 		t.Fatal(err)
 	}
-	group, _ := EncodeWecomTarget("group", "candidate")
+	group, _ := wecom.EncodeWecomTarget("group", "candidate")
 	if err := a.SendText(group, "unbound"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("unbound send=%v", err)
 	}
@@ -190,13 +185,13 @@ func TestWecomBoundSendAndProbeAuthorization(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(payloads) != 2 || payloads[0] != "owner:hello" || payloads[1] != "candidate:"+wecomBindingCheck {
+	if len(payloads) != 2 || payloads[0] != "owner:hello" || payloads[1] != "candidate:"+wecom.BindingCheckMessage {
 		t.Fatalf("payloads=%q", payloads)
 	}
 }
 
 func TestWecomSendReportsAcceptedSegmentsAndDoesNotRetry(t *testing.T) {
-	a, msg, _ := wecomAdapterFixture(t)
+	a, msg, _, _ := wecomAdapterFixture(t)
 	var mu sync.Mutex
 	calls := 0
 	startWecomAdapterTestWS(t, a, func(_, text string) int {
@@ -213,7 +208,7 @@ func TestWecomSendReportsAcceptedSegmentsAndDoesNotRetry(t *testing.T) {
 	})
 	err := a.SendText(msg.ChatID, strings.Repeat("😀", 900))
 	var partial *im.IMTextSendError
-	var transport *WecomTransportError
+	var transport *wecom.WecomTransportError
 	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != "platform_rejected" || !errors.As(err, &transport) || transport.Category != "platform_rejected" || transport.Code != 45001 {
 		t.Fatalf("send=%v", err)
 	}
@@ -225,24 +220,24 @@ func TestWecomSendReportsAcceptedSegmentsAndDoesNotRetry(t *testing.T) {
 }
 
 func TestWecomSendThrottleAndCancellation(t *testing.T) {
-	a, _, _ := wecomAdapterFixture(t)
-	if a.accountInterval != 500*time.Millisecond || a.targetInterval != 4*time.Second {
+	a, _, _, _ := wecomAdapterFixture(t)
+	accountInterval, targetInterval := a.RatePacingForTest()
+	if accountInterval != 500*time.Millisecond || targetInterval != 4*time.Second {
 		t.Fatal("production throttle mismatch")
 	}
-	a.accountInterval = 10 * time.Millisecond
-	a.targetInterval = 30 * time.Millisecond
-	if err := a.waitSendSlot(t.Context(), "first"); err != nil {
+	a.SetRatePacingForTest(10*time.Millisecond, 30*time.Millisecond)
+	if err := a.WaitSendSlotForTest(t.Context(), "first"); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if err := a.waitSendSlot(t.Context(), "second"); err != nil {
+	if err := a.WaitSendSlotForTest(t.Context(), "second"); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) < 8*time.Millisecond {
 		t.Fatal("account throttle bypassed")
 	}
 	start = time.Now()
-	if err := a.waitSendSlot(t.Context(), "second"); err != nil {
+	if err := a.WaitSendSlotForTest(t.Context(), "second"); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) < 25*time.Millisecond {
@@ -250,14 +245,14 @@ func TestWecomSendThrottleAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := a.waitSendSlot(ctx, "third"); !errors.Is(err, context.Canceled) {
+	if err := a.WaitSendSlotForTest(ctx, "third"); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
 
 func TestWecomUnknownSendReportsPartialWithoutReplay(t *testing.T) {
-	a, msg, _ := wecomAdapterFixture(t)
-	a.ws.timing.send = 20 * time.Millisecond
+	a, msg, _, _ := wecomAdapterFixture(t)
+	a.SetWSSendTimeoutForTest(20 * time.Millisecond)
 	var mu sync.Mutex
 	calls := 0
 	startWecomAdapterTestWS(t, a, func(_, _ string) int {
@@ -282,7 +277,7 @@ func TestWecomUnknownSendReportsPartialWithoutReplay(t *testing.T) {
 }
 
 func TestWecomLongResultAndRetiredBinding(t *testing.T) {
-	a, msg, _ := wecomAdapterFixture(t)
+	a, msg, _, r := wecomAdapterFixture(t)
 	var mu sync.Mutex
 	var parts []string
 	startWecomAdapterTestWS(t, a, func(_, text string) int { mu.Lock(); defer mu.Unlock(); parts = append(parts, text); return 0 })
@@ -295,11 +290,11 @@ func TestWecomLongResultAndRetiredBinding(t *testing.T) {
 	}
 	mu.Unlock()
 	key := (processKey{workspaceID: "project", imType: "wecom", chatID: msg.ChatID}).String()
-	target, ok := a.router.targetForKey(key)
+	target, ok := r.targetForKey(key)
 	if !ok {
 		t.Fatal("missing binding")
 	}
-	ctx, done, err := a.router.deliveryContext(t.Context(), target)
+	ctx, done, err := r.deliveryContext(t.Context(), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +306,7 @@ func TestWecomLongResultAndRetiredBinding(t *testing.T) {
 }
 
 func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
-	a, msg, _ := wecomAdapterFixture(t)
+	a, msg, _, _ := wecomAdapterFixture(t)
 	entered := make(chan struct{})
 	releaseACK := make(chan struct{})
 	var releaseOnce sync.Once
@@ -336,9 +331,7 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 	}()
 	// While the body ACK is held, probe must wait for the same target's slot.
 	time.Sleep(20 * time.Millisecond)
-	a.ws.mu.Lock()
-	pending := a.ws.current.sends
-	a.ws.mu.Unlock()
+	pending := a.WSPendingSendsForTest()
 	if pending != 1 {
 		t.Errorf("probe sent ahead of body ACK: pending=%d", pending)
 	}
@@ -356,7 +349,7 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 }
 
 func TestWecomRejectedCallbackIsCountedAndLoggedOnce(t *testing.T) {
-	a, _, store := wecomAdapterFixture(t)
+	a, _, store, _ := wecomAdapterFixture(t)
 	var logged strings.Builder
 	log.SetLogfFunc(func(msg string, args ...interface{}) {
 		fmt.Fprintf(&logged, msg, args...)
@@ -365,8 +358,8 @@ func TestWecomRejectedCallbackIsCountedAndLoggedOnce(t *testing.T) {
 	t.Cleanup(func() { log.SetDefaultLogger(nil) })
 	// Every rejection is counted, but the warning is bounded to one line per
 	// interval so a malformed flood cannot overwhelm the log.
-	a.callbackRejected("invalid_callback")
-	a.callbackRejected("source_time_out_of_range")
+	a.CallbackRejectedForTest("invalid_callback")
+	a.CallbackRejectedForTest("source_time_out_of_range")
 	counts := map[string]uint64{}
 	for _, counter := range store.MetricsSnapshot().Counters {
 		if counter.Platform == "wecom" && counter.Event == "callback_dropped" {
@@ -385,22 +378,20 @@ func TestWecomRejectedCallbackIsCountedAndLoggedOnce(t *testing.T) {
 }
 
 func TestWecomUnavailableIsLoggedUnlessStopping(t *testing.T) {
-	a, _, _ := wecomAdapterFixture(t)
+	a, _, _, _ := wecomAdapterFixture(t)
 	var logged strings.Builder
 	log.SetLogfFunc(func(msg string, args ...interface{}) {
 		fmt.Fprintf(&logged, msg, args...)
 		logged.WriteByte('\n')
 	}, golog.WarnLevel)
 	t.Cleanup(func() { log.SetDefaultLogger(nil) })
-	a.unavailable(&WecomTransportError{Category: "connection_unavailable"})
+	a.UnavailableForTest(&wecom.WecomTransportError{Category: "connection_unavailable"})
 	if !strings.Contains(logged.String(), "connection unavailable category=connection_unavailable") {
 		t.Fatalf("transport failure was silent: %q", logged.String())
 	}
 	logged.Reset()
-	a.mu.Lock()
-	a.stopping = true
-	a.mu.Unlock()
-	a.unavailable(errors.New("dial failed"))
+	a.SetStoppingForTest(true)
+	a.UnavailableForTest(errors.New("dial failed"))
 	if logged.Len() != 0 {
 		t.Fatalf("shutdown reported as failure: %q", logged.String())
 	}
@@ -410,7 +401,7 @@ func TestWecomQuestionHintRoundTrip(t *testing.T) {
 	router := &NotificationRouter{}
 	for _, multiple := range []bool{false, true} {
 		message := router.formatQuestionNotification(ControlState{Questions: map[string]*QuestionPayload{"q1": {RequestID: "q1", Version: 1, Question: "Choose", Options: []string{"First", "Second"}, Multiple: multiple}}})
-		rendered := renderWecomText(message)
+		rendered := wecom.RenderTextForTest(message)
 		_, hint, ok := strings.Cut(rendered, "Reply ")
 		if !ok {
 			t.Fatalf("missing hint: %q", rendered)

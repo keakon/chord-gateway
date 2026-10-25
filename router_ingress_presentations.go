@@ -159,7 +159,7 @@ func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg im.IncomingMes
 func (r *NotificationRouter) enqueueIngressRoleMenu(msg im.IncomingMessage, current string, roles []RoleInfo, expectedBindings ...string) {
 	r.enqueueIngressPresentation(msg, func(ctx context.Context, target im.DeliveryTarget) error {
 		text := buildRoleMenuText(current, roles, func(command string) string { return r.ingressCommandHint(msg, command) })
-		if msg.IMType != "feishu" || r.findFeishuAdapter() == nil {
+		if msg.IMType != "feishu" || r.findFeishuCardAdapter() == nil {
 			return r.SendBound(ctx, target, text)
 		}
 		request := newRoleMenuRequestID()

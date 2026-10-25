@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/disgoorg/disgo/rest"
+
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
 func discordRateLimiterEndpoint(method, major string) *rest.CompiledEndpoint {
@@ -25,7 +27,7 @@ func discordRateLimiterResponse(status int, headers map[string]string) *http.Res
 }
 
 func TestDiscordRateLimiterRouteSerializationAndErrorUnlock(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	defer l.Close(t.Context())
 	endpoint := discordRateLimiterEndpoint(http.MethodPost, "channel-a")
 	if err := l.Wait(t.Context(), endpoint); err != nil {
@@ -53,7 +55,7 @@ func TestDiscordRateLimiterRouteSerializationAndErrorUnlock(t *testing.T) {
 	if err := l.Wait(t.Context(), endpoint); err != nil {
 		t.Fatal("nil response retained route lock", err)
 	}
-	if err := l.Unlock(endpoint, discordRateLimiterResponse(http.StatusTooManyRequests, nil)); !errors.Is(err, errDiscordRateLimitHeaders) {
+	if err := l.Unlock(endpoint, discordRateLimiterResponse(http.StatusTooManyRequests, nil)); !errors.Is(err, discord.ErrDiscordRateLimitHeaders) {
 		t.Fatal("missing retry delay did not stop SDK retry", err)
 	}
 	if err := l.Wait(t.Context(), endpoint); err != nil {
@@ -78,7 +80,7 @@ func TestDiscordRateLimiterGlobalHeaderOnlyOnExplicitTrue(t *testing.T) {
 		{"scope_user", map[string]string{"X-RateLimit-Scope": "user"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			l := newDiscordRateLimiter(t.Context())
+			l := discord.NewDiscordRateLimiter(t.Context())
 			defer l.Close(t.Context())
 			route := discordRateLimiterEndpoint(http.MethodPost, "route")
 			if err := l.Wait(t.Context(), route); err != nil {
@@ -91,10 +93,8 @@ func TestDiscordRateLimiterGlobalHeaderOnlyOnExplicitTrue(t *testing.T) {
 			if err := l.Unlock(route, discordRateLimiterResponse(http.StatusTooManyRequests, header)); err != nil {
 				t.Fatal(err)
 			}
-			key, _ := discordRateLimitEndpointKey(route)
-			l.mu.Lock()
-			global, reset, remaining := !l.global.IsZero(), l.buckets[key].reset, l.buckets[key].remaining
-			l.mu.Unlock()
+			global := !l.GlobalResetForTest().IsZero()
+			reset, remaining, _, _ := l.BucketForTest(route)
 			if global != tc.global {
 				t.Fatalf("global limit = %t want %t", global, tc.global)
 			}
@@ -108,7 +108,7 @@ func TestDiscordRateLimiterGlobalHeaderOnlyOnExplicitTrue(t *testing.T) {
 }
 
 func TestDiscordRateLimiterFractionalRouteAndGlobalReset(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	defer l.Close(t.Context())
 	route := discordRateLimiterEndpoint(http.MethodPost, "route")
 	global := discordRateLimiterEndpoint(http.MethodGet, "global")
@@ -119,10 +119,7 @@ func TestDiscordRateLimiterFractionalRouteAndGlobalReset(t *testing.T) {
 	if err := l.Unlock(route, discordRateLimiterResponse(http.StatusOK, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset-After": "0.04"})); err != nil {
 		t.Fatal(err)
 	}
-	key, _ := discordRateLimitEndpointKey(route)
-	l.mu.Lock()
-	routeReset := l.buckets[key].reset
-	l.mu.Unlock()
+	routeReset, _, _, _ := l.BucketForTest(route)
 	if delta := routeReset.Sub(before); delta < 40*time.Millisecond || delta > time.Second {
 		t.Fatal("fractional reset was truncated", delta)
 	}
@@ -132,9 +129,7 @@ func TestDiscordRateLimiterFractionalRouteAndGlobalReset(t *testing.T) {
 	if err := l.Unlock(global, discordRateLimiterResponse(http.StatusTooManyRequests, map[string]string{"Retry-After": "0.08", "X-RateLimit-Global": "true"})); err != nil {
 		t.Fatal(err)
 	}
-	l.mu.Lock()
-	globalReset := l.global
-	l.mu.Unlock()
+	globalReset := l.GlobalResetForTest()
 	if !globalReset.After(routeReset) {
 		t.Fatal("test global delay did not exceed route delay")
 	}
@@ -150,7 +145,7 @@ func TestDiscordRateLimiterFractionalRouteAndGlobalReset(t *testing.T) {
 }
 
 func TestDiscordRateLimiterLongerRouteResetAndConcurrentGlobalUpdates(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	defer l.Close(t.Context())
 	route := discordRateLimiterEndpoint(http.MethodPost, "route")
 	global := discordRateLimiterEndpoint(http.MethodGet, "global")
@@ -162,10 +157,7 @@ func TestDiscordRateLimiterLongerRouteResetAndConcurrentGlobalUpdates(t *testing
 	if err := l.Unlock(route, discordRateLimiterResponse(http.StatusOK, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset-After": "0.06"})); err != nil {
 		t.Fatal(err)
 	}
-	key, _ := discordRateLimitEndpointKey(route)
-	l.mu.Lock()
-	reset := l.buckets[key].reset
-	l.mu.Unlock()
+	reset, _, _, _ := l.BucketForTest(route)
 	if err := l.Unlock(global, discordRateLimiterResponse(http.StatusTooManyRequests, map[string]string{"Retry-After": "0.01", "X-RateLimit-Global": "true"})); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +190,7 @@ func TestDiscordRateLimiterLongerRouteResetAndConcurrentGlobalUpdates(t *testing
 }
 
 func TestDiscordRateLimiterGlobalExtensionWakesWaitingRoutes(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	defer l.Close(t.Context())
 	route := discordRateLimiterEndpoint(http.MethodPost, "waiting")
 	global := discordRateLimiterEndpoint(http.MethodGet, "global")
@@ -212,18 +204,14 @@ func TestDiscordRateLimiterGlobalExtensionWakesWaitingRoutes(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- l.Wait(t.Context(), route) }()
-	key, _ := discordRateLimitEndpointKey(route)
 	waitIngressCondition(t, func() bool {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		return l.buckets[key].references == 1 && l.buckets[key].busy
+		_, _, references, busy := l.BucketForTest(route)
+		return references == 1 && busy
 	})
 	if err := l.Unlock(global, discordRateLimiterResponse(http.StatusTooManyRequests, map[string]string{"Retry-After": "0.1", "X-RateLimit-Scope": "global"})); err != nil {
 		t.Fatal(err)
 	}
-	l.mu.Lock()
-	reset := l.global
-	l.mu.Unlock()
+	reset := l.GlobalResetForTest()
 	select {
 	case err := <-done:
 		if err != nil || time.Now().Before(reset) {
@@ -240,7 +228,7 @@ func TestDiscordRateLimiterGlobalExtensionWakesWaitingRoutes(t *testing.T) {
 func TestDiscordRateLimiterRetryDelayParsingAndRelease(t *testing.T) {
 	for _, value := range []string{"1", "0.125", "0.000000001"} {
 		t.Run(value, func(t *testing.T) {
-			l := newDiscordRateLimiter(t.Context())
+			l := discord.NewDiscordRateLimiter(t.Context())
 			defer l.Close(t.Context())
 			e := discordRateLimiterEndpoint(http.MethodPost, "route")
 			if err := l.Wait(t.Context(), e); err != nil {
@@ -250,11 +238,9 @@ func TestDiscordRateLimiterRetryDelayParsingAndRelease(t *testing.T) {
 			if err := l.Unlock(e, discordRateLimiterResponse(http.StatusTooManyRequests, map[string]string{"Retry-After": value})); err != nil {
 				t.Fatal(err)
 			}
-			key, _ := discordRateLimitEndpointKey(e)
-			want, _ := discordRateLimitSeconds(value)
-			l.mu.Lock()
-			got := l.buckets[key].reset.Sub(before)
-			l.mu.Unlock()
+			want, _ := discord.RateLimitSeconds(value)
+			reset, _, _, _ := l.BucketForTest(e)
+			got := reset.Sub(before)
 			if got < want || got > want+time.Second {
 				t.Fatal(got, want)
 			}
@@ -262,13 +248,13 @@ func TestDiscordRateLimiterRetryDelayParsingAndRelease(t *testing.T) {
 	}
 	for _, value := range []string{"", "0", "-1", "NaN", "Inf", "1e30", "not-a-number"} {
 		t.Run("invalid/"+value, func(t *testing.T) {
-			l := newDiscordRateLimiter(t.Context())
+			l := discord.NewDiscordRateLimiter(t.Context())
 			defer l.Close(t.Context())
 			e := discordRateLimiterEndpoint(http.MethodPost, "route")
 			if err := l.Wait(t.Context(), e); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.Unlock(e, discordRateLimiterResponse(http.StatusTooManyRequests, map[string]string{"Retry-After": value})); !errors.Is(err, errDiscordRateLimitHeaders) {
+			if err := l.Unlock(e, discordRateLimiterResponse(http.StatusTooManyRequests, map[string]string{"Retry-After": value})); !errors.Is(err, discord.ErrDiscordRateLimitHeaders) {
 				t.Fatal("invalid delay accepted", err)
 			}
 			if err := l.Wait(t.Context(), e); err != nil {
@@ -283,7 +269,7 @@ func TestDiscordRateLimiterRetryDelayParsingAndRelease(t *testing.T) {
 
 func TestDiscordRateLimiterCancellationReleasesDelayAndParentWait(t *testing.T) {
 	parent, cancelParent := context.WithCancel(t.Context())
-	l := newDiscordRateLimiter(parent)
+	l := discord.NewDiscordRateLimiter(parent)
 	defer l.Close(t.Context())
 	e := discordRateLimiterEndpoint(http.MethodPost, "route")
 	if err := l.Wait(t.Context(), e); err != nil {
@@ -297,19 +283,15 @@ func TestDiscordRateLimiterCancellationReleasesDelayAndParentWait(t *testing.T) 
 	if err := l.Wait(ctx, e); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	key, _ := discordRateLimitEndpointKey(e)
-	l.mu.Lock()
-	busy, references := l.buckets[key].busy, l.buckets[key].references
-	l.mu.Unlock()
+	_, _, references, busy := l.BucketForTest(e)
 	if busy || references != 0 {
 		t.Fatal("cancelled delay retained bucket", busy, references)
 	}
 	done := make(chan error, 1)
 	go func() { done <- l.Wait(t.Context(), e) }()
 	waitIngressCondition(t, func() bool {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		return l.buckets[key].references == 1 && l.buckets[key].busy
+		_, _, references, busy := l.BucketForTest(e)
+		return references == 1 && busy
 	})
 	cancelParent()
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -318,10 +300,9 @@ func TestDiscordRateLimiterCancellationReleasesDelayAndParentWait(t *testing.T) 
 }
 
 func TestDiscordRateLimiterResetWakesDelayAndCloseCancelsGlobalWait(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	defer l.Close(t.Context())
 	e := discordRateLimiterEndpoint(http.MethodPost, "route")
-	key, _ := discordRateLimitEndpointKey(e)
 	for _, closeLimiter := range []bool{false, true} {
 		if err := l.Wait(t.Context(), e); err != nil {
 			t.Fatal(err)
@@ -332,9 +313,8 @@ func TestDiscordRateLimiterResetWakesDelayAndCloseCancelsGlobalWait(t *testing.T
 		done := make(chan error, 1)
 		go func() { done <- l.Wait(t.Context(), e) }()
 		waitIngressCondition(t, func() bool {
-			l.mu.Lock()
-			defer l.mu.Unlock()
-			return l.buckets[key].references == 1 && l.buckets[key].busy
+			_, _, references, busy := l.BucketForTest(e)
+			return references == 1 && busy
 		})
 		if closeLimiter {
 			l.Close(t.Context())
@@ -358,22 +338,20 @@ func TestDiscordRateLimiterResetWakesDelayAndCloseCancelsGlobalWait(t *testing.T
 }
 
 func TestDiscordRateLimiterConcurrentCloseCancelsWaitersAndResetKeepsActiveBucket(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	e := discordRateLimiterEndpoint(http.MethodPost, "route")
 	if err := l.Wait(t.Context(), e); err != nil {
 		t.Fatal(err)
 	}
 	l.Reset()
-	key, _ := discordRateLimitEndpointKey(e)
 	var waiters sync.WaitGroup
 	errorsSeen := make(chan error, 32)
 	for range 32 {
 		waiters.Go(func() { errorsSeen <- l.Wait(t.Context(), e) })
 	}
 	waitIngressCondition(t, func() bool {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		return l.buckets[key].references == 33
+		_, _, references, _ := l.BucketForTest(e)
+		return references == 33
 	})
 	var closers sync.WaitGroup
 	for range 8 {
@@ -397,15 +375,15 @@ func TestDiscordRateLimiterConcurrentCloseCancelsWaitersAndResetKeepsActiveBucke
 }
 
 func TestDiscordRateLimiterBoundedBucketsNeverEvictsActiveRoutes(t *testing.T) {
-	l := newDiscordRateLimiter(t.Context())
+	l := discord.NewDiscordRateLimiter(t.Context())
 	defer l.Close(t.Context())
-	for i := range discordRateLimiterCapacity {
+	for i := range discord.DiscordRateLimiterCapacity {
 		if err := l.Wait(t.Context(), discordRateLimiterEndpoint(http.MethodPost, fmt.Sprint(i))); err != nil {
 			t.Fatal(err)
 		}
 	}
 	newRoute := discordRateLimiterEndpoint(http.MethodPost, "extra")
-	if err := l.Wait(t.Context(), newRoute); !errors.Is(err, errDiscordRateLimiterCapacity) {
+	if err := l.Wait(t.Context(), newRoute); !errors.Is(err, discord.ErrDiscordRateLimiterCapacity) {
 		t.Fatal("active route evicted", err)
 	}
 	if err := l.Unlock(discordRateLimiterEndpoint(http.MethodPost, "0"), nil); err != nil {
@@ -414,10 +392,8 @@ func TestDiscordRateLimiterBoundedBucketsNeverEvictsActiveRoutes(t *testing.T) {
 	if err := l.Wait(t.Context(), newRoute); err != nil {
 		t.Fatal("unused route not reclaimed", err)
 	}
-	l.mu.Lock()
-	count := len(l.buckets)
-	l.mu.Unlock()
-	if count != discordRateLimiterCapacity {
+	count := l.BucketCountForTest()
+	if count != discord.DiscordRateLimiterCapacity {
 		t.Fatal("bucket limit exceeded", count)
 	}
 	if err := l.Unlock(newRoute, nil); err != nil {

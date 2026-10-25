@@ -8,6 +8,7 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
 func TestProxyFuncFor_PriorityAndDisabled(t *testing.T) {
@@ -109,12 +110,12 @@ func TestDiscordProxyDialer_NormalizesSocks5H(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dialer := discordProxyDialer(func(*http.Request) (*url.URL, error) { return proxyURL, nil })
+	dialer := discord.ProxyDialerForTest(func(*http.Request) (*url.URL, error) { return proxyURL, nil })
 	got, err := dialer.Proxy(&http.Request{})
 	if err != nil || got == nil || got.Scheme != "socks5" {
 		t.Fatalf("discord dialer must downgrade socks5h, got %v %v", got, err)
 	}
-	direct := discordProxyDialer(nil)
+	direct := discord.ProxyDialerForTest(nil)
 	if u, err := direct.Proxy(&http.Request{}); err != nil || u != nil {
 		t.Fatalf("discord nil proxy must stay direct, got %v %v", u, err)
 	}

@@ -14,12 +14,13 @@ func TestWechatDisconnectCancelsEachImageStage(t *testing.T) {
 	for _, stage := range []string{"/ilink/bot/getuploadurl", "/cdn", "/ilink/bot/sendmessage"} {
 		t.Run(stage, func(t *testing.T) {
 			a := newTestWechatAdapter(t)
-			a.imCfg.Wechat.BaseURL = "https://example.invalid"
-			a.ctx, a.cancel = context.WithCancel(t.Context())
-			defer a.cancel()
-			a.cachePairedContext("bot", "owner", "reply-context", true)
+			a.SetBaseURLForTest("https://example.invalid")
+			ctx, cancel := context.WithCancel(t.Context())
+			a.SetConnectionForTest(ctx, cancel)
+			defer cancel()
+			a.CachePairedContextForTest("bot", "owner", "reply-context", true)
 			entered := make(chan struct{})
-			a.httpClient.Transport = imageRoundTripper(func(request *http.Request) (*http.Response, error) {
+			a.SetTransportForTest(imageRoundTripper(func(request *http.Request) (*http.Response, error) {
 				if request.URL.Path == stage {
 					close(entered)
 					<-request.Context().Done()
@@ -30,7 +31,7 @@ func TestWechatDisconnectCancelsEachImageStage(t *testing.T) {
 					Header:     http.Header{"X-Encrypted-Param": {"download-param"}},
 					Body:       io.NopCloser(strings.NewReader(`{"upload_full_url":"https://example.invalid/cdn","ret":0}`)),
 				}, nil
-			})
+			}))
 			image := imageForUpload(t)
 			done := make(chan error, 1)
 			go func() { done <- a.SendImageContext(t.Context(), "owner", image) }()

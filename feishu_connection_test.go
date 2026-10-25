@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	"github.com/gorilla/websocket"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
@@ -60,9 +62,9 @@ func feishuTextFrame(t *testing.T, chat, business, delivery string) larkws.Frame
 	}
 	return larkws.Frame{Method: int32(larkws.FrameTypeData), Headers: larkws.Headers{{Key: larkws.HeaderType, Value: string(larkws.MessageTypeEvent)}, {Key: larkws.HeaderMessageID, Value: delivery}, {Key: larkws.HeaderSum, Value: "1"}}, Payload: payload}
 }
-func installFeishuReceiver(t *testing.T, a *FeishuAdapter, f feishuReceiverFunc) {
+func installFeishuReceiver(t *testing.T, a *feishu.FeishuAdapter, f feishuReceiverFunc) {
 	t.Helper()
-	r := a.msgRouter.(*NotificationRouter)
+	r := a.HostForTest().(*NotificationRouter)
 	n := NewIngressNormalizer(t.Context(), f)
 	r.ingress.normalizer = n
 	t.Cleanup(n.Close)
@@ -102,10 +104,10 @@ func TestFeishuFrameReaderDoesNotWaitForAcceptance(t *testing.T) {
 		return im.ReceiveResult{Disposition: im.ReceiveAccepted}
 	})
 	conn, client := feishuSocketPair(t)
-	g := a.startGeneration(t.Context(), conn)
-	defer g.close()
+	g := a.StartGenerationForTest(t.Context(), conn)
+	defer g.CloseGenerationForTest()
 	frame := feishuTextFrame(t, "chat", "business", "delivery")
-	if err := a.handleDataFrame(g.ctx, conn, frame); err != nil {
+	if err := a.HandleDataFrameForTest(g.GenerationContextForTest(), conn, frame); err != nil {
 		t.Fatal(err)
 	}
 	<-entered
@@ -115,10 +117,10 @@ func TestFeishuFrameReaderDoesNotWaitForAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = a.handleWSFrame(g.ctx, conn, data); err != nil {
+	if err = a.HandleWSFrameForTest(g.GenerationContextForTest(), conn, data); err != nil {
 		t.Fatal(err)
 	}
-	if a.currentPingInterval() != 7*time.Second {
+	if a.CurrentPingIntervalForTest() != 7*time.Second {
 		t.Fatal("pong was not handled")
 	}
 	read := make(chan []byte, 1)
@@ -161,9 +163,9 @@ func TestFeishuFramesMapUnconfirmedAcceptanceToFailure(t *testing.T) {
 				return im.ReceiveResult{Disposition: disposition}
 			})
 			conn, client := feishuSocketPair(t)
-			g := a.startGeneration(t.Context(), conn)
-			defer g.close()
-			if err := a.handleDataFrame(g.ctx, conn, feishuTextFrame(t, "chat", "business", "delivery")); err != nil {
+			g := a.StartGenerationForTest(t.Context(), conn)
+			defer g.CloseGenerationForTest()
+			if err := a.HandleDataFrameForTest(g.GenerationContextForTest(), conn, feishuTextFrame(t, "chat", "business", "delivery")); err != nil {
 				t.Fatal(err)
 			}
 			_, code := readFeishuResponse(t, client)
@@ -180,16 +182,16 @@ func TestFeishuFramesMapUnconfirmedAcceptanceToFailure(t *testing.T) {
 func TestFeishuStaleGenerationCannotWriteNewSocket(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
 	oldConn, _ := feishuSocketPair(t)
-	oldGeneration := a.startGeneration(t.Context(), oldConn)
-	oldGeneration.close()
+	oldGeneration := a.StartGenerationForTest(t.Context(), oldConn)
+	oldGeneration.CloseGenerationForTest()
 	newConn, client := feishuSocketPair(t)
-	newGeneration := a.startGeneration(t.Context(), newConn)
-	defer newGeneration.close()
-	if err := a.writeBinary(oldConn, []byte("stale")); err == nil {
+	newGeneration := a.StartGenerationForTest(t.Context(), newConn)
+	defer newGeneration.CloseGenerationForTest()
+	if err := a.WriteBinaryForTest(oldConn, []byte("stale")); err == nil {
 		t.Fatal("old generation permitted")
 	}
 	frame := feishuTextFrame(t, "chat", "business", "new-delivery")
-	if err := a.handleDataFrame(newGeneration.ctx, newConn, frame); err != nil {
+	if err := a.HandleDataFrameForTest(newGeneration.GenerationContextForTest(), newConn, frame); err != nil {
 		t.Fatal(err)
 	}
 	got, code := readFeishuResponse(t, client)

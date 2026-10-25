@@ -94,8 +94,8 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 	if msg.IMType != "feishu" {
 		return false, nil
 	}
-	feishu := r.findFeishuAdapter()
-	if feishu == nil {
+	cards := r.findFeishuCardAdapter()
+	if cards == nil {
 		return false, nil
 	}
 	key := cardHandleKey(target.ProcessKey, requestType, requestID)
@@ -119,7 +119,7 @@ func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context
 	if strings.TrimSpace(handle.MessageID) == "" {
 		return false, nil
 	}
-	if err := feishu.updateInteractiveMessageContext(ctx, handle.MessageID, card, false); err != nil {
+	if err := cards.UpdateInteractiveCard(ctx, handle.MessageID, card); err != nil {
 		log.Warnf("feishu: failed to update interactive card request_id=%v request_type=%v message_id=%v error=%v", requestID, requestType, handle.MessageID, err)
 		return false, err
 	}

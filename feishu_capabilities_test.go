@@ -24,7 +24,7 @@ func receiveFeishuCapabilityText(t *testing.T, r *NotificationRouter, business, 
 	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatal(err)
 	}
-	future, err := r.findFeishuAdapter().submitMessageEvent(t.Context(), &event, "delivery-"+business)
+	future, err := findFeishuAdapterForTest(r).SubmitMessageEvent(t.Context(), &event, "delivery-"+business)
 	if err != nil || future == nil {
 		t.Fatal(err)
 	}

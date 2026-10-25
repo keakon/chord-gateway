@@ -15,30 +15,31 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	"github.com/keakon/chord-gateway/internal/platform/telegram"
 )
 
 func TestTelegramNormalizeIdentityAndUnsupportedInputs(t *testing.T) {
-	a := &TelegramAdapter{accountID: "9007199254740993", username: "ThisBot", now: realTelegramClock}
+	a := telegram.NewTelegramAdapterForTest("9007199254740993", "ThisBot", nil, nil, nil)
 	tests := []struct {
 		name   string
-		mutate func(*telegramUpdate)
+		mutate func(*telegram.Update)
 		reason string
 	}{
 		{name: "private"},
-		{name: "group", mutate: func(u *telegramUpdate) { u.Message.Chat = telegramChat{ID: -9007199254740993, Type: "supergroup"} }},
-		{name: "nonmessage", mutate: func(u *telegramUpdate) { u.Message = nil }, reason: "unsupported_update"},
-		{name: "channel", mutate: func(u *telegramUpdate) { u.Message.Chat.Type = "channel" }, reason: "unsupported_chat"},
-		{name: "topic", mutate: func(u *telegramUpdate) { u.Message.MessageThreadID = 1 }, reason: "unsupported_topic"},
-		{name: "topicflag", mutate: func(u *telegramUpdate) { u.Message.IsTopicMessage = true }, reason: "unsupported_topic"},
-		{name: "sender_chat", mutate: func(u *telegramUpdate) { u.Message.SenderChat = &telegramChat{ID: -1} }, reason: "unsupported_sender_chat"},
-		{name: "anonymous", mutate: func(u *telegramUpdate) { u.Message.From = nil }, reason: "invalid_identity"},
-		{name: "bot", mutate: func(u *telegramUpdate) { u.Message.From.IsBot = true }, reason: "invalid_identity"},
-		{name: "private_wrong_from", mutate: func(u *telegramUpdate) { u.Message.From.ID = 8 }, reason: "invalid_identity"},
-		{name: "wrong_group_sign", mutate: func(u *telegramUpdate) { u.Message.Chat.Type = "group" }, reason: "invalid_identity"},
-		{name: "missingchat", mutate: func(u *telegramUpdate) { u.Message.Chat.ID = 0 }, reason: "invalid_identity"},
-		{name: "missingmessage", mutate: func(u *telegramUpdate) { u.Message.MessageID = 0 }, reason: "invalid_identity"},
-		{name: "media", mutate: func(u *telegramUpdate) { u.Message.Text = "" }, reason: "unsupported_content"},
-		{name: "media_caption", mutate: func(u *telegramUpdate) { u.Message.Text = "summarize this"; u.Message.hasMedia = true }, reason: "unsupported_content"},
+		{name: "group", mutate: func(u *telegram.Update) { u.Message.Chat = telegram.Chat{ID: -9007199254740993, Type: "supergroup"} }},
+		{name: "nonmessage", mutate: func(u *telegram.Update) { u.Message = nil }, reason: "unsupported_update"},
+		{name: "channel", mutate: func(u *telegram.Update) { u.Message.Chat.Type = "channel" }, reason: "unsupported_chat"},
+		{name: "topic", mutate: func(u *telegram.Update) { u.Message.MessageThreadID = 1 }, reason: "unsupported_topic"},
+		{name: "topicflag", mutate: func(u *telegram.Update) { u.Message.IsTopicMessage = true }, reason: "unsupported_topic"},
+		{name: "sender_chat", mutate: func(u *telegram.Update) { u.Message.SenderChat = &telegram.Chat{ID: -1} }, reason: "unsupported_sender_chat"},
+		{name: "anonymous", mutate: func(u *telegram.Update) { u.Message.From = nil }, reason: "invalid_identity"},
+		{name: "bot", mutate: func(u *telegram.Update) { u.Message.From.IsBot = true }, reason: "invalid_identity"},
+		{name: "private_wrong_from", mutate: func(u *telegram.Update) { u.Message.From.ID = 8 }, reason: "invalid_identity"},
+		{name: "wrong_group_sign", mutate: func(u *telegram.Update) { u.Message.Chat.Type = "group" }, reason: "invalid_identity"},
+		{name: "missingchat", mutate: func(u *telegram.Update) { u.Message.Chat.ID = 0 }, reason: "invalid_identity"},
+		{name: "missingmessage", mutate: func(u *telegram.Update) { u.Message.MessageID = 0 }, reason: "invalid_identity"},
+		{name: "media", mutate: func(u *telegram.Update) { u.Message.Text = "" }, reason: "unsupported_content"},
+		{name: "media_caption", mutate: func(u *telegram.Update) { u.Message.Text = "summarize this"; u.SetHasMediaForTest(true) }, reason: "unsupported_content"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -46,7 +47,7 @@ func TestTelegramNormalizeIdentityAndUnsupportedInputs(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&u)
 			}
-			e, reason := a.normalizeUpdate(u)
+			e, reason := a.NormalizeUpdateForTest(u)
 			if reason != test.reason {
 				t.Fatalf("reason=%q want=%q", reason, test.reason)
 			}
@@ -72,25 +73,25 @@ func TestTelegramNormalizeIdentityAndUnsupportedInputs(t *testing.T) {
 func TestTelegramCommandEntitySuffixAndUTF16(t *testing.T) {
 	tests := []struct {
 		name, text   string
-		entities     []telegramEntity
+		entities     []telegram.Entity
 		want, reason string
 	}{
-		{"suffix", "/status@THISBOT", []telegramEntity{{Type: "bot_command", Length: 15}}, "/status", ""},
-		{"args", "/bind@ThisBot \"/tmp/😃 @path\"", []telegramEntity{{Type: "bot_command", Length: 13}}, "/bind \"/tmp/😃 @path\"", ""},
-		{"other", "/status@other_bot", []telegramEntity{{Type: "bot_command", Length: 17}}, "", "other_bot_command"},
+		{"suffix", "/status@THISBOT", []telegram.Entity{{Type: "bot_command", Length: 15}}, "/status", ""},
+		{"args", "/bind@ThisBot \"/tmp/😃 @path\"", []telegram.Entity{{Type: "bot_command", Length: 13}}, "/bind \"/tmp/😃 @path\"", ""},
+		{"other", "/status@other_bot", []telegram.Entity{{Type: "bot_command", Length: 17}}, "", "other_bot_command"},
 		{"noentity", "/status@ThisBot", nil, "/status@ThisBot", ""},
 		{"ordinary", "path /tmp/a@ThisBot 😀", nil, "path /tmp/a@ThisBot 😀", ""},
-		{"nonleading", "😃 /status@ThisBot", []telegramEntity{{Type: "bot_command", Offset: 3, Length: 15}}, "😃 /status@ThisBot", ""},
-		{"surrogatehalf", "/😃@ThisBot", []telegramEntity{{Type: "bot_command", Length: 2}}, "", "invalid_command_entity"},
-		{"outofbounds", "/status", []telegramEntity{{Type: "bot_command", Length: 20}}, "", "invalid_command_entity"},
-		{"notcommand", "hello", []telegramEntity{{Type: "bot_command", Length: 5}}, "", "invalid_command_entity"},
-		{"legacy_hyphen_full_entity", "/handoff-deny@ThisBot", []telegramEntity{{Type: "bot_command", Length: 21}}, "", "invalid_command_entity"},
-		{"legacy_hyphen_prefix_entity", "/handoff-deny@ThisBot", []telegramEntity{{Type: "bot_command", Length: 8}}, "", "invalid_command_entity"},
-		{"alias_full_entity", "/handoff_deny@ThisBot", []telegramEntity{{Type: "bot_command", Length: 21}}, "/handoff-deny", ""},
+		{"nonleading", "😃 /status@ThisBot", []telegram.Entity{{Type: "bot_command", Offset: 3, Length: 15}}, "😃 /status@ThisBot", ""},
+		{"surrogatehalf", "/😃@ThisBot", []telegram.Entity{{Type: "bot_command", Length: 2}}, "", "invalid_command_entity"},
+		{"outofbounds", "/status", []telegram.Entity{{Type: "bot_command", Length: 20}}, "", "invalid_command_entity"},
+		{"notcommand", "hello", []telegram.Entity{{Type: "bot_command", Length: 5}}, "", "invalid_command_entity"},
+		{"legacy_hyphen_full_entity", "/handoff-deny@ThisBot", []telegram.Entity{{Type: "bot_command", Length: 21}}, "", "invalid_command_entity"},
+		{"legacy_hyphen_prefix_entity", "/handoff-deny@ThisBot", []telegram.Entity{{Type: "bot_command", Length: 8}}, "", "invalid_command_entity"},
+		{"alias_full_entity", "/handoff_deny@ThisBot", []telegram.Entity{{Type: "bot_command", Length: 21}}, "/handoff-deny", ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, reason := telegramNormalizeCommand(test.text, test.entities, "ThisBot")
+			got, reason := telegram.NormalizeCommand(test.text, test.entities, "ThisBot")
 			if got != test.want || reason != test.reason {
 				t.Fatalf("got=(%q,%q) want=(%q,%q)", got, reason, test.want, test.reason)
 			}
@@ -100,7 +101,7 @@ func TestTelegramCommandEntitySuffixAndUTF16(t *testing.T) {
 		units, byteIndex int
 		ok               bool
 	}{{0, 0, true}, {1, 1, true}, {2, 0, false}, {3, 5, true}, {4, 6, true}, {5, 6, false}} {
-		byteIndex, ok := telegramUTF16Boundary("a😃b", test.units)
+		byteIndex, ok := telegram.UTF16Boundary("a😃b", test.units)
 		if ok != test.ok || ok && byteIndex != test.byteIndex {
 			t.Fatal(test, byteIndex, ok)
 		}
@@ -108,21 +109,21 @@ func TestTelegramCommandEntitySuffixAndUTF16(t *testing.T) {
 }
 
 func TestTelegramNormalizeOmitsCommandDigest(t *testing.T) {
-	a := &TelegramAdapter{accountID: "99", username: "ThisBot", now: realTelegramClock}
+	a := telegram.NewTelegramAdapterForTest("99", "ThisBot", nil, nil, nil)
 	u := telegramTestUpdate(10)
 	u.Message.Text = "/status@ThisBot"
-	u.Message.Entities = []telegramEntity{{Type: "bot_command", Length: 15}}
-	e, reason := a.normalizeUpdate(u)
+	u.Message.Entities = []telegram.Entity{{Type: "bot_command", Length: 15}}
+	e, reason := a.NormalizeUpdateForTest(u)
 	if reason != "" || e.Message.Text != "/status" || e.InputDigest != "" {
 		t.Fatal(e, reason)
 	}
 }
 
 func TestTelegramAdapterConstructionAndLifecycle(t *testing.T) {
-	if _, err := NewTelegramAdapter(nil, config.IMAdapterConfig{}, nil, nil); err == nil {
+	if _, err := telegram.NewTelegramAdapter(nil, config.IMAdapterConfig{}, nil, nil); err == nil {
 		t.Fatal("missing token accepted")
 	}
-	a, err := NewTelegramAdapter(nil, config.IMAdapterConfig{Telegram: &config.TelegramConfig{BotToken: "secret"}}, nil, nil)
+	a, err := telegram.NewTelegramAdapter(nil, config.IMAdapterConfig{Telegram: &config.TelegramConfig{BotToken: "secret"}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,30 +136,30 @@ func TestTelegramAdapterConstructionAndLifecycle(t *testing.T) {
 	if err := a.SendTextContext(t.Context(), "7", "text"); err == nil {
 		t.Fatal("unready account sent")
 	}
-	a.running = true
+	a.SetRunningForTest(true)
 	if err := a.Connect(); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatal(err)
 	}
 	a.Disconnect()
-	if !errors.Is(a.ctx.Err(), context.Canceled) {
+	if !errors.Is(a.ContextForTest().Err(), context.Canceled) {
 		t.Fatal("disconnect did not cancel lifecycle")
 	}
 }
 
 func TestTelegramStartupRetryStopsOnCredentialsAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	a := &TelegramAdapter{ctx: ctx, cancel: cancel}
+	a := telegram.NewTelegramAdapterForTest("", "", nil, ctx, cancel)
 	count := 0
-	err := a.startupRequest(func() error { count++; return &telegramAPIError{Category: "credentials"} })
+	err := a.StartupRequestForTest(func() error { count++; return &telegram.APIError{Category: "credentials"} })
 	if count != 1 || err == nil {
 		t.Fatal(count, err)
 	}
 	entered := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- a.startupRequest(func() error {
+		done <- a.StartupRequestForTest(func() error {
 			close(entered)
-			return &telegramAPIError{Category: "rate_limited", RetryAfter: time.Hour}
+			return &telegram.APIError{Category: "rate_limited", RetryAfter: time.Hour}
 		})
 	}()
 	<-entered
@@ -176,16 +177,16 @@ func TestTelegramStartupRetryStopsOnCredentialsAndCancellation(t *testing.T) {
 // The transport remains context-aware while allowing the test to observe
 // shutdown before its final send cleanup finishes.
 type telegramLifecycleAPI struct {
-	telegramAPI
-	getMeFn   func(context.Context) (telegramUser, error)
-	updatesFn func(context.Context, *int64, int) ([]telegramUpdate, error)
-	sendFn    func(context.Context, int64, string) (telegramMessage, error)
+	telegram.API
+	getMeFn   func(context.Context) (telegram.User, error)
+	updatesFn func(context.Context, *int64, int) ([]telegram.Update, error)
+	sendFn    func(context.Context, int64, string) (telegram.Message, error)
 }
 
-func (a *telegramLifecycleAPI) GetUpdates(ctx context.Context, offset *int64, timeout int) ([]telegramUpdate, error) {
+func (a *telegramLifecycleAPI) GetUpdates(ctx context.Context, offset *int64, timeout int) ([]telegram.Update, error) {
 	return a.updatesFn(ctx, offset, timeout)
 }
-func (a *telegramLifecycleAPI) SendMessage(ctx context.Context, chat int64, text string) (telegramMessage, error) {
+func (a *telegramLifecycleAPI) SendMessage(ctx context.Context, chat int64, text string) (telegram.Message, error) {
 	return a.sendFn(ctx, chat, text)
 }
 
@@ -199,8 +200,8 @@ func TestTelegramAdapterShutdownJoinsPollAndSendBeforeReleasingAccount(t *testin
 	var pollOnce, sendOnce, releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(allowSendExit) }) }
 	t.Cleanup(release)
-	api := &telegramLifecycleAPI{telegramAPI: base}
-	api.updatesFn = func(ctx context.Context, offset *int64, timeout int) ([]telegramUpdate, error) {
+	api := &telegramLifecycleAPI{API: base}
+	api.updatesFn = func(ctx context.Context, offset *int64, timeout int) ([]telegram.Update, error) {
 		if timeout == 0 {
 			return base.GetUpdates(ctx, offset, timeout)
 		}
@@ -208,19 +209,20 @@ func TestTelegramAdapterShutdownJoinsPollAndSendBeforeReleasingAccount(t *testin
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	api.sendFn = func(ctx context.Context, _ int64, _ string) (telegramMessage, error) {
+	api.sendFn = func(ctx context.Context, _ int64, _ string) (telegram.Message, error) {
 		sendOnce.Do(func() { close(sendEntered) })
 		<-ctx.Done()
 		close(sendCanceled)
 		<-allowSendExit
-		return telegramMessage{}, ctx.Err()
+		return telegram.Message{}, ctx.Err()
 	}
-	a.api = api
+	a.SetAPIForTest(api)
 	var err error
-	a.sender, err = newTelegramTextSender(api)
+	sender, err := telegram.NewTelegramTextSender(api)
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.SetSenderForTest(sender)
 	done := make(chan error, 1)
 	go func() { done <- a.Connect(); close(done) }()
 	t.Cleanup(func() {
@@ -304,7 +306,7 @@ func TestTelegramAdapterAccountLockAcrossStateDirectories(t *testing.T) {
 			t.Error("first poller did not stop")
 		}
 	})
-	waitIngressCondition(t, func() bool { a1.mu.Lock(); defer a1.mu.Unlock(); return a1.ready })
+	waitIngressCondition(t, func() bool { return a1.ReadyForTest() })
 	a2, api2 := f2.adapter(t, f2.botID)
 	if err := a2.Connect(); err == nil {
 		t.Fatal("same account acquired lock from separate state directory")
@@ -331,20 +333,20 @@ func TestTelegramAdapterAccountLockAcrossStateDirectories(t *testing.T) {
 func TestTelegramAdapterPollerConflictTerminatesAndRevokesReadiness(t *testing.T) {
 	// The bound, not its duration, is under test: a persistent conflict must
 	// stay fatal and revoke readiness without waiting out the production window.
-	swapTestValue(t, &telegramConflictRetryDelay, time.Millisecond)
-	swapTestValue(t, &telegramConflictRetryLimit, 3)
+	swapTestValue(t, &telegram.TelegramConflictRetryDelay, time.Millisecond)
+	swapTestValue(t, &telegram.TelegramConflictRetryLimit, 3)
 	f := newTelegramGatewayFixture(t, 840003)
 	a, base := f.adapter(t, f.botID)
-	api := &telegramLifecycleAPI{telegramAPI: base}
-	api.updatesFn = func(ctx context.Context, offset *int64, timeout int) ([]telegramUpdate, error) {
+	api := &telegramLifecycleAPI{API: base}
+	api.updatesFn = func(ctx context.Context, offset *int64, timeout int) ([]telegram.Update, error) {
 		if timeout == 0 {
 			return base.GetUpdates(ctx, offset, timeout)
 		}
-		return nil, &telegramAPIError{Method: "getUpdates", Status: 409, Code: 409, Category: "poller_conflict"}
+		return nil, &telegram.APIError{Method: "getUpdates", Status: 409, Code: 409, Category: "poller_conflict"}
 	}
-	a.api = api
+	a.SetAPIForTest(api)
 	err := a.Connect()
-	var apiErr *telegramAPIError
+	var apiErr *telegram.APIError
 	if !errors.As(err, &apiErr) || apiErr.Category != "poller_conflict" {
 		t.Fatal(err)
 	}
@@ -387,10 +389,9 @@ func TestTelegramAdapterWebhookConflictStopsBeforePolling(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	api := newTelegramAPI("webhook-test-token", nil)
-	api.baseURL = server.URL
-	api.client = server.Client()
-	a.api = api
+	api := telegram.NewAPI("webhook-test-token", nil)
+	telegram.ConfigureAPIForTest(api, server.URL, server.Client())
+	a.SetAPIForTest(api)
 	err := a.Connect()
 	if err == nil || !strings.Contains(err.Error(), "webhook_conflict") {
 		t.Fatal(err)
@@ -415,11 +416,11 @@ func TestTelegramAdapterWebhookConflictStopsBeforePolling(t *testing.T) {
 	lock.Close()
 }
 
-func (a *telegramLifecycleAPI) GetMe(ctx context.Context) (telegramUser, error) {
+func (a *telegramLifecycleAPI) GetMe(ctx context.Context) (telegram.User, error) {
 	if a.getMeFn != nil {
 		return a.getMeFn(ctx)
 	}
-	return a.telegramAPI.GetMe(ctx)
+	return a.API.GetMe(ctx)
 }
 
 func TestTelegramConnectShutdownDuringStartup(t *testing.T) {
@@ -428,14 +429,14 @@ func TestTelegramConnectShutdownDuringStartup(t *testing.T) {
 			f := newTelegramGatewayFixture(t, 840011)
 			a, base := f.adapter(t, f.botID)
 			entered := make(chan struct{})
-			a.api = &telegramLifecycleAPI{telegramAPI: base, getMeFn: func(ctx context.Context) (telegramUser, error) {
+			a.SetAPIForTest(&telegramLifecycleAPI{API: base, getMeFn: func(ctx context.Context) (telegram.User, error) {
 				close(entered)
 				<-ctx.Done()
 				if category == "credentials" {
-					return telegramUser{}, &telegramAPIError{Category: "credentials"}
+					return telegram.User{}, &telegram.APIError{Category: "credentials"}
 				}
-				return telegramUser{}, ctx.Err()
-			}}
+				return telegram.User{}, ctx.Err()
+			}})
 			done := make(chan error, 1)
 			go func() { done <- a.Connect() }()
 			<-entered
@@ -446,7 +447,7 @@ func TestTelegramConnectShutdownDuringStartup(t *testing.T) {
 					t.Fatal(err)
 				}
 				if category == "credentials" {
-					var failure *telegramAPIError
+					var failure *telegram.APIError
 					if !errors.As(err, &failure) || failure.Category != category {
 						t.Fatal("shutdown swallowed fatal error", err)
 					}

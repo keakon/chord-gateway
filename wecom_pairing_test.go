@@ -10,6 +10,8 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
 )
 
 func TestWecomPairingOwnerAccountAndSecretRotation(t *testing.T) {
@@ -52,7 +54,7 @@ func TestWecomPairingAccountChangeRevokesPendingCode(t *testing.T) {
 			code = fields[i+1]
 		}
 	}
-	chat, _ := EncodeWecomTarget("private", "example-owner")
+	chat, _ := wecom.EncodeWecomTarget("private", "example-owner")
 	msg := im.IncomingMessage{IMType: "wecom", AccountID: "example-bot", ChatKind: "private", ChatID: chat, SenderID: "example-owner", MessageID: "message:example", Text: "/bind /project " + code}
 	ticket, ok := admission.Authorize(msg)
 	if !ok {

@@ -5,6 +5,11 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+	dingtalk "github.com/keakon/chord-gateway/internal/platform/dingtalk"
+	slack "github.com/keakon/chord-gateway/internal/platform/slack"
+	telegram "github.com/keakon/chord-gateway/internal/platform/telegram"
+	wechat "github.com/keakon/chord-gateway/internal/platform/wechat"
+	wecom "github.com/keakon/chord-gateway/internal/platform/wecom"
 )
 
 func TestNewIMAdapter_UnsupportedType(t *testing.T) {
@@ -36,7 +41,7 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 			t.Fatalf("NewIMAdapter() error = %v", err)
 		}
 		defer adapter.Disconnect()
-		if _, ok := adapter.(*TelegramAdapter); !ok || adapter.Type() != "telegram" {
+		if _, ok := adapter.(*telegram.TelegramAdapter); !ok || adapter.Type() != "telegram" {
 			t.Fatalf("adapter = %T, type = %q", adapter, adapter.Type())
 		}
 	})
@@ -60,7 +65,7 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 			t.Fatalf("NewIMAdapter() error = %v", err)
 		}
 		defer adapter.Disconnect()
-		if _, ok := adapter.(*WecomAdapter); !ok || adapter.Type() != "wecom" || adapter.SupportsLoginRenewal() {
+		if _, ok := adapter.(*wecom.WecomAdapter); !ok || adapter.Type() != "wecom" || adapter.SupportsLoginRenewal() {
 			t.Fatalf("unexpected wecom adapter: %T", adapter)
 		}
 		if _, err = adapter.StartLogin(); err != im.ErrLoginNotSupported {
@@ -69,13 +74,13 @@ func TestNewIMAdapter_CreatesSingleAdapters(t *testing.T) {
 	})
 
 	t.Run("dingtalk", func(t *testing.T) {
-		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Dingtalk: dingtalkIdentityTestConfig()}}}
+		cfg := &config.Config{IMs: []config.IMAdapterConfig{{Dingtalk: dingtalk.IdentityTestConfigForTest()}}}
 		adapter, err := NewIMAdapter(cfg, paths, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer adapter.Disconnect()
-		if _, ok := adapter.(*DingtalkAdapter); !ok || adapter.Type() != "dingtalk" {
+		if _, ok := adapter.(*dingtalk.DingtalkAdapter); !ok || adapter.Type() != "dingtalk" {
 			t.Fatalf("adapter type = %T", adapter)
 		}
 	})
@@ -100,11 +105,11 @@ func TestNewIMAdapter_WithSingleActiveIMUsesAdapterConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIMAdapter() error = %v", err)
 	}
-	wa, ok := adapter.(*WechatAdapter)
+	wa, ok := adapter.(*wechat.WechatAdapter)
 	if !ok {
 		t.Fatalf("adapter type = %T", adapter)
 	}
-	if got := wa.baseURL(); got != "https://example.com" {
+	if got := wa.BaseURLForTest(); got != "https://example.com" {
 		t.Fatalf("baseURL = %q", got)
 	}
 }
@@ -125,7 +130,7 @@ func TestNewIMAdapter_CreatesSlackWithoutConnecting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := adapter.(*SlackAdapter); !ok || adapter.Type() != "slack" {
+	if _, ok := adapter.(*slack.SlackAdapter); !ok || adapter.Type() != "slack" {
 		t.Fatalf("adapter = %T", adapter)
 	}
 }

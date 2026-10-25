@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -493,9 +495,9 @@ func TestHandleChordEventRoutesDirectAndLegacy(t *testing.T) {
 
 func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
-	feishu := &stubIMAdapter{typ: "feishu"}
+	feishuStub := &stubIMAdapter{typ: "feishu"}
 	r := &NotificationRouter{
-		adapter: &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}},
+		adapter: &MultiAdapter{adapters: []im.IMAdapter{wechat, feishuStub}},
 		mgr:     newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"feishu-chat": "ws1"}}}, {Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"wechat-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
 		lastKeyChatID: map[string]string{
 			(processKey{workspaceID: "ws1", imType: "wechat", chatID: "wechat-chat"}).String(): "wechat-chat",
@@ -506,13 +508,13 @@ func TestBroadcastExceptSkipsExcludedAndUnknownAdapters(t *testing.T) {
 	if got := len(wechat.sentMessages()); got != 0 {
 		t.Fatalf("excluded wechat received %d messages", got)
 	}
-	if got := feishu.lastMessage(); got.chatID != "feishu-chat" || got.text != "hello" {
+	if got := feishuStub.lastMessage(); got.chatID != "feishu-chat" || got.text != "hello" {
 		t.Fatalf("feishu message = %#v", got)
 	}
 
-	before := len(feishu.sentMessages())
+	before := len(feishuStub.sentMessages())
 	r.broadcastExcept("unknown", "ignored")
-	if got := len(feishu.sentMessages()); got != before+1 {
+	if got := len(feishuStub.sentMessages()); got != before+1 {
 		t.Fatalf("unknown excluded adapter should still broadcast to known adapters, got %d want %d", got, before+1)
 	}
 }
@@ -1548,8 +1550,8 @@ func TestChatIDLookupHelpers(t *testing.T) {
 
 func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat", supportsLoginRenewal: true, startLoginFunc: func() (string, error) { return "https://wx-login", nil }}
-	feishu := &stubIMAdapter{typ: "feishu", startLoginFunc: func() (string, error) { return "", im.ErrLoginNotSupported }}
-	multi := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
+	feishuStub := &stubIMAdapter{typ: "feishu", startLoginFunc: func() (string, error) { return "", im.ErrLoginNotSupported }}
+	multi := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishuStub}}
 	r := &NotificationRouter{adapter: multi}
 
 	if got := r.findAdapterByType("wechat"); got != wechat {
@@ -1558,7 +1560,7 @@ func TestFindAdapterByTypeAndAvailableLoginTargets(t *testing.T) {
 	if got := r.findAdapterByType("wx"); got != nil {
 		t.Fatalf("findAdapterByType wx = %#v", got)
 	}
-	if got := r.findAdapterByType("feishu"); got != feishu {
+	if got := r.findAdapterByType("feishu"); got != feishuStub {
 		t.Fatalf("findAdapterByType feishu failed")
 	}
 	if got := r.findAdapterByType("lark"); got != nil {
@@ -1634,8 +1636,8 @@ func TestHandleLogin(t *testing.T) {
 
 func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	wechat := &stubIMAdapter{typ: "wechat"}
-	feishu := &stubIMAdapter{typ: "feishu"}
-	multi := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishu}}
+	feishuStub := &stubIMAdapter{typ: "feishu"}
+	multi := &MultiAdapter{adapters: []im.IMAdapter{wechat, feishuStub}}
 	r := &NotificationRouter{
 		adapter:       multi,
 		mgr:           newTestChordManager(&config.Config{IMs: []config.IMAdapterConfig{{Feishu: &config.FeishuConfig{Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}, ChatBindings: map[string]string{"feishu-chat": "ws1"}}}, {Wechat: &config.WechatConfig{Owner: &config.OwnerIdentity{AccountID: "bot", UserID: "owner"}, ChatBindings: map[string]string{"wechat-chat": "ws1"}}}}, Workspaces: []config.Workspace{{ID: "ws1", Path: "/tmp/ws1"}}}),
@@ -1643,7 +1645,7 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	}
 
 	r.HandleSessionExpired("wechat")
-	if msgs := feishu.sentMessages(); len(msgs) != 1 || !strings.Contains(msgs[0].text, "/login wechat") {
+	if msgs := feishuStub.sentMessages(); len(msgs) != 1 || !strings.Contains(msgs[0].text, "/login wechat") {
 		t.Fatalf("feishu messages after wechat expiry = %#v", msgs)
 	}
 	if got := len(wechat.sentMessages()); got != 0 {
@@ -1656,12 +1658,12 @@ func TestHandleSessionExpiredAndLoginResult(t *testing.T) {
 	}
 
 	r.HandleLoginResult("wechat", true, "")
-	if msgs := feishu.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "WeChat login renewed") {
+	if msgs := feishuStub.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "WeChat login renewed") {
 		t.Fatalf("feishu messages after login success = %#v", msgs)
 	}
 
 	r.HandleLoginResult("wechat", false, "network")
-	if msgs := feishu.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "login renewal failed") {
+	if msgs := feishuStub.sentMessages(); !strings.Contains(msgs[len(msgs)-1].text, "login renewal failed") {
 		t.Fatalf("feishu messages after login failure = %#v", msgs)
 	}
 }
@@ -2316,7 +2318,7 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 				roleSwitchTimeout = 50 * time.Millisecond
 				defer func() { roleSwitchTimeout = oldTimeout }()
 			}
-			feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+			adapter := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
 
 			var patchedPath, patchedBody, sentText string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2338,12 +2340,12 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			feishu.httpClient = server.Client()
-			oldBaseURL := feishuOpenBaseURL
-			feishuOpenBaseURL = server.URL
-			defer func() { feishuOpenBaseURL = oldBaseURL }()
+			adapter.SetHTTPClientForTest(server.Client())
+			oldBaseURL := feishu.OpenBaseURL
+			feishu.OpenBaseURL = server.URL
+			defer func() { feishu.OpenBaseURL = oldBaseURL }()
 
-			r := &NotificationRouter{adapter: feishu, lastKeyChatID: make(map[string]string)}
+			r := &NotificationRouter{adapter: adapter, lastKeyChatID: make(map[string]string)}
 			proc := newRoleTestProcess("feishu")
 			key := proc.key
 			r.recordCardHandle(key, "role", "role-1", &im.InteractiveCardHandle{MessageID: "om_role_1"})
@@ -2389,7 +2391,7 @@ func TestRoleFailureResolvesFeishuMenuCard(t *testing.T) {
 }
 
 func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
-	feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
+	adapter := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret"})
 
 	var patchedPath, patchedBody, sentText string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2411,12 +2413,12 @@ func TestRoleSuccessResolvesFeishuMenuCardWithoutChatLine(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	feishu.httpClient = server.Client()
-	oldBaseURL := feishuOpenBaseURL
-	feishuOpenBaseURL = server.URL
-	defer func() { feishuOpenBaseURL = oldBaseURL }()
+	adapter.SetHTTPClientForTest(server.Client())
+	oldBaseURL := feishu.OpenBaseURL
+	feishu.OpenBaseURL = server.URL
+	defer func() { feishu.OpenBaseURL = oldBaseURL }()
 
-	r := &NotificationRouter{adapter: feishu, lastKeyChatID: make(map[string]string)}
+	r := &NotificationRouter{adapter: adapter, lastKeyChatID: make(map[string]string)}
 	proc := newRoleTestProcess("feishu")
 	key := proc.key
 	r.recordCardHandle(key, "role", "role-1", &im.InteractiveCardHandle{MessageID: "om_role_1"})
@@ -2457,33 +2459,33 @@ func TestCommandFromInternalActionRole(t *testing.T) {
 }
 
 func TestValidFeishuRoleCardAction(t *testing.T) {
-	if !isValidFeishuCardAction("role", "switch", "planner", nil) {
+	if !feishu.IsValidFeishuCardAction("role", "switch", "planner", nil) {
 		t.Fatal("role/switch/name should be valid")
 	}
-	if isValidFeishuCardAction("role", "switch", "", nil) {
+	if feishu.IsValidFeishuCardAction("role", "switch", "", nil) {
 		t.Fatal("role switch without a role name must be invalid")
 	}
-	if isValidFeishuCardAction("role", "allow", "planner", nil) {
+	if feishu.IsValidFeishuCardAction("role", "allow", "planner", nil) {
 		t.Fatal("role/allow must be invalid")
 	}
-	if isValidFeishuCardAction("confirm", "switch", "planner", nil) {
+	if feishu.IsValidFeishuCardAction("confirm", "switch", "planner", nil) {
 		t.Fatal("confirm/switch must stay invalid")
 	}
 }
 
 func TestValidFeishuQuestionCardAction(t *testing.T) {
 	// A single-select button carries the exact option label.
-	if !isValidFeishuCardAction("question", "answer", "yes", nil) {
+	if !feishu.IsValidFeishuCardAction("question", "answer", "yes", nil) {
 		t.Fatal("question/answer with a label should be valid")
 	}
 	// A form submission carries option numbers instead of a label.
-	if !isValidFeishuCardAction("question", "answer", "", []string{"1", "3"}) {
+	if !feishu.IsValidFeishuCardAction("question", "answer", "", []string{"1", "3"}) {
 		t.Fatal("question/answer with form answers should be valid")
 	}
-	if isValidFeishuCardAction("question", "answer", "", nil) {
+	if feishu.IsValidFeishuCardAction("question", "answer", "", nil) {
 		t.Fatal("question/answer without a value or form answers must be invalid")
 	}
-	if isValidFeishuCardAction("question", "allow", "yes", []string{"1"}) {
+	if feishu.IsValidFeishuCardAction("question", "allow", "yes", []string{"1"}) {
 		t.Fatal("question/allow must be invalid even with form answers")
 	}
 }
@@ -2686,7 +2688,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		proc := &ChordProcess{key: key, workspaceID: "ws1", stdin: stdin, state: ControlState{Questions: map[string]*QuestionPayload{"req-auto": {RequestID: "req-auto", ToolName: "QuestionTool", Version: 1}}}}
 		attachQuestionTestReceipts(proc)
 		mgr.procs[key] = proc
-		feishu := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}})
+		adapter := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", AppSecret: "secret", ChatBindings: map[string]string{"chat-1": "ws1"}})
 
 		var patchedPath string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2703,11 +2705,11 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 			}
 		}))
 		defer server.Close()
-		feishu.httpClient = server.Client()
-		oldBaseURL := feishuOpenBaseURL
-		feishuOpenBaseURL = server.URL
-		defer func() { feishuOpenBaseURL = oldBaseURL }()
-		r := &NotificationRouter{mgr: mgr, adapter: feishu, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]cardHandleEntry)}
+		adapter.SetHTTPClientForTest(server.Client())
+		oldBaseURL := feishu.OpenBaseURL
+		feishu.OpenBaseURL = server.URL
+		defer func() { feishu.OpenBaseURL = oldBaseURL }()
+		r := &NotificationRouter{mgr: mgr, adapter: adapter, lastKeyChatID: make(map[string]string), expiredPending: make(map[string]expiredPendingState), cardHandles: make(map[string]cardHandleEntry)}
 		r.recordCardHandle(key, "question", "req-auto", &im.InteractiveCardHandle{MessageID: "om_sent_1"})
 		msg := im.IncomingMessage{IMType: "feishu", ChatID: "chat-1", SenderID: "ou_owner", Text: "free text answer"}
 		r.handleChordCommand(&cfg.Workspaces[0], "chat-1", im.IMCommand{Type: "send", Content: "free text answer"}, "feishu", &msg)
@@ -2978,18 +2980,18 @@ func TestCommandFromInternalActionQuestion(t *testing.T) {
 }
 
 func TestFeishuQuestionFormAnswersFromCallback(t *testing.T) {
-	answers, err := feishuQuestionFormAnswers(map[string]interface{}{
+	answers, err := feishu.QuestionFormAnswersForTest(map[string]interface{}{
 		"option_2": true, "option_3": false, "option_1": true,
 		"unrelated": "kept out of the answers",
 	})
 	if err != nil || strings.Join(answers, ",") != "1,2" {
 		t.Fatalf("answers=%v err=%v", answers, err)
 	}
-	if got, err := feishuQuestionFormAnswers(map[string]interface{}{"option_1": false}); err != nil || len(got) != 0 {
+	if got, err := feishu.QuestionFormAnswersForTest(map[string]interface{}{"option_1": false}); err != nil || len(got) != 0 {
 		t.Fatalf("unchecked options selected: %v err=%v", got, err)
 	}
 	for _, value := range []any{nil, "true", "false", "unknown", []any{true}, map[string]any{"checked": false}, 1} {
-		if answers, err := feishuQuestionFormAnswers(map[string]interface{}{"option_1": true, "option_2": value}); err == nil || len(answers) != 0 {
+		if answers, err := feishu.QuestionFormAnswersForTest(map[string]interface{}{"option_1": true, "option_2": value}); err == nil || len(answers) != 0 {
 			t.Fatalf("unknown checker shape accepted: %v answers=%v", value, answers)
 		}
 	}

@@ -15,19 +15,25 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
+
+	discord "github.com/keakon/chord-gateway/internal/platform/discord"
 )
 
-func discordMetricsAdapter(t *testing.T, send func(context.Context, string, string) error) *DiscordAdapter {
-	adapter, err := NewDiscordAdapter(nil, config.IMAdapterConfig{Discord: &config.DiscordConfig{BotToken: "example-token", ApplicationID: "123456789012345678"}}, testPaths(t), nil)
+func discordMetricsAdapter(t *testing.T, send func(context.Context, string, string) error) *discord.DiscordAdapter {
+	adapter, err := discord.NewDiscordAdapter(nil, config.IMAdapterConfig{Discord: &config.DiscordConfig{BotToken: "example-token", ApplicationID: "123456789012345678"}}, testPaths(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter.sender = discordTestSender(t, send)
+	sender, err := discord.NewDiscordTextSender(send)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.SetSenderForTest(sender)
 	t.Cleanup(adapter.Disconnect)
 	return adapter
 }
 
-func assertDiscordPartialMetrics(t *testing.T, adapter *DiscordAdapter, target string, err error, category string, failures uint64) {
+func assertDiscordPartialMetrics(t *testing.T, adapter *discord.DiscordAdapter, target string, err error, category string, failures uint64) {
 	t.Helper()
 	var partial *im.IMTextSendError
 	if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != category {
@@ -87,7 +93,7 @@ func TestDiscordMetricsRateWaitAndPartialUnknownCountOnce(t *testing.T) {
 		case 2:
 			return &im.IMRateLimitError{RetryAfter: time.Millisecond}
 		default:
-			ctx.Value(discordSendOutcomeKey{}).(*discordSendOutcome).unknown.Store(true)
+			ctx.Value(discord.SendOutcomeKey{}).(*discord.SendOutcome).Unknown.Store(true)
 			return im.ErrDeliveryOutcomeUnknown
 		}
 	})
@@ -111,7 +117,7 @@ func TestDiscordMetricsConcurrentTargetsAndLaterFailureKeepTheirCategories(t *te
 			return nil
 		}
 		if target == "501" && count == 2 {
-			ctx.Value(discordSendOutcomeKey{}).(*discordSendOutcome).unknown.Store(true)
+			ctx.Value(discord.SendOutcomeKey{}).(*discord.SendOutcome).Unknown.Store(true)
 			return im.ErrDeliveryOutcomeUnknown
 		}
 		return errors.New("discord permission_denied")

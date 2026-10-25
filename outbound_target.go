@@ -255,13 +255,16 @@ func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target
 	}
 	defer done()
 	chat := target.Identity.ChatID
-	adapter := r.findFeishuAdapter()
-	if adapter == nil {
+	adapter := r.findAdapterByType("feishu")
+	cards, _ := adapter.(im.InteractiveCardAdapter)
+	if adapter == nil || cards == nil {
 		return nil, errors.New("adapter unavailable")
 	}
-	handle, err := adapter.sendMessageContext(ctx, chat, "interactive", card, false)
+	handle, err := cards.SendInteractiveCard(ctx, chat, card)
 	if err != nil && !errors.Is(err, im.ErrDeliveryOutcomeUnknown) && fallback != "" {
-		err = adapter.SendTextContext(ctx, chat, fallback)
+		if sender, ok := adapter.(contextTextSender); ok {
+			err = sender.SendTextContext(ctx, chat, fallback)
+		}
 	}
 	return handle, err
 }

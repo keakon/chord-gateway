@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	feishu "github.com/keakon/chord-gateway/internal/platform/feishu"
+	"github.com/keakon/chord-gateway/internal/platform/wechat"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -31,18 +34,18 @@ func TestMessageRedirectIsNotReplayed(t *testing.T) {
 			defer server.Close()
 			var err error
 			if platform == "feishu" {
-				oldURL := feishuOpenBaseURL
-				feishuOpenBaseURL = server.URL
-				defer func() { feishuOpenBaseURL = oldURL }()
+				oldURL := feishu.OpenBaseURL
+				feishu.OpenBaseURL = server.URL
+				defer func() { feishu.OpenBaseURL = oldURL }()
 				a := testFeishuAdapter(t, &config.FeishuConfig{})
 
-				a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-				a.httpClient = server.Client()
+				a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+				a.SetHTTPClientForTest(server.Client())
 				_, err = (&NotificationRouter{adapter: a}).sendCardToTarget(im.DeliveryTarget{Identity: im.ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "sample prompt")
 			} else {
 				a := newTestWechatAdapter(t)
-				a.imCfg.Wechat.BaseURL = server.URL
-				err = a.sendMessage(t.Context(), a.token.Load(), ilinkSendMessageRequest{})
+				a.SetBaseURLForTest(server.URL)
+				err = a.SendMessageForTest(t.Context(), a.TokenForTest(), wechat.ILinkSendMessageRequest{})
 			}
 			if requests.Load() != 1 || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 				t.Fatalf("redirect replayed or classified as rejection: requests=%d err=%v", requests.Load(), err)
@@ -99,13 +102,13 @@ func TestFeishuRejectedCardUsesTextFallback(t *testing.T) {
 				fmt.Fprint(w, `{"code":0,"data":{"message_id":"sample-message"}}`)
 			}))
 			defer server.Close()
-			oldURL := feishuOpenBaseURL
-			feishuOpenBaseURL = server.URL
-			defer func() { feishuOpenBaseURL = oldURL }()
+			oldURL := feishu.OpenBaseURL
+			feishu.OpenBaseURL = server.URL
+			defer func() { feishu.OpenBaseURL = oldURL }()
 			a := testFeishuAdapter(t, &config.FeishuConfig{})
 
-			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-			a.httpClient = server.Client()
+			a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+			a.SetHTTPClientForTest(server.Client())
 			key := processKey{workspaceID: "test", imType: "feishu", chatID: "sample-chat"}.String()
 			before := time.Now().Add(-time.Minute)
 			mgr := newTestChordManager(testConfig())
@@ -144,13 +147,13 @@ func TestFeishuCardOutcomeUnknownDoesNotFallback(t *testing.T) {
 		fmt.Fprint(w, `{"code":0}`)
 	}))
 	defer server.Close()
-	oldURL := feishuOpenBaseURL
-	feishuOpenBaseURL = server.URL
-	defer func() { feishuOpenBaseURL = oldURL }()
+	oldURL := feishu.OpenBaseURL
+	feishu.OpenBaseURL = server.URL
+	defer func() { feishu.OpenBaseURL = oldURL }()
 	a := testFeishuAdapter(t, &config.FeishuConfig{})
 
-	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-	a.httpClient = server.Client()
+	a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+	a.SetHTTPClientForTest(server.Client())
 	if _, err := (&NotificationRouter{adapter: a}).sendCardToTarget(im.DeliveryTarget{Identity: im.ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "original prompt"); !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		t.Fatal("card uncertainty was swallowed", err)
 	}
@@ -188,13 +191,13 @@ func TestFeishuRouterCardFailureNeverReplaysPrompt(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				oldURL := feishuOpenBaseURL
-				feishuOpenBaseURL = server.URL
-				defer func() { feishuOpenBaseURL = oldURL }()
+				oldURL := feishu.OpenBaseURL
+				feishu.OpenBaseURL = server.URL
+				defer func() { feishu.OpenBaseURL = oldURL }()
 				a := testFeishuAdapter(t, &config.FeishuConfig{})
 
-				a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-				a.httpClient = server.Client()
+				a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+				a.SetHTTPClientForTest(server.Client())
 				key := processKey{workspaceID: "test", imType: "feishu", chatID: "sample-chat"}.String()
 				before := time.Now().Add(-time.Minute)
 				mgr := newTestChordManager(testConfig())
@@ -245,15 +248,15 @@ func TestFeishuStaleEventCannotSendOrUpdateCard(t *testing.T) {
 		fmt.Fprint(w, `{"code":0,"data":{"message_id":"sample-message"}}`)
 	}))
 	defer server.Close()
-	oldURL := feishuOpenBaseURL
-	feishuOpenBaseURL = server.URL
-	defer func() { feishuOpenBaseURL = oldURL }()
+	oldURL := feishu.OpenBaseURL
+	feishu.OpenBaseURL = server.URL
+	defer func() { feishu.OpenBaseURL = oldURL }()
 	for _, event := range []string{"confirm_request", "question_request", "question_resolved", "uncertain_notice"} {
 		t.Run(event, func(t *testing.T) {
 			a := testFeishuAdapter(t, &config.FeishuConfig{})
 
-			a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
-			a.httpClient = server.Client()
+			a.SetTokenForTest("sample-token", time.Now().Add(time.Hour))
+			a.SetHTTPClientForTest(server.Client())
 			mgr := newTestChordManager(&config.Config{})
 			r := NewNotificationRouter(mgr)
 			defer r.Close()
