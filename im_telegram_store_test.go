@@ -123,7 +123,7 @@ func TestTelegramCursorAccountAndDiagnosticClone(t *testing.T) {
 	}
 	id := int64(10)
 	c.Telegram.LastObservedUpdateID = &id
-	copy := cloneIngressCursor(c)
+	copy := im.CloneIngressCursor(c)
 	*copy.Telegram.LastObservedUpdateID = 20
 	if *c.Telegram.LastObservedUpdateID != 10 {
 		t.Fatal("cloned diagnostic ID aliases original")

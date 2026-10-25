@@ -9,7 +9,7 @@ func (r *NotificationRouter) IngressAvailable() bool {
 }
 func (r *NotificationRouter) PlatformReady(platform, account string, presentation im.PlatformPresentation) error {
 	if r == nil || r.admission == nil {
-		return errIngressClosed
+		return im.ErrIngressClosed
 	}
 	return r.admission.pairing.PlatformReadyWithPresentation(platform, account, presentation)
 }

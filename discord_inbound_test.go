@@ -221,7 +221,7 @@ func TestDiscordInboundLookupDoesNotBlockGatewayAndPreservesCapturedGeneration(t
 	}
 	generation.Store(2)
 	close(release)
-	result := WaitIngressNormalization(t.Context(), <-results)
+	result := im.WaitIngressNormalization(t.Context(), <-results)
 	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal("captured message was lost across reconnect", result)
 	}
@@ -277,9 +277,9 @@ func TestDiscordInboundChannelCacheAndBoundedSubmission(t *testing.T) {
 		t.Fatal("channel cache unbounded")
 	}
 	inbound.submit = func(context.Context, string, im.IngressEnvelope, func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error)) (<-chan im.ReceiveResult, error) {
-		return nil, errIngressCapacity
+		return nil, im.ErrIngressCapacity
 	}
-	if err := inbound.HandleMessage(1, discordTestMessage()); !errors.Is(err, errIngressCapacity) {
+	if err := inbound.HandleMessage(1, discordTestMessage()); !errors.Is(err, im.ErrIngressCapacity) {
 		t.Fatal("capacity error lost", err)
 	}
 }
@@ -314,14 +314,14 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 	if err := inbound.HandleMessage(1, message); err != nil {
 		t.Fatal(err)
 	}
-	first := WaitIngressNormalization(t.Context(), <-futures)
+	first := im.WaitIngressNormalization(t.Context(), <-futures)
 	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
-	duplicate := WaitIngressNormalization(t.Context(), <-futures)
+	duplicate := im.WaitIngressNormalization(t.Context(), <-futures)
 	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != first.RecordID {
 		t.Fatal(duplicate)
 	}
@@ -337,14 +337,14 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
-	rejected := WaitIngressNormalization(t.Context(), <-futures)
+	rejected := im.WaitIngressNormalization(t.Context(), <-futures)
 	if rejected.Disposition != im.ReceiveRejected || rejected.RecordID == "" {
 		t.Fatal(rejected)
 	}
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
-	rejectedDuplicate := WaitIngressNormalization(t.Context(), <-futures)
+	rejectedDuplicate := im.WaitIngressNormalization(t.Context(), <-futures)
 	if rejectedDuplicate.Disposition != im.ReceiveDuplicate || rejectedDuplicate.State != "rejected" || rejectedDuplicate.RecordID != rejected.RecordID {
 		t.Fatal(rejectedDuplicate)
 	}
@@ -361,7 +361,7 @@ func TestDiscordInboundPersistentResumeDeduplicationAndBodyCommand(t *testing.T)
 	if err := inbound.HandleMessage(2, message); err != nil {
 		t.Fatal(err)
 	}
-	groupDM := WaitIngressNormalization(t.Context(), <-futures)
+	groupDM := im.WaitIngressNormalization(t.Context(), <-futures)
 	if groupDM.Disposition != im.ReceiveRejected || groupDM.RecordID == "" {
 		t.Fatal("GroupDM was treated as private", groupDM)
 	}

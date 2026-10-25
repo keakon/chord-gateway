@@ -169,7 +169,7 @@ func (s *dingtalkStream) Run(ctx context.Context) error {
 			s.callbacks.OnRetry(category, failures+1, delay)
 			lastCategory, lastReport = category, time.Now()
 		}
-		if !sleepCtx(ctx, delay) {
+		if !im.SleepCtx(ctx, delay) {
 			return nil
 		}
 		failures++
@@ -545,7 +545,7 @@ func (c *dingtalkStreamConnection) handleFrame(frame dingtalkFrame) bool {
 	}
 	c.wg.Go(func() {
 		defer func() { <-c.admissionSlots }()
-		outcome := WaitIngressNormalization(c.ctx, result)
+		outcome := im.WaitIngressNormalization(c.ctx, result)
 		if c.stream.callbacks.OnReceiveResult != nil {
 			c.stream.callbacks.OnReceiveResult(outcome)
 		}

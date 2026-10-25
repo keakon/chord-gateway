@@ -154,7 +154,7 @@ func TestWecomBackgroundResultsRejectUnboundAndRetiredTargets(t *testing.T) {
 				if !ok {
 					t.Fatal("fixture target missing")
 				}
-				target.lease.Close()
+				target.Lease.Close()
 				a.router.HandleChordEvent(key, "background_result", state)
 			case "queued_replaced_runtime":
 				blocked, release := make(chan struct{}), make(chan struct{})

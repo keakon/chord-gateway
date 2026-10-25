@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func confirmResolvedPayload(requestID, outcome string) json.RawMessage {
@@ -134,7 +136,7 @@ func TestFormatConfirmResolvedNotification(t *testing.T) {
 // that outcome.
 func TestResolveConfirmCardIgnoresAnsweredEcho(t *testing.T) {
 	r := &NotificationRouter{}
-	updated, err := r.resolveConfirmCard(DeliveryTarget{}, ControlState{LastConfirmResolved: &ConfirmResolutionPayload{RequestID: "req-1", Outcome: ConfirmOutcomeApproved}})
+	updated, err := r.resolveConfirmCard(im.DeliveryTarget{}, ControlState{LastConfirmResolved: &ConfirmResolutionPayload{RequestID: "req-1", Outcome: ConfirmOutcomeApproved}})
 	if updated || err != nil {
 		t.Fatalf("updated=%v err=%v, want no card patch for an answered echo", updated, err)
 	}

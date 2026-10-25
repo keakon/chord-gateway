@@ -55,14 +55,14 @@ func (a *WecomAdapter) SendTextContext(ctx context.Context, chatID, text string)
 	}
 	control := false
 	switch {
-	case ctx.Value(outboundDeliveryContextKey{}) != nil:
-		target, ok := ctx.Value(outboundDeliveryContextKey{}).(DeliveryTarget)
+	case ctx.Value(im.OutboundDeliveryContextKey{}) != nil:
+		target, ok := ctx.Value(im.OutboundDeliveryContextKey{}).(im.DeliveryTarget)
 		if !ok || target.Identity != (im.ChatIdentity{Platform: "wecom", AccountID: a.imCfg.Wecom.BotID, ChatID: chatID}) || !a.router.validTarget(target) {
 			return im.ErrPairingDenied
 		}
-	case ctx.Value(outboundReplyContextKey{}) != nil:
-		permit, ok := ctx.Value(outboundReplyContextKey{}).(ReplyPermit)
-		if !ok || permit.Identity != (im.ChatIdentity{Platform: "wecom", AccountID: a.imCfg.Wecom.BotID, ChatID: chatID}) || !time.Now().Before(permit.ExpiresAt) || !a.router.admission.Valid(permit.ticket) {
+	case ctx.Value(im.OutboundReplyContextKey{}) != nil:
+		permit, ok := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
+		if !ok || permit.Identity != (im.ChatIdentity{Platform: "wecom", AccountID: a.imCfg.Wecom.BotID, ChatID: chatID}) || !time.Now().Before(permit.ExpiresAt) || !a.router.admission.Valid(permit.Ticket) {
 			return im.ErrPairingDenied
 		}
 		control = true

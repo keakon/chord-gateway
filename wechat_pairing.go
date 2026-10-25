@@ -196,7 +196,7 @@ func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) 
 	if token == nil {
 		return errors.New("account unavailable")
 	}
-	if expected, ok := ctx.Value(replyAccountContextKey{}).(string); ok && token.AccountID != expected {
+	if expected, ok := ctx.Value(im.ReplyAccountContextKey{}).(string); ok && token.AccountID != expected {
 		return errors.New("account changed")
 	}
 	key := compositeKey(token.AccountID, chat)

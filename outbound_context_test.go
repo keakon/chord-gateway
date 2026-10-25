@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 type contextProbeAdapter struct {
@@ -37,7 +39,7 @@ func TestDeliveryPreservesCallerContext(t *testing.T) {
 				if !ok {
 					t.Fatal("missing ticket")
 				}
-				permit := ReplyPermit{Identity: ticket.Identity, AccountEpoch: ticket.AccountEpoch, ExpiresAt: time.Now().Add(time.Minute), ticket: ticket}
+				permit := im.ReplyPermit{Identity: ticket.Identity, AccountEpoch: ticket.AccountEpoch, ExpiresAt: time.Now().Add(time.Minute), Ticket: ticket}
 				type valueKey struct{}
 				deadline := time.Now().Add(10 * time.Second)
 				if source == "deadline" {
@@ -47,17 +49,17 @@ func TestDeliveryPreservesCallerContext(t *testing.T) {
 				defer cancel()
 				entered := make(chan struct{})
 				probe := &contextProbeAdapter{send: func(got context.Context) error {
-					if got.Value(replyAccountContextKey{}) != "bot" {
+					if got.Value(im.ReplyAccountContextKey{}) != "bot" {
 						t.Error("original account identity lost")
 					}
 					if flow {
-						captured, ok := got.Value(outboundReplyContextKey{}).(ReplyPermit)
-						if !ok || captured.ticket.Identity != ticket.Identity || got.Value(outboundDeliveryContextKey{}) != nil {
+						captured, ok := got.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
+						if !ok || captured.Ticket.Identity != ticket.Identity || got.Value(im.OutboundDeliveryContextKey{}) != nil {
 							t.Error("flow authority was not captured exclusively")
 						}
 					} else {
-						captured, ok := got.Value(outboundDeliveryContextKey{}).(DeliveryTarget)
-						if !ok || captured != target || got.Value(outboundReplyContextKey{}) != nil {
+						captured, ok := got.Value(im.OutboundDeliveryContextKey{}).(im.DeliveryTarget)
+						if !ok || captured != target || got.Value(im.OutboundReplyContextKey{}) != nil {
 							t.Error("binding authority was not captured exclusively")
 						}
 					}
@@ -92,7 +94,7 @@ func TestDeliveryPreservesCallerContext(t *testing.T) {
 					if flow {
 						r.admission.Close()
 					} else {
-						target.lease.Close()
+						target.Lease.Close()
 					}
 				}
 				select {

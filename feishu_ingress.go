@@ -32,7 +32,7 @@ func (a *FeishuAdapter) submitMessageEvent(ctx context.Context, event *larkim.P2
 	}
 	router, ok := a.msgRouter.(*NotificationRouter)
 	if !ok || router == nil {
-		return nil, errIngressClosed
+		return nil, im.ErrIngressClosed
 	}
 	msg := im.IncomingMessage{IMType: "feishu", AccountID: fc.AppID, AppID: fc.AppID, ChatKind: feishuChatKind(derefString(message.ChatType)), ChatID: derefString(message.ChatId), SenderID: derefString(event.Event.Sender.SenderId.OpenId), Text: text}
 	if id := derefString(message.MessageId); id != "" {
@@ -86,7 +86,7 @@ func (a *FeishuAdapter) submitCardActionEvent(ctx context.Context, event *larkca
 	msg := im.IncomingMessage{IMType: "feishu", AccountID: fc.AppID, AppID: fc.AppID, ChatID: chatID, SenderID: senderID, MessageID: "card:" + event.EventV2Base.Header.EventID, InternalAction: &im.InternalAction{BindingInstanceID: bindingID, Type: actionType, Action: actionName, RequestID: requestID, Value: value, Values: answers, Version: version, Handle: im.InteractiveCardHandle{MessageID: event.Event.Context.OpenMessageID, Token: event.Event.Token}}}
 	router, ok := a.msgRouter.(*NotificationRouter)
 	if !ok || router == nil {
-		return nil, nil, errIngressClosed
+		return nil, nil, im.ErrIngressClosed
 	}
 	envelope := im.IngressEnvelope{Message: msg, DeliveryID: deliveryID, SourceTime: feishuHeaderTime(event.EventV2Base), ReceivedAt: time.Now()}
 	envelope = router.CaptureIngressEnvelope(envelope)

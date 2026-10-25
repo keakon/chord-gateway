@@ -458,7 +458,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if err != nil || future == nil {
 		t.Fatal(err)
 	}
-	first := WaitIngressNormalization(t.Context(), future)
+	first := im.WaitIngressNormalization(t.Context(), future)
 	if first.Disposition != im.ReceiveAccepted {
 		t.Fatal(first)
 	}
@@ -466,7 +466,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	duplicate := WaitIngressNormalization(t.Context(), future)
+	duplicate := im.WaitIngressNormalization(t.Context(), future)
 	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != first.RecordID {
 		t.Fatal(duplicate)
 	}
@@ -478,7 +478,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if err != nil || future == nil || immediate != nil {
 		t.Fatal(immediate, err)
 	}
-	second := WaitIngressNormalization(t.Context(), future)
+	second := im.WaitIngressNormalization(t.Context(), future)
 	if second.Disposition != im.ReceiveAccepted || second.RecordID == first.RecordID {
 		t.Fatal(second)
 	}
@@ -486,7 +486,7 @@ func TestFeishuRealIngressNamespacesVolatileAnswersAndReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	duplicate = WaitIngressNormalization(t.Context(), future)
+	duplicate = im.WaitIngressNormalization(t.Context(), future)
 	if duplicate.Disposition != im.ReceiveDuplicate || duplicate.RecordID != second.RecordID {
 		t.Fatal(duplicate)
 	}

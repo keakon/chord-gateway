@@ -196,10 +196,10 @@ func TestIngressMetricVocabularyRoundTripsProducedLabels(t *testing.T) {
 	}
 	// Classifier helpers are exercised instead of restated: every reason they
 	// can return must round-trip, including one a future change adds.
-	for _, err := range []error{errIngressCaptureBusy, errIngressCapacity, errIngressClosed, errors.New("unclassified")} {
-		reason := ingressSubmitRefusalReason(err)
+	for _, err := range []error{im.ErrIngressCaptureBusy, im.ErrIngressCapacity, im.ErrIngressClosed, errors.New("unclassified")} {
+		reason := im.SubmitRefusalReason(err)
 		if got := im.MetricReason(reason); got != reason {
-			t.Errorf("ingressSubmitRefusalReason(%v) = %q collapses to %q", err, reason, got)
+			t.Errorf("im.SubmitRefusalReason(%v) = %q collapses to %q", err, reason, got)
 		}
 	}
 	for _, err := range []error{

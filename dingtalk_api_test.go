@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keakon/chord-gateway/internal/im"
+
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/buildinfo"
 )
@@ -340,7 +342,7 @@ func TestDingtalkAdapterReportsActualRateWaits(t *testing.T) {
 				}
 			} else {
 				target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
-				ctx := context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account)
+				ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
 				if err := f.a.SendTextContext(ctx, target, "first output"); err != nil {
 					t.Fatal(err)
 				}

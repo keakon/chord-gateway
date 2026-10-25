@@ -20,7 +20,6 @@ type DispatchResult struct {
 }
 
 var errIngressTargetExpired = errors.New("control target expired")
-var errIngressCaptureBusy = errors.New("ingress target snapshot busy")
 
 // CaptureIngress is the synchronous capture path for transports that have
 // already read a complete batch and can wait while freezing its controls.

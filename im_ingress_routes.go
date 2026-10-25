@@ -98,7 +98,7 @@ func (r *NotificationRouter) enqueueIngressReply(msg im.IncomingMessage, text st
 		if expires.Before(deadline) {
 			deadline = expires
 		}
-		permit := ReplyPermit{Identity: ticket.Identity, SenderID: ticket.SenderID, AccountEpoch: ticket.AccountEpoch, RequestID: msg.MessageID, Kind: "owner", ExpiresAt: deadline, ticket: ticket}
+		permit := im.ReplyPermit{Identity: ticket.Identity, SenderID: ticket.SenderID, AccountEpoch: ticket.AccountEpoch, RequestID: msg.MessageID, Kind: "owner", ExpiresAt: deadline, Ticket: ticket}
 		send = func(ctx context.Context) error { return r.SendFlowReply(ctx, permit, text) }
 	} else {
 		ws, err := r.getConfig().ResolveWorkspace(msg.IMType, msg.ChatID)

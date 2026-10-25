@@ -36,7 +36,7 @@ func TestDingtalkRegressionAccountLocksCoverSendJoin(t *testing.T) {
 		return context.Canceled
 	})
 	target, _ := dingtalkEncodeTarget(f.a.cfg.CorpID, "private", "test-staff")
-	sendCtx := context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account)
+	sendCtx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
 	sendDone := make(chan error, 1)
 	go func() { sendDone <- f.a.SendTextContext(sendCtx, target, "test response") }()
 	dingtalkWaitTest(t, sendEntered)
@@ -143,7 +143,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	if _, err := (&BindingService{router: f.r}).Bind(t.Context(), msg, ticket, []string{dir, code}); err != nil {
 		t.Fatal(err)
 	}
-	permit := ReplyPermit{Identity: ticket.Identity, AccountEpoch: ticket.AccountEpoch, ExpiresAt: time.Now().Add(time.Minute), ticket: ticket}
+	permit := im.ReplyPermit{Identity: ticket.Identity, AccountEpoch: ticket.AccountEpoch, ExpiresAt: time.Now().Add(time.Minute), Ticket: ticket}
 	if err := f.r.SendFlowReply(t.Context(), permit, "flow response"); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 		t.Fatal("other account became available")
 	}
 	callback.MsgID = "new-input-during-outage"
-	if _, err := f.a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, "outage-delivery")); !errors.Is(err, errIngressClosed) {
+	if _, err := f.a.onCallback(t.Context(), dingtalkAdapterFrame(t, callback, "outage-delivery")); !errors.Is(err, im.ErrIngressClosed) {
 		t.Fatalf("outage admitted new input: %v", err)
 	}
 	f.s.mu.Lock()
@@ -200,7 +200,7 @@ func TestDingtalkRegressionAcceptedWorkSurvivesStreamOutage(t *testing.T) {
 	if !ok {
 		t.Fatal("bound target unavailable")
 	}
-	ctx := context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account)
+	ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
 	if err := f.r.SendBound(ctx, target, "background result during reconnect"); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestDingtalkNotReadySendIsCategorized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendCtx := context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account)
+	sendCtx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account)
 	f.a.mu.Lock()
 	f.a.stopping = true
 	f.a.mu.Unlock()
@@ -274,7 +274,7 @@ func TestDingtalkCaptureBusyRefusalStaysRetryable(t *testing.T) {
 	// A delivery that races the target's state write must be refused as
 	// target_busy with the loss visible in the metrics; robot callbacks are
 	// fire-and-forget, so the refusal reply tells the user to resend.
-	if future != nil || !errors.Is(err, errIngressCaptureBusy) {
+	if future != nil || !errors.Is(err, im.ErrIngressCaptureBusy) {
 		t.Fatalf("busy capture was not refused: future=%v err=%v", future, err)
 	}
 	var count uint64

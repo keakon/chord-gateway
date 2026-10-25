@@ -136,7 +136,7 @@ func TestRuntimeRetirementCancelsAdmittedSend(t *testing.T) {
 			case "account":
 				_ = r.admission.pairing.PlatformReady("wechat", "replacement-bot")
 			case "binding":
-				target.lease.Close()
+				target.Lease.Close()
 			}
 			select {
 			case err := <-done:

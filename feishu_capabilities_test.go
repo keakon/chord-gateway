@@ -28,7 +28,7 @@ func receiveFeishuCapabilityText(t *testing.T, r *NotificationRouter, business, 
 	if err != nil || future == nil {
 		t.Fatal(err)
 	}
-	return WaitIngressNormalization(t.Context(), future)
+	return im.WaitIngressNormalization(t.Context(), future)
 }
 
 func TestFeishuCapabilitiesDoneDenialRequiresReason(t *testing.T) {

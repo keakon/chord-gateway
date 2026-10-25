@@ -185,7 +185,7 @@ func (s *slackInbound) submit(ctx context.Context, kind string, payload json.Raw
 		return nil, nil, err
 	}
 	if s.router == nil {
-		return nil, nil, errIngressClosed
+		return nil, nil, im.ErrIngressClosed
 	}
 	capturedKind, target, ok := s.router.TryCaptureIngress(envelope.Message)
 	if !ok {

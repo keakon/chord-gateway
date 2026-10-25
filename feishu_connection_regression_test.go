@@ -205,7 +205,7 @@ func TestFeishuOldSocketCannotSubmitBusinessToNewGeneration(t *testing.T) {
 func TestFeishuAcceptanceBudgetReturnsUncertainBeforeLateCommit(t *testing.T) {
 	// The elapsed-time assertion is relative to the budget; shrink the budget so
 	// the test does not wait out the full production window.
-	swapTestValue(t, &ingressAcceptBudget, 200*time.Millisecond)
+	swapTestValue(t, &im.IngressAcceptBudget, 200*time.Millisecond)
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "test-app"})
 	release, accepted := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
@@ -226,7 +226,7 @@ func TestFeishuAcceptanceBudgetReturnsUncertainBeforeLateCommit(t *testing.T) {
 	if code != 500 || larkws.Headers(frame.Headers).GetString(larkws.HeaderMessageID) != "slow-delivery" {
 		t.Fatal("unconfirmed write received success", code)
 	}
-	if elapsed := time.Since(started); elapsed < ingressAcceptBudget/2 || elapsed > ingressAcceptBudget+time.Second {
+	if elapsed := time.Since(started); elapsed < im.IngressAcceptBudget/2 || elapsed > im.IngressAcceptBudget+time.Second {
 		t.Fatal("acceptance budget not honored", elapsed)
 	}
 	releaseOnce.Do(func() { close(release) })

@@ -231,7 +231,7 @@ func (a *FeishuAdapter) Connect() error {
 			}
 			log.Warnf("feishu: long connection dropped, retrying error=%v retry_in=%v", err, a.currentReconnectInterval())
 		}
-		if !sleepCtx(ctx, a.currentReconnectInterval()) {
+		if !im.SleepCtx(ctx, a.currentReconnectInterval()) {
 			return nil
 		}
 	}

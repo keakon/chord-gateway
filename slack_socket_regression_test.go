@@ -256,7 +256,7 @@ func TestSlackReceiptDeadlineDoesNotInventRetryableOutcome(t *testing.T) {
 	}
 	// Completion is still buffered for durable reconciliation after the waiter exits.
 	future <- im.ReceiveResult{Disposition: im.ReceiveAccepted, RecordID: "late-record"}
-	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
+	if result := im.WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 }

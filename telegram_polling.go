@@ -68,7 +68,7 @@ func (a *TelegramAdapter) loadCursor(ctx context.Context) (im.IngressCursor, err
 	// Legacy checkpoints cannot establish when the acknowledgement was created.
 	untrusted := t.BotID != a.accountID || created.IsZero() || created.After(now) || now.Sub(created) >= 24*time.Hour
 	if t.PendingOffset != nil && untrusted {
-		next := *cloneIngressCursor(&cursor)
+		next := *im.CloneIngressCursor(&cursor)
 		next.Telegram.PendingOffset = nil
 		next.Telegram.PendingCreatedAt = time.Time{}
 		next.Telegram.State = "empty"
@@ -222,7 +222,7 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor im.IngressCursor, bat
 		}
 		hasResponse = false
 		if cursor.Telegram.PendingOffset != nil {
-			next := *cloneIngressCursor(&cursor)
+			next := *im.CloneIngressCursor(&cursor)
 			next.Telegram.PendingOffset = nil
 			next.Telegram.PendingCreatedAt = time.Time{}
 			next.Telegram.State = "confirmed"
@@ -246,7 +246,7 @@ func (a *TelegramAdapter) poll(ctx context.Context, cursor im.IngressCursor, bat
 				failed = true
 				break
 			}
-			next := cloneIngressCursor(&cursor)
+			next := im.CloneIngressCursor(&cursor)
 			next.Generation = cursor.Generation + 1
 			offset := update.UpdateID + 1
 			next.Telegram.PendingOffset = &offset

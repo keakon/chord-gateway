@@ -164,7 +164,7 @@ type WechatAdapter struct {
 	replyContexts  map[string]wechatReplyContext
 	ingressPending map[string]*wechatIngressPending
 
-	ingressReadinessNotifier
+	im.ReadinessNotifier
 
 	imCfg         config.IMAdapterConfig
 	msgRouter     im.MessageRouter
@@ -250,7 +250,7 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 		resp, err := a.getQRCodeStatus(qrcodeID)
 		if err != nil {
 			if ctx != nil {
-				sleepCtx(ctx, ilinkPollInterval)
+				im.SleepCtx(ctx, ilinkPollInterval)
 			} else {
 				time.Sleep(ilinkPollInterval)
 			}
@@ -279,7 +279,7 @@ func (a *WechatAdapter) pollQRStatusForRelogin(ctx context.Context, qrcodeID str
 			return
 		}
 		if ctx != nil {
-			sleepCtx(ctx, ilinkPollInterval)
+			im.SleepCtx(ctx, ilinkPollInterval)
 		} else {
 			time.Sleep(ilinkPollInterval)
 		}

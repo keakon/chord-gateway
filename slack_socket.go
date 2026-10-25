@@ -245,7 +245,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 						// Count it like every other discard in this loop instead of
 						// dropping the refusal without a metric.
 						if a.router != nil {
-							a.router.ObserveIngress("slack", "lost_before_accept", ingressSubmitRefusalReason(submitErr))
+							a.router.ObserveIngress("slack", "lost_before_accept", im.SubmitRefusalReason(submitErr))
 						}
 						if submitFailuresLogged.CompareAndSwap(false, true) {
 							log.Warnf("slack: intake submission failed; leaving envelopes unacknowledged for Slack to redeliver")
@@ -320,7 +320,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 		if ctx.Err() != nil {
 			return slackSocketResult(parent, failures)
 		}
-		return slackConnectionError{"ingress_preparation_failed", !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errIngressCapacity)}
+		return slackConnectionError{"ingress_preparation_failed", !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, im.ErrIngressCapacity)}
 	}
 	if ctx.Err() != nil {
 		return slackSocketResult(parent, failures)
@@ -337,7 +337,7 @@ func (a *SlackAdapter) runSlackSocket(parent context.Context, identity slackIden
 	if ctx.Err() != nil {
 		a.setUnavailable()
 	}
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 	<-ctx.Done()
 	return slackSocketResult(parent, failures)
 }
@@ -365,7 +365,7 @@ func (a *SlackAdapter) slackReceiptACK(ctx context.Context, generation uint64, r
 	budget := slackAcceptanceBudget
 	waitCtx, cancel := context.WithDeadline(ctx, receipt.ReceivedAt.Add(budget))
 	defer cancel()
-	result := WaitIngressNormalization(waitCtx, receipt.Future)
+	result := im.WaitIngressNormalization(waitCtx, receipt.Future)
 	switch result.Disposition {
 	case im.ReceiveAccepted, im.ReceiveDuplicate, im.ReceiveRejected:
 		done := a.queueSlackACK(ctx, generation, receipt.Frame, receipt.ReceivedAt, slackAcceptanceHint(result), acks)

@@ -19,7 +19,7 @@ const (
 func (r *NotificationRouter) CaptureIngressEnvelope(e im.IngressEnvelope) im.IngressEnvelope {
 	// Callback decoders may reuse their buffers after the reader returns. Values
 	// and the action must remain the operation observed at receive time.
-	e.Cursor = cloneIngressCursor(e.Cursor)
+	e.Cursor = im.CloneIngressCursor(e.Cursor)
 	if e.Message.InternalAction != nil {
 		action := *e.Message.InternalAction
 		action.Values = slices.Clone(action.Values)
@@ -31,7 +31,7 @@ func (r *NotificationRouter) CaptureIngressEnvelope(e im.IngressEnvelope) im.Ing
 	kind, target, ok := r.tryCaptureIngress(e.Message)
 	e.Capture = &im.IngressCapture{Kind: kind, Target: target}
 	if !ok {
-		e.Capture.Err = errIngressCaptureBusy
+		e.Capture.Err = im.ErrIngressCaptureBusy
 	}
 	return e
 }
@@ -103,7 +103,7 @@ func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize fu
 	n.mu.Lock()
 	if n.closed || n.ctx.Err() != nil {
 		n.mu.Unlock()
-		return nil, errIngressClosed
+		return nil, im.ErrIngressClosed
 	}
 	if err := ctx.Err(); err != nil {
 		n.mu.Unlock()
@@ -115,7 +115,7 @@ func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize fu
 	}
 	if n.count >= ingressNormalizationCapacity {
 		n.mu.Unlock()
-		return nil, errIngressCapacity
+		return nil, im.ErrIngressCapacity
 	}
 	result := make(chan im.ReceiveResult, 1)
 	_, exists := n.queues[key]
@@ -128,33 +128,6 @@ func (n *IngressNormalizer) submit(ctx context.Context, key string, normalize fu
 		n.ready <- key
 	}
 	return result, nil
-}
-
-// WaitIngressNormalization waits for the committed outcome. Cancellation of
-// the wait cannot establish whether the writer committed: report uncertain,
-// never retryable. The buffered channel still receives the authoritative result
-// and transport redelivery is safe through in-memory business-ID deduplication.
-func WaitIngressNormalization(ctx context.Context, result <-chan im.ReceiveResult) im.ReceiveResult {
-	if result == nil {
-		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "normalization_unavailable"}
-	}
-	// Prefer an already-completed result over a simultaneous cancellation.
-	select {
-	case value, ok := <-result:
-		return ingressNormalizationResult(value, ok)
-	default:
-	}
-	select {
-	case value, ok := <-result:
-		return ingressNormalizationResult(value, ok)
-	case <-ctx.Done():
-		select {
-		case value, ok := <-result:
-			return ingressNormalizationResult(value, ok)
-		default:
-			return im.ReceiveResult{Disposition: im.ReceiveUncertain, Reason: "normalization_wait_cancelled"}
-		}
-	}
 }
 
 func ingressNormalizationResult(value im.ReceiveResult, ok bool) im.ReceiveResult {

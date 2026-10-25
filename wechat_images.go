@@ -112,7 +112,7 @@ func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, ima
 	if account == nil {
 		return fmt.Errorf("account unavailable")
 	}
-	if expected, ok := ctx.Value(replyAccountContextKey{}).(string); ok && account.AccountID != expected {
+	if expected, ok := ctx.Value(im.ReplyAccountContextKey{}).(string); ok && account.AccountID != expected {
 		return fmt.Errorf("account changed")
 	}
 	release, err := im.AcquireImageUpload(ctx)

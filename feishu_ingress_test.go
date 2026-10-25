@@ -25,7 +25,7 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result := WaitIngressNormalization(t.Context(), future)
+		result := im.WaitIngressNormalization(t.Context(), future)
 		want := im.ReceiveAccepted
 		if delivery == "delivery-two" {
 			want = im.ReceiveDuplicate
@@ -40,7 +40,7 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 	if err != nil || immediate != nil {
 		t.Fatal(immediate, err)
 	}
-	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
+	if result := im.WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	raw, _ := feishuTestReceivers.Load(a)
@@ -123,7 +123,7 @@ func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = WaitIngressNormalization(t.Context(), future)
+		_ = im.WaitIngressNormalization(t.Context(), future)
 	}
 	raw, _ := feishuTestReceivers.Load(a)
 	receiver := raw.(*testFeishuReceiver)
@@ -264,17 +264,17 @@ func TestFeishuCardOutcomePresentationChecksCurrentOwnerAppAndChat(t *testing.T)
 
 // Synchronous test helpers exercise the production submitters.
 func (a *FeishuAdapter) handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
 	future, err := a.submitMessageEvent(ctx, event, "")
 	if err != nil || future == nil {
 		return err
 	}
-	return feishuMessageIngressError(WaitIngressNormalization(ctx, future))
+	return feishuMessageIngressError(im.WaitIngressNormalization(ctx, future))
 }
 
 func (a *FeishuAdapter) handleCardActionEvent(ctx context.Context, event *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
 	future, immediate, err := a.submitCardActionEvent(ctx, event, "")
 	if err != nil {
@@ -283,6 +283,6 @@ func (a *FeishuAdapter) handleCardActionEvent(ctx context.Context, event *larkca
 	if future == nil {
 		return immediate, nil
 	}
-	result := WaitIngressNormalization(ctx, future)
+	result := im.WaitIngressNormalization(ctx, future)
 	return a.feishuCardIngressResponse(event, result), feishuMessageIngressError(result)
 }

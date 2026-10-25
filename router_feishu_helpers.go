@@ -73,11 +73,11 @@ func (r *NotificationRouter) updateFeishuCardStatus(msg im.IncomingMessage, proc
 	return r.updateFeishuCardForTarget(msg, target, requestType, requestID, card)
 }
 
-func (r *NotificationRouter) updateFeishuCardForTarget(msg im.IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
+func (r *NotificationRouter) updateFeishuCardForTarget(msg im.IncomingMessage, target im.DeliveryTarget, requestType, requestID string, card map[string]any) bool {
 	return r.updateFeishuCardForTargetContext(context.Background(), msg, target, requestType, requestID, card)
 }
 
-func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Context, msg im.IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any) bool {
+func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Context, msg im.IncomingMessage, target im.DeliveryTarget, requestType, requestID string, card map[string]any) bool {
 	updated, _ := r.patchFeishuCardForTargetContext(ctx, msg, target, requestType, requestID, card, true)
 	return updated
 }
@@ -85,7 +85,7 @@ func (r *NotificationRouter) updateFeishuCardForTargetContext(ctx context.Contex
 // Preserve handles until a confirmed terminal patch. A failed or uncertain
 // patch can be reconciled by a later trusted result instead of stranding the
 // original card, and uncertain writes must not trigger the same text fallback.
-func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context, msg im.IncomingMessage, target DeliveryTarget, requestType, requestID string, card map[string]any, terminal bool) (bool, error) {
+func (r *NotificationRouter) patchFeishuCardForTargetContext(ctx context.Context, msg im.IncomingMessage, target im.DeliveryTarget, requestType, requestID string, card map[string]any, terminal bool) (bool, error) {
 	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
 		return false, err

@@ -37,7 +37,7 @@ type DingtalkAdapter struct {
 	sendWG     sync.WaitGroup
 	fatal      error
 
-	ingressReadinessNotifier
+	im.ReadinessNotifier
 }
 
 func NewDingtalkAdapter(globalCfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*DingtalkAdapter, error) {
@@ -204,7 +204,7 @@ func (a *DingtalkAdapter) activate(ctx context.Context, generation uint64) error
 	a.ready = true
 	a.activated = true
 	a.mu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 	return nil
 }
 
@@ -216,7 +216,7 @@ func (a *DingtalkAdapter) onUnavailable() {
 		a.router.admission.pairing.PlatformUnavailable("dingtalk")
 	}
 	a.mu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 }
 
 func dingtalkResult(result im.ReceiveResult) <-chan im.ReceiveResult {
@@ -270,7 +270,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 	available := a.connected && !a.stopping
 	a.mu.Unlock()
 	if !available {
-		return nil, errIngressClosed
+		return nil, im.ErrIngressClosed
 	}
 	if ready && contentErr == nil {
 		// Capture an existing owner's reply authority now, so a failed accept
@@ -286,7 +286,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		}
 		future, err := a.router.SubmitIngress(ctx, e)
 		if err != nil {
-			a.observeReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
+			a.observeReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: im.SubmitRefusalReason(err)})
 			a.notifyLostInput(msg)
 		}
 		return a.trackAcceptance(future, msg), err
@@ -299,11 +299,11 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 	active := s.started && !s.stopping
 	s.mu.Unlock()
 	if !active || n == nil {
-		return nil, errIngressClosed
+		return nil, im.ErrIngressClosed
 	}
 	key := string(ingressKey("", "dingtalk", a.account, msg.ChatID))
 	future, submitErr := n.submitProtocol(ctx, key, func(ctx context.Context) im.ReceiveResult {
-		ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+		ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 		defer cancel()
 		reason := "identity_unverified"
 		probe := !ready && identityErr == nil && contentErr == nil
@@ -335,7 +335,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame dingtalkFrame) (
 		return result
 	})
 	if submitErr != nil {
-		a.observeReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(submitErr)})
+		a.observeReceiveResult(im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: im.SubmitRefusalReason(submitErr)})
 	}
 	return a.trackAcceptance(future, im.IncomingMessage{}), submitErr
 }
@@ -430,7 +430,7 @@ func (a *DingtalkAdapter) SendTextContext(ctx context.Context, chat, text string
 		return err
 	}
 	imCfg := a.router.getConfig().IMConfigByType("dingtalk")
-	expectedAccount, scoped := ctx.Value(replyAccountContextKey{}).(string)
+	expectedAccount, scoped := ctx.Value(im.ReplyAccountContextKey{}).(string)
 	if scoped {
 		if expectedAccount != a.account {
 			return im.ErrPairingDenied
@@ -438,7 +438,7 @@ func (a *DingtalkAdapter) SendTextContext(ctx context.Context, chat, text string
 	} else if imCfg == nil || imCfg.OwnerIdentity() == nil || imCfg.OwnerIdentity().AccountID != a.account || imCfg.Bindings()[chat] == "" {
 		return im.ErrPairingDenied
 	}
-	_, control := ctx.Value(outboundReplyContextKey{}).(ReplyPermit)
+	_, control := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
 	err := a.sender.Send(ctx, a.ctx, nil, chat, text, control)
 	a.reportSendFailure(err)
 	return err

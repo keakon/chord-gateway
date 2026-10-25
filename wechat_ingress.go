@@ -117,7 +117,7 @@ func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMes
 			return true
 		},
 	}
-	wait, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+	wait, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
 	future, err := r.SubmitIngress(wait, im.IngressEnvelope{Message: incoming, Capture: msg.captureRef, Preparation: preparation, ReceivedAt: msg.receivedAt})
 	if err != nil {
@@ -132,7 +132,7 @@ func (a *WechatAdapter) receiveIncomingMessage(ctx context.Context, msg ilinkMes
 		a.ingressPending[key] = pending
 	}
 	a.mu.Unlock()
-	result := WaitIngressNormalization(wait, future)
+	result := im.WaitIngressNormalization(wait, future)
 	a.mu.Lock()
 	pending.result = result
 	if result.Disposition != im.ReceiveUncertain && a.ingressPending[key] == pending {
@@ -210,7 +210,7 @@ func (a *WechatAdapter) confirmIncomingContext(msg ilinkMessage, token *TokenDat
 	reply.accountEpoch = epoch
 	a.replyContexts[key] = reply
 	a.mu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 }
 
 // Each Connect creates a new context even when it reuses the same credentials.

@@ -8,30 +8,13 @@ import (
 	"github.com/keakon/chord-gateway/internal/im"
 )
 
-type DeliveryTarget struct {
-	Identity                        im.ChatIdentity
-	AccountEpoch, BindingGeneration uint64
-	ProcessKey, RuntimeInstanceID   string
-	lease                           *im.BindingLease
-	paired                          bool
-}
-
-type ReplyPermit struct {
-	Identity        im.ChatIdentity
-	SenderID        string
-	AccountEpoch    uint64
-	RequestID, Kind string
-	ExpiresAt       time.Time
-	ticket          im.AdmissionTicket
-}
-
 type contextTextSender interface {
 	SendTextContext(context.Context, string, string) error
 }
 
-func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
+func (r *NotificationRouter) targetForKey(key string) (im.DeliveryTarget, bool) {
 	ws, platform, chat := parseProcessKey(key)
-	target := DeliveryTarget{Identity: im.ChatIdentity{Platform: platform, ChatID: chat}, ProcessKey: key}
+	target := im.DeliveryTarget{Identity: im.ChatIdentity{Platform: platform, ChatID: chat}, ProcessKey: key}
 	if r.mgr != nil {
 		if p := r.mgr.GetProcessForKey(key); p != nil {
 			target.RuntimeInstanceID = p.bindingInstanceID
@@ -51,13 +34,13 @@ func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
 				if phase != "active" || lease == nil || lease.WorkspaceID != ws || lease.Context().Err() != nil {
 					return target, false
 				}
-				target.lease = lease
+				target.Lease = lease
 				target.BindingGeneration = gen
 			}
 		}
 		return target, true
 	}
-	target.paired = true
+	target.Paired = true
 	if r.admission == nil {
 		return target, false
 	}
@@ -81,24 +64,24 @@ func (r *NotificationRouter) targetForKey(key string) (DeliveryTarget, bool) {
 	if lease == nil || phase != "active" || lease.Context().Err() != nil {
 		return target, false
 	}
-	target.lease = lease
+	target.Lease = lease
 	target.BindingGeneration = generation
 	target.AccountEpoch = lease.AccountEpoch
 	return target, true
 }
 
-func (r *NotificationRouter) validTarget(target DeliveryTarget) bool {
+func (r *NotificationRouter) validTarget(target im.DeliveryTarget) bool {
 	current, ok := r.targetForKey(target.ProcessKey)
 	if !ok || current.RuntimeInstanceID != target.RuntimeInstanceID {
 		return false
 	}
-	if target.lease == nil {
-		return current.lease == nil
+	if target.Lease == nil {
+		return current.Lease == nil
 	}
-	if current.lease != target.lease {
+	if current.Lease != target.Lease {
 		return false
 	}
-	if !target.paired {
+	if !target.Paired {
 		return true
 	}
 	p := r.admission.pairing
@@ -108,7 +91,7 @@ func (r *NotificationRouter) validTarget(target DeliveryTarget) bool {
 	return s != nil && !s.changed && s.epoch == target.AccountEpoch && s.account == target.Identity.AccountID
 }
 
-func (r *NotificationRouter) SendBound(ctx context.Context, target DeliveryTarget, text string) error {
+func (r *NotificationRouter) SendBound(ctx context.Context, target im.DeliveryTarget, text string) error {
 	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
 		return err
@@ -124,14 +107,14 @@ func (r *NotificationRouter) SendBound(ctx context.Context, target DeliveryTarge
 	if sender, ok := adapter.(contextTextSender); ok {
 		return sender.SendTextContext(ctx, target.Identity.ChatID, text)
 	}
-	if target.paired {
+	if target.Paired {
 		return errors.New("adapter does not support cancellable delivery")
 	}
 	return adapter.SendText(target.Identity.ChatID, text)
 }
 
-func (r *NotificationRouter) SendFlowReply(ctx context.Context, permit ReplyPermit, text string) error {
-	if !time.Now().Before(permit.ExpiresAt) || !r.admission.Valid(permit.ticket) {
+func (r *NotificationRouter) SendFlowReply(ctx context.Context, permit im.ReplyPermit, text string) error {
+	if !time.Now().Before(permit.ExpiresAt) || !r.admission.Valid(permit.Ticket) {
 		return im.ErrPairingDenied
 	}
 	p := r.admission.pairing
@@ -143,9 +126,9 @@ func (r *NotificationRouter) SendFlowReply(ctx context.Context, permit ReplyPerm
 	}
 	parent := state.ctx
 	p.mu.Unlock()
-	ctx = context.WithValue(ctx, replyAccountContextKey{}, permit.Identity.AccountID)
-	ctx = context.WithValue(ctx, outboundDeliveryContextKey{}, nil)
-	ctx = context.WithValue(ctx, outboundReplyContextKey{}, permit)
+	ctx = context.WithValue(ctx, im.ReplyAccountContextKey{}, permit.Identity.AccountID)
+	ctx = context.WithValue(ctx, im.OutboundDeliveryContextKey{}, nil)
+	ctx = context.WithValue(ctx, im.OutboundReplyContextKey{}, permit)
 	ctx, cancel := context.WithDeadline(ctx, permit.ExpiresAt)
 	defer cancel()
 	if parent != nil {
@@ -194,15 +177,15 @@ func (r *NotificationRouter) sendTextForIM(platform, chat, text string) bool {
 
 // deliveryContext admits a send for the captured binding and runtime. Runtime
 // retirement cancels admitted I/O; it never upgrades old work to a new process.
-func (r *NotificationRouter) deliveryContext(parent context.Context, target DeliveryTarget) (context.Context, func(), error) {
+func (r *NotificationRouter) deliveryContext(parent context.Context, target im.DeliveryTarget) (context.Context, func(), error) {
 	if !r.validTarget(target) {
 		return nil, nil, context.Canceled
 	}
-	if target.paired {
-		parent = context.WithValue(parent, replyAccountContextKey{}, target.Identity.AccountID)
+	if target.Paired {
+		parent = context.WithValue(parent, im.ReplyAccountContextKey{}, target.Identity.AccountID)
 	}
-	parent = context.WithValue(parent, outboundReplyContextKey{}, nil)
-	ctx, cancel := context.WithCancel(context.WithValue(parent, outboundDeliveryContextKey{}, target))
+	parent = context.WithValue(parent, im.OutboundReplyContextKey{}, nil)
+	ctx, cancel := context.WithCancel(context.WithValue(parent, im.OutboundDeliveryContextKey{}, target))
 	var stops []func() bool
 	watch := func(source context.Context) {
 		stops = append(stops, context.AfterFunc(source, cancel))
@@ -210,7 +193,7 @@ func (r *NotificationRouter) deliveryContext(parent context.Context, target Deli
 			cancel()
 		}
 	}
-	if target.paired {
+	if target.Paired {
 		p := r.admission.pairing
 		p.mu.Lock()
 		state := p.platforms[target.Identity.Platform]
@@ -249,23 +232,23 @@ func (r *NotificationRouter) deliveryContext(parent context.Context, target Deli
 		}
 		cancel()
 	}
-	if target.lease != nil {
-		if !target.lease.BeginSend() {
+	if target.Lease != nil {
+		if !target.Lease.BeginSend() {
 			done()
 			return nil, nil, context.Canceled
 		}
-		watch(target.lease.Context())
+		watch(target.Lease.Context())
 		cleanup := done
-		done = func() { cleanup(); target.lease.EndSend() }
+		done = func() { cleanup(); target.Lease.EndSend() }
 	}
 	return ctx, done, nil
 }
 
-func (r *NotificationRouter) sendCardToTarget(target DeliveryTarget, card map[string]any, fallback string) (*im.InteractiveCardHandle, error) {
+func (r *NotificationRouter) sendCardToTarget(target im.DeliveryTarget, card map[string]any, fallback string) (*im.InteractiveCardHandle, error) {
 	return r.sendCardToTargetContext(context.Background(), target, card, fallback)
 }
 
-func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target DeliveryTarget, card map[string]any, fallback string) (*im.InteractiveCardHandle, error) {
+func (r *NotificationRouter) sendCardToTargetContext(ctx context.Context, target im.DeliveryTarget, card map[string]any, fallback string) (*im.InteractiveCardHandle, error) {
 	ctx, done, err := r.deliveryContext(ctx, target)
 	if err != nil {
 		return nil, err
@@ -311,10 +294,3 @@ func (r *NotificationRouter) ensureOwnedGate(platform, chat, workspace string) {
 	}
 	r.admission.gate(im.ChatIdentity{Platform: platform, AccountID: account, ChatID: chat}, workspace, epoch)
 }
-
-type replyAccountContextKey struct{}
-
-// Captured authority lets transports validate their exact destination without
-// upgrading a queued output to the current binding or an unrelated flow.
-type outboundDeliveryContextKey struct{}
-type outboundReplyContextKey struct{}

@@ -93,7 +93,7 @@ func receiveNormalization(t *testing.T, result <-chan im.ReceiveResult) im.Recei
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return WaitIngressNormalization(ctx, result)
+	return im.WaitIngressNormalization(ctx, result)
 }
 
 func TestIngressNormalizationParentCancellationDrainsWithoutClose(t *testing.T) {
@@ -120,7 +120,7 @@ func TestIngressNormalizationParentCancellationDrainsWithoutClose(t *testing.T) 
 			t.Fatal("result channel was not closed")
 		}
 	}
-	if _, err := n.Submit("channel", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); !errors.Is(err, errIngressClosed) {
+	if _, err := n.Submit("channel", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); !errors.Is(err, im.ErrIngressClosed) {
 		t.Fatalf("submit after cancellation: %v", err)
 	}
 }
@@ -188,15 +188,15 @@ func TestIngressNormalizationWaitCancellationIsUncertain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	result := make(chan im.ReceiveResult, 1)
-	if got := WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveUncertain {
+	if got := im.WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveUncertain {
 		t.Fatal(got)
 	}
 	result <- im.ReceiveResult{Disposition: im.ReceiveAccepted}
-	if got := WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveAccepted {
+	if got := im.WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveAccepted {
 		t.Fatal(got)
 	}
 	close(result)
-	if got := WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveUncertain {
+	if got := im.WaitIngressNormalization(ctx, result); got.Disposition != im.ReceiveUncertain {
 		t.Fatal(got)
 	}
 }

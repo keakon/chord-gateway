@@ -20,14 +20,6 @@ import (
 
 var errIngressMissing = errors.New("ingress record or route not found")
 var errIngressBlocked = errors.New("ingress route has undelivered or uncertain input")
-var errIngressClosed = errors.New("ingress is closed")
-var errIngressCapacity = errors.New("ingress capacity reached")
-var errIngressTransportChanged = errors.New("transport identity changed before admission")
-
-// ingressAcceptBudget bounds how long a dispatch waits for an acceptance before
-// reporting an uncertain outcome. It is variable so the acceptance-budget test
-// does not wait out the full window; production keeps two seconds.
-var ingressAcceptBudget = 2 * time.Second
 
 const ingressHistoryLimit = 100000
 const ingressHistoryTTL = 24 * time.Hour
@@ -105,7 +97,7 @@ func (s *IngressStore) lock(ctx context.Context) error {
 	}
 	if s.closing.Load() {
 		s.mu.Unlock()
-		return errIngressClosed
+		return im.ErrIngressClosed
 	}
 	if err := ctx.Err(); err != nil {
 		s.mu.Unlock()
@@ -359,7 +351,7 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	if r.Kind != "task" && r.Kind != "control" {
 		return reject("invalid_kind")
 	}
-	if err := validateIngressCursor(r.Platform, cursor); err != nil {
+	if err := im.ValidateIngressCursor(r.Platform, cursor); err != nil {
 		return reject("invalid_cursor")
 	}
 	// The transport-validity callback reaches adapter and admission locks.
@@ -406,7 +398,7 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	}
 	commitCursor := func() {
 		if cursor != nil {
-			s.cursors[compositeKey(r.Platform, r.AccountID)] = *cloneIngressCursor(cursor)
+			s.cursors[compositeKey(r.Platform, r.AccountID)] = *im.CloneIngressCursor(cursor)
 		}
 	}
 	if r.Platform == "telegram" {

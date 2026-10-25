@@ -38,7 +38,7 @@ func TestMessageRedirectIsNotReplayed(t *testing.T) {
 
 				a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 				a.httpClient = server.Client()
-				_, err = (&NotificationRouter{adapter: a}).sendCardToTarget(DeliveryTarget{Identity: im.ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "sample prompt")
+				_, err = (&NotificationRouter{adapter: a}).sendCardToTarget(im.DeliveryTarget{Identity: im.ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "sample prompt")
 			} else {
 				a := newTestWechatAdapter(t)
 				a.imCfg.Wechat.BaseURL = server.URL
@@ -151,7 +151,7 @@ func TestFeishuCardOutcomeUnknownDoesNotFallback(t *testing.T) {
 
 	a.accessToken, a.tokenExpireAt = "sample-token", time.Now().Add(time.Hour)
 	a.httpClient = server.Client()
-	if _, err := (&NotificationRouter{adapter: a}).sendCardToTarget(DeliveryTarget{Identity: im.ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "original prompt"); !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
+	if _, err := (&NotificationRouter{adapter: a}).sendCardToTarget(im.DeliveryTarget{Identity: im.ChatIdentity{Platform: "feishu", ChatID: "sample-chat"}, ProcessKey: (processKey{workspaceID: "ws", imType: "feishu", chatID: "sample-chat"}).String()}, map[string]any{}, "original prompt"); !errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		t.Fatal("card uncertainty was swallowed", err)
 	}
 	if len(types) != 1 || types[0] != "interactive" {

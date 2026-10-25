@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/keakon/golog/log"
 )
@@ -60,20 +58,3 @@ var loginShellEnv = sync.OnceValue(func() []string {
 	env = append(env, "PATH="+strings.Join(merged, ":"))
 	return env
 })
-
-// sleepCtx waits for d to elapse or ctx to be cancelled. Returns true if the
-// full duration elapsed, false if the context was cancelled. A non-positive d
-// defaults to 1 second.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		d = time.Second
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}

@@ -10,7 +10,7 @@ import (
 
 // Presentation is queued separately from execution. Its target and deadline
 // are frozen before enqueue so a later binding cannot receive the response.
-func (r *NotificationRouter) enqueueIngressPresentation(msg im.IncomingMessage, present func(context.Context, DeliveryTarget) error, expectedBindings ...string) outboundEnqueueResult {
+func (r *NotificationRouter) enqueueIngressPresentation(msg im.IncomingMessage, present func(context.Context, im.DeliveryTarget) error, expectedBindings ...string) outboundEnqueueResult {
 	if r.outbound == nil {
 		return outboundClosed
 	}
@@ -74,7 +74,7 @@ func (r *NotificationRouter) enqueueIngressInteractionPresentation(msg im.Incomi
 }
 
 func (r *NotificationRouter) enqueueIngressInteractionFeedback(msg im.IncomingMessage, kind, request, title, text, template string, terminal, diagnostic bool, expectedBindings ...string) {
-	r.enqueueIngressPresentation(msg, func(ctx context.Context, target DeliveryTarget) error {
+	r.enqueueIngressPresentation(msg, func(ctx context.Context, target im.DeliveryTarget) error {
 		if msg.IMType == "feishu" {
 			if kind == "confirm" && r.confirmCardIsTerminal(target.ProcessKey, request) {
 				if diagnostic {
@@ -157,7 +157,7 @@ func (r *NotificationRouter) enqueueIngressDispatchDiagnostic(msg im.IncomingMes
 }
 
 func (r *NotificationRouter) enqueueIngressRoleMenu(msg im.IncomingMessage, current string, roles []RoleInfo, expectedBindings ...string) {
-	r.enqueueIngressPresentation(msg, func(ctx context.Context, target DeliveryTarget) error {
+	r.enqueueIngressPresentation(msg, func(ctx context.Context, target im.DeliveryTarget) error {
 		text := buildRoleMenuText(current, roles, func(command string) string { return r.ingressCommandHint(msg, command) })
 		if msg.IMType != "feishu" || r.findFeishuAdapter() == nil {
 			return r.SendBound(ctx, target, text)

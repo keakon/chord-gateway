@@ -41,10 +41,10 @@ func TestIngressProtocolSharesFIFOAndCapacityWithBusinessInput(t *testing.T) {
 		}
 		results = append(results, future)
 	}
-	if _, err := n.submitProtocol(t.Context(), "another-chat", func(context.Context) im.ReceiveResult { return im.ReceiveResult{} }); !errors.Is(err, errIngressCapacity) {
+	if _, err := n.submitProtocol(t.Context(), "another-chat", func(context.Context) im.ReceiveResult { return im.ReceiveResult{} }); !errors.Is(err, im.ErrIngressCapacity) {
 		t.Fatalf("protocol queue bypassed shared budget: %v", err)
 	}
-	if _, err := n.Submit("another-chat", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); !errors.Is(err, errIngressCapacity) {
+	if _, err := n.Submit("another-chat", func(context.Context) (im.IngressEnvelope, error) { return im.IngressEnvelope{}, nil }); !errors.Is(err, im.ErrIngressCapacity) {
 		t.Fatalf("business queue bypassed shared budget: %v", err)
 	}
 	close(release)

@@ -520,8 +520,8 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		return
 	}
 	sendCtx := context.Background()
-	if target.lease != nil {
-		sendCtx = target.lease.Context()
+	if target.Lease != nil {
+		sendCtx = target.Lease.Context()
 	}
 	if state.BindingInstanceID != "" {
 		p := r.mgr.GetProcessForKey(key)
@@ -660,7 +660,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	task()
 }
 
-func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType string, state ControlState, msg string) {
+func (r *NotificationRouter) deliverChordEvent(target im.DeliveryTarget, eventType string, state ControlState, msg string) {
 	key, imType := target.ProcessKey, target.Identity.Platform
 	if eventType == "notification" && r.duplicatePromptNotification(key, state) {
 		return
@@ -752,7 +752,7 @@ func (r *NotificationRouter) deliverChordEvent(target DeliveryTarget, eventType 
 // answering interaction already resolved the card itself. Like the question
 // variant, an uncertain patch must not trigger the text fallback, and a
 // text-delivered confirmation (no stored handle) falls back to the text notice.
-func (r *NotificationRouter) resolveConfirmCard(target DeliveryTarget, state ControlState) (bool, error) {
+func (r *NotificationRouter) resolveConfirmCard(target im.DeliveryTarget, state ControlState) (bool, error) {
 	p := state.LastConfirmResolved
 	if p == nil || (p.Outcome != ConfirmOutcomeTimeout && p.Outcome != ConfirmOutcomeCancelled) {
 		return false, nil
@@ -770,7 +770,7 @@ func (r *NotificationRouter) resolveConfirmCard(target DeliveryTarget, state Con
 // question was delivered as text (no stored handle) the caller falls back to
 // sending the close notification as text. An uncertain patch must not trigger
 // that fallback, because the original card may already have been updated.
-func (r *NotificationRouter) resolveQuestionCard(target DeliveryTarget, state ControlState) (bool, error) {
+func (r *NotificationRouter) resolveQuestionCard(target im.DeliveryTarget, state ControlState) (bool, error) {
 	p := state.LastQuestionResolved
 	if p == nil {
 		return false, nil

@@ -252,7 +252,7 @@ func TestSlackInboundAsyncOrderingKindAndFreeze(t *testing.T) {
 	default:
 	}
 	close(release)
-	if WaitIngressNormalization(t.Context(), first).Disposition != im.ReceiveAccepted || WaitIngressNormalization(t.Context(), second).Disposition != im.ReceiveAccepted {
+	if im.WaitIngressNormalization(t.Context(), first).Disposition != im.ReceiveAccepted || im.WaitIngressNormalization(t.Context(), second).Disposition != im.ReceiveAccepted {
 		t.Fatal("normalization failed")
 	}
 	a, b := <-receiver.envelopes, <-receiver.envelopes
@@ -297,7 +297,7 @@ func TestSlackInboundSharedConversationProducesAdmissionRejection(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer cancel()
-	if result := WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
+	if result := im.WaitIngressNormalization(t.Context(), future); result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
 	envelope := <-receiver.envelopes

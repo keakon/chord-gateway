@@ -33,7 +33,7 @@ func (r *NotificationRouter) SubmitIngressNormalization(ctx context.Context, key
 
 func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key string, envelope im.IngressEnvelope, normalize func(context.Context, im.IngressEnvelope) (im.IngressEnvelope, error), observe func(im.ReceiveResult)) (<-chan im.ReceiveResult, error) {
 	if r.ingress == nil {
-		return nil, errIngressClosed
+		return nil, im.ErrIngressClosed
 	}
 	if key == "" || envelope.Message.IMType == "" || envelope.Message.AccountID == "" {
 		return nil, errors.New("invalid normalization scope")
@@ -51,7 +51,7 @@ func (r *NotificationRouter) submitIngressNormalization(ctx context.Context, key
 	available := r.ingress.started && !r.ingress.stopping
 	r.ingress.mu.Unlock()
 	if !available || normalizer == nil {
-		return nil, errIngressClosed
+		return nil, im.ErrIngressClosed
 	}
 	return normalizer.submitObserved(ctx, key, func(ctx context.Context) (im.IngressEnvelope, error) {
 		if normalize == nil {
@@ -111,41 +111,27 @@ func (r *NotificationRouter) RejectIngressEnvelope(ctx context.Context, e im.Ing
 // can wait. Socket readers should use SubmitIngress and handle its future away
 // from heartbeats. Cancellation cannot certify that an in-flight commit failed.
 func (r *NotificationRouter) ReceiveIngress(ctx context.Context, envelope im.IngressEnvelope) im.ReceiveResult {
-	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
 	future, err := r.SubmitIngress(ctx, envelope)
 	if err != nil {
-		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)}
+		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: im.SubmitRefusalReason(err)}
 	}
-	return WaitIngressNormalization(ctx, future)
-}
-
-// ingressSubmitRefusalReason maps a submission failure to its bounded metric
-// reason. Capture-busy is a retry against one target, capacity is global
-// backpressure, and anything else leaves the ingress unavailable.
-func ingressSubmitRefusalReason(err error) string {
-	switch {
-	case errors.Is(err, errIngressCaptureBusy):
-		return "target_busy"
-	case errors.Is(err, errIngressCapacity):
-		return "capacity"
-	default:
-		return "ingress_unavailable"
-	}
+	return im.WaitIngressNormalization(ctx, future)
 }
 
 // PrepareIngressAccount is called after transport identity verification, before
 // PlatformReady. Pending work is released only after current admission is ready.
 func (r *NotificationRouter) PrepareIngressAccount(ctx context.Context, platform, account string) error {
 	if r.ingress == nil {
-		return errIngressClosed
+		return im.ErrIngressClosed
 	}
 	s := r.ingress
 	s.mu.Lock()
 	ready := s.started && !s.stopping && s.ctx != nil && s.ctx.Err() == nil
 	s.mu.Unlock()
 	if !ready || s.store.closing.Load() {
-		return errIngressClosed
+		return im.ErrIngressClosed
 	}
 	return s.PrepareAccount(ctx, platform, account)
 }

@@ -304,7 +304,7 @@ func TestWecomLongResultAndRetiredBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer done()
-	target.lease.Close()
+	target.Lease.Close()
 	if err := a.SendTextContext(ctx, msg.ChatID, "stale output"); !errors.Is(err, im.ErrPairingDenied) {
 		t.Fatalf("retired permit allowed: %v", err)
 	}

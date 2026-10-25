@@ -38,7 +38,7 @@ func TestDiscordBodyCommandsRemainDurableTasksAfterNormalization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := WaitIngressNormalization(t.Context(), future)
+			result := im.WaitIngressNormalization(t.Context(), future)
 			if result.Disposition != im.ReceiveAccepted {
 				t.Fatal(result)
 			}

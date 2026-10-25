@@ -164,7 +164,7 @@ func TestGatewayIngressNormalizationCannotReplaceOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := WaitIngressNormalization(context.Background(), future)
+	result := im.WaitIngressNormalization(context.Background(), future)
 	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}
@@ -180,7 +180,7 @@ func TestGatewayIngressNormalizationCannotReplaceOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result = WaitIngressNormalization(context.Background(), future); result.Disposition != im.ReceiveRetryable || result.Reason != "normalization_failed" {
+	if result = im.WaitIngressNormalization(context.Background(), future); result.Disposition != im.ReceiveRetryable || result.Reason != "normalization_failed" {
 		t.Fatal(result)
 	}
 }

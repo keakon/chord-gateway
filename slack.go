@@ -37,7 +37,7 @@ type SlackAdapter struct {
 	sends                                      sync.WaitGroup
 	proxyFunc                                  func(*http.Request) (*url.URL, error)
 	inbound                                    *slackInbound
-	ingressReadinessNotifier
+	im.ReadinessNotifier
 	http *slackHTTPClient
 	// Fixed production endpoints and budgets; hooks permit protocol fault tests.
 	openSocket                func(context.Context) (string, error)
@@ -152,7 +152,7 @@ func (a *SlackAdapter) Connect() error {
 		if slackReconnectImmediately(err) {
 			// A warning/refresh disconnect asks for a prompt reconnect; skip the
 			// backoff budget instead of penalising an intentional refresh.
-			if !sleepCtx(a.ctx, slackImmediateReconnectDelay) {
+			if !im.SleepCtx(a.ctx, slackImmediateReconnectDelay) {
 				return nil
 			}
 			continue
@@ -164,7 +164,7 @@ func (a *SlackAdapter) Connect() error {
 		}
 		attempt++
 		log.Warnf("slack: connection unavailable category=%s retry_in=%s", slackConnectionCategory(err), delay)
-		if !sleepCtx(a.ctx, delay) {
+		if !im.SleepCtx(a.ctx, delay) {
 			return nil
 		}
 	}
@@ -207,7 +207,7 @@ func (a *SlackAdapter) SendTextContext(ctx context.Context, chatID, text string)
 		return errors.New("slack: account unavailable")
 	}
 	defer a.sends.Done()
-	if account, _ := ctx.Value(replyAccountContextKey{}).(string); account != "" && account != identity.AccountID {
+	if account, _ := ctx.Value(im.ReplyAccountContextKey{}).(string); account != "" && account != identity.AccountID {
 		return im.ErrPairingDenied
 	}
 	return a.sender.Send(ctx, a.ctx, chatID, text)
@@ -234,7 +234,7 @@ func (a *SlackAdapter) setUnavailable() {
 	if a.router != nil {
 		a.router.PlatformUnavailable("slack")
 	}
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 }
 func (a *SlackAdapter) IngressDeliveryReadiness(id im.ChatIdentity) im.IngressDeliveryReadiness {
 	a.mu.Lock()

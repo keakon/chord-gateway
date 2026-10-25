@@ -331,7 +331,7 @@ func TestWechatOutgoingUsesOriginalAccountBeforeHTTP(t *testing.T) {
 		calls++
 		return nil, fmt.Errorf("unexpected HTTP request")
 	})
-	ctx := context.WithValue(t.Context(), replyAccountContextKey{}, "original")
+	ctx := context.WithValue(t.Context(), im.ReplyAccountContextKey{}, "original")
 	if err := a.SendTextContext(ctx, "owner", "original account result"); err == nil {
 		t.Fatal("text switched account")
 	}

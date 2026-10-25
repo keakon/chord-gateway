@@ -111,7 +111,7 @@ func (a *FeishuAdapter) submitDataFrame(ctx context.Context, conn *websocket.Con
 	if g != nil && g.conn == conn && g.ctx.Err() != nil {
 		return g.ctx.Err()
 	}
-	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	job := feishuResponseJob{ctx: ctx, cancel: cancel, frame: frame, started: time.Now()}
 	var header struct {
 		Header struct {
@@ -143,7 +143,7 @@ func (a *FeishuAdapter) submitDataFrame(ctx context.Context, conn *websocket.Con
 			}
 			return nil, err
 		}
-		result := WaitIngressNormalization(ctx, future)
+		result := im.WaitIngressNormalization(ctx, future)
 		if card != nil {
 			return a.feishuCardIngressResponse(card, result), feishuMessageIngressError(result)
 		}
@@ -166,7 +166,7 @@ func (a *FeishuAdapter) submitDataFrame(ctx context.Context, conn *websocket.Con
 			if r, ok := a.msgRouter.(*NotificationRouter); ok {
 				r.ObserveIngress("feishu", "lost_before_accept", "capacity")
 			}
-			if err := a.writeDataResponse(conn, frame, job.started, nil, errIngressCapacity); err != nil {
+			if err := a.writeDataResponse(conn, frame, job.started, nil, im.ErrIngressCapacity); err != nil {
 				return err
 			}
 			return nil

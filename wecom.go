@@ -35,7 +35,7 @@ type WecomAdapter struct {
 	accountInterval, targetInterval time.Duration
 	callbackWarnAt                  time.Time
 
-	ingressReadinessNotifier
+	im.ReadinessNotifier
 }
 
 func NewWecomAdapter(cfg *config.Config, imCfg config.IMAdapterConfig, _ *config.Paths, router *NotificationRouter) (*WecomAdapter, error) {
@@ -130,7 +130,7 @@ func (a *WecomAdapter) transportReady(ctx context.Context) error {
 	}
 	a.ready = true
 	a.mu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 	return nil
 }
 
@@ -153,7 +153,7 @@ func (a *WecomAdapter) unavailable(err error) {
 	if a.router != nil && a.router.admission != nil {
 		a.router.admission.pairing.PlatformUnavailable("wecom")
 	}
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 }
 
 // callbackRejected counts a malformed user text callback that was dropped
@@ -227,7 +227,7 @@ func (a *WecomAdapter) receiveFrame(ctx context.Context, raw []byte) error {
 		a.observeReceive(a.admitDiagnosticReply(e.Message), result)
 	})
 	if err != nil {
-		a.observeReceive(e.Message, im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: ingressSubmitRefusalReason(err)})
+		a.observeReceive(e.Message, im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: im.SubmitRefusalReason(err)})
 	}
 	return nil
 }

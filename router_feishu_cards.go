@@ -13,7 +13,7 @@ import (
 	"github.com/keakon/chord-gateway/internal/im"
 )
 
-func (r *NotificationRouter) sendFeishuConfirmCard(target DeliveryTarget, state ControlState) (bool, error) {
+func (r *NotificationRouter) sendFeishuConfirmCard(target im.DeliveryTarget, state ControlState) (bool, error) {
 	key, chatID := target.ProcessKey, target.Identity.ChatID
 	if state.PendingConfirm == nil {
 		return false, nil
@@ -29,7 +29,7 @@ func (r *NotificationRouter) sendFeishuConfirmCard(target DeliveryTarget, state 
 	return true, err
 }
 
-func (r *NotificationRouter) sendFeishuQuestionCard(target DeliveryTarget, state ControlState) (bool, error) {
+func (r *NotificationRouter) sendFeishuQuestionCard(target im.DeliveryTarget, state ControlState) (bool, error) {
 	key, chatID := target.ProcessKey, target.Identity.ChatID
 	if state.questionForNotification() == nil || !shouldSendFeishuQuestionCard(state.questionForNotification()) {
 		return false, nil
@@ -47,7 +47,7 @@ func (r *NotificationRouter) sendFeishuQuestionCard(target DeliveryTarget, state
 
 // Only a diagnostic may follow an uncertain card send. The original prompt
 // must not be repeated as text by this helper or its caller.
-func (r *NotificationRouter) reportFeishuCardFailure(target DeliveryTarget, err error) {
+func (r *NotificationRouter) reportFeishuCardFailure(target im.DeliveryTarget, err error) {
 	log.Warnf("feishu card delivery failed error=%v", err)
 	if errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 		feishu := r.findFeishuAdapter()

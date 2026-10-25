@@ -97,7 +97,7 @@ func (h *slackIntegrationHarness) receive(t *testing.T, kind string, payload jso
 	defer cancel()
 	ctx, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
-	return WaitIngressNormalization(ctx, future)
+	return im.WaitIngressNormalization(ctx, future)
 }
 
 func (h *slackIntegrationHarness) bindDM(t *testing.T) {
@@ -277,7 +277,7 @@ func TestSlackIntegrationFrozenAllowCannotApproveNewConfirmation(t *testing.T) {
 	process.state.PendingConfirm = &ConfirmPayload{RequestID: "new-confirm"}
 	process.mu.Unlock()
 	close(release)
-	result := WaitIngressNormalization(t.Context(), future)
+	result := im.WaitIngressNormalization(t.Context(), future)
 	if result.Disposition != im.ReceiveAccepted {
 		t.Fatal(result)
 	}

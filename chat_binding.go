@@ -258,7 +258,7 @@ func (r *NotificationRouter) sendPairingReply(msg im.IncomingMessage, text strin
 		return
 	}
 	t := *msg.AdmissionTicket()
-	_ = r.SendFlowReply(context.Background(), ReplyPermit{Identity: t.Identity, SenderID: t.SenderID, AccountEpoch: t.AccountEpoch, RequestID: msg.MessageID, Kind: "owner", ExpiresAt: t.ReceivedAt.Add(30 * time.Second), ticket: t}, text)
+	_ = r.SendFlowReply(context.Background(), im.ReplyPermit{Identity: t.Identity, SenderID: t.SenderID, AccountEpoch: t.AccountEpoch, RequestID: msg.MessageID, Kind: "owner", ExpiresAt: t.ReceivedAt.Add(30 * time.Second), Ticket: t}, text)
 }
 
 func displayBindingDirectory(path string) string {

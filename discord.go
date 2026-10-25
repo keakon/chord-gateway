@@ -45,7 +45,7 @@ type DiscordAdapter struct {
 	fatal                    chan error
 	proxyFunc                func(*http.Request) (*url.URL, error)
 
-	ingressReadinessNotifier
+	im.ReadinessNotifier
 }
 
 // Discord rejects REST requests that carry no User-Agent, and the SDK default is
@@ -267,7 +267,7 @@ func (a *DiscordAdapter) onStateChange(state gateway.Status, generation uint64) 
 		a.router.admission.pairing.PlatformUnavailable("discord")
 	}
 	a.stateMu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 }
 
 func (a *DiscordAdapter) currentGeneration(generation uint64) bool {
@@ -314,7 +314,7 @@ func (a *DiscordAdapter) captureEvent(_ gateway.EventType, data gateway.EventDat
 			if err := delivery(); err != nil {
 				if a.router.ingressStore != nil {
 					reason := "admission_unavailable"
-					if errors.Is(err, errIngressCapacity) {
+					if errors.Is(err, im.ErrIngressCapacity) {
 						reason = "capacity"
 					}
 					if errors.Is(err, context.Canceled) {
@@ -391,7 +391,7 @@ func (a *DiscordAdapter) stop() {
 		a.router.admission.pairing.PlatformUnavailable("discord")
 	}
 	a.stateMu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 }
 func (a *DiscordAdapter) finish() {
 	a.finishOnce.Do(func() {

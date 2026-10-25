@@ -135,7 +135,7 @@ func (s *IngressService) signal() {
 	}
 }
 func (s *IngressService) Accept(ctx context.Context, e im.IngressEnvelope) im.ReceiveResult {
-	ctx, cancel := context.WithTimeout(ctx, ingressAcceptBudget)
+	ctx, cancel := context.WithTimeout(ctx, im.IngressAcceptBudget)
 	defer cancel()
 	s.mu.Lock()
 	ready := s.started && !s.stopping && s.ctx.Err() == nil
@@ -152,7 +152,7 @@ func (s *IngressService) Accept(ctx context.Context, e im.IngressEnvelope) im.Re
 		return im.ReceiveResult{Disposition: im.ReceiveRetryable, Reason: "target_busy"}
 	}
 	msg := e.Message
-	if validateIngressCursor(msg.IMType, e.Cursor) != nil {
+	if im.ValidateIngressCursor(msg.IMType, e.Cursor) != nil {
 		return im.ReceiveResult{Disposition: im.ReceiveRejected, Reason: "cursor_platform_invalid"}
 	}
 	if msg.AccountID == "" || msg.MessageID == "" || msg.ChatID == "" {
@@ -507,7 +507,7 @@ func (s *IngressService) quarantineTask(rec IngressRecord, reason string) {
 	}
 }
 func (s *IngressService) quarantineBenign(err error) bool {
-	return errors.Is(err, errIngressMissing) || errors.Is(err, errIngressBlocked) || errors.Is(err, errIngressClosed) || s.ctx.Err() != nil
+	return errors.Is(err, errIngressMissing) || errors.Is(err, errIngressBlocked) || errors.Is(err, im.ErrIngressClosed) || s.ctx.Err() != nil
 }
 func (s *IngressService) dispatchTask(rec IngressRecord) {
 	if !s.Available() {
@@ -607,7 +607,7 @@ func (s *IngressService) dispatchTask(rec IngressRecord) {
 	requestID := "im-" + rec.RecordID
 	err = s.store.UpdateRecord(s.ctx, rec.RecordID, []im.IngressState{im.IngressReceived}, func(r *IngressRecord) error {
 		if !s.router.admission.Valid(a.Ticket) || !checkIngressDeliveryReadiness(s.router.findAdapterByType(rec.Platform), rec.Identity()).Ready {
-			return errIngressTransportChanged
+			return im.ErrIngressTransportChanged
 		}
 		r.State = im.IngressDispatching
 		r.SessionID = identity.SessionID

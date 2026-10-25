@@ -21,8 +21,8 @@ func (r *NotificationRouter) HandleChordImage(key string, image *im.ReceivedImag
 		return
 	}
 	ctx := context.Background()
-	if target.lease != nil {
-		ctx = target.lease.Context()
+	if target.Lease != nil {
+		ctx = target.Lease.Context()
 	}
 	_, imType, chatID := parseProcessKey(key)
 	adapter := r.findAdapterByType(imType)
@@ -47,7 +47,7 @@ func (r *NotificationRouter) HandleChordImage(key string, image *im.ReceivedImag
 			}); ok {
 				return contextual.SendImageContext(ctx, chatID, image)
 			}
-			if target.lease != nil {
+			if target.Lease != nil {
 				return context.Canceled
 			}
 			return sender.SendImage(chatID, image)

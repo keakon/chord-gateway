@@ -75,7 +75,7 @@ func dingtalkAdapterReceive(t *testing.T, a *DingtalkAdapter, callback dingtalkC
 		// not redeliver: the user resends. The retry below models that resend to
 		// keep the suite immune to a scheduling race between deliveries of one
 		// chat.
-		if !errors.Is(err, errIngressCaptureBusy) || time.Now().After(deadline) {
+		if !errors.Is(err, im.ErrIngressCaptureBusy) || time.Now().After(deadline) {
 			t.Fatal(err)
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -364,7 +364,7 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 		t.Run(scenario, func(t *testing.T) {
 			f := newDingtalkAdapterFixture(t)
 			dingtalkAdapterVerify(t, f)
-			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), replyAccountContextKey{}, f.a.account))
+			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), im.ReplyAccountContextKey{}, f.a.account))
 			defer cancel()
 			var mu sync.Mutex
 			var segments []string

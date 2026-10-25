@@ -34,7 +34,7 @@ type TelegramAdapter struct {
 	retryWarn time.Time
 	captured  map[int64]telegramCapturedUpdate
 
-	ingressReadinessNotifier
+	im.ReadinessNotifier
 }
 
 // errTelegramAlreadyRunning is returned when Connect is called while another
@@ -86,7 +86,7 @@ func (a *TelegramAdapter) SendTextContext(ctx context.Context, chat, text string
 		return errors.New("telegram account unavailable")
 	}
 	defer a.sends.Done()
-	if expected, ok := ctx.Value(replyAccountContextKey{}).(string); ok && account != expected {
+	if expected, ok := ctx.Value(im.ReplyAccountContextKey{}).(string); ok && account != expected {
 		return errors.New("telegram account changed")
 	}
 	return a.sender.Send(ctx, a.ctx, nil, chat, text, false)
@@ -127,14 +127,11 @@ func (a *TelegramAdapter) Connect() (result error) {
 		a.captured = nil
 		a.mu.Lock()
 		a.ready = false
-		notify := a.notify
 		a.mu.Unlock()
 		if a.router != nil {
 			a.router.PlatformUnavailable("telegram")
 		}
-		if notify != nil {
-			notify()
-		}
+		a.WakeIngressReadiness()
 		a.cancel()
 		a.sends.Wait()
 		if accountLock != nil {
@@ -191,7 +188,7 @@ func (a *TelegramAdapter) Connect() (result error) {
 	a.mu.Lock()
 	a.ready = true
 	a.mu.Unlock()
-	a.wakeIngressReadiness()
+	a.WakeIngressReadiness()
 	return a.poll(a.ctx, cursor, batch, true)
 }
 

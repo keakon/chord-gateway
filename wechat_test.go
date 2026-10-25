@@ -539,7 +539,7 @@ func TestWechatAdapter_PersistenceAndSplitText(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		start := time.Now()
-		sleepCtx(ctx, time.Second)
+		im.SleepCtx(ctx, time.Second)
 		if time.Since(start) > 100*time.Millisecond {
 			t.Fatalf("sleep took too long after cancel")
 		}

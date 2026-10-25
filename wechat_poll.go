@@ -150,7 +150,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 					return nil
 				}
 				a.notifySessionExpired()
-				sleepCtx(ctx, ilinkBackoffDelay)
+				im.SleepCtx(ctx, ilinkBackoffDelay)
 			}
 			continue
 		}
@@ -186,7 +186,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 				return fmt.Errorf("wechat ingress requires local inspection: %w", err)
 			}
 			log.Warnf("wechat ilink: getupdates request failed")
-			sleepCtx(ctx, wechatPollingBackoff(&consecutiveFailures))
+			im.SleepCtx(ctx, wechatPollingBackoff(&consecutiveFailures))
 			continue
 		}
 		if resp.statusKind() == ilinkGetUpdatesStatusSessionExpired {
@@ -196,14 +196,14 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 		}
 		if resp.Ret != 0 || resp.ErrCode != 0 {
 			cancel()
-			sleepCtx(ctx, wechatPollingBackoff(&consecutiveFailures))
+			im.SleepCtx(ctx, wechatPollingBackoff(&consecutiveFailures))
 			continue
 		}
 		consecutiveFailures = 0
 		r := a.pairingRouter()
 		if r == nil || r.admission == nil || r.ingressStore == nil {
 			cancel()
-			return errIngressClosed
+			return im.ErrIngressClosed
 		}
 		a.capturePollingMessages(resp, token)
 		p := r.admission.pairing
@@ -223,7 +223,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 		if err != nil || !valid {
 			cancel()
 			log.Warnf("wechat: paired access unavailable; check account identity or terminal pairing setup")
-			sleepCtx(ctx, ilinkRetryDelay)
+			im.SleepCtx(ctx, ilinkRetryDelay)
 			continue
 		}
 		batch := wechatPollingBatch{response: resp}
@@ -264,7 +264,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 				lastStuckWarn = time.Now()
 			}
 			r.ObserveIngress("wechat", "acceptance_unconfirmed", batch.pending.Reason)
-			sleepCtx(pollCtx, ilinkRetryDelay)
+			im.SleepCtx(pollCtx, ilinkRetryDelay)
 		}
 		if pollCtx.Err() != nil || batch.position != len(resp.Msgs) {
 			cancel()
@@ -291,7 +291,7 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 		cursor = next
 		a.syncBuf = wechatCursorBuf(cursor)
 		if len(resp.Msgs) == 0 || previousBuf == wechatCursorBuf(next) {
-			sleepCtx(ctx, ilinkPollInterval)
+			im.SleepCtx(ctx, ilinkPollInterval)
 		}
 	}
 	return nil
@@ -315,12 +315,12 @@ func wechatCursorBuf(cursor im.IngressCursor) string {
 
 func nextWechatCursor(current im.IngressCursor, account, buf string) (im.IngressCursor, error) {
 	if current.Generation == ^uint64(0) {
-		return im.IngressCursor{}, errIngressCursorConflict
+		return im.IngressCursor{}, im.ErrIngressCursorConflict
 	}
 	version := uint64(1)
 	if current.Wechat != nil {
 		if current.Wechat.BatchVersion == ^uint64(0) {
-			return im.IngressCursor{}, errIngressCursorConflict
+			return im.IngressCursor{}, im.ErrIngressCursorConflict
 		}
 		version = current.Wechat.BatchVersion + 1
 	}
@@ -328,7 +328,7 @@ func nextWechatCursor(current im.IngressCursor, account, buf string) (im.Ingress
 		buf = wechatCursorBuf(current)
 	}
 	next := im.IngressCursor{Kind: "wechat", Version: 1, Generation: current.Generation + 1, Wechat: &im.WechatIngressCursor{AccountID: account, Buf: buf, BatchVersion: version}}
-	return next, validateIngressCursor("wechat", &next)
+	return next, im.ValidateIngressCursor("wechat", &next)
 }
 
 func equalWechatCursor(a, b im.IngressCursor) bool {
@@ -351,7 +351,7 @@ func (a *WechatAdapter) commitPollingCursor(ctx context.Context, token *TokenDat
 	}
 	err := r.ingressStore.commitCursorGuarded(ctx, "wechat", token.AccountID, previous.Generation, next, valid)
 	p.store.txMu.Unlock()
-	if errors.Is(err, errIngressTransportChanged) {
+	if errors.Is(err, im.ErrIngressTransportChanged) {
 		return errWechatPollingIdentityChanged
 	}
 	if err == nil {
