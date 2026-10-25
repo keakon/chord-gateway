@@ -26,7 +26,19 @@ go build ./...
 ./scripts/setup-git-hooks.sh
 ```
 
-该脚本会安装 `.githooks/pre-commit`，在每次提交前先对已暂存的 `.go` 文件执行 `goimports` 和 `gofmt`，再运行共享的 Go 质量检查。
+该脚本安装两个钩子，按开销分层：
+
+- `.githooks/pre-commit` 对已暂存的 `.go` 文件执行 `goimports` 和 `gofmt`。它有意到此为止，让 `git commit`、`--amend` 和 rebase 步骤保持交互式速度。
+- `.githooks/pre-push` 运行决定分支是否可发布的检查：`scripts/check-go-quality.sh`（测试、覆盖率、`go test -race`、`go vet`、`staticcheck`）、`scripts/check_gopls.sh`，以及文档变更时的文档检查。
+
+不想推送就执行同样命令时用 Makefile：
+
+```bash
+make preflight     # pre-push 的内容
+make ci            # CI 的全部内容
+make test-fast     # 在可用时把 TMPDIR 指向内存文件系统后跑测试
+make help          # 列出所有 target
+```
 
 当前本地 / CI 质量门禁：
 
@@ -39,16 +51,19 @@ MIN_COVERAGE=70.0 ./scripts/check-go-quality.sh
 ```bash
 goimports -l -local github.com/keakon/chord-gateway .
 go test -coverprofile=coverage.out ./...
+go test -race -short ./...
 go tool cover -func=coverage.out
 # CI 要求总覆盖率 >= 70.0%。
 go vet ./...
 staticcheck -checks 'all,-ST*' ./...
 ```
 
-提交 PR 前请执行：
+存在内存文件系统时本地测试可以更快。`scripts/test_tmpdir.sh` 负责解析一个（macOS 会在 `/Volumes/GatewayTestRam` 创建 APFS RAM disk；Linux 优先使用 `/dev/shm`），`make test-fast` 会把 `TMPDIR` 指过去。持久写入是本测试套件的主要开销，这通常能显著缩短耗时且不改变任何代码路径。用 `make clean` 卸载 RAM disk。
+
+提交 PR 前请执行门禁：
 
 ```bash
-./scripts/check-go-quality.sh
+make ci
 ```
 
 ## PR 规范

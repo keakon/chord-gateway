@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Everything too slow to run on every commit lives here.
+#
+# pre-commit limits itself to goimports + gofmt so that `git commit` — and every
+# `git commit --amend` and interactive rebase step on top of it — stays
+# interactive. This hook runs the checks that actually decide whether the branch
+# is publishable, and `pre-commit` points here rather than duplicating them.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -21,12 +27,8 @@ if ! command -v goimports >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v staticcheck >/dev/null 2>&1; then
-  echo "pre-push: staticcheck not found in PATH" >&2
-  echo "install with: go install honnef.co/go/tools/cmd/staticcheck@latest" >&2
-  exit 1
-fi
-
+# Covered by pre-commit, but commits created with --no-verify or from a clone
+# without core.hooksPath configured would otherwise push unformatted Go.
 echo "pre-push: checking goimports"
 out="$(goimports -l -local github.com/keakon/chord-gateway .)"
 if [[ -n "$out" ]]; then
@@ -36,14 +38,20 @@ if [[ -n "$out" ]]; then
   exit 1
 fi
 
-echo "pre-push: running go vet"
-go vet ./...
+# check-go-quality.sh covers goimports, tests with coverage, `go test -race`,
+# `go vet` and staticcheck, so those are not repeated here. The cross-repo
+# contract gate is not part of it: that script only reports whether a Chord
+# checkout is available, so run ./scripts/check-chord-contract.sh (or
+# `make contract`) explicitly when a checkout is present.
+echo "pre-push: running the full quality gate"
+MIN_COVERAGE="${MIN_COVERAGE:-70.0}" ./scripts/check-go-quality.sh
 
-echo "pre-push: running staticcheck"
-staticcheck -checks 'all,-ST1000' ./...
-
-echo "pre-push: running short tests"
-go test -short -timeout=2m ./...
+if command -v gopls >/dev/null 2>&1; then
+  echo "pre-push: running gopls diagnostics"
+  ./scripts/check_gopls.sh
+else
+  echo "pre-push: gopls not found in PATH; skipping (install with: go install golang.org/x/tools/gopls@latest)" >&2
+fi
 
 if [[ "$has_doc_changes" -eq 1 ]]; then
   echo "pre-push: running docs checks"

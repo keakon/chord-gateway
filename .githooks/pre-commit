@@ -38,4 +38,7 @@ if [[ -n "${files}" ]]; then
   echo "pre-commit: goimports + gofmt applied to ${count} staged Go file(s)"
 fi
 
-MIN_COVERAGE="${MIN_COVERAGE:-70.0}" ./scripts/check-go-quality.sh
+# Committing stays cheap on purpose: correctness gates (tests, coverage, race,
+# vet, staticcheck, gopls) belong to pre-push, so a commit records a checkpoint
+# without paying several minutes for every `git commit --amend`.
+echo "pre-commit: formatting applied; run 'make preflight' before pushing"

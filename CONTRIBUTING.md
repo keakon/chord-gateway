@@ -26,7 +26,19 @@ Enable commit hooks once:
 ./scripts/setup-git-hooks.sh
 ```
 
-This installs `.githooks/pre-commit`, which runs `goimports` and `gofmt` on staged `.go` files and then executes the shared Go quality checks before each commit.
+This installs two hooks that split the quality gate by cost:
+
+- `.githooks/pre-commit` runs `goimports` and `gofmt` on staged `.go` files. It deliberately stops there so `git commit`, `--amend`, and rebase steps stay interactive.
+- `.githooks/pre-push` runs the checks that decide whether a branch is publishable: `scripts/check-go-quality.sh` (tests, coverage, `go test -race`, `go vet`, `staticcheck`), `scripts/check_gopls.sh`, and the documentation checks when docs changed.
+
+Use the Makefile for the same commands without pushing:
+
+```bash
+make preflight     # what pre-push runs
+make ci            # everything CI runs
+make test-fast     # tests over a memory-backed TMPDIR when one is available
+make help          # list every target
+```
 
 Current local/CI quality gate:
 
@@ -39,16 +51,19 @@ This runs:
 ```bash
 goimports -l -local github.com/keakon/chord-gateway .
 go test -coverprofile=coverage.out ./...
+go test -race -short ./...
 go tool cover -func=coverage.out
 # CI requires total coverage >= 70.0%.
 go vet ./...
 staticcheck -checks 'all,-ST*' ./...
 ```
 
-Run tests before opening a PR:
+Faster local test runs are available when a memory-backed filesystem is present. `scripts/test_tmpdir.sh` resolves one (macOS creates an APFS RAM disk at `/Volumes/GatewayTestRam`; Linux prefers `/dev/shm`) and `make test-fast` points `TMPDIR` at it. Durable writes dominate the suite, so this usually cuts the runtime substantially without changing any code path. Tear the disk down with `make clean`.
+
+Run the gate before opening a PR:
 
 ```bash
-./scripts/check-go-quality.sh
+make ci
 ```
 
 ## Pull Request Guidelines
