@@ -4,7 +4,7 @@
 # .githooks without introducing new tooling assumptions. Anything here must stay
 # runnable from a plain checkout with Go installed.
 #
-#   make preflight   what pre-push runs, before pushing
+#   make preflight   quality and gopls checks, plus module and resource checks
 #   make ci          everything CI runs
 #   make test-fast   tests over a memory-backed TMPDIR when one is available
 
@@ -26,7 +26,7 @@ CHORD_REPO ?= ../chord
 .PHONY: help ci preflight fmt fmt-check deps-check test test-fast test-cover race vet staticcheck gopls-check quality docs-check docs-sync contract clean
 
 help:
-	@echo "preflight   what pre-push runs: goimports, quality gate, gopls"
+	@echo "preflight   quality/gopls checks plus module tidiness and resource scripts"
 	@echo "ci          the full gate CI runs"
 	@echo "build-matrix cross-build every supported GOOS/GOARCH target"
 	@echo "test-fast   tests with TMPDIR on a memory-backed filesystem when possible"
@@ -38,8 +38,8 @@ help:
 # .github/workflows/docs.yml because they depend on the changed paths.
 ci: fmt-check deps-check quality gopls-check build-matrix contract docs-check resource-scripts-check
 
-# The gates .githooks/pre-push runs, plus the cheaper module-tidiness check;
-# docs checks stay in the hook because they depend on the changed paths.
+# Runs the pre-push quality and gopls checks, plus module-tidiness and
+# resource-script checks. The hook runs docs checks only when docs changed.
 # check-go-quality.sh already covers vet, staticcheck, the short and race test
 # runs and the coverage floor, so they are not repeated here.
 preflight: fmt-check deps-check quality gopls-check resource-scripts-check
