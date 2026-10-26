@@ -20,6 +20,11 @@
 
 ### 新功能
 
+- `/allow [--session|--project|--user] [request-id]` 可以记录 Chord 为本次确认提供的规则，而不只是批准这一次调用。作用域参数对应 Chord 的 `session`、`project`、`user_global`，回执会写明写入了哪个作用域，且只有在 Chord 确实提供了规则时确认提示才会给出该选项。不带参数的 `/allow` 仍只批准本次。参见[使用说明](./docs/usage_CN.md#im-命令)。
+- `/models [模型池]` 通过 Chord 的 `models` 协议命令查看或切换当前模型池，返回的是确认结果而不是把命令当作聊天文本发出去。
+- `/image <reference>` 可按 artifact 引用重新拉取 Chord 仍保存的生成图片。此前传输丢块是死路，只提示「原图仍在 Chord 中」；现在丢弃提示会列出可重新拉取的引用。
+- `/handoff-cancel` 撤回待处理的 handoff 请求而不记录拒绝原因，改变主意时不必再编一个理由让模型读到。
+
 - Chord 在确认请求落定时会推送 `confirm_resolved`。超时自动拒绝或提前取消会把飞书确认卡片置灰并提示已过期（其他 IM 平台以文本提示）。过期或失效的 IM 确认操作会被拒绝，并提示检查 `/status`；console 对过期确认的回复仍会作为后续消息发送，不会被当作批准或拒绝。
 - gateway 现在会在启动时以 `outbound proxy ...` 记录每个已配置出站代理(已去除凭据),方便确认实际解析到的值。
 - 新增全局与各 IM 可选出站代理 `proxy_url`（`ims.<platform>.proxy_url`，优先级各 IM > 全局）。为空表示直连；环境代理变量会被忽略。支持 `http`、`https`、`socks5`、`socks5h`。HTTP 客户端四种都支持;WebSocket 长连接(Discord、Slack、飞书、企业微信、钉钉)支持 `http`、`socks5`、`socks5h`,并在启动时拒绝 `https`,同时把 `socks5h` 规范化成 `socks5`。单独配置的 `ims.<platform>.proxy_url` 不会被不兼容的全局默认值阻断:只有 WebSocket 平台实际解析到 `https` 代理时才会在启动时拒绝。

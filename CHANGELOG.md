@@ -20,6 +20,11 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- `/allow [--session|--project|--user] [request-id]` records the rules Chord offered for a confirmation instead of approving only that one call. The scope flag maps to Chord's `session`, `project` and `user_global` rule scopes, the receipt names the scope it wrote to, and the confirmation prompt only advertises the flag when Chord actually offered rules. Bare `/allow` keeps its single-call meaning. See [usage](./docs/usage.md#im-commands).
+- `/models [model_pool]` reads or switches the current model pool through Chord's `models` protocol command. It is answered with a confirmed reply rather than being sent as chat text.
+- `/image <reference>` re-requests a generated image Chord still holds. A transfer that lost chunks used to be a dead end that only said the original was still in Chord; the discard notice now names the recoverable references.
+- `/handoff-cancel` withdraws a pending handoff request without recording a rejection, so a change of mind no longer has to be phrased as a reason for the model to read.
+
 - Chord now pushes `confirm_resolved` when a delivered confirmation settles. An auto-deny timeout or early cancellation greys out the Feishu confirmation card with an expiry notice (other IM platforms get the notice as text). Stale IM confirmation actions are rejected and direct users to check `/status`; console replies to an expired confirmation remain follow-up messages, not approvals or denials.
 - The gateway logs each configured outbound proxy once at startup as `outbound proxy ...` with credentials stripped, so operators can confirm the resolved value.
 - Added optional outbound `proxy_url` globally and per IM (`ims.<platform>.proxy_url`, priority per-IM > global). Empty means direct; environment proxy variables are ignored. Supported schemes: `http`, `https`, `socks5`, `socks5h`. HTTP clients accept all four; WebSocket long-connections (Discord, Slack, Feishu, WeCom, DingTalk) accept `http`, `socks5` and `socks5h` and reject `https` at startup, and normalize `socks5h` to `socks5`. A per-IM `proxy_url` override is not blocked by an incompatible global default: an `https` global proxy is rejected only when a WebSocket platform actually resolves to it.
