@@ -10,7 +10,6 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 	refused := []string{
 		"/queue", "/queue clear",
 		"/export", "/export report.md",
-		"/models", "/models dev-pool",
 		"/tier", "/tier cheap",
 		"/rename", "/rename nightly",
 		"/yolo", "/yolo on", "/yolo off",
@@ -24,11 +23,15 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 
 	// These look similar but Chord routes them as ordinary user messages, so
 	// refusing them would swallow legitimate input.
+	// /models is a Chord local-only slash, so it would normally belong to
+	// chordLocalOnlySlash. It is absent because the gateway implements the
+	// models protocol command now, and /role for the same reason.
 	forwarded := []string{
 		"/skill review-pr",     // only bare /skill opens the selector
 		"/compact now",         // Chord matches /compact exactly
 		"/model", "/model gpt", // no such command in Chord
-		"/models-info", "/yoloing",
+		"/models", "/models-info",
+		"/yoloing",
 		"", "   ", "plain text", "/status",
 	}
 	for _, content := range forwarded {
@@ -38,11 +41,21 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 	}
 }
 
+func TestGatewayOwnedSlashIncludesModelsAndRole(t *testing.T) {
+	for _, content := range []string{"/models", "/models dev-pool", "/role", "/role planner"} {
+		if !isGatewayOwnedSlashCommand(content) {
+			t.Errorf("isGatewayOwnedSlashCommand(%q) = false, want true", content)
+		}
+	}
+}
+
 // TestLocalOnlySlashCommandsMirrorChord guards the list itself. Entries here
-// must stay a subset of IsTUILocalOnlySlashCommand in ../chord, minus /role and
-// /mcp, which the gateway answers with its own confirmed commands.
+// must stay a subset of IsTUILocalOnlySlashCommand in ../chord, minus the
+// commands the gateway answers itself: /role, /mcp and /models all have gateway
+// routes, so forwarding them verbatim would bypass those rather than reaching
+// Chord's local handler.
 func TestLocalOnlySlashCommandsMirrorChord(t *testing.T) {
-	// The set Chord treats as TUI-local-only, minus the two the gateway owns.
+	// The set Chord treats as TUI-local-only.
 	chordSet := map[string]bool{
 		"/queue": true, "/export": true, "/models": true, "/tier": true,
 		"/rename": true, "/compact": true, "/yolo": true, "/mcp": true,
@@ -53,8 +66,15 @@ func TestLocalOnlySlashCommandsMirrorChord(t *testing.T) {
 			t.Errorf("%s is not local-only for Chord; refusing it would reject ordinary messages", command)
 		}
 	}
-	if gatewayRoles := len(chordSet) - len(chordLocalOnlySlash); gatewayRoles != 2 {
-		t.Errorf("%d Chord command(s) unaccounted for, want exactly 2 mapped to gateway routes (/role, /mcp)", gatewayRoles)
+	if gatewayRoutes := len(chordSet) - len(chordLocalOnlySlash); gatewayRoutes != 3 {
+		t.Errorf("%d Chord command(s) unaccounted for, want exactly 3 mapped to gateway routes (/role, /mcp, /models)", gatewayRoutes)
+	}
+	// The three Chord considers local-only but the gateway owns must actually
+	// route to gateway handling, not fall through to the process.
+	for _, command := range []string{"/role", "/models", "/mcp"} {
+		if chordLocalOnlySlash[command] {
+			t.Errorf("%s has a gateway route and must not be refused as local-only", command)
+		}
 	}
 }
 

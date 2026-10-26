@@ -2727,7 +2727,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		// The coverage is argument-sensitive: Chord takes these on the main
 		// agent whether or not arguments follow, so plain /models and
 		// /models <pool> have to be refused alike.
-		for _, content := range []string{"/models", "/models dev-pool", "/yolo", "/yolo on", "/queue", "/tier", "/rename beta", "/COMPACT"} {
+		for _, content := range []string{"/yolo", "/yolo on", "/queue", "/tier", "/rename beta", "/COMPACT"} {
 			r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
 			r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: content}, "wechat", nil)
 			if got := sender.lastMessage().text; !strings.Contains(got, "only available in local TUI") {

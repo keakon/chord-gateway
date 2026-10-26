@@ -98,7 +98,12 @@ type ChordProcess struct {
 	// request id, and roleWaiters wakes every waiter with the same payload, so
 	// two concurrent waits could consume each other's response. It is held only
 	// for the Chord round-trip, not for IM card/text I/O.
-	roleMu            sync.Mutex
+	roleMu sync.Mutex
+	// modelsWaiters are notified when a models_response envelope arrives. Like
+	// role responses, models responses carry no request id, so the modelsMu
+	// guard serializes round-trips for the same reason.
+	modelsWaiters     envelopeWaiters[ModelsResponse]
+	modelsMu          sync.Mutex
 	questionWaiters   map[string]chan QuestionReceipt
 	onQuestionReceipt func(*ChordProcess, QuestionReceipt) bool
 }
@@ -727,6 +732,22 @@ func (p *ChordProcess) WaitStatus(ctx context.Context, questionIDs ...string) (C
 	state, err := waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status", "question_ids": ids})
 	state.InputQueue = state.InputQueue.clone()
 	return state, err
+}
+
+// WaitModels sends a models command and waits for models_response. Chord
+// answers every models command with models_response, so both the status query
+// and a pool switch get a definite reply instead of silence.
+func (p *ChordProcess) WaitModels(ctx context.Context, action, pool string) (ModelsResponse, error) {
+	p.modelsMu.Lock()
+	defer p.modelsMu.Unlock()
+	cmd := map[string]any{"type": "models"}
+	if action != "" {
+		cmd["action"] = action
+	}
+	if pool != "" {
+		cmd["pool"] = pool
+	}
+	return waitForEnvelope(ctx, p, &p.modelsWaiters, cmd)
 }
 
 // WaitRoleList sends a role list command and waits for the role_response.

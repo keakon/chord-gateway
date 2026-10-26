@@ -328,6 +328,15 @@ type StatusResponse struct {
 	UpdatedAt      string             `json:"updated_at"`
 }
 
+// ModelsResponse is the models_response envelope payload. Chord answers every
+// models command with one of these; Status carries the human-readable pool list
+// Chord already formats for TUI display.
+type ModelsResponse struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+	Status  string `json:"status,omitempty"`
+}
+
 // RoleInfo describes one switchable main-agent role in a role list.
 type RoleInfo struct {
 	Name    string `json:"name"`

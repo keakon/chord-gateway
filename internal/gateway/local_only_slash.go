@@ -18,7 +18,6 @@ import "strings"
 var chordLocalOnlySlash = map[string]bool{
 	"/queue":   false,
 	"/export":  false,
-	"/models":  false,
 	"/tier":    false,
 	"/rename":  false,
 	"/yolo":    false,
@@ -26,11 +25,15 @@ var chordLocalOnlySlash = map[string]bool{
 	"/skill":   true,
 }
 
-// gatewayOwnedSlash lists slash commands the gateway answers itself. Reaching
-// the process verbatim would bypass that handling — /new and /resume apply input
-// guards and session replacement before a command is ever sent — so text that
-// skips command parsing through ForceText must still not reach the process.
+// gatewayOwnedSlash lists slash commands the gateway answers itself, whether it
+// handles them directly (/models through the models protocol command, /role
+// through the role one) or routes them to a dedicated handler that applies
+// guards first (/new and /resume replace the session). Reaching the process
+// verbatim would bypass that handling, so text that skips command parsing
+// through ForceText must still not reach the process.
 var gatewayOwnedSlash = map[string]bool{
+	"/models": false,
+	"/role":   false,
 	"/new":    false,
 	"/resume": false,
 }

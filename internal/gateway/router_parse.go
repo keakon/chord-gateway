@@ -88,6 +88,10 @@ func parseIMCommand(text string) im.IMCommand {
 	case "/image":
 		// Re-requests a generated image Chord still holds, by artifact reference.
 		return im.IMCommand{Type: "image", Content: strings.TrimSpace(rest)}
+	case "/models":
+		// Model pool control is a Chord protocol command the gateway can answer;
+		// the TUI /models selector is a different, local affordance.
+		return im.IMCommand{Type: "models", Content: strings.TrimSpace(rest)}
 	case "/role":
 		content := ""
 		if len(parts) > 1 {

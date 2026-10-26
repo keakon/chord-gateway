@@ -513,6 +513,13 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		// No onEvent — solicited response.
 
+	case "models_response":
+		var resp ModelsResponse
+		if err := json.Unmarshal(env.Payload, &resp); err == nil {
+			p.modelsWaiters.notify(resp)
+		}
+		// No onEvent — solicited response.
+
 	case "role_change":
 		var payload struct {
 			Role string `json:"role"`

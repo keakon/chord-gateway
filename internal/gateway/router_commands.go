@@ -61,6 +61,8 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleHandoffCommand(ws, chatID, cmd, procKey, proc)
 	case "role":
 		r.handleRoleCommand(ws, chatID, cmd, incoming, procKey, proc)
+	case "models":
+		r.handleModelsCommand(ws, chatID, cmd, procKey, proc)
 	case "image":
 		r.handleImageCommand(ws, chatID, cmd, procKey, proc)
 	case "send":
@@ -71,6 +73,51 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		log.Warnf("unknown command type type=%v", cmd.Type)
 		r.sendTextForKey(procKey, chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
 	}
+}
+
+// handleModelsCommand answers the models protocol command. Without this the
+// only way to read or change the model pool from IM was to ask the agent, which
+// neither shows the effective pools nor survives a busy turn.
+func (r *NotificationRouter) handleModelsCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, procKey string, proc *ChordProcess) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	pool := strings.TrimSpace(cmd.Content)
+	action := "status"
+	if pool != "" {
+		action = "set_current_model_pool"
+	}
+	resp, err := proc.WaitModels(ctx, action, pool)
+	if err != nil {
+		log.Warnf("models command did not receive a response workspace=%v action=%v error=%v", ws.ID, action, err)
+		r.sendTextForKey(procKey, chatID, fmt.Sprintf("⚠️ Could not confirm the model pool change. Reply %s to check what Chord reports.", "/status"))
+		return
+	}
+	if !resp.OK {
+		r.sendTextForKey(procKey, chatID, "⚠️ "+modelsResponseMessage(resp.Message, "Chord rejected the models request."))
+		return
+	}
+	if action == "set_current_model_pool" {
+		log.Infof("models.pool_switch workspace=%v chat_id=%v pool=%v", ws.ID, chatID, pool)
+		text := "✅ Switched the current model pool."
+		if status := strings.TrimSpace(resp.Status); status != "" {
+			text += "\n\n" + status
+		}
+		r.sendTextForKey(procKey, chatID, text)
+		return
+	}
+	if status := strings.TrimSpace(resp.Status); status != "" {
+		r.sendTextForKey(procKey, chatID, status)
+		return
+	}
+	r.sendTextForKey(procKey, chatID, "ℹ️ No model pool status is available from Chord.")
+}
+
+func modelsResponseMessage(detail, fallback string) string {
+	if strings.TrimSpace(detail) == "" {
+		return fallback
+	}
+	return detail
 }
 
 // handleImageCommand asks Chord to resend a generated image by artifact
