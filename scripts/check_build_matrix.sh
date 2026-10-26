@@ -19,10 +19,13 @@ targets=(
   windows/amd64
 )
 
+build_stderr="$(mktemp)"
+trap 'rm -f "$build_stderr"' EXIT
+
 for target in "${targets[@]}"; do
-  if ! GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./... 2>/tmp/build-matrix.err; then
+  if ! GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./... 2>"$build_stderr"; then
     echo "cross build failed: ${target}" >&2
-    cat /tmp/build-matrix.err >&2
+    cat "$build_stderr" >&2
     exit 1
   fi
   echo "build ok: ${target}"
