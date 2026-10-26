@@ -36,7 +36,11 @@ jobs:
         run: |
           set -euo pipefail
           coverage_file="coverage.out"
-          go test -short -timeout=5m -coverprofile="${coverage_file}" ./...
+          # -coverpkg=./... must match scripts/check-go-quality.sh. Without it a
+          # test only instruments its own package, which reported 65.1% for this
+          # tree while the local gate reported 83.3% against the same 70.0%
+          # threshold, so the two halves of one gate disagreed.
+          go test -short -timeout=5m -coverprofile="${coverage_file}" -coverpkg=./... ./...
           cover_output="$(go tool cover -func="${coverage_file}")"
           printf '%s\n' "${cover_output}"
           total_coverage="$(printf '%s\n' "${cover_output}" | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
@@ -62,6 +66,24 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test -race -short -timeout=5m ./...
+
+  build:
+    name: Cross-platform build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The gopls gate only selects the files the runner's platform compiles,
+      # so platform-twin files receive no analysis anywhere else.
+      - name: Build every supported target
+        run: ./scripts/check_build_matrix.sh
 
   contract:
     name: Chord process contracts
