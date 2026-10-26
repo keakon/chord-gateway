@@ -84,6 +84,11 @@ func parseIMCommand(text string) im.IMCommand {
 			reason = strings.TrimSpace(text[len(parts[0]):])
 		}
 		return im.IMCommand{Type: "handoff", Action: "deny", Reason: reason}
+	case "/handoff-cancel", "/handoff_cancel":
+		// Withdraws the request without a rejection reason. Chord distinguishes
+		// cancel from deny, and forcing a fabricated reason through /handoff-deny
+		// would misreport why the handoff ended.
+		return im.IMCommand{Type: "handoff", Action: "cancel"}
 	case "/image":
 		// Re-requests a generated image Chord still holds, by artifact reference.
 		return im.IMCommand{Type: "image", Content: strings.TrimSpace(rest)}

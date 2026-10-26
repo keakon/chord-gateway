@@ -113,13 +113,6 @@ func (r *NotificationRouter) handleModelsCommand(ws *config.Workspace, chatID st
 	r.sendTextForKey(procKey, chatID, "ℹ️ No model pool status is available from Chord.")
 }
 
-func modelsResponseMessage(detail, fallback string) string {
-	if strings.TrimSpace(detail) == "" {
-		return fallback
-	}
-	return detail
-}
-
 // handleImageCommand asks Chord to resend a generated image by artifact
 // reference. A transfer that lost chunks used to be unrecoverable from IM — the
 // notice said the original was still in Chord but offered no way to get it.
@@ -145,6 +138,13 @@ func (r *NotificationRouter) handleImageCommand(ws *config.Workspace, chatID str
 	}
 	log.Infof("image.resend_requested workspace=%v chat_id=%v reference=%v", ws.ID, chatID, reference)
 	r.sendTextForKey(procKey, chatID, "🖼️ Asked Chord for the original image; it arrives here when the transfer finishes.")
+}
+
+func modelsResponseMessage(detail, fallback string) string {
+	if strings.TrimSpace(detail) == "" {
+		return fallback
+	}
+	return detail
 }
 
 func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, imType string, proc *ChordProcess) {
@@ -365,6 +365,12 @@ func (r *NotificationRouter) handleHandoffCommand(ws *config.Workspace, chatID s
 		return
 	}
 	r.scheduleCommandReminder(procKey)
+	if cmd.Action == "cancel" {
+		// Cancel reports nothing back to the model, so the receipt must not
+		// imply a rejection was recorded.
+		r.sendTextForKey(procKey, chatID, "↩️ handoff request withdrawn")
+		return
+	}
 	if cmd.Action == "deny" {
 		if strings.TrimSpace(cmd.Reason) != "" {
 			r.sendTextForKey(procKey, chatID, "✅ handoff denied: "+strings.TrimSpace(cmd.Reason))

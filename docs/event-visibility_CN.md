@@ -29,6 +29,7 @@ gateway 默认订阅以下事件：
 - `compaction_status`
 - `session_switched`
 - `mcp_status_changed`
+- `workdir_changed`
 - `input_queue_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`

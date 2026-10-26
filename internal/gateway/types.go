@@ -38,6 +38,12 @@ type ControlState struct {
 	LastEnvelopeSeq   uint64              `json:"-"`
 	LastInputResult   *InputResultPayload `json:"-"`
 	UnconfirmedInputs int                 `json:"-"`
+	// Workdir tracks the checkout the agent runs in. Generation lets a client
+	// discard snapshots taken before a mid-session worktree switch, which the
+	// workdir_changed event announces.
+	Workdir              WorkdirSnapshot `json:"-"`
+	QuestionBindingID    string          `json:"-"` // binding used for question history pagination
+	QuestionsNextAfterID string          `json:"-"` // empty means the last page
 
 	// Pending interactions
 	PendingConfirm *ConfirmPayload             `json:"pending_confirm,omitempty"`
@@ -355,6 +361,15 @@ type HeadlessEnvelope struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
+// WorkdirSnapshot is the checkout the agent is using. Generation changes
+// whenever the binding moves, which is what lets a client discard a snapshot
+// taken before a mid-session worktree switch.
+type WorkdirSnapshot struct {
+	Path       string `json:"path"`
+	WorktreeID string `json:"worktree_id,omitempty"`
+	Generation int    `json:"generation,omitempty"`
+}
+
 // StatusResponse is the payload for type="status_response".
 type StatusResponse struct {
 	MCP *MCPStatusSnapshot `json:"mcp,omitempty"`
@@ -374,6 +389,15 @@ type StatusResponse struct {
 	LastError      string             `json:"last_error"`
 	LastOutcome    string             `json:"last_outcome"`
 	UpdatedAt      string             `json:"updated_at"`
+	// Workdir is the effective checkout; non-empty WorktreeID means the agent
+	// moved off the main checkout, which is worth surfacing because /bind and
+	// relative paths resolve against it.
+	Workdir *WorkdirSnapshot `json:"workdir,omitempty"`
+	// QuestionBindingID and QuestionsNextAfterID drive history pagination. A
+	// history page holds at most 32 records, so a long session can otherwise
+	// leave an older question unreachable through /answer @<id>.
+	QuestionBindingID    string `json:"question_binding_id,omitempty"`
+	QuestionsNextAfterID string `json:"questions_next_after_id,omitempty"`
 }
 
 // ModelsResponse is the models_response envelope payload. Chord answers every
@@ -559,6 +583,15 @@ func (s *ControlState) applyStatusResponse(resp *StatusResponse) {
 	s.LastError = resp.LastError
 	s.UpdatedAt = resp.UpdatedAt
 	s.LastOutcome = resp.LastOutcome
+	// Absent means "unchanged", not "cleared": a status_response that omits the
+	// workdir must not drop a known checkout.
+	if resp.Workdir != nil {
+		s.Workdir = *resp.Workdir
+	}
+	if resp.QuestionBindingID != "" {
+		s.QuestionBindingID = resp.QuestionBindingID
+	}
+	s.QuestionsNextAfterID = resp.QuestionsNextAfterID
 }
 
 // ensureTurnWindow starts a window on the first indication of agent work. Controls

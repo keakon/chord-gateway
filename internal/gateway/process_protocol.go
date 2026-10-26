@@ -513,6 +513,18 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		// No onEvent — solicited response.
 
+	case "workdir_changed":
+		var payload struct {
+			Path       string `json:"path"`
+			WorktreeID string `json:"worktree_id,omitempty"`
+			Generation int    `json:"generation,omitempty"`
+		}
+		if err := json.Unmarshal(env.Payload, &payload); err == nil && strings.TrimSpace(payload.Path) != "" {
+			p.state.Workdir = WorkdirSnapshot{Path: payload.Path, WorktreeID: payload.WorktreeID, Generation: payload.Generation}
+		}
+		// No onEvent: the change is reported through the next /status read,
+		// which is where the operator sees paths.
+
 	case "models_response":
 		var resp ModelsResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {

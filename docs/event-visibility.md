@@ -29,6 +29,7 @@ The gateway subscribes to these events by default:
 - `compaction_status`
 - `session_switched`
 - `mcp_status_changed`
+- `workdir_changed`
 - `input_queue_changed`
 - `session_transfer_preparing`
 - `session_transfer_status`

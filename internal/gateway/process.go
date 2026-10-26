@@ -729,7 +729,17 @@ func (p *ChordProcess) WaitStatus(ctx context.Context, questionIDs ...string) (C
 	if len(ids) > 32 {
 		ids = ids[:32]
 	}
-	state, err := waitForEnvelope(ctx, p, &p.statusWaiters, map[string]any{"type": "status", "question_ids": ids})
+	cmd := map[string]any{"type": "status", "question_ids": ids}
+	p.mu.Lock()
+	binding, after := p.state.QuestionBindingID, p.state.QuestionsNextAfterID
+	p.mu.Unlock()
+	// Paginating question history needs both the binding it was read from and
+	// the cursor Chord returned, and Chord ends pagination with an empty cursor.
+	if binding != "" && after != "" {
+		cmd["binding_id"] = binding
+		cmd["questions_after_id"] = after
+	}
+	state, err := waitForEnvelope(ctx, p, &p.statusWaiters, cmd)
 	state.InputQueue = state.InputQueue.clone()
 	return state, err
 }
@@ -775,7 +785,10 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// compaction_status, session_switched, background_result, and image_result.
 	// background_result is subscribed by default but can be opted out, because
 	// finished job results are pushed as chat messages.
-	events := []string{"input_queue_changed", "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "confirm_resolved", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent}
+	// workdir_changed is always on: it announces a mid-session checkout switch,
+	// and without it a snapshot read before the switch stays authoritative for
+	// the path /bind and relative arguments resolve against.
+	events := []string{"input_queue_changed", "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "confirm_resolved", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent, "workdir_changed"}
 	if cfg == nil {
 		return events
 	}

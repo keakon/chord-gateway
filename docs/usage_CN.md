@@ -53,7 +53,7 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/bind "<directory>" [pairing_code]` | 绑定已有目录；首次私聊配对需提供终端配对码 |
 | `/status` | 查看当前 Chord 状态：busy/idle、session、当前角色、phase、最近一次上下文检查点结果、待处理交互及恢复的排队输入 |
 | `/cancel` | 取消当前 turn |
-| `/allow` | 批准待确认请求 |
+| `/allow [--session\|--project\|--user] [request-id]` | 批准待确认请求；带作用域参数时同时记录 Chord 提供的规则，同类操作不再重复询问 |
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer @<id> <text>` | 按 ID 回答或修正问题；唯一待答题可省略 ID |
 | `/handoff <agent> [model_pool]` | 将待处理 Chord handoff 请求的接受结果转发给 Chord；不带参数时由 Chord 使用默认 agent |
@@ -65,6 +65,9 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/resume <id>` | 恢复并 pin 指定 session；如果恢复失败，会清除该 pin 并提示用户 |
 | `/takeover <id> [--timeout <duration>]` | 将运行中的 TUI 会话接管到当前聊天，并保持暂停 |
 | `/takeover status` | 查询当前绑定的移交状态，不发起新的接管 |
+| `/models [模型池]` | 查看当前模型池，或切换到指定模型池 |
+| `/image <reference>` | 按 artifact 引用重新拉取 Chord 仍保存的生成图片 |
+| `/handoff-cancel` | 撤回待处理的 handoff 请求，不记录拒绝原因 |
 | `/sessions` | 列出最近 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送新要求给 Chord，待答问题继续保留 |

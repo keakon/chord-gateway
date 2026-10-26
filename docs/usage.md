@@ -53,7 +53,7 @@ Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/questi
 | `/bind "<directory>" [pairing_code]` | Bind an existing directory; first private pairing requires the terminal code |
 | `/status` | Show current Chord state: busy/idle, session, current role, phase, last context checkpoint, pending interaction, and restored queued input |
 | `/cancel` | Cancel the current turn |
-| `/allow` | Approve the pending confirmation |
+| `/allow [--session\|--project\|--user] [request-id]` | Approve the pending confirmation. Add a scope flag to also record the rules Chord offered, so the same kind of work does not ask again |
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer @<id> <text>` | Answer or revise an explicit question ID; numeric shortcuts are supported |
 | `/handoff <agent> [model_pool]` | Forward an acceptance for a pending Chord handoff request; omit arguments to let Chord use its default agent |
@@ -65,6 +65,9 @@ Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/questi
 | `/resume <id>` | Resume and pin a specific session; if the session cannot be resumed, the pin is cleared and the user is notified |
 | `/takeover <id> [--timeout <duration>]` | Take over a running TUI session into this chat and leave it paused |
 | `/takeover status` | Query the current binding's transfer without starting a new request |
+| `/models [model_pool]` | Show the current model pool, or switch to a named pool |
+| `/image <reference>` | Re-request a generated image Chord still holds, by artifact reference |
+| `/handoff-cancel` | Withdraw a pending handoff request without recording a rejection |
 | `/sessions` | List recent sessions from the workspace |
 | `/login [platform]` | Show supported login-renewal platforms, or start one when a platform is provided (for example `/login wechat`) |
 | any other text | Send new instructions to Chord; pending questions remain available |
