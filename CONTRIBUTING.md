@@ -60,7 +60,14 @@ staticcheck -checks 'all,-ST1000' ./...
 
 Keep the flags in sync with `scripts/check-go-quality.sh` and `.github/workflows/ci.yml`: `-coverpkg=./...` and the staticcheck check set both change what the gate measures, and a copy that drifts quietly runs less than CI does.
 
-Faster local test runs are available when a memory-backed filesystem is present. `scripts/test_tmpdir.sh` resolves one (macOS creates an APFS RAM disk at `/Volumes/GatewayTestRam`; Linux prefers `/dev/shm`) and `make test-fast` points `TMPDIR` at it. Durable writes dominate the suite, so this usually cuts the runtime substantially without changing any code path. Tear the disk down with `make clean`.
+Faster local test runs are available when a memory-backed filesystem is present. `scripts/test_tmpdir.sh` resolves one; the first usable candidate wins:
+
+1. `CHORD_GATEWAY_TEST_TMPDIR`
+2. `CHORD_TEST_TMPDIR` (chord's variable, so one export covers both checkouts)
+3. `.chord/test-tmpdir`, an untracked repo-local file whose first non-comment line is the path
+4. the platform default: `/dev/shm` on Linux, or the APFS RAM disk `ChordTestRam` on macOS, shared with the chord checkout so both reuse one disk
+
+`make test-fast` points `TMPDIR` at it, and `scripts/check-go-quality.sh` — the coverage/race gate behind `git push`, `make quality`, `make preflight`, and `make ci` — resolves the same directory for its test runs. Both fall back to the default temp dir when no candidate is usable. The CI workflow deliberately stays on the default filesystem: it calls neither script and should keep exercising the realistic worst case. For other entry points, export the variables yourself, for example `TMPDIR=$(./scripts/test_tmpdir.sh) make test-cover`; Go reads `TMP`/`TEMP` instead of `TMPDIR` on Windows, so the helper scripts set all three. The speed-up comes from the persistence tests' fsyncs; the cross-process contract tests are unaffected. `make clean` detaches the shared RAM disk, so neither checkout can reuse it until one recreates it.
 
 Run the gate before opening a PR:
 

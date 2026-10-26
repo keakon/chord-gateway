@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # Resolve a memory-backed temp directory for local test runs.
 #
-# The Go test suite is dominated by durable writes: persistence here fsyncs every
-# write, depends on synchronous store pages, and exercises restart recovery by
-# killing processes mid-write. On a real disk each fsync costs milliseconds and
+# Persistence tests fsync every write and exercise restart recovery by killing
+# processes mid-write. On a real disk each fsync costs milliseconds and
 # parallelism cannot hide it. Pointing TMPDIR at a memory-backed filesystem keeps
 # every code path and durability guarantee intact while removing that latency.
+# Cross-process contract tests dominate the rest of the suite and are unaffected
+# either way.
 #
 # Resolution order (first writable directory wins):
 #   1. $CHORD_GATEWAY_TEST_TMPDIR
-#   2. .chord/test-tmpdir (repo-local, untracked) — first non-empty, non-comment line
-#   3. platform default: /dev/shm on Linux; a reused-or-created APFS RAM disk on macOS
+#   2. $CHORD_TEST_TMPDIR — chord's variable, so one export covers both checkouts
+#   3. .chord/test-tmpdir (repo-local, untracked) — first non-empty, non-comment line
+#   4. platform default: /dev/shm on Linux; the APFS RAM disk ChordTestRam on
+#      macOS, shared with the chord checkout so both reuse one disk
 #
 # Prints the chosen directory, or nothing when no memory-backed filesystem is
 # available, so callers fall back to the default temp dir. Windows has no
@@ -19,11 +22,13 @@
 #
 # Usage:
 #   scripts/test_tmpdir.sh            # print the directory to use
-#   scripts/test_tmpdir.sh --destroy  # tear down the macOS RAM disk this may create
+#   scripts/test_tmpdir.sh --destroy  # tear down the shared macOS RAM disk
 
 set -euo pipefail
 
-volume_name="GatewayTestRam"
+# Shared with chord (see its scripts/test_tmpdir.sh) so a local machine runs at
+# most one test RAM disk instead of one per checkout.
+volume_name="ChordTestRam"
 # 4 GiB expressed in 512-byte sectors, the unit `ram://` expects. Sized for a
 # cold Go build cache, where the build work dir holds every compiled package
 # archive and can exceed 1 GiB. The disk is sparse, so only written data is
@@ -182,13 +187,16 @@ main() {
 	esac
 
 	# 1. Explicit environment override.
-	if [[ -n "${CHORD_GATEWAY_TEST_TMPDIR:-}" ]]; then
-		if usable "${CHORD_GATEWAY_TEST_TMPDIR}"; then
-			echo "${CHORD_GATEWAY_TEST_TMPDIR}"
+	local name dir
+	for name in CHORD_GATEWAY_TEST_TMPDIR CHORD_TEST_TMPDIR; do
+		dir="${!name:-}"
+		[[ -n "${dir}" ]] || continue
+		if usable "${dir}"; then
+			echo "${dir}"
 			return 0
 		fi
-		echo "warning: CHORD_GATEWAY_TEST_TMPDIR=${CHORD_GATEWAY_TEST_TMPDIR} is not a writable directory; ignoring" >&2
-	fi
+		echo "warning: ${name}=${dir} is not a writable directory; ignoring" >&2
+	done
 
 	# 2. Repo-local config file. .chord/ holds local-only content and is ignored;
 	# a developer who wants a fixed location writes it there with a GUI-less editor

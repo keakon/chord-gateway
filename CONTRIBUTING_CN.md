@@ -60,7 +60,14 @@ staticcheck -checks 'all,-ST1000' ./...
 
 请让这些参数与 `scripts/check-go-quality.sh`、`.github/workflows/ci.yml` 保持一致：`-coverpkg=./...` 与 staticcheck 的检查集都会改变门禁的度量口径，抄错一份就会比 CI 跑得更少。
 
-存在内存文件系统时本地测试可以更快。`scripts/test_tmpdir.sh` 负责解析一个（macOS 会在 `/Volumes/GatewayTestRam` 创建 APFS RAM disk；Linux 优先使用 `/dev/shm`），`make test-fast` 会把 `TMPDIR` 指过去。持久写入是本测试套件的主要开销，这通常能显著缩短耗时且不改变任何代码路径。用 `make clean` 卸载 RAM disk。
+存在内存文件系统时本地测试可以更快。`scripts/test_tmpdir.sh` 负责解析一个目录，按以下顺序取第一个可用项：
+
+1. `CHORD_GATEWAY_TEST_TMPDIR`
+2. `CHORD_TEST_TMPDIR`（chord 使用的变量，导出一次即可同时覆盖两个仓库）
+3. `.chord/test-tmpdir`（未跟踪的仓库本地文件，取第一个非注释行作为路径）
+4. 平台默认：Linux 用 `/dev/shm`；macOS 用 APFS RAM disk `ChordTestRam`，与 chord 仓库共享，避免重复创建内存盘
+
+`make test-fast` 会把 `TMPDIR` 指向它；`scripts/check-go-quality.sh`（`git push`、`make quality`、`make preflight`、`make ci` 背后的覆盖率 / race 门禁）也会用同一个目录跑测试。没有可用目录时两者都回退到默认临时目录。CI workflow 有意保持默认文件系统：它不调用这两个脚本，需要继续覆盖更接近真实的最坏情况。其他入口可以自行导出，例如 `TMPDIR=$(./scripts/test_tmpdir.sh) make test-cover`；Windows 上 Go 读的是 `TMP`/`TEMP` 而不是 `TMPDIR`，所以辅助脚本会同时设置三者。加速主要来自持久化测试的 fsync；跨进程契约测试不受影响。`make clean` 会卸载这个共享 RAM disk，两个仓库都需要等下一次创建后才能继续复用。
 
 提交 PR 前请执行门禁：
 
