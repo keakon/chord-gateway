@@ -436,3 +436,48 @@ func TestWechatMonitorCancellationKeepsSharedStoreAvailable(t *testing.T) {
 		})
 	}
 }
+
+func TestWechatCheckpointCommitSerializesWithConfigTransaction(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r, _ := pairedTestRouter(t)
+		p := r.admission.pairing
+		p.mu.Lock()
+		p.platforms["wechat"] = &pairingPlatform{account: "bot", epoch: 1, ctx: context.Background()}
+		p.mu.Unlock()
+		store := NewIngressStore()
+		t.Cleanup(func() { _ = store.Close() })
+		r.ingressStore = store
+		a := newTestWechatAdapter(t)
+		a.SetHostForTest(r)
+		token := &wechat.TokenData{AccountID: "bot", Token: "token", BaseURL: "https://example.invalid"}
+		a.StoreTokenForTest(token)
+		next, err := wechat.NextWechatCursor(im.IngressCursor{}, "bot", "next")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		p.store.txMu.Lock()
+		done := make(chan error, 1)
+		go func() {
+			done <- a.CommitPollingCursorForTest(context.Background(), token, 1, im.IngressCursor{}, next)
+		}()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			p.store.txMu.Unlock()
+			t.Fatalf("checkpoint committed while config transaction held: %v", err)
+		default:
+		}
+		p.store.txMu.Unlock()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		cursor, err := store.Cursor("wechat", "bot")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cursor.Wechat == nil || cursor.Wechat.Buf != "next" {
+			t.Fatalf("cursor = %#v", cursor)
+		}
+	})
+}

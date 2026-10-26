@@ -222,12 +222,12 @@ func TestSlackACKWriterRejectsExpiredAndOldGeneration(t *testing.T) {
 }
 
 func TestSlackSocketURLAndFatalAuthentication(t *testing.T) {
-	for _, address := range []string{"wss://wss.slackapi.com/link/?ticket=sample", "wss://wss-primary.slackapi.com/link", "wss://wss-backup.slackapi.com/link"} {
+	for _, address := range []string{"wss://wss.slack.com/link/?ticket=sample", "wss://wss-primary.slack.com/link", "wss://wss-backup.slack.com/link"} {
 		if !slack.ValidSocketURL(address) {
 			t.Fatal(address)
 		}
 	}
-	for _, address := range []string{"ws://wss.slackapi.com/link", "wss://wss.slackapi.com.evil.test/link", "wss://user@wss.slackapi.com/link", "wss://wss.slackapi.com/link#fragment", "wss://wss.slackapi.com:8080/link"} {
+	for _, address := range []string{"ws://wss.slack.com/link", "wss://wss.slackapi.com/link", "wss://wss.slack.com.evil.test/link", "wss://user@wss.slack.com/link", "wss://wss.slack.com/link#fragment", "wss://wss.slack.com:8080/link"} {
 		if slack.ValidSocketURL(address) {
 			t.Fatal(address)
 		}

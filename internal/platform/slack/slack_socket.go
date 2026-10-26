@@ -59,12 +59,12 @@ func ValidSocketURL(address string) bool {
 	}
 	// Only official Socket Mode hosts. The short-lived ticket stays in memory.
 	host := strings.ToLower(u.Hostname())
-	return host == "wss.slackapi.com" || host == "wss-primary.slackapi.com" || host == "wss-backup.slackapi.com"
+	return host == "wss.slack.com" || host == "wss-primary.slack.com" || host == "wss-backup.slack.com"
 }
 func dialSlackSocketWithProxy(ctx context.Context, address string, proxyFunc func(*http.Request) (*url.URL, error)) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, WriteBufferSize: 32 << 10}
 	dialer.Proxy = im.WebsocketProxyFunc(proxyFunc)
-	conn, response, err := dialer.DialContext(ctx, address, http.Header{"Origin": []string{"https://api.slackapi.com"}})
+	conn, response, err := dialer.DialContext(ctx, address, http.Header{"Origin": []string{"https://api.slack.com"}})
 	if response != nil && err != nil {
 		_ = response.Body.Close()
 	}

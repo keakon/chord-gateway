@@ -55,12 +55,10 @@ func (a *WechatAdapter) publishToken(token *TokenData) {
 	}
 	// The host invalidates the paired platform state and closes the binding
 	// gates under the config-store transaction lock; this callback swaps the
-	// adapter credential inside that same span. The adapter-side predicate
-	// mirrors the host's account-change detection so cached reply contexts are
-	// cleared exactly when the paired account is replaced.
-	previous := a.token.Load()
-	changed := previous != nil && previous.AccountID != "" && account != "" && previous.AccountID != account
-	a.host.ReplaceTransportAccount("wechat", account, func() {
+	// adapter credential inside that same span. The host's changed flag is the
+	// authority for clearing account-scoped caches: after a session expiry the
+	// adapter token may already be nil while the paired account is still known.
+	a.host.ReplaceTransportAccount("wechat", account, func(changed bool) {
 		if changed {
 			a.mu.Lock()
 			a.replyContexts = map[string]WechatReplyContext{}

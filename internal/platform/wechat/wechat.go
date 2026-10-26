@@ -34,9 +34,10 @@ type Host interface {
 	SubmitIngress(ctx context.Context, envelope im.IngressEnvelope) (<-chan im.ReceiveResult, error)
 	IngressCursorFor(platform, account string) (im.IngressCursor, error)
 	CommitIngressCursor(ctx context.Context, platform, account string, expected uint64, next im.IngressCursor, valid func() bool) error
+	CommitIngressCursorUnderConfigTx(ctx context.Context, platform, account string, expected uint64, next im.IngressCursor, valid func() bool) error
 	PublishPlatformReadinessUnderConfigTx(ctx context.Context, platform, account string) error
 	PairingEpoch(platform, account string) (uint64, bool)
-	ReplaceTransportAccount(platform, account string, commit func()) bool
+	ReplaceTransportAccount(platform, account string, commit func(changed bool)) bool
 	ExpireTransportAccount(platform string, clear func())
 	ValidTicket(t im.AdmissionTicket) bool
 	CurrentConfig() *config.Config

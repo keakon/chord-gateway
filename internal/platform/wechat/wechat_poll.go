@@ -207,8 +207,9 @@ func (a *WechatAdapter) monitorLoop(ctx context.Context) error {
 			cancel()
 			continue
 		}
-		// Publish readiness under the config-store transaction lock, as the
-		// checkpoint write below is guarded by the same pairing epoch.
+		// Publish readiness under the config-store transaction lock; the
+		// checkpoint write below reacquires the same lock so a pairing change
+		// cannot interleave between its epoch check and cursor commit.
 		if err := a.host.PublishPlatformReadinessUnderConfigTx(pollCtx, "wechat", token.AccountID); err != nil {
 			cancel()
 			log.Warnf("wechat: paired access unavailable; check account identity or terminal pairing setup")
@@ -339,7 +340,7 @@ func (a *WechatAdapter) commitPollingCursor(ctx context.Context, token *TokenDat
 	if !valid() {
 		return ErrWechatPollingIdentityChanged
 	}
-	err := a.host.CommitIngressCursor(ctx, "wechat", token.AccountID, previous.Generation, next, valid)
+	err := a.host.CommitIngressCursorUnderConfigTx(ctx, "wechat", token.AccountID, previous.Generation, next, valid)
 	if errors.Is(err, im.ErrIngressTransportChanged) {
 		return ErrWechatPollingIdentityChanged
 	}

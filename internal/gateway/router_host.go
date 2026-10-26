@@ -85,6 +85,24 @@ func (r *NotificationRouter) CommitIngressCursor(ctx context.Context, platform, 
 	return r.ingressStore.commitCursorGuarded(ctx, platform, account, expected, next, valid)
 }
 
+// CommitIngressCursorUnderConfigTx commits a checkpoint while holding the
+// config-store transaction lock, so the pairing epoch and account checked by
+// valid cannot change between the check and the cursor write.
+func (r *NotificationRouter) CommitIngressCursorUnderConfigTx(ctx context.Context, platform, account string, expected uint64, next im.IngressCursor, valid func() bool) error {
+	if r == nil || r.admission == nil {
+		return im.ErrIngressClosed
+	}
+	p := r.admission.pairing
+	if p == nil || p.store == nil {
+		return im.ErrIngressClosed
+	}
+	if err := lockIngressMutex(ctx, &p.store.txMu); err != nil {
+		return err
+	}
+	defer p.store.txMu.Unlock()
+	return r.CommitIngressCursor(ctx, platform, account, expected, next, valid)
+}
+
 // ObserveLostBeforeAccept records that a transport dropped input before the
 // shared ingress could accept it.
 func (r *NotificationRouter) ObserveLostBeforeAccept(platform, reason string) {
@@ -103,7 +121,7 @@ func (r *NotificationRouter) PairingEpoch(platform, account string) (uint64, boo
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	state := p.platforms[platform]
-	if state == nil || state.account != account || state.changed || state.ctx.Err() != nil {
+	if state == nil || state.account != account || state.changed || (state.ctx != nil && state.ctx.Err() != nil) {
 		return 0, false
 	}
 	return state.epoch, true
@@ -121,11 +139,14 @@ func (r *NotificationRouter) PlatformReadySimple(platform, account string) error
 // config-store transaction lock: it invalidates the paired platform state and
 // closes the platform's binding leases, then runs commit (the adapter's own
 // credential swap) while the lock is still held, and finally stops the
-// platform's paired processes asynchronously. It reports whether the account
-// actually changed.
-func (r *NotificationRouter) ReplaceTransportAccount(platform, account string, commit func()) bool {
+// platform's paired processes asynchronously. The commit callback receives the
+// same account-change decision so adapters can invalidate their own
+// account-scoped caches without duplicating the comparison.
+func (r *NotificationRouter) ReplaceTransportAccount(platform, account string, commit func(changed bool)) bool {
 	if r == nil || r.admission == nil {
-		commit()
+		if commit != nil {
+			commit(false)
+		}
 		return false
 	}
 	p := r.admission.pairing
@@ -158,7 +179,7 @@ func (r *NotificationRouter) ReplaceTransportAccount(platform, account string, c
 		r.admission.mu.Unlock()
 	}
 	if commit != nil {
-		commit()
+		commit(changed)
 	}
 	if changed {
 		go r.StopPairedPlatform(platform)

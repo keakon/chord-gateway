@@ -162,3 +162,37 @@ func TestWechatBindPreservesBoundReplyContext(t *testing.T) {
 		})
 	}
 }
+
+func TestWechatPublishTokenClearsCachesOnHostAccountChange(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account string
+		cleared bool
+	}{
+		{name: "account changed after token expiry", account: "bot-b", cleared: true},
+		{name: "same account keeps caches", account: "bot-a", cleared: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := pairedTestRouter(t)
+			p := r.admission.pairing
+			p.mu.Lock()
+			p.platforms["wechat"] = &pairingPlatform{account: "bot-a", epoch: 1, ctx: context.Background()}
+			p.mu.Unlock()
+			a := newTestWechatAdapter(t)
+			a.SetHostForTest(r)
+			a.StoreTokenForTest(nil)
+			a.ReplaceReplyContextsForTest(map[string]wechat.WechatReplyContext{"bot-a:chat": {}})
+			a.ReplaceIngressPendingForTest(map[string]*wechat.WechatIngressPending{"bot-a:message": {}})
+			a.PublishTokenForTest(&wechat.TokenData{AccountID: tc.account, Token: "token", BaseURL: "https://example.invalid"})
+			if got := a.ReplyContextCountForTest(); (got == 0) != tc.cleared {
+				t.Fatalf("reply contexts = %d, cleared = %v", got, tc.cleared)
+			}
+			if got := a.IngressPendingCountForTest(); (got == 0) != tc.cleared {
+				t.Fatalf("pending ingress = %d, cleared = %v", got, tc.cleared)
+			}
+			if token := a.TokenForTest(); token == nil || token.AccountID != tc.account {
+				t.Fatalf("token = %#v", token)
+			}
+		})
+	}
+}
