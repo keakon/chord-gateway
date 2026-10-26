@@ -7,7 +7,57 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestSessionChangeClearsQuestionHistoryCursor(t *testing.T) {
+	for _, env := range []*HeadlessEnvelope{
+		{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"new-session"}`)},
+		{Type: "status_response", Payload: json.RawMessage(`{"session_id":"new-session"}`)},
+	} {
+		t.Run(env.Type, func(t *testing.T) {
+			writer := &captureWriteCloser{}
+			p := &ChordProcess{
+				stdin: writer,
+				state: ControlState{
+					SessionID:            "old-session",
+					QuestionBindingID:    "old-binding",
+					QuestionsNextAfterID: "old-cursor",
+				},
+			}
+			p.processEnvelope(env)
+			if state := p.State(); state.QuestionBindingID != "" || state.QuestionsNextAfterID != "" {
+				t.Fatalf("session change retained old question cursor: binding=%q after=%q", state.QuestionBindingID, state.QuestionsNextAfterID)
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := p.WaitStatus(ctx)
+				done <- err
+			}()
+			deadline := time.Now().Add(time.Second)
+			for writer.String() == "" {
+				if time.Now().After(deadline) {
+					t.Fatal("WaitStatus did not send a request")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			var command map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(writer.String()), &command); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"binding_id", "questions_after_id"} {
+				if _, ok := command[key]; ok {
+					t.Errorf("WaitStatus sent stale %s: %s", key, writer.String())
+				}
+			}
+			cancel()
+			<-done
+		})
+	}
+}
 
 func TestReadLoopAcceptsLargeEncodedHeadlessFrame(t *testing.T) {
 	// Chord captures up to 512 KiB of local-shell output. JSON escaping can

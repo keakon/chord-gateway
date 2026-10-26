@@ -486,6 +486,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 					previous = nil
 					p.questionEventVersions = nil
 					p.state.resetTurnWindow()
+					p.state.QuestionBindingID = ""
 				}
 				if resp.SessionID != p.state.SessionID {
 					p.state.InputQueue = nil
@@ -598,6 +599,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				p.state.Questions = nil
 				p.state.LastQuestion = nil
 				p.state.LastQuestionResolved = nil
+				p.state.QuestionBindingID = ""
+				p.state.QuestionsNextAfterID = ""
 				p.questionEventVersions = nil
 				// Compaction outcomes belong to the abandoned session: keep
 				// them and /status would report the old session's checkpoint,
