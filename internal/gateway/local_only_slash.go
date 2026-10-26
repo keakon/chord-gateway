@@ -26,13 +26,15 @@ var chordLocalOnlySlash = map[string]bool{
 
 // gatewayOwnedSlash lists slash commands the gateway answers itself, whether it
 // handles them directly (/models through the models protocol command, /role
-// through the role one, /queue through the input_queue one) or routes them to a
+// through the role one, /queue through the input_queue one, /mcp through the
+// MCP command route) or routes them to a
 // dedicated handler that applies guards first (/new and /resume replace the
 // session). Reaching the process verbatim would bypass that handling, so text
 // that skips command parsing through ForceText must still not reach the process.
 var gatewayOwnedSlash = map[string]bool{
 	"/models": false,
 	"/role":   false,
+	"/mcp":    false,
 	"/queue":  false,
 	"/new":    false,
 	"/resume": false,

@@ -22,9 +22,9 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 
 	// These look similar but Chord routes them as ordinary user messages, so
 	// refusing them would swallow legitimate input.
-	// /queue, /models and /role are Chord local-only slashes, so they would
-	// normally belong to chordLocalOnlySlash. They are absent because the
-	// gateway implements the input_queue, models and role protocol commands now.
+	// /queue, /models, /role and /mcp are Chord local-only slashes, so they
+	// would normally belong to chordLocalOnlySlash. Gateway-owned commands
+	// are checked separately when input bypasses command parsing.
 	forwarded := []string{
 		"/skill review-pr",     // only bare /skill opens the selector
 		"/compact now",         // Chord matches /compact exactly
@@ -41,8 +41,8 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 	}
 }
 
-func TestGatewayOwnedSlashIncludesModelsAndRole(t *testing.T) {
-	for _, content := range []string{"/models", "/models dev-pool", "/role", "/role planner", "/queue", "/queue clear", "/queue after hi"} {
+func TestGatewayOwnedSlashIncludesGatewayCommandRoutes(t *testing.T) {
+	for _, content := range []string{"/models", "/models dev-pool", "/role", "/role planner", "/mcp", "/mcp status", "/mcp enable", "/queue", "/queue clear", "/queue after hi"} {
 		if !isGatewayOwnedSlashCommand(content) {
 			t.Errorf("isGatewayOwnedSlashCommand(%q) = false, want true", content)
 		}
@@ -66,14 +66,17 @@ func TestLocalOnlySlashCommandsMirrorChord(t *testing.T) {
 			t.Errorf("%s is not local-only for Chord; refusing it would reject ordinary messages", command)
 		}
 	}
-	if gatewayRoutes := len(chordSet) - len(chordLocalOnlySlash); gatewayRoutes != 4 {
-		t.Errorf("%d Chord command(s) unaccounted for, want exactly 4 mapped to gateway routes (/role, /mcp, /models, /queue)", gatewayRoutes)
-	}
-	// The four Chord considers local-only but the gateway owns must actually
-	// route to gateway handling, not fall through to the process.
-	for _, command := range []string{"/role", "/models", "/mcp", "/queue"} {
-		if chordLocalOnlySlash[command] {
-			t.Errorf("%s has a gateway route and must not be refused as local-only", command)
+	gatewayRoutes := map[string]bool{"/role": true, "/mcp": true, "/models": true, "/queue": true}
+	for command := range chordSet {
+		_, localOnly := chordLocalOnlySlash[command]
+		switch {
+		case localOnly:
+		case gatewayRoutes[command]:
+			if !isGatewayOwnedSlashCommand(command) {
+				t.Errorf("%s has a gateway route but is not guarded against ForceText", command)
+			}
+		default:
+			t.Errorf("%s is neither refused nor mapped to a gateway route", command)
 		}
 	}
 }

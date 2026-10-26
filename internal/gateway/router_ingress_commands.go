@@ -51,10 +51,6 @@ func (r *NotificationRouter) ingressStatus(msg im.IncomingMessage) string {
 	return text
 }
 func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg im.IncomingMessage, p *ChordProcess, cmd im.IMCommand, target *im.IngressControlTarget, id string) DispatchResult {
-	switch content := strings.ToLower(strings.TrimSpace(cmd.Content)); {
-	case isChordLocalOnlySlashCommand(content), isGatewayOwnedSlashCommand(content):
-		return DispatchResult{"rejected", "command_requires_local_tui"}
-	}
 	if action, ok := remoteMCPCommand(cmd.Content); ok {
 		text := "Manage MCP authentication in this session's working directory on the host: chord mcp login <server> or chord mcp logout <server>. Reconnect in the local TUI. These commands are not forwarded to the model."
 		if action == "status" {
@@ -65,6 +61,10 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg im.In
 		}
 		r.enqueueIngressReply(msg, text)
 		return DispatchResult{"completed", ""}
+	}
+	switch content := strings.ToLower(strings.TrimSpace(cmd.Content)); {
+	case isChordLocalOnlySlashCommand(content), isGatewayOwnedSlashCommand(content):
+		return DispatchResult{"rejected", "command_requires_local_tui"}
 	}
 	p.mu.RLock()
 	valid := p.ingressTargetMatchesLocked(target, cmd)
