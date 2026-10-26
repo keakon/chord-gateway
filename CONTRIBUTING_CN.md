@@ -67,7 +67,7 @@ staticcheck -checks 'all,-ST1000' ./...
 3. `.chord/test-tmpdir`（未跟踪的仓库本地文件，取第一个非注释行作为路径）
 4. 平台默认：Linux 用 `/dev/shm`；macOS 用 APFS RAM disk `ChordTestRam`，与 chord 仓库共享，避免重复创建内存盘
 
-`make test-fast` 会把 `TMPDIR` 指向它；`scripts/check-go-quality.sh`（`git push`、`make quality`、`make preflight`、`make ci` 背后的覆盖率 / race 门禁）也会用同一个目录跑测试。没有可用目录时两者都回退到默认临时目录。CI workflow 有意保持默认文件系统：它不调用这两个脚本，需要继续覆盖更接近真实的最坏情况。其他入口可以自行导出，例如 `TMPDIR=$(./scripts/test_tmpdir.sh) make test-cover`；Windows 上 Go 读的是 `TMP`/`TEMP` 而不是 `TMPDIR`，所以辅助脚本会同时设置三者。加速主要来自持久化测试的 fsync；跨进程契约测试不受影响。`make clean` 会卸载这个共享 RAM disk，两个仓库都需要等下一次创建后才能继续复用。
+`make test-fast` 会把 `TMPDIR` 指向它；`scripts/check-go-quality.sh`（`git push`、`make quality`、`make preflight`、`make ci` 背后的覆盖率 / race 门禁）也会用同一个目录跑测试。没有可用目录时两者都回退到默认临时目录。CI workflow 有意保持默认文件系统：它不调用这两个脚本，需要继续覆盖更接近真实的最坏情况。其他入口可以自行导出，例如 `TMPDIR=$(./scripts/test_tmpdir.sh) make test-cover`；Windows 上 Go 读的是 `TMP`/`TEMP` 而不是 `TMPDIR`，所以辅助脚本会同时设置三者。加速主要来自持久化测试的 fsync；跨进程契约测试不受影响。只要 `ChordTestRam` 可用就直接复用，没有 owner 记录也一样；记录只用于授权清理。owner 记录保存挂载卷的设备节点、卷 UUID、父磁盘和 attach 得到的 physical store。`make clean` 仅在当前挂载与前三个字段匹配、且记录的 physical store 仍支撑该父磁盘时，才弹出这个 physical store；无法验证归属的挂载保持不动。
 
 提交 PR 前请执行门禁：
 
