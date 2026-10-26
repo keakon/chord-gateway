@@ -33,6 +33,15 @@ if [[ -n "$goimports_diff" ]]; then
   exit 1
 fi
 
+# Local runs (pre-push, make quality/preflight) get a memory-backed temp dir when
+# one is available. CI does not call this script, so it keeps measuring the
+# default filesystem; an unusable candidate falls back to the default here too.
+test_tmpdir="$(./scripts/test_tmpdir.sh)"
+if [[ -n "$test_tmpdir" ]]; then
+  export TMPDIR="$test_tmpdir" TMP="$test_tmpdir" TEMP="$test_tmpdir"
+  echo "==> test temp dir: $test_tmpdir"
+fi
+
 echo "==> go test -short -timeout=${test_timeout} -coverprofile=${coverage_file} -coverpkg=./... ./..."
 go test -short -timeout="$test_timeout" -coverprofile="$coverage_file" -coverpkg=./... ./...
 
