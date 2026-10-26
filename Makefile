@@ -36,13 +36,13 @@ help:
 
 # Same Go checks CI runs. Docs checks stay in .githooks/pre-push and
 # .github/workflows/docs.yml because they depend on the changed paths.
-ci: fmt-check deps-check quality gopls-check build-matrix contract docs-check
+ci: fmt-check deps-check quality gopls-check build-matrix contract docs-check resource-scripts-check
 
 # The gates .githooks/pre-push runs, plus the cheaper module-tidiness check;
 # docs checks stay in the hook because they depend on the changed paths.
 # check-go-quality.sh already covers vet, staticcheck, the short and race test
 # runs and the coverage floor, so they are not repeated here.
-preflight: fmt-check deps-check quality gopls-check
+preflight: fmt-check deps-check quality gopls-check resource-scripts-check
 
 fmt:
 	$(GOIMPORTS) -w -local $(LOCAL) .
@@ -107,6 +107,10 @@ build-matrix:
 
 docs-check:
 	python3 scripts/check-docs.py
+
+resource-scripts-check:
+	bash -n scripts/test_tmpdir.sh scripts/test_resource_scripts.sh scripts/check_build_matrix.sh
+	bash scripts/test_resource_scripts.sh
 
 docs-sync:
 	cd website && npm run sync
