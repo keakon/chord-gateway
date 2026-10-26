@@ -71,7 +71,7 @@ Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/questi
 | `/queue edit <n> <text>` | Replace the text of queued input `n`. Items with attachments can only be edited in the local Chord TUI |
 | `/queue delete <n>` | Drop queued input `n` |
 | `/queue pause` / `/queue resume` / `/queue clear` | Pause the queue, resume it, or drop the queued after-completion inputs (`clear` keeps ordinary next-request inputs and never touches work already running) |
-| `/queue after <text>` | Queue text that only starts once the current work finishes, instead of becoming the next request |
+| `/queue after <text>` | Queue text that only starts once the current work finishes, instead of becoming the next request; `/new` cannot be queued this way |
 | `/image <reference>` | Re-request a generated image Chord still holds, by artifact reference |
 | `/handoff-cancel` | Withdraw a pending handoff request without recording a rejection |
 | `/sessions` | List recent sessions from the workspace |

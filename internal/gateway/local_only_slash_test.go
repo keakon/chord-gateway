@@ -12,7 +12,7 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 		"/tier", "/tier cheap",
 		"/rename", "/rename nightly",
 		"/yolo", "/yolo on", "/yolo off",
-		"/COMPACT", "/Yolo ON", "  /export  ",
+		"/compact", "  /export  ",
 	}
 	for _, content := range refused {
 		if !isChordLocalOnlySlashCommand(content) {
@@ -28,6 +28,7 @@ func TestIsChordLocalOnlySlashCommand(t *testing.T) {
 	forwarded := []string{
 		"/skill review-pr",     // only bare /skill opens the selector
 		"/compact now",         // Chord matches /compact exactly
+		"/COMPACT", "/Yolo ON", // Chord's local-only predicate is case-sensitive
 		"/model", "/model gpt", // no such command in Chord
 		"/models", "/models-info",
 		"/queue", "/queue clear", "/queue, clearing",

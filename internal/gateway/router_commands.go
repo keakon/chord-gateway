@@ -93,7 +93,11 @@ func (r *NotificationRouter) handleModelsCommand(ws *config.Workspace, chatID st
 	resp, err := proc.WaitModels(ctx, action, pool)
 	if err != nil {
 		log.Warnf("models command did not receive a response workspace=%v action=%v error=%v", ws.ID, action, err)
-		r.sendTextForKey(procKey, chatID, fmt.Sprintf("⚠️ Could not confirm the model pool change. Reply %s to check what Chord reports.", "/status"))
+		message := "⚠️ Could not read the model pool from Chord. Retry /models."
+		if action == "set_current_model_pool" {
+			message = "⚠️ Could not confirm the model pool switch. Reply /models to check the current pool."
+		}
+		r.sendTextForKey(procKey, chatID, message)
 		return
 	}
 	if !resp.OK {
@@ -446,7 +450,7 @@ func (r *NotificationRouter) handleSendCommand(ws *config.Workspace, chatID stri
 	// effects never reach the headless protocol, so forwarding them would let
 	// an IM caller mutate a session the gateway can no longer observe — /yolo
 	// in particular turns permission confirmations off silently.
-	switch content := strings.ToLower(strings.TrimSpace(cmd.Content)); {
+	switch content := strings.TrimSpace(cmd.Content); {
 	case isChordLocalOnlySlashCommand(content):
 		r.sendTextForKey(procKey, chatID, "⚠️ This command is only available in local TUI.")
 		return

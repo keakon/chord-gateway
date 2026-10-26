@@ -45,17 +45,20 @@ var gatewayOwnedSlash = map[string]bool{
 // would mutate host state the gateway cannot observe; refusing it is the only
 // way to keep the IM control surface and the actual session in agreement.
 func isChordLocalOnlySlashCommand(content string) bool {
-	return matchesSlashCommand(content, chordLocalOnlySlash)
+	return matchesSlashCommand(content, chordLocalOnlySlash, false)
 }
 
 // isGatewayOwnedSlashCommand reports whether content is a slash command the
 // gateway handles through a dedicated route.
 func isGatewayOwnedSlashCommand(content string) bool {
-	return matchesSlashCommand(content, gatewayOwnedSlash)
+	return matchesSlashCommand(content, gatewayOwnedSlash, true)
 }
 
-func matchesSlashCommand(content string, commands map[string]bool) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(content))
+func matchesSlashCommand(content string, commands map[string]bool, caseInsensitive bool) bool {
+	trimmed := strings.TrimSpace(content)
+	if caseInsensitive {
+		trimmed = strings.ToLower(trimmed)
+	}
 	if trimmed == "" {
 		return false
 	}

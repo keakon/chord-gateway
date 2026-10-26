@@ -537,7 +537,10 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	case "models_response":
 		var resp ModelsResponse
 		if err := json.Unmarshal(env.Payload, &resp); err == nil {
-			p.modelsWaiters.notify(resp)
+			if ch := p.modelsWaiters[resp.RequestID]; resp.RequestID != "" && ch != nil {
+				delete(p.modelsWaiters, resp.RequestID)
+				ch <- resp
+			}
 		}
 		// No onEvent — solicited response.
 

@@ -2744,7 +2744,7 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 		// The coverage is argument-sensitive: Chord takes these on the main
 		// agent whether or not arguments follow, so plain /models and
 		// /models <pool> have to be refused alike.
-		for _, content := range []string{"/yolo", "/yolo on", "/export report.md", "/tier", "/rename beta", "/COMPACT"} {
+		for _, content := range []string{"/yolo", "/yolo on", "/export report.md", "/tier", "/rename beta", "/compact"} {
 			r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
 			r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: content}, "wechat", nil)
 			if got := sender.lastMessage().text; !strings.Contains(got, "only available in local TUI") {
@@ -2757,14 +2757,16 @@ func TestHandleChordCommandAndViews(t *testing.T) {
 	})
 
 	t.Run("send forwards argument forms that Chord treats as ordinary messages", func(t *testing.T) {
-		r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
-		r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: "/skill review-pr"}, "wechat", nil)
-		if got := sender.sentMessages(); len(got) != 0 {
-			t.Fatalf("/skill with a name is a normal user message, got rejection %#v", got)
-		}
-		out := stdin.String()
-		if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, "/skill review-pr") {
-			t.Fatalf("stdin = %q", out)
+		for _, content := range []string{"/skill review-pr", "/COMPACT", "/Yolo ON"} {
+			r, _, sender, stdin, _, ws := newRouterAndProcess(ControlState{})
+			r.handleChordCommand(ws, "chat-1", im.IMCommand{Type: "send", Content: content}, "wechat", nil)
+			if got := sender.sentMessages(); len(got) != 0 {
+				t.Fatalf("%s should be ordinary input, got rejection %#v", content, got)
+			}
+			out := stdin.String()
+			if !strings.Contains(out, `"type":"send"`) || !strings.Contains(out, content) {
+				t.Fatalf("%s: stdin = %q", content, out)
+			}
 		}
 	})
 

@@ -71,7 +71,7 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/queue edit <n> <text>` | 替换第 `n` 条排队输入的文本；带附件的输入只能在本地 Chord TUI 中编辑 |
 | `/queue delete <n>` | 删除第 `n` 条排队输入 |
 | `/queue pause` / `/queue resume` / `/queue clear` | 暂停队列、恢复队列，或丢弃已排队的「完成后执行」输入（`clear` 保留普通的下一次请求输入，且不触碰正在运行的工作） |
-| `/queue after <text>` | 排队一段文本，等当前工作全部结束后再执行，而不是作为下一次请求立即开始 |
+| `/queue after <text>` | 排队一段文本，等当前工作全部结束后再执行，而不是作为下一次请求立即开始；不能用此方式排队 `/new` |
 | `/image <reference>` | 按 artifact 引用重新拉取 Chord 仍保存的生成图片 |
 | `/handoff-cancel` | 撤回待处理的 handoff 请求，不记录拒绝原因 |
 | `/sessions` | 列出最近 session |

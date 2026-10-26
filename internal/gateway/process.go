@@ -100,9 +100,9 @@ type ChordProcess struct {
 	// for the Chord round-trip, not for IM card/text I/O.
 	roleMu sync.Mutex
 	// modelsWaiters are notified when a models_response envelope arrives. Like
-	// role responses, models responses carry no request id, so the modelsMu
-	// guard serializes round-trips for the same reason.
-	modelsWaiters envelopeWaiters[ModelsResponse]
+	// role responses, model round-trips stay serialized, but request ids keep a
+	// late response from a timed-out request from waking the next waiter.
+	modelsWaiters map[string]chan ModelsResponse
 	modelsMu      sync.Mutex
 	// queueWaiters correlate input_queue results by operation_id, the id Chord
 	// echoes back. Unlike status and models replies these are per-caller, so a
@@ -755,14 +755,39 @@ func (p *ChordProcess) WaitStatus(ctx context.Context, questionIDs ...string) (C
 func (p *ChordProcess) WaitModels(ctx context.Context, action, pool string) (ModelsResponse, error) {
 	p.modelsMu.Lock()
 	defer p.modelsMu.Unlock()
+	requestID := rand.Text()
+	ch := make(chan ModelsResponse, 1)
+	p.mu.Lock()
+	if p.modelsWaiters == nil {
+		p.modelsWaiters = make(map[string]chan ModelsResponse)
+	}
+	p.modelsWaiters[requestID] = ch
+	p.mu.Unlock()
+
 	cmd := map[string]any{"type": "models"}
+	cmd["request_id"] = requestID
 	if action != "" {
 		cmd["action"] = action
 	}
 	if pool != "" {
 		cmd["pool"] = pool
 	}
-	return waitForEnvelope(ctx, p, &p.modelsWaiters, cmd)
+	if err := p.SendCommand(cmd); err != nil {
+		p.mu.Lock()
+		delete(p.modelsWaiters, requestID)
+		p.mu.Unlock()
+		return ModelsResponse{}, err
+	}
+
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-ctx.Done():
+		p.mu.Lock()
+		delete(p.modelsWaiters, requestID)
+		p.mu.Unlock()
+		return ModelsResponse{}, ctx.Err()
+	}
 }
 
 // WaitRoleList sends a role list command and waits for the role_response.

@@ -516,6 +516,14 @@ func (r *NotificationRouter) findAdapterByType(name string) im.IMAdapter {
 // HandleChordEvent is the entry point for chord events.
 // It decides whether to push a notification to the IM user.
 func (r *NotificationRouter) HandleChordEvent(key, eventType string, state ControlState) {
+	if eventType == "exit" {
+		r.mu.Lock()
+		if view, ok := r.queueViews[key]; ok && (view.proc == nil || !view.proc.Alive()) {
+			delete(r.queueViews, key)
+		}
+		r.mu.Unlock()
+	}
+
 	target, targetOK := r.targetForKey(key)
 	if !targetOK {
 		return
@@ -541,6 +549,9 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	if eventType == "session_switched" || eventType == "exit" {
 		r.mu.Lock()
 		delete(r.shownQuestions, key)
+		if eventType == "session_switched" {
+			delete(r.queueViews, key)
+		}
 		r.mu.Unlock()
 	}
 	if eventType == "question_request" || eventType == "question_updated" {

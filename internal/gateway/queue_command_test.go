@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -355,6 +356,32 @@ func TestQueueCommandWithoutProjection(t *testing.T) {
 
 	if got := h.sender.lastMessage().text; !strings.Contains(got, "has not reported an input queue") {
 		t.Fatalf("reply = %q", got)
+	}
+}
+
+func TestQueueRefreshFailureWithoutCacheReportsUnknownState(t *testing.T) {
+	h := newQueueHarness(t)
+	h.proc.stdin = &errorWriteCloser{err: io.ErrClosedPipe}
+	h.r.handleChordCommand(h.ws, "chat-1", parseIMCommand("/queue"), "wechat", nil)
+
+	reply := h.sender.lastMessage().text
+	if !strings.Contains(reply, "current state is unknown") || strings.Contains(reply, "Nothing is queued") {
+		t.Fatalf("reply = %q, want an unknown-state warning", reply)
+	}
+}
+
+func TestProcessLifecycleEventsClearQueueView(t *testing.T) {
+	for _, event := range []string{"exit", "session_switched"} {
+		t.Run(event, func(t *testing.T) {
+			h := newQueueHarness(t)
+			h.r.queueViews = map[string]queueView{h.proc.key: {proc: h.proc, queue: testQueue(9)}}
+
+			h.r.HandleChordEvent(h.proc.key, event, ControlState{})
+
+			if _, ok := h.r.queueViews[h.proc.key]; ok {
+				t.Fatalf("queue view remains after %s event", event)
+			}
+		})
 	}
 }
 

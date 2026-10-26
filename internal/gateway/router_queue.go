@@ -159,6 +159,10 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 		log.Warnf("queue state refresh failed workspace=%v error=%v", ws.ID, refreshErr)
 	}
 	if queue == nil {
+		if refreshErr != nil {
+			r.sendTextForKey(procKey, chatID, "⚠️ Could not read the input queue from Chord. Its current state is unknown; retry /queue before taking action.")
+			return
+		}
 		// Either this Chord build predates the surface or the session has not
 		// published a queue yet; both leave nothing to address.
 		r.sendTextForKey(procKey, chatID, "⚠️ Chord has not reported an input queue for this session. Nothing is queued, or this Chord build does not expose queue management.")

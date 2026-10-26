@@ -11,6 +11,7 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 - `confirm_rule_intent_result` 回执，包含 `request_id` 和逐条规则的 `tool`、`pattern` 及可选 `error`。带作用域的 `/allow` 会等待此回执，再报告 Chord 是否记住了所提供的规则。
 - `status_response.questions` 持久化问题集合、稳定的 `option_ids`，以及 `question_request`、`question_updated`、`question_resolved` 事件。
 - 带 `action` / `operation_id` 的问题命令、关联的 `question_receipt` 回执，以及带 `version`、`binding_id`、`supports_interaction` 的展示确认命令。
+- `models` 命令携带唯一 `request_id`，每条 `models_response` 都回显该值；gateway 会忽略未关联或迟到的模型回执。
 - `idle` 和 `status_response` 中的后台任务数量。
 - 输入队列投影提供完整 target 身份、`view_version`、`view_version_cas: true` 和 `queue_revision`。gateway 修改队列时会携带 `expected_view_version`；视图过期时返回 `input_queue_result: conflict`。不支持视图比较时，gateway 仍可列出队列，但不会执行修改。
 - 带 SHA-256 校验信息的 `image_result` 已保存图片摘要、带字节偏移和末块标记的有序 `image_artifact` 分块，以及读取图片 artifact 失败时回传的 `request_id`；全部生成图片分块输出后才发送整体 `idle` 事件。

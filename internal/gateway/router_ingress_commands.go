@@ -62,7 +62,7 @@ func (r *NotificationRouter) dispatchIngressSlash(ctx context.Context, msg im.In
 		r.enqueueIngressReply(msg, text)
 		return DispatchResult{"completed", ""}
 	}
-	switch content := strings.ToLower(strings.TrimSpace(cmd.Content)); {
+	switch content := strings.TrimSpace(cmd.Content); {
 	case isChordLocalOnlySlashCommand(content), isGatewayOwnedSlashCommand(content):
 		return DispatchResult{"rejected", "command_requires_local_tui"}
 	}

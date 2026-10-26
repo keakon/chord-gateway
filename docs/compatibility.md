@@ -12,6 +12,7 @@ Use a Chord build that supports all of the following:
 - `confirm_rule_intent_result` receipts with `request_id` and per-rule `tool`, `pattern`, and optional `error`. Scoped `/allow` waits for this receipt before reporting whether Chord remembered the offered rules.
 - Durable question collections in `status_response.questions`, stable `option_ids`, and `question_request`, `question_updated`, and `question_resolved` events.
 - Question commands with `action` / `operation_id`, correlated `question_receipt`, and presentation commands with `version`, `binding_id`, and `supports_interaction`.
+- `models` commands with a unique `request_id` echoed by each `models_response`. The gateway ignores uncorrelated or late model responses.
 - Background-job counts in `idle` and `status_response`.
 - Input-queue projections with complete target identity, `view_version`, `view_version_cas: true`, and `queue_revision`. The gateway includes `expected_view_version` when applying queue changes; stale views return `input_queue_result: conflict`. It can still list a queue when this compare is unavailable, but it will not mutate it.
 - `image_result` saved-image summaries with SHA-256 integrity metadata, ordered `image_artifact` chunks with byte offsets and final markers, and `request_id` echoed in errors for failed image-artifact reads. The aggregate `idle` event follows all generated-image chunks.
