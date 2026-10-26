@@ -96,6 +96,12 @@ func parseIMCommand(text string) im.IMCommand {
 		// Model pool control is a Chord protocol command the gateway can answer;
 		// the TUI /models selector is a different, local affordance.
 		return im.IMCommand{Type: "models", Content: strings.TrimSpace(rest)}
+	case "/queue":
+		// Chord's /queue only pauses, resumes or clears from the TUI. The
+		// gateway answers the whole family through the input_queue protocol
+		// command, which also lists, edits and deletes single items, so the raw
+		// tail is parsed by the handler that knows which action is supported.
+		return im.IMCommand{Type: "queue", Content: rest}
 	case "/role":
 		content := ""
 		if len(parts) > 1 {

@@ -65,6 +65,8 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleModelsCommand(ws, chatID, cmd, procKey, proc)
 	case "image":
 		r.handleImageCommand(ws, chatID, cmd, procKey, proc)
+	case "queue":
+		r.handleQueueCommand(ws, chatID, cmd, procKey, proc)
 	case "send":
 		r.handleSendCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "local_shell":

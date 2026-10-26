@@ -102,8 +102,12 @@ type ChordProcess struct {
 	// modelsWaiters are notified when a models_response envelope arrives. Like
 	// role responses, models responses carry no request id, so the modelsMu
 	// guard serializes round-trips for the same reason.
-	modelsWaiters     envelopeWaiters[ModelsResponse]
-	modelsMu          sync.Mutex
+	modelsWaiters envelopeWaiters[ModelsResponse]
+	modelsMu      sync.Mutex
+	// queueWaiters correlate input_queue results by operation_id, the id Chord
+	// echoes back. Unlike status and models replies these are per-caller, so a
+	// broadcast would let one IM user's command settle another's.
+	queueWaiters      inputQueueWaiters
 	questionWaiters   map[string]chan QuestionReceipt
 	onQuestionReceipt func(*ChordProcess, QuestionReceipt) bool
 }

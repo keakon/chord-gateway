@@ -11,8 +11,8 @@ type InteractiveCardHandle struct {
 // IMCommand is a parsed command from IM user.
 type IMCommand struct {
 	Timeout   *time.Duration
-	Type      string   // "local_shell", "send", "status", "cancel", "confirm", "question", "handoff", "role", "new", "resume", "sessions", "todos", "login", "bind", "models", "image"
-	Content   string   // for send/login target
+	Type      string   // "local_shell", "send", "status", "cancel", "confirm", "question", "handoff", "role", "new", "resume", "sessions", "todos", "login", "bind", "models", "image", "queue"
+	Content   string   // for send/login target, and the raw tail of /queue and /role
 	RequestID string   // for confirm/question/handoff
 	Action    string   // for confirm/handoff: "allow"/"deny"/"accept"
 	Reason    string   // for deny: human-readable reason text

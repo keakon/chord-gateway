@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -58,6 +60,159 @@ func (q *InputQueue) clone() *InputQueue {
 	out.Works = slices.Clone(q.Works)
 	out.Inputs = slices.Clone(q.Inputs)
 	return &out
+}
+
+// Input queue result values. Chord reports a stale expected revision as
+// "conflict" and every other refusal as "rejected"; both mean the gateway's
+// projection is behind and nothing was applied.
+const (
+	inputQueueCommitted = "committed"
+	inputQueueConflict  = "conflict"
+	inputQueueRejected  = "rejected"
+)
+
+// InputQueueResult is the reply to one input_queue command. Chord echoes the
+// operation_id it was handed, which is the only correlation available: these
+// commands answer with this envelope instead of input_result.
+//
+// The get action reuses this shape for its content and attachment count, so a
+// single decoding covers every action.
+type InputQueueResult struct {
+	OperationID   string            `json:"operation_id"`
+	Target        *InputQueueTarget `json:"target,omitempty"`
+	Result        string            `json:"result"`
+	Reason        string            `json:"reason,omitempty"`
+	InputID       string            `json:"input_id,omitempty"`
+	ItemRevision  uint64            `json:"item_revision,omitempty"`
+	QueueRevision uint64            `json:"queue_revision"`
+	Content       string            `json:"content,omitempty"`
+	Attachments   int               `json:"attachments,omitempty"`
+}
+
+// errInputQueueUnknown means the gateway has never seen a queue projection for
+// the live binding, so it has no target to send. Chord requires the exact
+// target it advertised, and inventing one would address a queue that is not
+// this session's.
+var errInputQueueUnknown = errors.New("input queue state is unknown; use /status and retry")
+
+// inputQueueWaiters keys replies by operation_id. Chord echoes the id, and a
+// broadcast waiter would let one caller consume another's result, so these
+// cannot use envelopeWaiters.
+type inputQueueWaiters struct {
+	waiters map[string]chan InputQueueResult
+}
+
+func (w *inputQueueWaiters) add(id string, ch chan InputQueueResult) {
+	if w.waiters == nil {
+		w.waiters = make(map[string]chan InputQueueResult)
+	}
+	w.waiters[id] = ch
+}
+
+func (w *inputQueueWaiters) remove(id string) { delete(w.waiters, id) }
+
+// take removes and returns the waiter for id, or nil when nothing is waiting.
+func (w *inputQueueWaiters) take(id string) chan InputQueueResult {
+	ch := w.waiters[id]
+	delete(w.waiters, id)
+	return ch
+}
+
+// notifyInputQueueResult runs under p.mu and hands one reply to its waiter. A
+// reply nobody waits for is dropped: it can only be a late answer to an
+// operation that already timed out, and acting on it would apply a result the
+// caller has stopped waiting for.
+func (p *ChordProcess) notifyInputQueueResult(result InputQueueResult) {
+	ch := p.queueWaiters.take(result.OperationID)
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- result:
+	default:
+	}
+}
+
+// WaitInputQueue issues one input_queue command against the target Chord last
+// advertised and waits for the matching input_queue_result.
+//
+// Chord compares the whole target struct and rejects anything else, so a
+// session switch, epoch bump or working-directory change since the cached
+// projection makes it refuse the command instead of applying it to a queue the
+// gateway cannot see. That rejection is the safety property here: a stale
+// cache can only fail, never retarget another session's input.
+func (p *ChordProcess) WaitInputQueue(ctx context.Context, action string, fields map[string]any) (InputQueueResult, error) {
+	cmd := map[string]any{"type": "input_queue", "action": action}
+	for key, value := range fields {
+		cmd[key] = value
+	}
+	return p.waitForInputQueueResult(ctx, cmd)
+}
+
+// WaitAfterCompletion submits text that starts only once the current work
+// finishes. Chord routes a policied send through its input delivery queue and
+// answers with input_queue_result rather than input_result, so this shares the
+// operation_id correlation above instead of the receipt pipeline.
+func (p *ChordProcess) WaitAfterCompletion(ctx context.Context, content, requestID string) (InputQueueResult, error) {
+	return p.waitForInputQueueResult(ctx, map[string]any{
+		"type":            "send",
+		"content":         content,
+		"request_id":      requestID,
+		"delivery_policy": "after_completion",
+	})
+}
+
+// waitForInputQueueResult stamps the command with an operation_id and the
+// cached target, sends it, and waits for the reply carrying that id.
+func (p *ChordProcess) waitForInputQueueResult(ctx context.Context, cmd map[string]any) (InputQueueResult, error) {
+	target, known := p.inputQueueTargetSnapshot()
+	if !known {
+		return InputQueueResult{}, errInputQueueUnknown
+	}
+	operationID := "gwq-" + rand.Text()
+	cmd["operation_id"] = operationID
+	cmd["target"] = target
+	// Chord refuses an input_queue command whose binding_id does not match the
+	// --gateway-instance it was started with, so a managed process must echo it
+	// back or every mutation fails as if the binding had changed.
+	if p.bindingInstanceID != "" {
+		cmd["binding_id"] = p.bindingInstanceID
+	}
+
+	var zero InputQueueResult
+	ch := make(chan InputQueueResult, 1)
+	p.mu.Lock()
+	p.queueWaiters.add(operationID, ch)
+	p.mu.Unlock()
+	// SendCommand applies the takeover guard, so a binding mid-transfer refuses
+	// the command instead of queueing work nothing will consume.
+	if err := p.SendCommand(cmd); err != nil {
+		p.mu.Lock()
+		p.queueWaiters.remove(operationID)
+		p.mu.Unlock()
+		return zero, err
+	}
+	select {
+	case result := <-ch:
+		return result, nil
+	case <-ctx.Done():
+		p.mu.Lock()
+		p.queueWaiters.remove(operationID)
+		p.mu.Unlock()
+		return zero, ctx.Err()
+	}
+}
+
+// inputQueueTargetSnapshot returns the target Chord last advertised, together
+// with whether it still describes this process.
+func (p *ChordProcess) inputQueueTargetSnapshot() (InputQueueTarget, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.state.InputQueue == nil {
+		return InputQueueTarget{}, false
+	}
+	target := p.state.InputQueue.InputQueueTarget
+	return target, p.inputQueueTargetMatches(target)
 }
 
 func (p *ChordProcess) inputQueueTargetMatches(target InputQueueTarget) bool {
@@ -149,7 +304,57 @@ func formatInputQueueStatus(q *InputQueue) string {
 	} else if q.RestoredNextInputsBlocked {
 		text += "\nRestored inputs await explicit continuation in the original session."
 	} else if q.Gate.Mode == "paused" || len(q.Inputs) > 0 {
-		text += "\nInspect or manage queued inputs in the local Chord TUI before changing directories."
+		text += "\nInspect or manage queued inputs with /queue."
 	}
 	return text
+}
+
+// inputQueueListLimit bounds what one IM message shows. Chord allows 128 queued
+// inputs; listing them all would trip platform message limits and drown the
+// part the operator is looking for.
+const inputQueueListLimit = 10
+
+// formatInputQueue renders the projection for the /queue command. The numbers
+// are part of the interface, not cosmetics: they are the only handle /queue
+// show, /queue edit and /queue delete have over an item, and Chord's input IDs
+// are opaque.
+func formatInputQueue(q *InputQueue) string {
+	if q == nil {
+		return ""
+	}
+	mode := q.Gate.Mode
+	if mode == "" {
+		mode = "unknown gate"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Input queue: %d pending; %s", len(q.Inputs), mode)
+	if q.Gate.Reason != "" {
+		fmt.Fprintf(&b, " (%s)", q.Gate.Reason)
+	}
+	if q.Blocked != "" {
+		fmt.Fprintf(&b, "\n⚠️ Queue storage is blocked: %s", strings.ReplaceAll(q.Blocked, "\n", " "))
+	}
+	if q.RestoredNextInputsBlocked {
+		b.WriteString("\nRestored inputs wait for explicit continuation in the original session.")
+	}
+	for i, input := range q.Inputs {
+		if i == inputQueueListLimit {
+			fmt.Fprintf(&b, "\n… and %d more", len(q.Inputs)-i)
+			break
+		}
+		fmt.Fprintf(&b, "\n%d. [%s, %s] %s", i+1, input.Policy, input.Stage, input.Preview)
+		if input.Attachments > 0 {
+			fmt.Fprintf(&b, " (%d attachment(s))", input.Attachments)
+		}
+		if input.EditHeld {
+			b.WriteString(" (locked for editing in the local TUI)")
+		}
+	}
+	if len(q.Inputs) > 0 {
+		b.WriteString("\nReply /queue show <n> to read one in full, /queue edit <n> <text> to replace it, or /queue delete <n> to drop it.")
+	}
+	if q.Gate.Mode == "paused" {
+		b.WriteString("\nReply /queue resume to release queued work.")
+	}
+	return b.String()
 }

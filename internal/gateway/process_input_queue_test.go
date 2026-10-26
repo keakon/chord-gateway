@@ -248,7 +248,7 @@ func TestInputQueueStatusExplainsBlockedAndPausedQueues(t *testing.T) {
 		if q.Blocked != "" && !strings.Contains(text, "storage is blocked") {
 			t.Fatal(text)
 		}
-		if q.Gate.Mode == "paused" && !strings.Contains(text, "local Chord TUI") {
+		if q.Gate.Mode == "paused" && !strings.Contains(text, "/queue") {
 			t.Fatal(text)
 		}
 		if q.RestoredNextInputsBlocked && !strings.Contains(text, "explicit continuation") {

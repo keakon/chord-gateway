@@ -9,14 +9,13 @@ import "strings"
 // the headless protocol never reports back to this integration.
 //
 // Two differences from the Chord set are deliberate:
-//   - /role and /mcp are absent because the gateway maps them to its own
-//     confirmed IM commands instead of forwarding them verbatim.
+//   - /role, /mcp, /models and /queue are absent because the gateway maps them
+//     to its own confirmed IM commands instead of forwarding them verbatim.
 //   - bareOnly marks commands that only take their local meaning without
 //     arguments: Chord treats "/skill <name>" as an ordinary user message, and
 //     matches "/compact" exactly, so blocking their argument forms would reject
 //     messages IM callers legitimately expect to reach the agent.
 var chordLocalOnlySlash = map[string]bool{
-	"/queue":   false,
 	"/export":  false,
 	"/tier":    false,
 	"/rename":  false,
@@ -27,13 +26,14 @@ var chordLocalOnlySlash = map[string]bool{
 
 // gatewayOwnedSlash lists slash commands the gateway answers itself, whether it
 // handles them directly (/models through the models protocol command, /role
-// through the role one) or routes them to a dedicated handler that applies
-// guards first (/new and /resume replace the session). Reaching the process
-// verbatim would bypass that handling, so text that skips command parsing
-// through ForceText must still not reach the process.
+// through the role one, /queue through the input_queue one) or routes them to a
+// dedicated handler that applies guards first (/new and /resume replace the
+// session). Reaching the process verbatim would bypass that handling, so text
+// that skips command parsing through ForceText must still not reach the process.
 var gatewayOwnedSlash = map[string]bool{
 	"/models": false,
 	"/role":   false,
+	"/queue":  false,
 	"/new":    false,
 	"/resume": false,
 }

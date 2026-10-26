@@ -60,7 +60,7 @@
 
 - 完成通知现在附带刚结束 turn 的紧凑摘要（时长、工具调用数、重试次数），`⏳ Chord: Ready for input; background jobs still running: N` 变体同样适用。长时间提醒现在显示已运行的 turn 时长、`running tools` / `retrying` 等粗粒度阶段，以及当前工作周期内观察到的工具与重试次数。同一会话内的确认、交接和取消操作不会清零累计进度。本地 shell 工作单独跟踪，不会重置 agent 进度；完成通知会显示仍在运行的 shell 命令数量。`connecting` 这类传输层 phase 仍然不会暴露。
 
-- Chord 在自身侧执行的斜杠命令不再转发：带不带参数的 `/queue`、`/export`、`/models`、`/tier`、`/rename`、`/yolo`、`/compact`，以及不带参数的 `/skill`，现在一律被拒绝并回复「仅在本地 TUI 可用」。这些命令改变的都是 headless 协议不会回报的会话状态，转发它们等于允许 IM 侧静默操作；其中 `/yolo` 可以在聊天界面毫无线索的情况下关闭权限确认。请在本地 Chord TUI 中管理。参见[使用说明](./docs/usage_CN.md#im-命令)。
+- Chord 在自身侧执行的斜杠命令不再转发：`/export`、`/tier`、`/rename`、`/yolo`、`/compact`，以及不带参数的 `/skill`，现在一律被拒绝并回复「仅在本地 TUI 可用」。这些命令改变的都是 headless 协议不会回报的会话状态，转发它们等于允许 IM 侧静默操作；其中 `/yolo` 可以在聊天界面毫无线索的情况下关闭权限确认。`/queue`、`/models` 与 `/role` 改由 gateway 自己处理；带参数的 `/compact`、`/skill` 仍作为普通消息交给 agent。其余请在本地 Chord TUI 中管理。参见[使用说明](./docs/usage_CN.md#im-命令)。
 
 - 配置中不支持或已移除的 YAML 字段现在会在 gateway 日志中带行号报告并被忽略，不再静默失效：拼写错误或 `event_visibility.activity` 这类已移除选项在启动时即可发现，文件其余部分仍正常加载。
 

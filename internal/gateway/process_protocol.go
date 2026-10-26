@@ -532,6 +532,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		// No onEvent — solicited response.
 
+	case "input_queue_result":
+		var result InputQueueResult
+		if err := json.Unmarshal(env.Payload, &result); err == nil && result.OperationID != "" {
+			p.notifyInputQueueResult(result)
+		}
+		// No onEvent — solicited response. The queue state it changes arrives
+		// separately as input_queue_changed, which already drives the cache.
+
 	case "role_change":
 		var payload struct {
 			Role string `json:"role"`
