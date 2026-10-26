@@ -66,13 +66,23 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/takeover <id> [--timeout <duration>]` | 将运行中的 TUI 会话接管到当前聊天，并保持暂停 |
 | `/takeover status` | 查询当前绑定的移交状态，不发起新的接管 |
 | `/models [模型池]` | 查看当前模型池，或切换到指定模型池 |
+| `/queue` | 列出 Chord 为当前 session 排队的输入，并给出下续命令使用的序号 |
+| `/queue show <n>` | 查看某条排队输入的完整文本（列表只显示截断后的预览） |
+| `/queue edit <n> <text>` | 替换第 `n` 条排队输入的文本；带附件的输入只能在本地 Chord TUI 中编辑 |
+| `/queue delete <n>` | 删除第 `n` 条排队输入 |
+| `/queue pause` / `/queue resume` / `/queue clear` | 暂停队列、恢复队列，或丢弃已排队的「完成后执行」输入（`clear` 保留普通的下一次请求输入，且不触碰正在运行的工作） |
+| `/queue after <text>` | 排队一段文本，等当前工作全部结束后再执行，而不是作为下一次请求立即开始 |
 | `/image <reference>` | 按 artifact 引用重新拉取 Chord 仍保存的生成图片 |
 | `/handoff-cancel` | 撤回待处理的 handoff 请求，不记录拒绝原因 |
 | `/sessions` | 列出最近 session |
 | `/login [platform]` | 查看支持登录续期的平台；指定平台时启动续期流程（例如 `/login wechat`） |
 | 其他文本 | 发送新要求给 Chord，待答问题继续保留 |
 
-未识别的斜杠命令会作为普通文本转发给 Chord，但有一类例外：Chord 会在自身侧执行 `/queue`、`/export`、`/models`、`/tier`、`/rename`、`/yolo`、`/compact` 以及不带参数的 `/skill`，而它们造成的变化都不会通过 headless 协议回报。gateway 会直接拒绝这些命令并提示只能在本地 TUI 使用，而不是转发出去。其中 `/yolo` 影响最大：一旦转发，IM 侧可以在聊天里完全无感知地关闭权限确认。请在本地 Chord TUI 中管理这些命令。
+未识别的斜杠命令会作为普通文本转发给 Chord，但有一类例外：Chord 会在自身侧执行 `/export`、`/tier`、`/rename`、`/yolo`、`/compact` 以及不带参数的 `/skill`，而它们造成的变化都不会通过 headless 协议回报。gateway 会直接拒绝这些命令并提示只能在本地 TUI 使用，而不是转发出去。其中 `/yolo` 影响最大：一旦转发，IM 侧可以在聊天里完全无感知地关闭权限确认。请在本地 Chord TUI 中管理这些命令。`/models`、`/role` 和 `/queue` 也在 Chord 的本地命令集内，但 gateway 通过协议命令自行应答，不会转发。
+
+`/queue` 每次操作前都会先从 Chord 读取队列，因此条目序号始终对应刚刚展示的列表。改动会带上 Chord 上一次报告的修订号：如果队列在期间发生了变化，Chord 会拒绝该改动，回复会提示重新读取，而不是按同一个序号重试。
+
+Chord 始终未回复的 `/queue` 改动会提示为「未确认」而不是失败——它仍可能已经生效。重复操作前请先用 `/queue` 核对。
 
 `/sessions` 在绑定目录中调用 `chord sessions list --json --limit 10`，并传递 `chord_state_dir`。自定义会话根目录和仓库 worktree 的共享会话由 Chord 解析。结果按最近活动时间排序，并标出使用中的会话；查询失败与空列表会分别提示。需要使用提供此命令的 Chord，gateway 不再扫描旧目录。
 

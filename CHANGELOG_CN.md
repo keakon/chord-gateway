@@ -24,6 +24,7 @@
 - `/models [模型池]` 通过 Chord 的 `models` 协议命令查看或切换当前模型池，返回的是确认结果而不是把命令当作聊天文本发出去。
 - `/image <reference>` 可按 artifact 引用重新拉取 Chord 仍保存的生成图片。此前传输丢块是死路，只提示「原图仍在 Chord 中」；现在丢弃提示会列出可重新拉取的引用。
 - `/handoff-cancel` 撤回待处理的 handoff 请求而不记录拒绝原因，改变主意时不必再编一个理由让模型读到。
+- `/queue` 通过 Chord 的 `input_queue` 协议命令管理输入队列：不带参数列出队列，`/queue show <n>` 读取某条的完整文本，`/queue edit <n> <text>` 替换其文本，`/queue delete <n>` 删除它，`/queue pause`、`/queue resume` 和 `/queue clear` 控制队列闸门。`/queue after <text>` 排队一段等当前工作全部结束后才开始的文本。每次改动都会带上 Chord 上一次报告的修订号，因此期间已变化的队列会被拒绝，而不会误改到别的条目。此前 gateway 把 `/queue` 当作 TUI 专属命令拒绝，同时又在队列存在未决输入期间拒绝 `/new`、`/resume` 和 `/bind`——在远程主机上，这等于要求操作者去修复一个它自己造成的死结。`/queue` 因此不再属于被拒绝的斜杠命令列表。
 
 - Chord 在确认请求落定时会推送 `confirm_resolved`。超时自动拒绝或提前取消会把飞书确认卡片置灰并提示已过期（其他 IM 平台以文本提示）。过期或失效的 IM 确认操作会被拒绝，并提示检查 `/status`；console 对过期确认的回复仍会作为后续消息发送，不会被当作批准或拒绝。
 - gateway 现在会在启动时以 `outbound proxy ...` 记录每个已配置出站代理(已去除凭据),方便确认实际解析到的值。

@@ -66,6 +66,12 @@ Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/questi
 | `/takeover <id> [--timeout <duration>]` | Take over a running TUI session into this chat and leave it paused |
 | `/takeover status` | Query the current binding's transfer without starting a new request |
 | `/models [model_pool]` | Show the current model pool, or switch to a named pool |
+| `/queue` | List the inputs Chord has queued for this session, with the position numbers the commands below address |
+| `/queue show <n>` | Read one queued input in full (the listing truncates previews) |
+| `/queue edit <n> <text>` | Replace the text of queued input `n`. Items with attachments can only be edited in the local Chord TUI |
+| `/queue delete <n>` | Drop queued input `n` |
+| `/queue pause` / `/queue resume` / `/queue clear` | Pause the queue, resume it, or drop the queued after-completion inputs (`clear` keeps ordinary next-request inputs and never touches work already running) |
+| `/queue after <text>` | Queue text that only starts once the current work finishes, instead of becoming the next request |
 | `/image <reference>` | Re-request a generated image Chord still holds, by artifact reference |
 | `/handoff-cancel` | Withdraw a pending handoff request without recording a rejection |
 | `/sessions` | List recent sessions from the workspace |
@@ -76,7 +82,9 @@ Notes:
 
 - `/login wechat` is the documented command name for WeChat login renewal.
 - `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
-- Unrecognized slash commands are forwarded to Chord as normal text, with one exception: Chord runs `/queue`, `/export`, `/models`, `/tier`, `/rename`, `/yolo`, `/compact` and a bare `/skill` on its own side rather than treating them as chat input, and nothing they change is reported back over the headless protocol. The gateway refuses them instead of forwarding them, and replies that they are only available in the local TUI. `/yolo` matters most: forwarding it would let an IM caller turn permission confirmations off without anything visible happening in the chat. Manage these from the local Chord TUI.
+- Unrecognized slash commands are forwarded to Chord as normal text, with one exception: Chord runs `/export`, `/tier`, `/rename`, `/yolo`, `/compact` and a bare `/skill` on its own side rather than treating them as chat input, and nothing they change is reported back over the headless protocol. The gateway refuses them instead of forwarding them, and replies that they are only available in the local TUI. `/yolo` matters most: forwarding it would let an IM caller turn permission confirmations off without anything visible happening in the chat. Manage these from the local Chord TUI. `/models`, `/role` and `/queue` are in Chord's own local-only set too, but the gateway answers them through protocol commands rather than forwarding them.
+- `/queue` reads the queue from Chord before acting, so its item numbers always refer to the listing just shown. It sends the revision Chord reported with each change: if the queue moved in between, Chord refuses the change and the reply says to re-read instead of retrying the same number.
+- A `/queue` change that Chord never answers is reported as unconfirmed rather than failed, because it may still have been applied. Check with `/queue` before repeating it.
 - `/summary` is not part of the documented gateway command set.
 
 `/sessions` queries `chord sessions list --json --limit 10` in the bound directory and forwards `chord_state_dir`. Chord resolves custom session roots and sessions shared by repository worktrees. Results are ordered by recent activity and mark sessions in use. Query failures are reported separately from an empty list. Use a Chord build providing this command; the gateway does not scan legacy directories.
