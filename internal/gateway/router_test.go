@@ -1124,6 +1124,23 @@ func TestFormatConfirmNotification(t *testing.T) {
 		}
 	})
 
+	t.Run("shows the actual permission rules that can be remembered", func(t *testing.T) {
+		msg := r.formatConfirmNotification(ControlState{
+			PendingConfirm: &ConfirmPayload{
+				ToolName: "Shell",
+				NeedsApprovalRuleItems: []ConfirmRuleItem{
+					{Tool: "Delete", Pattern: "sample.txt"},
+					{Pattern: "git status"},
+				},
+			},
+		})
+		for _, want := range []string{"Delete: sample.txt", "Shell: git status", "/allow --session"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("expected %q in %q", want, msg)
+			}
+		}
+	})
+
 	t.Run("does not include request ID", func(t *testing.T) {
 		msg := r.formatConfirmNotification(ControlState{
 			PendingConfirm: &ConfirmPayload{

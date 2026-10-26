@@ -107,9 +107,10 @@ type ChordProcess struct {
 	// queueWaiters correlate input_queue results by operation_id, the id Chord
 	// echoes back. Unlike status and models replies these are per-caller, so a
 	// broadcast would let one IM user's command settle another's.
-	queueWaiters      inputQueueWaiters
-	questionWaiters   map[string]chan QuestionReceipt
-	onQuestionReceipt func(*ChordProcess, QuestionReceipt) bool
+	queueWaiters       inputQueueWaiters
+	confirmRuleWaiters confirmRuleIntentWaiters
+	questionWaiters    map[string]chan QuestionReceipt
+	onQuestionReceipt  func(*ChordProcess, QuestionReceipt) bool
 }
 
 var ErrManagerShuttingDown = errors.New("chord manager is shutting down")

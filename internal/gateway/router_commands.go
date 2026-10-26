@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -129,11 +130,13 @@ func (r *NotificationRouter) handleImageCommand(ws *config.Workspace, chatID str
 		return
 	}
 	state := proc.State()
-	if !proc.images.expectRefetch(state.SessionID, reference) {
+	requestID := "im-image-" + rand.Text()
+	if !proc.images.expectRefetch(state.SessionID, reference, requestID) {
 		r.sendTextForKey(procKey, chatID, "⚠️ A resend for that image is already pending or already arrived.")
 		return
 	}
-	if err := proc.SendCommand(map[string]any{"type": "image_artifact", "content": reference, "request_id": "im-image-" + state.SessionID}); err != nil {
+	if err := proc.SendCommand(map[string]any{"type": "image_artifact", "content": reference, "request_id": requestID}); err != nil {
+		proc.images.cancelRefetch(requestID)
 		log.Errorf("failed to request image resend workspace=%v error=%v", ws.ID, err)
 		r.sendTextForKey(procKey, chatID, "❌ Failed to ask Chord for the original image.")
 		return
@@ -228,7 +231,19 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		}
 		confirmCmd["rule_items"] = items
 	}
-	if err := proc.SendCommand(confirmCmd); err != nil {
+	var ruleReceipt ConfirmRuleIntentResult
+	var ruleReceiptErr error
+	if cmd.RuleScope != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), confirmRuleIntentWaitTimeout)
+		var sent bool
+		ruleReceipt, sent, ruleReceiptErr = proc.WaitConfirmRuleIntentResult(ctx, requestID, confirmCmd)
+		cancel()
+		if !sent {
+			log.Errorf("failed to send confirm response workspace=%v error=%v", ws.ID, ruleReceiptErr)
+			r.sendTextForKey(procKey, chatID, "❌ Failed to send confirmation.")
+			return
+		}
+	} else if err := proc.SendCommand(confirmCmd); err != nil {
 		log.Errorf("failed to send confirm response workspace=%v error=%v", ws.ID, err)
 		r.sendTextForKey(procKey, chatID, "❌ Failed to send confirmation.")
 		return
@@ -253,9 +268,12 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		r.sendTextForKey(procKey, chatID, "✅ allowed")
 		return
 	}
-	// Recording a rule widens every later decision in that scope, so the
-	// receipt names the scope rather than saying only "allowed".
-	r.sendTextForKey(procKey, chatID, fmt.Sprintf("✅ allowed; %d rule(s) remembered for the %s scope", len(rules), confirmRuleScopeLabel(cmd.RuleScope)))
+	if ruleReceiptErr != nil {
+		log.Warnf("confirm rule persistence result unconfirmed workspace=%v request_id=%v error=%v", ws.ID, requestID, ruleReceiptErr)
+		r.sendTextForKey(procKey, chatID, "✅ allowed for this call; could not confirm whether the requested rules were saved. Check the rules on the Chord host before relying on them.")
+		return
+	}
+	r.sendTextForKey(procKey, chatID, formatConfirmRuleIntentReceipt(ruleReceipt, len(rules), cmd.RuleScope))
 }
 
 // confirmRuleScopeLabel renders each rule scope the way the operator sees it in

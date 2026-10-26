@@ -103,6 +103,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	if env.Type == "session_switched" {
 		p.images.reset()
 	}
+	if env.Type == "error" {
+		var payload struct {
+			RequestID string `json:"request_id"`
+		}
+		if json.Unmarshal(env.Payload, &payload) == nil {
+			p.images.cancelRefetch(payload.RequestID)
+		}
+	}
 	p.mu.Lock()
 	now := time.Now()
 	updatedAt := now.Format(time.RFC3339)
@@ -539,6 +547,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 		// No onEvent — solicited response. The queue state it changes arrives
 		// separately as input_queue_changed, which already drives the cache.
+	case "confirm_rule_intent_result":
+		var result ConfirmRuleIntentResult
+		if err := json.Unmarshal(env.Payload, &result); err == nil && result.RequestID != "" {
+			p.notifyConfirmRuleIntentResult(result)
+		}
+		// No onEvent — this is a correlated persistence receipt.
 
 	case "role_change":
 		var payload struct {

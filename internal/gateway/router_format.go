@@ -348,7 +348,19 @@ func (r *NotificationRouter) formatConfirmNotification(state ControlState, hints
 	sb.WriteString(commandHint("/deny [reason]", hints))
 	// Only advertise "remember this" when Chord actually offered rules to
 	// record: offering it unconditionally would then be refused.
-	if len(c.RuleCandidates()) > 0 {
+	rules := c.RuleCandidates()
+	if len(rules) > 0 {
+		sb.WriteString("\nRules offered by Chord:")
+		for _, rule := range rules {
+			tool := strings.TrimSpace(rule.Tool)
+			if tool == "" {
+				tool = c.ToolName
+			}
+			sb.WriteString("\n  • ")
+			sb.WriteString(tool)
+			sb.WriteString(": ")
+			sb.WriteString(rule.Pattern)
+		}
 		sb.WriteString("\nTo also remember these, reply ")
 		sb.WriteString(commandHint("/allow --session", hints))
 		sb.WriteString(" (or --project / --user).")

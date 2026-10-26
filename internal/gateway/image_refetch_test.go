@@ -4,9 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -17,6 +17,7 @@ func refetchChunk(t *testing.T, m receivedImageMetadata, offset int, last bool, 
 	t.Helper()
 	payload := map[string]any{
 		"reference":  m.Reference,
+		"request_id": "refetch-request",
 		"size_bytes": m.Size,
 		"mime_type":  m.MIME,
 		"width":      m.Width,
@@ -45,10 +46,10 @@ func TestImageRefetchRecoversWithoutSummary(t *testing.T) {
 	var receiver imageReceiver
 	defer receiver.reset()
 
-	if !receiver.expectRefetch("session-1", m.Reference) {
+	if !receiver.expectRefetch("session-1", m.Reference, "refetch-request") {
 		t.Fatal("expectRefetch refused a fresh reference")
 	}
-	if receiver.expectRefetch("session-1", m.Reference) {
+	if receiver.expectRefetch("session-1", m.Reference, "refetch-duplicate") {
 		t.Fatal("a second outstanding resend must be refused")
 	}
 
@@ -74,6 +75,105 @@ func TestImageRefetchRecoversWithoutSummary(t *testing.T) {
 	receiver.reset()
 	if im.ImageSpoolBytes.Load() != initial {
 		t.Fatal("refetch did not release its spool accounting")
+	}
+}
+
+func TestImageRefetchCoexistsWithOrdinaryTransfer(t *testing.T) {
+	data := testImageBytes(t)
+	meta := testImageMetadata(data)
+	var receiver imageReceiver
+	defer receiver.reset()
+	if err := receiver.result(testImageResult(t, "ordinary-call", []receivedImageMetadata{meta}), "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !receiver.expectRefetch("session-1", meta.Reference, "refetch-request") {
+		t.Fatal("ordinary transfer prevented reserving a resend")
+	}
+	if image, err := receiver.chunk(refetchChunk(t, meta, 0, true, data), "session-1"); err != nil || image == nil {
+		t.Fatalf("resend could not bootstrap: image=%v err=%v", image, err)
+	} else {
+		image.Close()
+	}
+	if image, err := receiver.chunk(testImageChunk(t, "ordinary-call", meta, 0, true, data), "session-1"); err != nil || image == nil {
+		t.Fatalf("resend disturbed ordinary transfer: image=%v err=%v", image, err)
+	} else {
+		image.Close()
+	}
+}
+
+func TestImageRefetchReservationCleanup(t *testing.T) {
+	data := testImageBytes(t)
+	meta := testImageMetadata(data)
+	for _, cleanup := range []string{"send failure", "idle", "error", "session switch", "timeout"} {
+		t.Run(cleanup, func(t *testing.T) {
+			p := &ChordProcess{state: ControlState{SessionID: "session-1"}}
+			defer p.images.reset()
+			if !p.images.expectRefetch("session-1", meta.Reference, "refetch-request") {
+				t.Fatal("reservation failed")
+			}
+			switch cleanup {
+			case "send failure":
+				p.images.cancelRefetch("refetch-request")
+			case "idle":
+				p.processEnvelope(&HeadlessEnvelope{Type: "idle", Payload: json.RawMessage(`{}`)})
+			case "error":
+				p.processEnvelope(&HeadlessEnvelope{Type: "error", Payload: json.RawMessage(`{"request_id":"refetch-request","message":"artifact unavailable"}`)})
+			case "session switch":
+				p.processEnvelope(&HeadlessEnvelope{Type: "session_switched", Payload: json.RawMessage(`{"session_id":"session-2"}`)})
+			case "timeout":
+				p.images.mu.Lock()
+				p.images.expected[meta.Reference].timer.Reset(time.Millisecond)
+				p.images.mu.Unlock()
+				deadline := time.Now().Add(time.Second)
+				for {
+					p.images.mu.Lock()
+					count := len(p.images.expected)
+					p.images.mu.Unlock()
+					if count == 0 {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("reservation timeout did not clean up")
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			if !p.images.expectRefetch(p.State().SessionID, meta.Reference, "retry-request") {
+				t.Fatal("cleanup prevented a retry")
+			}
+		})
+	}
+}
+
+func TestUncorrelatedErrorDoesNotCancelImageRefetches(t *testing.T) {
+	var p ChordProcess
+	defer p.images.reset()
+	for _, ref := range []string{"artifact:images/first.png", "artifact:images/second.png"} {
+		if !p.images.expectRefetch("session-1", ref, ref) {
+			t.Fatalf("reservation failed for %q", ref)
+		}
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "error", Payload: json.RawMessage(`{"message":"unrelated failure"}`)})
+	if got := len(p.images.expected); got != 2 {
+		t.Fatalf("uncorrelated error left %d reservations, want 2", got)
+	}
+
+	p.processEnvelope(&HeadlessEnvelope{Type: "error", Payload: json.RawMessage(`{"request_id":"artifact:images/first.png","message":"artifact unavailable"}`)})
+	if got := len(p.images.expected); got != 1 {
+		t.Fatalf("correlated error left %d reservations, want 1", got)
+	}
+	if !p.images.expectRefetch("session-1", "artifact:images/first.png", "retry") {
+		t.Fatal("correlated error did not release its reservation")
+	}
+	p.images.mu.Lock()
+	_, secondPending := p.images.expected["artifact:images/second.png"]
+	p.images.mu.Unlock()
+	if !secondPending {
+		t.Fatal("unrelated reservation was unexpectedly removed")
+	}
+	if p.images.expectRefetch("session-1", "artifact:images/second.png", "duplicate") {
+		t.Fatal("duplicate reservation was unexpectedly accepted")
 	}
 }
 
@@ -103,7 +203,15 @@ func TestImageRefetchRejectsForgedReference(t *testing.T) {
 	if _, err := imageDigestFromReference(m.Reference, "image/jpeg"); err == nil {
 		t.Fatal("mismatched extension and MIME accepted")
 	}
-	_ = forged
+	if !receiver.expectRefetch("session-1", forged.Reference, "refetch-request") {
+		t.Fatal("valid artifact reference was not reserved")
+	}
+	if image, err := receiver.chunk(refetchChunk(t, forged, 0, true, data), "session-1"); err == nil || image != nil {
+		t.Fatalf("forged digest accepted: image=%v err=%v", image, err)
+	}
+	if len(receiver.expected) != 0 {
+		t.Fatal("digest failure retained reservation")
+	}
 }
 
 // TestImageRefetchRejectsUnrequested keeps a re-request out of another session's
@@ -120,12 +228,12 @@ func TestImageRefetchRejectsUnrequested(t *testing.T) {
 	}
 
 	receiver.reset()
-	receiver.expectRefetch("session-1", m.Reference)
+	receiver.expectRefetch("session-1", m.Reference, "refetch-request")
 	if _, err := receiver.chunk(refetchChunk(t, m, 0, true, data), "session-2"); err == nil {
 		t.Fatal("resend crossed into another session")
 	}
 	// A resumed delivery must start at zero or the digest check is meaningless.
-	receiver.expectRefetch("session-1", m.Reference)
+	receiver.expectRefetch("session-1", m.Reference, "refetch-request")
 	if _, err := receiver.chunk(refetchChunk(t, m, 5, true, data), "session-1"); err == nil {
 		t.Fatal("resend starting mid-file accepted")
 	}
@@ -155,5 +263,4 @@ func TestImageFinishNoticeNamesReferences(t *testing.T) {
 		t.Fatalf("second finish = %v, want nil", n)
 	}
 	receiver.reset()
-	_ = fmt.Sprint()
 }

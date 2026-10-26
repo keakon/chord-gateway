@@ -150,13 +150,18 @@ var confirmRuleScopes = map[string]string{
 // because a mistyped scope would otherwise be remembered as a wrong request.
 func parseAllowArgs(rest string) (scope, requestID string, invalid bool) {
 	fields := strings.Fields(rest)
+	once := false
 	for _, field := range fields {
 		switch {
 		case field == "once":
 			// Explicit and optional: bare /allow already approves once.
+			if scope != "" {
+				return "", "", true
+			}
+			once = true
 			continue
 		case confirmRuleScopes[field] != "":
-			if scope != "" {
+			if scope != "" || once {
 				return "", "", true
 			}
 			scope = confirmRuleScopes[field]

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"hash"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
 )
@@ -21,6 +23,7 @@ const (
 	maxGatewayImageChunk = 384 << 10
 	maxGatewayImageSpool = 256 << 20
 	maxGatewayImageCount = 5
+	imageRefetchTimeout  = 30 * time.Second
 )
 
 type receivedImageMetadata struct {
@@ -47,6 +50,11 @@ type imageReceiveKey struct {
 	session, agent, call, reference string
 }
 
+type imageRefetch struct {
+	key   imageReceiveKey
+	timer *time.Timer
+}
+
 type imageReceiver struct {
 	mu      sync.Mutex
 	entries map[imageReceiveKey]*imageReceiveEntry
@@ -56,7 +64,7 @@ type imageReceiver struct {
 	// Indexed by reference alone: Chord answers a re-request with an empty call
 	// and agent id, so the identity tuple that normal delivery uses is not
 	// available to match on.
-	expected  map[string]imageReceiveKey
+	expected  map[string]imageRefetch
 	seen      map[imageReceiveKey]bool
 	seenOrder []imageReceiveKey
 }
@@ -65,25 +73,51 @@ type imageReceiver struct {
 // arriving chunks can bootstrap their own metadata instead of being rejected for
 // having no preceding image_result. Returns false when the reference is already
 // fully known, which would mean a duplicate re-request.
-func (r *imageReceiver) expectRefetch(session, reference string) bool {
+func (r *imageReceiver) expectRefetch(session, reference, requestID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for key, e := range r.entries {
-		if key.reference == reference {
-			return !e.refetch
+		if key.session == session && key.reference == reference && e.refetch {
+			return false
 		}
 	}
-	if r.seen[imageReceiveKey{reference: reference}] {
+	if r.seen[imageReceiveKey{session: session, reference: reference}] || len(r.expected) >= 32 {
 		return false
 	}
 	if r.expected == nil {
-		r.expected = make(map[string]imageReceiveKey)
+		r.expected = make(map[string]imageRefetch)
 	}
 	if _, ok := r.expected[reference]; ok {
 		return false
 	}
-	r.expected[reference] = imageReceiveKey{session: session, reference: reference}
+	key := imageReceiveKey{session: session, call: requestID, reference: reference}
+	timer := time.AfterFunc(imageRefetchTimeout, func() {
+		r.cancelRefetch(requestID)
+	})
+	r.expected[reference] = imageRefetch{key: key, timer: timer}
 	return true
+}
+
+// cancelRefetch leaves ordinary deliveries alone, even for the same reference.
+// An empty request ID is used for an uncorrelated headless error.
+func (r *imageReceiver) cancelRefetch(requestID string) {
+	if requestID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for reference, pending := range r.expected {
+		if pending.key.call != requestID {
+			continue
+		}
+		pending.timer.Stop()
+		if entry := r.entries[pending.key]; entry != nil {
+			r.discard(entry)
+			delete(r.entries, pending.key)
+		}
+		r.rememberTerminal(pending.key)
+		delete(r.expected, reference)
+	}
 }
 
 // rememberTerminal requires r.mu and stores no image bytes or open files.
@@ -107,6 +141,9 @@ func (r *imageReceiver) reset() {
 	defer r.mu.Unlock()
 	for _, e := range r.entries {
 		r.discard(e)
+	}
+	for _, pending := range r.expected {
+		pending.timer.Stop()
 	}
 	r.entries = nil
 	r.expected = nil
@@ -140,6 +177,15 @@ func (r *imageReceiver) finish() error {
 		r.discard(e)
 		delete(r.entries, key)
 		r.rememberTerminal(key)
+	}
+	for reference, pending := range r.expected {
+		pending.timer.Stop()
+		if !slices.Contains(refs, reference) {
+			refs = append(refs, reference)
+			count++
+		}
+		r.rememberTerminal(pending.key)
+		delete(r.expected, reference)
 	}
 	if count != 0 {
 		// Name the recoverable references: each one can be re-requested with
@@ -292,6 +338,7 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.Received
 		Width     int    `json:"width"`
 		Height    int    `json:"height"`
 		CallID    string `json:"call_id"`
+		RequestID string `json:"request_id"`
 		AgentID   string `json:"agent_id"`
 		Offset    int64  `json:"offset"`
 		Last      bool   `json:"last"`
@@ -303,6 +350,9 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.Received
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := imageReceiveKey{session, p.AgentID, p.CallID, p.Reference}
+	if p.RequestID != "" && p.CallID == "" && p.AgentID == "" {
+		key.call = p.RequestID
+	}
 	if r.seen[key] || r.seen[imageReceiveKey{session, p.AgentID, p.CallID, ""}] {
 		return nil, nil
 	}
@@ -312,32 +362,46 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.Received
 		// Chord replays the chunks directly. Adopt this chunk's own headers as
 		// the metadata, then let the normal checks validate everything after it.
 		expected, ok := r.expected[p.Reference]
-		if !ok || expected.session != session {
+		if !ok || expected.key != key || p.CallID != "" || p.AgentID != "" {
 			r.rememberTerminal(key)
 			return nil, fmt.Errorf("image chunk has no matching result")
 		}
-		if p.Offset != 0 {
+		bootstrapFailed := func(err error) (*im.ReceivedImage, error) {
+			expected.timer.Stop()
+			delete(r.expected, p.Reference)
 			r.rememberTerminal(key)
-			return nil, fmt.Errorf("resumed image does not start at offset 0")
+			return nil, err
+		}
+		if p.Offset != 0 {
+			return bootstrapFailed(fmt.Errorf("resumed image does not start at offset 0"))
 		}
 		digest, err := imageDigestFromReference(p.Reference, p.MIME)
 		if err != nil {
-			r.rememberTerminal(key)
-			return nil, err
+			return bootstrapFailed(err)
 		}
 		meta := receivedImageMetadata{Reference: p.Reference, SHA256: digest, Size: p.Size, MIME: p.MIME, Width: p.Width, Height: p.Height}
 		if err := validateImageMetadata(meta); err != nil {
-			r.rememberTerminal(key)
-			return nil, err
+			return bootstrapFailed(err)
+		}
+		if len(r.entries) >= 32 {
+			return bootstrapFailed(fmt.Errorf("too many incomplete images"))
 		}
 		if r.entries == nil {
 			r.entries = make(map[imageReceiveKey]*imageReceiveEntry)
 		}
 		e = &imageReceiveEntry{meta: meta, refetch: true}
 		r.entries[key] = e
-		delete(r.expected, p.Reference)
+	}
+	releaseRefetch := func() {
+		if e.refetch {
+			if pending, ok := r.expected[p.Reference]; ok && pending.key == key {
+				pending.timer.Stop()
+				delete(r.expected, p.Reference)
+			}
+		}
 	}
 	fail := func(err error) (*im.ReceivedImage, error) {
+		releaseRefetch()
 		r.discard(e)
 		delete(r.entries, key)
 		r.rememberTerminal(key)
@@ -389,7 +453,11 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.Received
 	image := &im.ReceivedImage{Path: e.file.Name(), Reference: e.meta.Reference, CallID: p.CallID, AgentID: p.AgentID, SessionID: session, MIME: e.meta.MIME, SHA256: e.meta.SHA256, Size: e.meta.Size, Width: e.meta.Width, Height: e.meta.Height}
 	e.file = nil
 	delete(r.entries, key)
+	releaseRefetch()
 	r.rememberTerminal(key)
+	if e.refetch {
+		r.rememberTerminal(imageReceiveKey{session: session, reference: p.Reference})
+	}
 	return image, nil
 }
 
