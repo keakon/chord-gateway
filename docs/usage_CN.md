@@ -53,7 +53,7 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/bind "<directory>" [pairing_code]` | 绑定已有目录；首次私聊配对需提供终端配对码 |
 | `/status` | 查看当前 Chord 状态：busy/idle、session、当前角色、phase、最近一次上下文检查点结果、待处理交互及恢复的排队输入 |
 | `/cancel` | 取消当前 turn |
-| `/allow [--session\|--project\|--user] [request-id]` | 批准待确认请求；带作用域参数时同时记录 Chord 提供的规则，同类操作不再重复询问 |
+| `/allow [once\|--session\|--project\|--user] [request-id]` | 批准待确认请求；带作用域参数时同时记录 Chord 提供的规则，同类操作不再重复询问 |
 | `/deny [reason]` | 拒绝待确认请求；可选原因会转发给 Chord |
 | `/answer @<id> <text>` | 按 ID 回答或修正问题；唯一待答题可省略 ID |
 | `/handoff <agent> [model_pool]` | 将待处理 Chord handoff 请求的接受结果转发给 Chord；不带参数时由 Chord 使用默认 agent |
@@ -80,9 +80,11 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 
 未识别的斜杠命令会作为普通文本转发给 Chord，但有一类例外：Chord 会在自身侧执行 `/export`、`/tier`、`/rename`、`/yolo`、`/compact` 以及不带参数的 `/skill`，而它们造成的变化都不会通过 headless 协议回报。gateway 会直接拒绝这些命令并提示只能在本地 TUI 使用，而不是转发出去。其中 `/yolo` 影响最大：一旦转发，IM 侧可以在聊天里完全无感知地关闭权限确认。请在本地 Chord TUI 中管理这些命令。`/models`、`/role` 和 `/queue` 也在 Chord 的本地命令集内，但 gateway 通过协议命令自行应答，不会转发。
 
-`/queue` 每次操作前都会先从 Chord 读取队列，因此条目序号始终对应刚刚展示的列表。改动会带上 Chord 上一次报告的修订号：如果队列在期间发生了变化，Chord 会拒绝该改动，回复会提示重新读取，而不是按同一个序号重试。
+`/queue` 每次操作前都会先从 Chord 读取队列，因此条目序号对应刚刚展示的列表。每次操作都会携带该视图的版本。如果输入、队列门控或其他可见状态在操作应用前发生变化，Chord 会拒绝过期操作并提示重新读取。存储阻塞等状态变化可能不会增加持久队列修订号。
 
 Chord 始终未回复的 `/queue` 改动会提示为「未确认」而不是失败——它仍可能已经生效。重复操作前请先用 `/queue` 核对。
+
+`/image <reference>` 请求 Chord 返回已保存的原图，不会再次调用生图服务。如果 Chord 已无法读取该 artifact，请求会失败，也不会重新生成图片。
 
 `/sessions` 在绑定目录中调用 `chord sessions list --json --limit 10`，并传递 `chord_state_dir`。自定义会话根目录和仓库 worktree 的共享会话由 Chord 解析。结果按最近活动时间排序，并标出使用中的会话；查询失败与空列表会分别提示。需要使用提供此命令的 Chord，gateway 不再扫描旧目录。
 
@@ -144,6 +146,8 @@ IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题�
 
 - `/allow` 批准
 - `/deny [reason]` 拒绝；可选原因会转发给 Chord
+
+单独发送 `/allow` 或 `/allow once` 只批准当前这次调用。添加 `--session`、`--project` 或 `--user`，可按指定作用域保存 Chord 为本次请求提供的权限规则；gateway 会报告每条规则的保存结果和失败项。规则保存失败不会撤销本次调用的批准。等待回执超时时，规则结果未知；依赖这些规则前，请先在 Chord 宿主机核查。只有 Chord 为当前请求提供了规则时，才能带作用域参数。
 
 飞书批准或拒绝请求提交后，原卡片会显示请求已提交，尚未确认 Chord 接受；请通过 `/status` 核查。卡片更新失败不会回滚提交；平台明确拒绝更新时可改用文本提示，更新结果未知时不重复发送。
 

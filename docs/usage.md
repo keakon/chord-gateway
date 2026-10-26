@@ -53,7 +53,7 @@ Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/questi
 | `/bind "<directory>" [pairing_code]` | Bind an existing directory; first private pairing requires the terminal code |
 | `/status` | Show current Chord state: busy/idle, session, current role, phase, last context checkpoint, pending interaction, and restored queued input |
 | `/cancel` | Cancel the current turn |
-| `/allow [--session\|--project\|--user] [request-id]` | Approve the pending confirmation. Add a scope flag to also record the rules Chord offered, so the same kind of work does not ask again |
+| `/allow [once\|--session\|--project\|--user] [request-id]` | Approve the pending confirmation. Add a scope flag to also record the rules Chord offered, so the same kind of work does not ask again |
 | `/deny [reason]` | Deny the pending confirmation; optional reason text is forwarded to Chord |
 | `/answer @<id> <text>` | Answer or revise an explicit question ID; numeric shortcuts are supported |
 | `/handoff <agent> [model_pool]` | Forward an acceptance for a pending Chord handoff request; omit arguments to let Chord use its default agent |
@@ -83,8 +83,9 @@ Notes:
 - `/login wechat` is the documented command name for WeChat login renewal.
 - `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
 - Unrecognized slash commands are forwarded to Chord as normal text, with one exception: Chord runs `/export`, `/tier`, `/rename`, `/yolo`, `/compact` and a bare `/skill` on its own side rather than treating them as chat input, and nothing they change is reported back over the headless protocol. The gateway refuses them instead of forwarding them, and replies that they are only available in the local TUI. `/yolo` matters most: forwarding it would let an IM caller turn permission confirmations off without anything visible happening in the chat. Manage these from the local Chord TUI. `/models`, `/role` and `/queue` are in Chord's own local-only set too, but the gateway answers them through protocol commands rather than forwarding them.
-- `/queue` reads the queue from Chord before acting, so its item numbers always refer to the listing just shown. It sends the revision Chord reported with each change: if the queue moved in between, Chord refuses the change and the reply says to re-read instead of retrying the same number.
+- `/queue` reads the queue from Chord before acting, so item numbers refer to the listing just shown. Each operation carries that view's version. If an input, queue gate, or other visible state changes before the operation is applied, Chord rejects the stale operation and asks you to read the queue again. Some state changes, such as a storage block, do not advance the durable queue revision.
 - A `/queue` change that Chord never answers is reported as unconfirmed rather than failed, because it may still have been applied. Check with `/queue` before repeating it.
+- `/image <reference>` asks Chord for the saved original image; it does not run image generation again. If Chord can no longer read the artifact, the request fails and the image is not recreated.
 - `/summary` is not part of the documented gateway command set.
 
 `/sessions` queries `chord sessions list --json --limit 10` in the bound directory and forwards `chord_state_dir`. Chord resolves custom session roots and sessions shared by repository worktrees. Results are ordered by recent activity and mark sessions in use. Query failures are reported separately from an empty list. Use a Chord build providing this command; the gateway does not scan legacy directories.
@@ -149,6 +150,8 @@ When Chord asks for permission, Feishu can show an interactive confirmation card
 - `/deny [reason]` to reject, optionally including a reason that is forwarded to Chord
 
 Both commands only apply to the currently pending confirmation. If no confirmation is pending, the gateway warns that there is nothing to respond to. If you supply a request ID that does not match the current pending confirmation, the gateway rejects the action as a mismatch.
+
+Bare `/allow` and `/allow once` approve only this call. Add `--session`, `--project`, or `--user` to save the permission rules Chord offered at the selected scope; the gateway reports which rules were saved and any per-rule failures. The approval remains in effect for this call if saving a rule fails. If the receipt times out, the rule outcome is unknown, so check the rules on the Chord host before relying on them. A scope flag is valid only when Chord offered rules for the request.
 
 After submitting a Feishu approval or denial, the original card reports that the request was submitted and Chord acceptance remains unconfirmed; check `/status`. A card update failure does not roll back the submission. An explicitly rejected update may fall back to text; an unknown update outcome does not trigger a duplicate send.
 
