@@ -28,6 +28,7 @@ CHORD_REPO ?= ../chord
 help:
 	@echo "preflight   what pre-push runs: goimports, quality gate, gopls"
 	@echo "ci          the full gate CI runs"
+	@echo "build-matrix cross-build every supported GOOS/GOARCH target"
 	@echo "test-fast   tests with TMPDIR on a memory-backed filesystem when possible"
 	@echo "fmt         apply goimports + gofmt"
 	@echo "quality     scripts/check-go-quality.sh (coverage + race + vet + staticcheck)"
@@ -35,7 +36,7 @@ help:
 
 # Same Go checks CI runs. Docs checks stay in .githooks/pre-push and
 # .github/workflows/docs.yml because they depend on the changed paths.
-ci: fmt-check deps-check quality gopls-check contract docs-check
+ci: fmt-check deps-check quality gopls-check build-matrix contract docs-check
 
 # The gates .githooks/pre-push runs, plus the cheaper module-tidiness check;
 # docs checks stay in the hook because they depend on the changed paths.
@@ -97,6 +98,12 @@ staticcheck:
 # here, once per target platform.
 gopls-check:
 	CG_GO=$(GO) CG_GOPLS=$(GOPLS) ./scripts/check_gopls.sh
+
+# Complements gopls-check: that gate only sees the host platform's files, so the
+# windows and unix twins are type-checked here. The target list lives in the
+# script because .github/workflows/ci.yml calls the same one.
+build-matrix:
+	./scripts/check_build_matrix.sh
 
 docs-check:
 	python3 scripts/check-docs.py
