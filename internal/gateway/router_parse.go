@@ -85,6 +85,9 @@ func parseIMCommand(text string) im.IMCommand {
 			reason = strings.TrimSpace(text[len(parts[0]):])
 		}
 		return im.IMCommand{Type: "handoff", Action: "deny", Reason: reason}
+	case "/image":
+		// Re-requests a generated image Chord still holds, by artifact reference.
+		return im.IMCommand{Type: "image", Content: strings.TrimSpace(rest)}
 	case "/role":
 		content := ""
 		if len(parts) > 1 {

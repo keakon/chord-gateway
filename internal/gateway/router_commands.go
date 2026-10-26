@@ -61,6 +61,8 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		r.handleHandoffCommand(ws, chatID, cmd, procKey, proc)
 	case "role":
 		r.handleRoleCommand(ws, chatID, cmd, incoming, procKey, proc)
+	case "image":
+		r.handleImageCommand(ws, chatID, cmd, procKey, proc)
 	case "send":
 		r.handleSendCommand(ws, chatID, cmd, incoming, procKey, proc)
 	case "local_shell":
@@ -69,6 +71,33 @@ func (r *NotificationRouter) handleChordCommand(ws *config.Workspace, chatID str
 		log.Warnf("unknown command type type=%v", cmd.Type)
 		r.sendTextForKey(procKey, chatID, fmt.Sprintf("⚠️ Unknown command: %s", cmd.Type))
 	}
+}
+
+// handleImageCommand asks Chord to resend a generated image by artifact
+// reference. A transfer that lost chunks used to be unrecoverable from IM — the
+// notice said the original was still in Chord but offered no way to get it.
+func (r *NotificationRouter) handleImageCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, procKey string, proc *ChordProcess) {
+	reference := strings.TrimSpace(cmd.Content)
+	if reference == "" {
+		r.sendTextForKey(procKey, chatID, "⚠️ Use /image <reference> with the reference from the failed transfer notice.")
+		return
+	}
+	if !strings.HasPrefix(reference, "artifact:images/") {
+		r.sendTextForKey(procKey, chatID, "⚠️ That is not an image artifact reference. It should start with artifact:images/.")
+		return
+	}
+	state := proc.State()
+	if !proc.images.expectRefetch(state.SessionID, reference) {
+		r.sendTextForKey(procKey, chatID, "⚠️ A resend for that image is already pending or already arrived.")
+		return
+	}
+	if err := proc.SendCommand(map[string]any{"type": "image_artifact", "content": reference, "request_id": "im-image-" + state.SessionID}); err != nil {
+		log.Errorf("failed to request image resend workspace=%v error=%v", ws.ID, err)
+		r.sendTextForKey(procKey, chatID, "❌ Failed to ask Chord for the original image.")
+		return
+	}
+	log.Infof("image.resend_requested workspace=%v chat_id=%v reference=%v", ws.ID, chatID, reference)
+	r.sendTextForKey(procKey, chatID, "🖼️ Asked Chord for the original image; it arrives here when the transfer finishes.")
 }
 
 func (r *NotificationRouter) handleStatusCommand(ws *config.Workspace, chatID, imType string, proc *ChordProcess) {

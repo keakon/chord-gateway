@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -35,6 +36,10 @@ type imageReceiveEntry struct {
 	file   *os.File
 	digest hash.Hash
 	offset int64
+	// refetch marks an entry created by an explicit re-request rather than an
+	// image_result summary. Chord answers a re-request with chunks only, so the
+	// metadata has to come from the first chunk's own headers.
+	refetch bool
 }
 
 // Image identity is scoped to the durable session and the emitting Agent.
@@ -47,8 +52,38 @@ type imageReceiver struct {
 	entries map[imageReceiveKey]*imageReceiveEntry
 	// Completed and failed identities share a bounded terminal cache. Failed
 	// transfers consume the remaining chunks without reporting every chunk.
+	// expected holds references the gateway actively asked Chord to resend.
+	// Indexed by reference alone: Chord answers a re-request with an empty call
+	// and agent id, so the identity tuple that normal delivery uses is not
+	// available to match on.
+	expected  map[string]imageReceiveKey
 	seen      map[imageReceiveKey]bool
 	seenOrder []imageReceiveKey
+}
+
+// expectRefetch records that the gateway asked Chord to resend reference, so the
+// arriving chunks can bootstrap their own metadata instead of being rejected for
+// having no preceding image_result. Returns false when the reference is already
+// fully known, which would mean a duplicate re-request.
+func (r *imageReceiver) expectRefetch(session, reference string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, e := range r.entries {
+		if key.reference == reference {
+			return !e.refetch
+		}
+	}
+	if r.seen[imageReceiveKey{reference: reference}] {
+		return false
+	}
+	if r.expected == nil {
+		r.expected = make(map[string]imageReceiveKey)
+	}
+	if _, ok := r.expected[reference]; ok {
+		return false
+	}
+	r.expected[reference] = imageReceiveKey{session: session, reference: reference}
+	return true
 }
 
 // rememberTerminal requires r.mu and stores no image bytes or open files.
@@ -74,6 +109,7 @@ func (r *imageReceiver) reset() {
 		r.discard(e)
 	}
 	r.entries = nil
+	r.expected = nil
 	r.seen = nil
 	r.seenOrder = nil
 }
@@ -92,13 +128,27 @@ func (r *imageReceiver) finish() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	count := len(r.entries)
+	// Collect before the loop clears the map, or the notice loses the very
+	// references it exists to hand out.
+	refs := make([]string, 0, count)
+	for _, e := range r.entries {
+		if e.meta.Reference != "" {
+			refs = append(refs, e.meta.Reference)
+		}
+	}
 	for key, e := range r.entries {
 		r.discard(e)
 		delete(r.entries, key)
 		r.rememberTerminal(key)
 	}
 	if count != 0 {
-		return fmt.Errorf("%d incomplete image transfer(s) discarded; originals remain in Chord", count)
+		// Name the recoverable references: each one can be re-requested with
+		// /image <reference>, which is the only way back to a lost transfer.
+		sort.Strings(refs)
+		if len(refs) > 3 {
+			refs = append(refs[:3:3], fmt.Sprintf("…and %d more", len(refs)-3))
+		}
+		return fmt.Errorf("%d incomplete image transfer(s) discarded; re-request an original with /image <reference>: %s", count, strings.Join(refs, ", "))
 	}
 	return nil
 }
@@ -177,6 +227,61 @@ func (r *imageReceiver) result(raw json.RawMessage, session string) error {
 	return nil
 }
 
+// imageDigestFromReference recovers the expected SHA-256 from the reference Chord
+// issues. Reference form is artifact:images/sha256-<hex>.<ext>, and the digest is
+// what makes a re-requested image verifiable without a signed summary.
+func imageDigestFromReference(reference, mime string) (string, error) {
+	prefix := "artifact:images/sha256-"
+	rest, ok := strings.CutPrefix(reference, prefix)
+	if !ok {
+		return "", fmt.Errorf("image reference is not an artifact reference")
+	}
+	digest, ext, found := cutLast(rest, ".")
+	if !found {
+		return "", fmt.Errorf("image reference has no extension")
+	}
+	if len(digest) != hex.EncodedLen(sha256.Size) || !isHex(digest) {
+		return "", fmt.Errorf("image reference digest is malformed")
+	}
+	want := map[string]bool{"image/png": true, "image/jpeg": true, "image/webp": true}[mime]
+	switch {
+	case !want:
+		return "", fmt.Errorf("unsupported image type")
+	case ext == "png" && mime != "image/png", ext == "jpg" && mime != "image/jpeg", ext == "webp" && mime != "image/webp":
+		return "", fmt.Errorf("image extension does not match its type")
+	}
+	return digest, nil
+}
+
+func cutLast(s, sep string) (before, after string, found bool) {
+	if i := strings.LastIndex(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
+	}
+	return s, "", false
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// validateImageMetadata applies the same limits the normal image_result path
+// enforces, so a re-request cannot smuggle in something with no summary.
+func validateImageMetadata(m receivedImageMetadata) error {
+	if m.Size <= 0 || m.Size > im.MaxGatewayImageBytes || m.Width <= 0 || m.Height <= 0 || m.Width > im.MaxGatewayImageDimension || m.Height > im.MaxGatewayImageDimension || int64(m.Width)*int64(m.Height) > 36_000_000 || (m.MIME != "image/png" && m.MIME != "image/jpeg" && m.MIME != "image/webp") {
+		return fmt.Errorf("invalid image metadata")
+	}
+	if !strings.HasPrefix(m.Reference, "artifact:images/sha256-"+m.SHA256+".") {
+		return fmt.Errorf("image reference does not match digest")
+	}
+	return nil
+}
+
 func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.ReceivedImage, error) {
 	// Chunks carry no digest of their own; integrity is checked against the
 	// summary's SHA-256 once the final chunk arrives.
@@ -203,8 +308,34 @@ func (r *imageReceiver) chunk(raw json.RawMessage, session string) (*im.Received
 	}
 	e := r.entries[key]
 	if e == nil {
-		r.rememberTerminal(key)
-		return nil, fmt.Errorf("image chunk has no matching result")
+		// A re-requested reference arrives without a preceding image_result:
+		// Chord replays the chunks directly. Adopt this chunk's own headers as
+		// the metadata, then let the normal checks validate everything after it.
+		expected, ok := r.expected[p.Reference]
+		if !ok || expected.session != session {
+			r.rememberTerminal(key)
+			return nil, fmt.Errorf("image chunk has no matching result")
+		}
+		if p.Offset != 0 {
+			r.rememberTerminal(key)
+			return nil, fmt.Errorf("resumed image does not start at offset 0")
+		}
+		digest, err := imageDigestFromReference(p.Reference, p.MIME)
+		if err != nil {
+			r.rememberTerminal(key)
+			return nil, err
+		}
+		meta := receivedImageMetadata{Reference: p.Reference, SHA256: digest, Size: p.Size, MIME: p.MIME, Width: p.Width, Height: p.Height}
+		if err := validateImageMetadata(meta); err != nil {
+			r.rememberTerminal(key)
+			return nil, err
+		}
+		if r.entries == nil {
+			r.entries = make(map[imageReceiveKey]*imageReceiveEntry)
+		}
+		e = &imageReceiveEntry{meta: meta, refetch: true}
+		r.entries[key] = e
+		delete(r.expected, p.Reference)
 	}
 	fail := func(err error) (*im.ReceivedImage, error) {
 		r.discard(e)
