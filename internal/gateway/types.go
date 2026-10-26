@@ -4,6 +4,7 @@ package gateway
 import (
 	"encoding/json"
 	"maps"
+	"strings"
 	"time"
 )
 
@@ -151,7 +152,20 @@ type ConfirmResolutionPayload struct {
 	Outcome   string `json:"outcome"`
 }
 
+// ConfirmRuleItem is one rule Chord offers to record alongside an approval.
+// Chord sends these so an approver can allow a class of work once instead of
+// re-approving every identical call.
+type ConfirmRuleItem struct {
+	Tool    string `json:"tool,omitempty"`
+	Pattern string `json:"pattern"`
+}
+
 // ConfirmPayload is the confirm_request event payload.
+//
+// Chord sends far more than the gateway used to decode; every field below is
+// present on the wire today. The rule fields are what make "allow and remember"
+// reachable over IM: without them the only available action is bare approval,
+// and each subsequent identical tool call asks again.
 type ConfirmPayload struct {
 	ToolName      string   `json:"tool_name"`
 	ArgsJSON      string   `json:"args_json"`
@@ -159,6 +173,40 @@ type ConfirmPayload struct {
 	NeedsApproval []string `json:"needs_approval,omitempty"`
 	DoneReport    string   `json:"done_report,omitempty"`
 	DoneReason    string   `json:"done_reason,omitempty"`
+
+	TimeoutMS      int64    `json:"timeout_ms,omitempty"`
+	AlreadyAllowed []string `json:"already_allowed,omitempty"`
+	AgentID        string   `json:"agent_id,omitempty"`
+	// Rules are the patterns Chord would accept verbatim in rule_pattern /
+	// rule_items when recording an approval.
+	NeedsApprovalRules      []string          `json:"needs_approval_rules,omitempty"`
+	AlreadyAllowedRules     []string          `json:"already_allowed_rules,omitempty"`
+	NeedsApprovalRuleItems  []ConfirmRuleItem `json:"needs_approval_rule_items,omitempty"`
+	AlreadyAllowedRuleItems []ConfirmRuleItem `json:"already_allowed_rule_items,omitempty"`
+}
+
+// RuleCandidates returns the rule items worth recording for an approval.
+// Chord sends the items attached to the request it is resolving, so the approved
+// rules are the ones that actually caused this prompt.
+func (p *ConfirmPayload) RuleCandidates() []ConfirmRuleItem {
+	if p == nil {
+		return nil
+	}
+	if len(p.NeedsApprovalRuleItems) > 0 {
+		return p.NeedsApprovalRuleItems
+	}
+	rules := p.NeedsApprovalRules
+	if len(rules) == 0 {
+		return nil
+	}
+	items := make([]ConfirmRuleItem, 0, len(rules))
+	for _, pattern := range rules {
+		if strings.TrimSpace(pattern) == "" {
+			continue
+		}
+		items = append(items, ConfirmRuleItem{Pattern: pattern})
+	}
+	return items
 }
 
 // QuestionPayload is the question_request event payload.

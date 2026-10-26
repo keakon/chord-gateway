@@ -199,6 +199,17 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		r.sendTextForKey(procKey, chatID, "⚠️ Rejecting Done requires a reason. Reply /deny <what remains to do>.")
 		return
 	}
+	if cmd.Invalid {
+		r.sendTextForKey(procKey, chatID, "⚠️ Use /allow [--session|--project|--user] [request-id].")
+		return
+	}
+	rules := pc.RuleCandidates()
+	if cmd.RuleScope != "" && len(rules) == 0 {
+		// Nothing durable to record: Chord offered no rule for this request, so
+		// approving "and remember" would either fail or write a rule nobody chose.
+		r.sendTextForKey(procKey, chatID, "⚠️ This request offers no rules to remember. Use /allow to approve just this call.")
+		return
+	}
 	confirmCmd := map[string]any{
 		"type":       "confirm",
 		"request_id": requestID,
@@ -206,6 +217,14 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 	}
 	if cmd.Action == "deny" && reason != "" {
 		confirmCmd["deny_reason"] = reason
+	}
+	if cmd.RuleScope != "" {
+		confirmCmd["rule_scope"] = cmd.RuleScope
+		items := make([]map[string]string, 0, len(rules))
+		for _, rule := range rules {
+			items = append(items, map[string]string{"tool": rule.Tool, "pattern": rule.Pattern})
+		}
+		confirmCmd["rule_items"] = items
 	}
 	if err := proc.SendCommand(confirmCmd); err != nil {
 		log.Errorf("failed to send confirm response workspace=%v error=%v", ws.ID, err)
@@ -227,8 +246,27 @@ func (r *NotificationRouter) handleConfirmCommand(ws *config.Workspace, chatID s
 		return
 	}
 	r.resolveFeishuCard(msg, procKey, "confirm", requestID, "Confirmation approved", "✅ Approved by "+sender, "green")
-	log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName)
-	r.sendTextForKey(procKey, chatID, "✅ allowed")
+	log.Infof("confirm.responded workspace=%v chat_id=%v sender_id=%v request_id=%v action=%v tool=%v rules=%v rule_scope=%v", ws.ID, chatID, msg.SenderID, requestID, cmd.Action, pc.ToolName, len(rules), cmd.RuleScope)
+	if cmd.RuleScope == "" {
+		r.sendTextForKey(procKey, chatID, "✅ allowed")
+		return
+	}
+	// Recording a rule widens every later decision in that scope, so the
+	// receipt names the scope rather than saying only "allowed".
+	r.sendTextForKey(procKey, chatID, fmt.Sprintf("✅ allowed; %d rule(s) remembered for the %s scope", len(rules), confirmRuleScopeLabel(cmd.RuleScope)))
+}
+
+// confirmRuleScopeLabel renders each rule scope the way the operator sees it in
+// Chord so the receipt and the durable permission file agree.
+func confirmRuleScopeLabel(scope string) string {
+	switch scope {
+	case "project":
+		return "project"
+	case "user_global":
+		return "user-wide"
+	default:
+		return "session"
+	}
 }
 
 func (r *NotificationRouter) handleQuestionCommand(ws *config.Workspace, chatID string, cmd im.IMCommand, msg im.IncomingMessage, procKey string, proc *ChordProcess) {

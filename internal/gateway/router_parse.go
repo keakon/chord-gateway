@@ -44,11 +44,10 @@ func parseIMCommand(text string) im.IMCommand {
 	case "/cancel":
 		return im.IMCommand{Type: "cancel"}
 	case "/allow":
-		requestID := ""
-		if len(parts) > 1 {
-			requestID = strings.TrimSpace(parts[1])
-		}
-		return im.IMCommand{Type: "confirm", Action: "allow", RequestID: requestID}
+		// Accepts "/allow", "/allow <request-id>", and any combination with a
+		// persistence flag: "/allow --session", "/allow req-3 --project".
+		scope, requestID, invalid := parseAllowArgs(rest)
+		return im.IMCommand{Type: "confirm", Action: "allow", RequestID: requestID, RuleScope: scope, Invalid: invalid}
 	case "/deny":
 		reason := ""
 		if len(parts) > 1 {
@@ -121,6 +120,46 @@ func parseIMCommand(text string) im.IMCommand {
 	default:
 		return im.IMCommand{Type: "send", Content: text}
 	}
+}
+
+// confirmRuleScopes maps the flags an IM user can append to /allow onto the
+// rule_scope Chord accepts. The long flag is documented; the short forms stay
+// available because typing "--project" on a phone keypad is unpleasant.
+var confirmRuleScopes = map[string]string{
+	"--session": "session",
+	"--project": "project",
+	"--user":    "user_global",
+	"-s":        "session",
+	"-p":        "project",
+	"-u":        "user_global",
+}
+
+// parseAllowArgs splits the tail of "/allow" into a rule scope and a request id.
+// Two unconsumed positional fields are a syntax error rather than a silent merge,
+// because a mistyped scope would otherwise be remembered as a wrong request.
+func parseAllowArgs(rest string) (scope, requestID string, invalid bool) {
+	fields := strings.Fields(rest)
+	for _, field := range fields {
+		switch {
+		case field == "once":
+			// Explicit and optional: bare /allow already approves once.
+			continue
+		case confirmRuleScopes[field] != "":
+			if scope != "" {
+				return "", "", true
+			}
+			scope = confirmRuleScopes[field]
+			continue
+		case strings.HasPrefix(field, "-"):
+			return "", "", true
+		default:
+			if requestID != "" {
+				return "", "", true
+			}
+			requestID = field
+		}
+	}
+	return scope, strings.TrimPrefix(requestID, "@"), false
 }
 
 func commandFromInternalAction(action *im.InternalAction) im.IMCommand {

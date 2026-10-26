@@ -21,6 +21,9 @@ type IMCommand struct {
 	Answers   []string // for question
 	SessionID string   // for resume
 	Invalid   bool     // command-specific parse failure
+	// RuleScope carries confirm rule persistence: "" approves once, otherwise
+	// "session", "project" or "user_global" also records the rules Chord offered.
+	RuleScope string
 }
 
 // IncomingMessage is the structured inbound message model.
