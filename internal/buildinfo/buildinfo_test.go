@@ -11,8 +11,8 @@ func TestDefaultVersionIsResolvedFromBuildMetadata(t *testing.T) {
 	if Version != "" {
 		t.Fatalf("Version = %q, want empty default before ldflags", Version)
 	}
-	if DefaultDevVersion != "v0.3.3-dev" {
-		t.Fatalf("DefaultDevVersion = %q, want %q", DefaultDevVersion, "v0.3.3-dev")
+	if DefaultDevVersion != "v0.3.4-dev" {
+		t.Fatalf("DefaultDevVersion = %q, want %q", DefaultDevVersion, "v0.3.4-dev")
 	}
 }
 
