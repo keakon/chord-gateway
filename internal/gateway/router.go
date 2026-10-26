@@ -46,6 +46,7 @@ type NotificationRouter struct {
 	questionOperations    map[string]pendingQuestionOperation
 	cardHandles           map[string]cardHandleEntry
 	transferNotices       map[string]transferNotice
+	queueViews            map[string]queueView
 	outbound              *outboundDispatcher
 }
 

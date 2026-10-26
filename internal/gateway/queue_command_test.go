@@ -148,6 +148,7 @@ func testQueue(revision uint64, items ...InputQueueItem) *InputQueue {
 	return &InputQueue{
 		InputQueueTarget: InputQueueTarget{RuntimeID: "runtime-1", SessionID: "session-1", SessionEpoch: 3, OwnerTaskID: "main"},
 		ViewVersion:      revision,
+		ViewVersionCAS:   true,
 		QueueRevision:    revision,
 		Gate:             InputQueueGate{Mode: "running"},
 		Inputs:           items,
@@ -271,6 +272,7 @@ func TestQueueCommandRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newQueueHarness(t)
+			h.r.queueViews = map[string]queueView{h.proc.key: {proc: h.proc, queue: testQueue(9, items...)}}
 			h.answerQueue(testQueue(9, items...), tc.result)
 			h.r.handleChordCommand(h.ws, "chat-1", parseIMCommand(tc.command), "wechat", nil)
 
@@ -301,6 +303,7 @@ func TestQueueCommandRoundTrip(t *testing.T) {
 func TestQueueCommandConflictAsksForRefresh(t *testing.T) {
 	h := newQueueHarness(t)
 	items := []InputQueueItem{{InputID: "input-a", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued", Preview: "gone"}}
+	h.r.queueViews = map[string]queueView{h.proc.key: {proc: h.proc, queue: testQueue(9, items...)}}
 	h.answerQueue(testQueue(9, items...), InputQueueResult{Result: inputQueueConflict, Reason: `queued input "input-a" no longer exists`})
 	h.r.handleChordCommand(h.ws, "chat-1", parseIMCommand("/queue delete 1"), "wechat", nil)
 
@@ -313,6 +316,7 @@ func TestQueueCommandConflictAsksForRefresh(t *testing.T) {
 func TestQueueCommandRejectsUnaddressableIndex(t *testing.T) {
 	h := newQueueHarness(t)
 	items := []InputQueueItem{{InputID: "input-a", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued", Preview: "only one"}}
+	h.r.queueViews = map[string]queueView{h.proc.key: {proc: h.proc, queue: testQueue(9, items...)}}
 	h.answerQueue(testQueue(9, items...), InputQueueResult{Result: inputQueueCommitted})
 	h.r.handleChordCommand(h.ws, "chat-1", parseIMCommand("/queue delete 3"), "wechat", nil)
 
@@ -330,6 +334,7 @@ func TestQueueCommandRejectsUnaddressableIndex(t *testing.T) {
 func TestQueueCommandEditRefusesAttachments(t *testing.T) {
 	h := newQueueHarness(t)
 	items := []InputQueueItem{{InputID: "input-a", Revision: 2, Sequence: 1, Policy: "next_request", Stage: "queued", Preview: "chart", Attachments: 1}}
+	h.r.queueViews = map[string]queueView{h.proc.key: {proc: h.proc, queue: testQueue(9, items...)}}
 	h.answerQueue(testQueue(9, items...), InputQueueResult{Result: inputQueueCommitted})
 	h.r.handleChordCommand(h.ws, "chat-1", parseIMCommand("/queue edit 1 new text"), "wechat", nil)
 

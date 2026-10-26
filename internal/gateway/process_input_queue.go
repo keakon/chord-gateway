@@ -44,12 +44,13 @@ type InputQueueItem struct {
 type InputQueue struct {
 	RestoredNextInputsBlocked bool `json:"restored_next_inputs_blocked,omitempty"`
 	InputQueueTarget
-	ViewVersion   uint64           `json:"view_version"`
-	QueueRevision uint64           `json:"queue_revision"`
-	Gate          InputQueueGate   `json:"gate"`
-	Works         []InputQueueWork `json:"works"`
-	Inputs        []InputQueueItem `json:"inputs"`
-	Blocked       string           `json:"blocked,omitempty"`
+	ViewVersion    uint64           `json:"view_version"`
+	ViewVersionCAS bool             `json:"view_version_cas"`
+	QueueRevision  uint64           `json:"queue_revision"`
+	Gate           InputQueueGate   `json:"gate"`
+	Works          []InputQueueWork `json:"works"`
+	Inputs         []InputQueueItem `json:"inputs"`
+	Blocked        string           `json:"blocked,omitempty"`
 }
 
 func (q *InputQueue) clone() *InputQueue {
@@ -171,7 +172,16 @@ func (p *ChordProcess) waitForInputQueueResult(ctx context.Context, cmd map[stri
 	}
 	operationID := "gwq-" + rand.Text()
 	cmd["operation_id"] = operationID
-	cmd["target"] = target
+	if _, supplied := cmd["target"]; !supplied {
+		cmd["target"] = target
+	}
+	if _, supplied := cmd["expected_view_version"]; !supplied {
+		p.mu.RLock()
+		if queue := p.state.InputQueue; queue != nil && queue.ViewVersionCAS {
+			cmd["expected_view_version"] = queue.ViewVersion
+		}
+		p.mu.RUnlock()
+	}
 	// Chord refuses an input_queue command whose binding_id does not match the
 	// --gateway-instance it was started with, so a managed process must echo it
 	// back or every mutation fails as if the binding had changed.

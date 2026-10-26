@@ -39,6 +39,22 @@ type queueRequest struct {
 	text   string
 }
 
+type queueView struct {
+	proc  *ChordProcess
+	queue *InputQueue
+}
+
+func (r *NotificationRouter) showQueue(procKey, chatID string, proc *ChordProcess, queue *InputQueue, note string) {
+	if r.sendTextForKey(procKey, chatID, formatInputQueue(queue)+note) {
+		r.mu.Lock()
+		if r.queueViews == nil {
+			r.queueViews = make(map[string]queueView)
+		}
+		r.queueViews[procKey] = queueView{proc: proc, queue: queue.clone()}
+		r.mu.Unlock()
+	}
+}
+
 // parseQueueRequest splits the tail of /queue. Positions are 1-based to match
 // formatInputQueue, so an operator can act on the item they just read without
 // copying an opaque Chord input ID.
@@ -134,9 +150,8 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 		return
 	}
 
-	// Refresh before acting. Every action either addresses an item by its
-	// position in this projection or sends its revision as the compare-and-set
-	// value, so a stale snapshot would either hit the wrong item or be refused.
+	// Refresh to detect a changed view, without reinterpreting the user's
+	// numeric address against the new list.
 	refreshCtx, refreshCancel := context.WithTimeout(context.Background(), inputQueueRefreshTimeout)
 	queue, refreshErr := r.refreshInputQueue(refreshCtx, proc)
 	refreshCancel()
@@ -151,12 +166,30 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 	}
 
 	if request.action == "list" {
-		text := formatInputQueue(queue)
+		note := ""
 		if refreshErr != nil {
-			text += "\n\n⚠️ Could not refresh from Chord; this is the last state it reported."
+			note = "\n\n⚠️ Could not refresh from Chord; this is the last state it reported."
 		}
-		r.sendTextForKey(procKey, chatID, text)
+		r.showQueue(procKey, chatID, proc, queue, note)
 		return
+	}
+	if !queue.ViewVersionCAS {
+		r.sendTextForKey(procKey, chatID, "⚠️ This Chord build does not support queue view checks. /queue can list the queue; manage it in the local Chord TUI.")
+		return
+	}
+	if request.index > 0 {
+		r.mu.RLock()
+		view := r.queueViews[procKey]
+		r.mu.RUnlock()
+		if view.proc != proc || view.queue == nil {
+			r.showQueue(procKey, chatID, proc, queue, "\n\n⚠️ Read this list before choosing an item number, then repeat the command.")
+			return
+		}
+		if view.queue.InputQueueTarget != queue.InputQueueTarget || view.queue.ViewVersion != queue.ViewVersion {
+			r.showQueue(procKey, chatID, proc, queue, "\n\n⚠️ The queue changed since the list was shown. No change was submitted; choose an item from this list.")
+			return
+		}
+		queue = view.queue
 	}
 	if request.action == "after" {
 		ctx, cancel := context.WithTimeout(context.Background(), inputQueueTimeout)
@@ -183,7 +216,7 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 		target = fmt.Sprintf("#%d/%s", request.index, item.Policy)
 		switch request.action {
 		case "show":
-			result, err = proc.WaitInputQueue(ctx, "get", map[string]any{"input_id": item.InputID})
+			result, err = proc.WaitInputQueue(ctx, "get", map[string]any{"input_id": item.InputID, "expected_view_version": queue.ViewVersion, "target": queue.InputQueueTarget})
 		case "edit":
 			if item.Attachments > 0 {
 				// Chord refuses this too, and its reason ("Use the local TUI to
@@ -193,19 +226,23 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 				return
 			}
 			result, err = proc.WaitInputQueue(ctx, "update", map[string]any{
-				"input_id":          item.InputID,
-				"expected_revision": item.Revision,
-				"content":           request.text,
+				"input_id":              item.InputID,
+				"expected_revision":     item.Revision,
+				"content":               request.text,
+				"expected_view_version": queue.ViewVersion,
+				"target":                queue.InputQueueTarget,
 			})
 		default:
 			result, err = proc.WaitInputQueue(ctx, "delete", map[string]any{
-				"input_id":          item.InputID,
-				"expected_revision": item.Revision,
+				"input_id":              item.InputID,
+				"expected_revision":     item.Revision,
+				"expected_view_version": queue.ViewVersion,
+				"target":                queue.InputQueueTarget,
 			})
 		}
 	case "pause", "resume", "clear":
 		target = request.action
-		result, err = proc.WaitInputQueue(ctx, request.action, map[string]any{"expected_queue_revision": queue.QueueRevision})
+		result, err = proc.WaitInputQueue(ctx, request.action, map[string]any{"expected_queue_revision": queue.QueueRevision, "expected_view_version": queue.ViewVersion, "target": queue.InputQueueTarget})
 	default:
 		r.sendTextForKey(procKey, chatID, queueUsage)
 		return
