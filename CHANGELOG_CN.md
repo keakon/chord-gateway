@@ -137,6 +137,7 @@
 - 企业微信与钉钉不再把空白消息当作空任务下发，和 Telegram 一样按非法输入拒绝。
 - Slack 发送失败改为报告限定的分类（`invalid_target`、`forbidden`、`credentials`、`api_rejected`、`platform_rejected`），不再把所有明确拒绝都塌缩为 `delivery_failed`；钉钉的拒绝回复改为提示用户重发，机器人回调为 fire-and-forget，不会被平台重投。
 - 启动时的代理日志改为报告每平台实际生效值，并把仅含空白的 `proxy_url` 视为直连，不再显示为已配置。
+- 会话已经移交到 TUI、源端移交也已结束的聊天，现在可以用显式 `/takeover <session-id>` 收回。此前残留的移交阻断会让所有接管都以 `target_not_ready` 被拒，而新 owner 持有会话锁又让 `/resume` 持续失败，只剩 `/new` 一条出路。现在预检确认当前 owner 后，新移交会替换已结束的阻断；进行中或入向的移交、仍在运行的进程和未投递输入仍会拒绝接管。
 
 
 ## v0.3.3 – 2026-10-12

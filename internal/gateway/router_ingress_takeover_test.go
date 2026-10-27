@@ -72,6 +72,81 @@ func TestIngressTakeoverStartUsesAuthoritativeResult(t *testing.T) {
 	}
 }
 
+// A binding that handed its session to another runtime stays blocked on purpose,
+// but an explicit takeover has to be able to ask that runtime for the session
+// back. Before superseding, a finished guard refused /takeover forever while
+// /new and /resume could not clear it either: the new owner still held the
+// session lock, so the chat had no way back in.
+func TestIngressTakeoverSupersedePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		state     string
+		direction string
+		reason    string
+	}{
+		{name: "released outgoing guard", state: "released", direction: "outgoing"},
+		{name: "saved outgoing guard", state: "saved", direction: "outgoing"},
+		{name: "draining outgoing guard", state: "draining", direction: "outgoing", reason: "target_not_ready"},
+		{name: "incoming guard", state: "waiting_source", direction: "incoming", reason: "target_not_ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.Workspaces[0].Path = t.TempDir()
+			m := newTestChordManager(cfg)
+			m.transfers = newSessionTransferStore(t.TempDir())
+			r := NewNotificationRouter(m)
+			t.Cleanup(r.Close)
+			r.ingressStore = testIngressStore(t)
+			identity := im.ChatIdentity{Platform: "wechat", AccountID: "bot", ChatID: "chat"}
+			if _, err := r.ingressStore.EnsureRoute(context.Background(), identity, "digest", "test", ""); err != nil {
+				t.Fatal(err)
+			}
+			key := (processKey{workspaceID: "test", imType: "wechat", chatID: "chat"}).String()
+			finished := takeoverTestRecord(tc.state)
+			finished.Direction = tc.direction
+			finished.Interrupted = true
+			finished.Status.StartedAt = "2026-01-01T00:00:00Z"
+			if err := m.transfers.update(key, &finished, ""); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			var preflight TransferStatus
+			m.takeoverCLI = func(_ context.Context, _ string, req takeoverRequest) (TransferStatus, error) {
+				calls++
+				if req.Action == transferStatePreflight {
+					preflight = TransferStatus{TransferID: req.TransferID, SessionID: req.SessionID, SourceRuntimeID: "source", SourceSessionEpoch: 3, Workspace: cfg.Workspaces[0].Path, TargetKind: "gateway", TargetInstanceID: req.TargetInstanceID, State: transferStatePreflight}
+					return preflight, nil
+				}
+				status := preflight
+				status.State = "draining"
+				return status, nil
+			}
+			msg := im.IncomingMessage{IMType: "wechat", ChatID: "chat"}
+			msg.SetAdmissionTicket(&im.AdmissionTicket{Identity: identity})
+			got := r.dispatchIngressTakeover(context.Background(), msg, key, im.IMCommand{Type: "takeover", Action: "start", SessionID: "session"}, nil)
+			if tc.reason != "" {
+				if got.State != im.IngressRejected || got.Reason != tc.reason || calls != 0 {
+					t.Fatalf("result=%+v calls=%d", got, calls)
+				}
+				if guard, ok, err := m.transfers.Get(key); err != nil || !ok || guard.Status.TransferID != finished.Status.TransferID {
+					t.Fatalf("refused takeover changed the existing guard: %#v, %v", guard, err)
+				}
+				return
+			}
+			if got.State != im.IngressSubmitted || got.Reason != "transfer_pending" || calls != 2 {
+				t.Fatalf("result=%+v calls=%d", got, calls)
+			}
+			guard, ok, err := m.transfers.Get(key)
+			if err != nil || !ok {
+				t.Fatalf("guard = %#v, %v", guard, err)
+			}
+			if guard.Direction != "incoming" || guard.Status.TransferID != preflight.TransferID || guard.Interrupted || guard.Status.StartedAt != "" {
+				t.Fatalf("superseding guard inherited finished transfer evidence: %#v", guard)
+			}
+		})
+	}
+}
+
 func TestIngressTakeoverPendingBlocksMutatingStart(t *testing.T) {
 	cfg := testConfig()
 	cfg.Workspaces[0].Path = t.TempDir()

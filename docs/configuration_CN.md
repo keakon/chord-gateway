@@ -291,7 +291,7 @@ platform + account + owner + workspace + chat (encoded)
 
 如果未设置 `session_pins_file`，默认路径为 `<state_dir>/session-pins.json`。
 
-移交阻断优先于 pin。移交开始后，普通输入和自动重启都不能恢复该 pin，也不会自动改用新会话。阻断在 gateway 重启后仍然保留。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功；失败时保留阻断。详见[会话接管](./usage_CN.md#会话接管)。
+移交阻断优先于 pin。移交开始后，普通输入和自动重启都不能恢复该 pin，也不会自动改用新会话。阻断在 gateway 重启后仍然保留。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功，或 `/takeover <session-id>` 覆盖已经结束（`released` 或 `saved`）的外向移交；失败时保留阻断。详见[会话接管](./usage_CN.md#会话接管)。
 
 ## 飞书绑定流程
 

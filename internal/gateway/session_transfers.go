@@ -131,6 +131,21 @@ func (s *sessionTransferStore) Blocked(key string) bool {
 	return ok || err != nil
 }
 func (s *sessionTransferStore) update(key string, value *sessionTransfer, expectedID string) error {
+	return s.commit(key, value, expectedID, true)
+}
+
+// replace supersedes the transfer named by expectedID instead of extending it.
+// A new transfer on the same binding is a separate operation, so it must not
+// inherit the previous transfer's interruption evidence or start time. Only an
+// explicit takeover of a finished transfer uses this path.
+func (s *sessionTransferStore) replace(key string, value sessionTransfer, expectedID string) error {
+	if expectedID == "" {
+		return errors.New("replace requires a transfer identity")
+	}
+	return s.commit(key, &value, expectedID, false)
+}
+
+func (s *sessionTransferStore) commit(key string, value *sessionTransfer, expectedID string, inherit bool) error {
 	if s == nil {
 		return errors.New("session transfer storage unavailable")
 	}
@@ -149,9 +164,11 @@ func (s *sessionTransferStore) update(key string, value *sessionTransfer, expect
 	var normalized sessionTransfer
 	if value != nil {
 		v := *value
-		v.Interrupted = v.Interrupted || old.Interrupted
-		if old.Status.StartedAt != "" {
-			v.Status.StartedAt = old.Status.StartedAt
+		if inherit {
+			v.Interrupted = v.Interrupted || old.Interrupted
+			if old.Status.StartedAt != "" {
+				v.Status.StartedAt = old.Status.StartedAt
+			}
 		}
 		v.Status.WaitExpired = false
 		v.Status.Blockers = append([]TransferBlocker(nil), v.Status.Blockers...)

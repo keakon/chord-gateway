@@ -40,6 +40,35 @@ func TestSessionTransferGuardSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestSessionTransferReplaceSupersedesFinishedTransfer(t *testing.T) {
+	store := newSessionTransferStore(t.TempDir())
+	finished := takeoverTestRecord("released")
+	finished.Interrupted = true
+	finished.Status.StartedAt = "2026-01-01T00:00:00Z"
+	if err := store.update("key", &finished, ""); err != nil {
+		t.Fatal(err)
+	}
+	next := takeoverTestRecord("preflight")
+	next.Direction = "incoming"
+	next.Status.TransferID = "transfer-2"
+	if err := store.replace("key", next, ""); err == nil {
+		t.Fatal("replace without a transfer identity accepted")
+	}
+	if err := store.replace("key", next, finished.Status.TransferID); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := store.Get("key")
+	if err != nil || !ok {
+		t.Fatalf("guard = %#v, %v", got, err)
+	}
+	if got.Status.TransferID != "transfer-2" || got.Direction != "incoming" || got.Interrupted || got.Status.StartedAt != "" {
+		t.Fatalf("replace inherited finished transfer evidence: %#v", got)
+	}
+	if err := store.replace("key", next, finished.Status.TransferID); err == nil {
+		t.Fatal("stale replace accepted")
+	}
+}
+
 func TestSessionTransferFailedPersistenceKeepsGuard(t *testing.T) {
 	store := newSessionTransferStore(t.TempDir())
 	record := takeoverTestRecord("draining")

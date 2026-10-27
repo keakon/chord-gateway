@@ -137,6 +137,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - WeCom and DingTalk no longer dispatch an empty or whitespace-only message as an empty task; both reject it as invalid input like Telegram.
 - Slack send failures report bounded categories (`invalid_target`, `forbidden`, `credentials`, `api_rejected`, `platform_rejected`) instead of collapsing every explicit rejection into `delivery_failed`, and the DingTalk refusal reply now tells the user to resend, since robot callbacks are fire-and-forget and are not redelivered.
 - The startup proxy log reports the effective per-platform value and treats a whitespace-only `proxy_url` as a direct connection instead of reporting it as configured.
+- An explicit `/takeover <session-id>` now recovers a chat whose session was exported to a TUI and whose source transfer already finished. That leftover guard used to refuse every takeover with `target_not_ready` while `/resume` kept failing because the new owner held the session lock, leaving `/new` as the only way out. The new transfer replaces the finished guard after the usual preflight confirms the current owner; in-flight and incoming transfers, live processes and undelivered input still refuse the takeover.
 
 
 ## v0.3.3 – 2026-10-12

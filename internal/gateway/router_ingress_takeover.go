@@ -109,6 +109,13 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg im
 	if err != nil {
 		return reject("transfer_storage_unavailable")
 	}
+	// A finished outgoing transfer already handed this session to another
+	// runtime. Taking it back is exactly what an explicit takeover asks for and
+	// the preflight validates the runtime that owns the session now, so the new
+	// transfer supersedes that guard. Refusing instead leaves the binding stuck:
+	// /new and /resume cannot clear the guard while the new owner still holds the
+	// session lock.
+	supersede := exists && record.Direction == "outgoing" && (record.Status.State == "released" || record.Status.State == "saved")
 	localPreparation := false
 	if !exists && p != nil {
 		state := p.State()
@@ -133,8 +140,15 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg im
 		if cmd.Action != "start" || cmd.SessionID == "" {
 			return reject("invalid_takeover")
 		}
-		if exists || p != nil && ingressTakeoverProcessActive(p) {
+		if exists && !supersede || p != nil && ingressTakeoverProcessActive(p) {
 			return reject("target_not_ready")
+		}
+		if supersede && p != nil {
+			// The previous process is gone, but it may still hold unresolved input
+			// evidence for this binding.
+			if err := p.guardedInputError(); err != nil {
+				return reject("undelivered_inputs")
+			}
 		}
 		if !m.gatewayManagedSupported() {
 			return reject("takeover_unsupported")
@@ -165,11 +179,24 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg im
 		}()
 		// Capture and persist the exact source identity before the mutating request.
 		status.State = "waiting_source"
+		previousTransferID := ""
+		if supersede {
+			previousTransferID = record.Status.TransferID
+		}
 		record = sessionTransfer{Status: status, Direction: "incoming"}
 		m.lifecycleGate.RLock()
 		release := m.acquireKeyLock(key)
 		current := m.GetProcessForKey(key)
-		if m.shuttingDown.Load() || m.transferBlocked(key) || current != p {
+		// Only the guard this takeover supersedes may still block the binding;
+		// anything else means the binding changed after the preflight validated it.
+		guardBlocks := func() bool {
+			latest, ok, getErr := m.transfers.Get(key)
+			if getErr != nil {
+				return true
+			}
+			return ok && (!supersede || latest.Status.TransferID != previousTransferID)
+		}
+		if m.shuttingDown.Load() || guardBlocks() || current != p {
 			release()
 			m.lifecycleGate.RUnlock()
 			if settle.call() != nil {
@@ -177,7 +204,11 @@ func (r *NotificationRouter) dispatchIngressTakeover(ctx context.Context, msg im
 			}
 			return reject("control_target_expired")
 		}
-		err = m.transfers.update(key, &record, "")
+		if supersede {
+			err = m.transfers.replace(key, record, previousTransferID)
+		} else {
+			err = m.transfers.update(key, &record, "")
+		}
 		release()
 		m.lifecycleGate.RUnlock()
 		if err != nil {

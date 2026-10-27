@@ -293,7 +293,7 @@ That means different chats and different IMs keep separate pinned sessions, even
 
 If `session_pins_file` is not set, the store defaults to `<state_dir>/session-pins.json`.
 
-A transfer guard takes precedence over the pin. After a transfer starts, neither ordinary input nor automatic restart can resume that pin or fall back to a fresh session. The guard survives gateway restarts. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds; failed attempts retain the guard. See [usage.md](./usage.md#session-takeover).
+A transfer guard takes precedence over the pin. After a transfer starts, neither ordinary input nor automatic restart can resume that pin or fall back to a fresh session. The guard survives gateway restarts. When takeover into this chat reaches `ready_paused` and its session pin is saved, the target binding opens for explicit continuation. A binding that transferred its session out remains blocked until an explicit `/new` or `/resume` succeeds, or until `/takeover <session-id>` supersedes an outgoing transfer that already finished (`released` or `saved`); failed attempts retain the guard. See [usage.md](./usage.md#session-takeover).
 
 ## Feishu binding workflow
 
