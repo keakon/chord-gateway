@@ -4,7 +4,7 @@
 # .githooks without introducing new tooling assumptions. Anything here must stay
 # runnable from a plain checkout with Go installed.
 #
-#   make preflight   quality and gopls checks, plus module and resource checks
+#   make preflight   the pre-push checks: formatting, module tidiness, vet, staticcheck, short tests
 #   make ci          everything CI runs
 #   make test-fast   tests over a memory-backed TMPDIR when one is available
 
@@ -26,7 +26,7 @@ CHORD_REPO ?= ../chord
 .PHONY: help ci preflight fmt fmt-check deps-check test test-fast test-cover race vet staticcheck gopls-check quality docs-check docs-sync contract clean
 
 help:
-	@echo "preflight   quality/gopls checks plus module tidiness and resource scripts"
+	@echo "preflight   pre-push checks: formatting, module tidiness, vet, staticcheck, short tests"
 	@echo "ci          the full gate CI runs"
 	@echo "build-matrix cross-build every supported GOOS/GOARCH target"
 	@echo "test-fast   tests with TMPDIR on a memory-backed filesystem when possible"
@@ -38,11 +38,15 @@ help:
 # .github/workflows/docs.yml because they depend on the changed paths.
 ci: fmt-check deps-check quality gopls-check build-matrix contract docs-check resource-scripts-check
 
-# Runs the pre-push quality and gopls checks, plus module-tidiness and
-# resource-script checks. The hook runs docs checks only when docs changed.
-# check-go-quality.sh already covers vet, staticcheck, the short and race test
-# runs and the coverage floor, so they are not repeated here.
-preflight: fmt-check deps-check quality gopls-check resource-scripts-check
+# What `git push` runs: the checks cheap enough to keep a push interactive. The
+# coverage floor, `go test -race` and gopls diagnostics are heavier than that
+# split allows, so CI owns them; `make quality` and `make gopls-check` reproduce
+# them locally. The hook runs docs checks only when docs changed. -short keeps
+# the cross-repo contract tests out: they would build ../chord's working tree,
+# so an unrelated Chord edit could block a gateway push. `make contract` runs
+# them.
+preflight: GOTESTFLAGS := -short
+preflight: fmt-check deps-check vet staticcheck test-fast resource-scripts-check
 
 fmt:
 	$(GOIMPORTS) -w -local $(LOCAL) .
@@ -72,7 +76,7 @@ test-fast:
 	@tmp="$$( ./scripts/test_tmpdir.sh )"; \
 	 if [[ -n "$$tmp" ]]; then echo "test-fast: TMPDIR=$$tmp"; \
 	 else echo "test-fast: no memory-backed temp dir; using the default temp dir"; fi; \
-	 TMPDIR="$$tmp" TMP="$$tmp" TEMP="$$tmp" $(GO) test -count=1 $(PKGS)
+	 TMPDIR="$$tmp" TMP="$$tmp" TEMP="$$tmp" $(GO) test -count=1 $(GOTESTFLAGS) $(PKGS)
 
 test-cover:
 	COVERAGE_FILE=$(COVERAGE_FILE) MIN_COVERAGE=$(MIN_COVERAGE) ./scripts/check-go-quality.sh

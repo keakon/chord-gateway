@@ -21,37 +21,24 @@ while IFS= read -r path; do
   esac
 done < <(git diff --name-only @{push}...HEAD 2>/dev/null || git diff --name-only HEAD~1...HEAD)
 
+# Commits created with --no-verify or from a clone without core.hooksPath
+# configured would otherwise push unformatted Go. preflight's fmt-check reports
+# the files; this guard only turns a missing tool into a clear message.
 if ! command -v goimports >/dev/null 2>&1; then
   echo "pre-push: goimports not found in PATH" >&2
   echo "install with: go install golang.org/x/tools/cmd/goimports@latest" >&2
   exit 1
 fi
 
-# Covered by pre-commit, but commits created with --no-verify or from a clone
-# without core.hooksPath configured would otherwise push unformatted Go.
-echo "pre-push: checking goimports"
-out="$(goimports -l -local github.com/keakon/chord-gateway .)"
-if [[ -n "$out" ]]; then
-  echo "pre-push: goimports formatting needed:" >&2
-  echo "$out" >&2
-  echo "Run: goimports -w -local github.com/keakon/chord-gateway ." >&2
-  exit 1
-fi
-
-# check-go-quality.sh covers goimports, tests with coverage, `go test -race`,
-# `go vet` and staticcheck, so those are not repeated here. The cross-repo
-# contract gate is not part of it: that script only reports whether a Chord
-# checkout is available, so run ./scripts/check-chord-contract.sh (or
-# `make contract`) explicitly when a checkout is present.
-echo "pre-push: running the full quality gate"
-MIN_COVERAGE="${MIN_COVERAGE:-70.0}" ./scripts/check-go-quality.sh
-
-if command -v gopls >/dev/null 2>&1; then
-  echo "pre-push: running gopls diagnostics"
-  ./scripts/check_gopls.sh
-else
-  echo "pre-push: gopls not found in PATH; skipping (install with: go install golang.org/x/tools/gopls@latest)" >&2
-fi
+# preflight runs formatting, module tidiness, vet, staticcheck and the short
+# test suite. The coverage floor, `go test -race` and gopls diagnostics belong
+# to CI's test, race and gopls jobs; `make quality` and `make gopls-check`
+# reproduce them locally. The cross-repo contract gate is not part of preflight
+# either: that script only reports whether a Chord checkout is available, so run
+# ./scripts/check-chord-contract.sh (or `make contract`) explicitly when a
+# checkout is present.
+echo "pre-push: running preflight"
+make preflight
 
 if [[ "$has_doc_changes" -eq 1 ]]; then
   echo "pre-push: running docs checks"

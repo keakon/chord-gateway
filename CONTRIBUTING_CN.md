@@ -29,7 +29,7 @@ go build ./...
 该脚本安装两个钩子，按开销分层：
 
 - `.githooks/pre-commit` 对已暂存的 `.go` 文件执行 `goimports` 和 `gofmt`。它有意到此为止，让 `git commit`、`--amend` 和 rebase 步骤保持交互式速度。
-- `.githooks/pre-push` 运行决定分支是否可发布的检查：`scripts/check-go-quality.sh`（测试、覆盖率、`go test -race`、`go vet`、`staticcheck`）、`scripts/check_gopls.sh`，以及文档变更时的文档检查。
+- `.githooks/pre-push` 运行 `make preflight`：格式化、模块整洁性、`go vet`、`staticcheck` 和带 `-short` 的测试，文档有改动时再加文档检查。`-short` 会跳过跨仓契约测试，否则它们会构建同级 `../chord` 工作树；需要时用 `make contract` 运行。覆盖率下限、`go test -race` 和 gopls 诊断交给 CI 的 `test`、`race`、`gopls` job，每个推送的提交都会跑。
 
 不想推送就执行同样命令时用 Makefile：
 
@@ -40,7 +40,7 @@ make test-fast     # 在可用时把 TMPDIR 指向内存文件系统后跑测试
 make help          # 列出所有 target
 ```
 
-当前本地 / CI 质量门禁：
+完整质量门禁（即 CI 的 `test` 与 `race` job 执行的内容；本地用 `make quality` 或 `make test-cover`）：
 
 ```bash
 MIN_COVERAGE=70.0 ./scripts/check-go-quality.sh
@@ -52,7 +52,7 @@ MIN_COVERAGE=70.0 ./scripts/check-go-quality.sh
 goimports -l -local github.com/keakon/chord-gateway .
 go test -short -timeout=5m -coverprofile=coverage.out -coverpkg=./... ./...
 go test -race -short -timeout=5m ./...
-go tool cover -func=coverage.out
+./scripts/check-coverage.sh coverage.out
 # CI 要求总覆盖率 >= 70.0%。
 go vet ./...
 staticcheck -checks 'all,-ST1000' ./...
@@ -67,7 +67,7 @@ staticcheck -checks 'all,-ST1000' ./...
 3. `.chord/test-tmpdir`（未跟踪的仓库本地文件，取第一个非注释行作为路径）
 4. 平台默认：Linux 用 `/dev/shm`；macOS 用 APFS RAM disk `ChordTestRam`，与 chord 仓库共享，避免重复创建内存盘
 
-`make test-fast` 会把 `TMPDIR` 指向它；`scripts/check-go-quality.sh`（`git push`、`make quality`、`make preflight`、`make ci` 背后的覆盖率 / race 门禁）也会用同一个目录跑测试。没有可用目录时两者都回退到默认临时目录。CI workflow 有意保持默认文件系统：它不调用这两个脚本，需要继续覆盖更接近真实的最坏情况。其他入口可以自行导出，例如 `TMPDIR=$(./scripts/test_tmpdir.sh) make test-cover`；Windows 上 Go 读的是 `TMP`/`TEMP` 而不是 `TMPDIR`，所以辅助脚本会同时设置三者。加速主要来自持久化测试的 fsync；跨进程契约测试不受影响。只要 `ChordTestRam` 可用就直接复用，没有 owner 记录也一样；记录只用于授权清理。owner 记录保存挂载卷的设备节点、卷 UUID、父磁盘和 attach 得到的 physical store。`make clean` 仅在当前挂载与前三个字段匹配、且记录的 physical store 仍支撑该父磁盘时，才弹出这个 physical store；无法验证归属的挂载保持不动。
+`make test-fast` 会把 `TMPDIR` 指向它；`scripts/check-go-quality.sh`（`make quality`、`make test-cover`、`make ci` 背后的覆盖率 / race 门禁）也会用同一个目录跑测试。没有可用目录时两者都回退到默认临时目录。CI workflow 有意保持默认文件系统：它不调用这两个脚本，需要继续覆盖更接近真实的最坏情况。其他入口可以自行导出，例如 `TMPDIR=$(./scripts/test_tmpdir.sh) make test-cover`；Windows 上 Go 读的是 `TMP`/`TEMP` 而不是 `TMPDIR`，所以辅助脚本会同时设置三者。加速主要来自持久化测试的 fsync；跨进程契约测试不受影响。只要 `ChordTestRam` 可用就直接复用，没有 owner 记录也一样；记录只用于授权清理。owner 记录保存挂载卷的设备节点、卷 UUID、父磁盘和 attach 得到的 physical store。`make clean` 仅在当前挂载与前三个字段匹配、且记录的 physical store 仍支撑该父磁盘时，才弹出这个 physical store；无法验证归属的挂载保持不动。
 
 提交 PR 前请执行门禁：
 

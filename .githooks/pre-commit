@@ -38,7 +38,7 @@ if [[ -n "${files}" ]]; then
   echo "pre-commit: goimports + gofmt applied to ${count} staged Go file(s)"
 fi
 
-# Committing stays cheap on purpose: correctness gates (tests, coverage, race,
-# vet, staticcheck, gopls) belong to pre-push, so a commit records a checkpoint
-# without paying several minutes for every `git commit --amend`.
+# Committing stays cheap on purpose: correctness gates belong to pre-push, and
+# the coverage floor, race detector and gopls diagnostics to CI, so a commit
+# records a checkpoint without paying minutes for every `git commit --amend`.
 echo "pre-commit: run 'make preflight' before pushing"

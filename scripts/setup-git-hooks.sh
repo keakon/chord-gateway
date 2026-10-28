@@ -8,12 +8,11 @@ cat <<'EOF'
 Git hooks installed: core.hooksPath=.githooks
 
 pre-commit (fast, seconds): goimports + gofmt on staged Go files.
-pre-push (slow, minutes):   goimports check, scripts/check-go-quality.sh
-                            (tests + coverage + race + vet + staticcheck),
-                            scripts/check_gopls.sh, and docs checks when docs
-                            changed.
+pre-push (slower):          make preflight (formatting, module tidiness, vet,
+                            staticcheck, short tests), and docs checks when
+                            docs changed.
 
-Correctness gates live at pre-push so `git commit` and history rewrites stay
-interactive. Run `make preflight` yourself to check without pushing.
-Default minimum coverage: 70.0% (override with MIN_COVERAGE if needed)
+Coverage (minimum 70.0%, override with MIN_COVERAGE), race and gopls
+diagnostics run in CI; `make quality` and `make gopls-check` reproduce them
+locally. Run `make preflight` yourself to check without pushing.
 EOF
