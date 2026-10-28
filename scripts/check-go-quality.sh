@@ -48,25 +48,8 @@ go test -short -timeout="$test_timeout" -coverprofile="$coverage_file" -coverpkg
 echo "==> go test -race -short -timeout=${test_timeout} ./..."
 go test -race -short -timeout="$test_timeout" ./...
 
-echo "==> go tool cover -func=${coverage_file}"
-cover_output="$(go tool cover -func="$coverage_file")"
-printf '%s
-' "$cover_output"
-
-total_coverage="$(printf '%s
-' "$cover_output" | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
-if [[ -z "$total_coverage" ]]; then
-  echo "failed to parse total coverage" >&2
-  exit 1
-fi
-
-awk -v total="$total_coverage" -v min="$min_coverage" 'BEGIN {
-  if (total + 0 < min + 0) {
-    printf("coverage check failed: total %.1f%% < required %.1f%%\n", total + 0, min + 0)
-    exit 1
-  }
-  printf("coverage check passed: total %.1f%% >= required %.1f%%\n", total + 0, min + 0)
-}'
+echo "==> coverage check (${coverage_file})"
+MIN_COVERAGE="$min_coverage" ./scripts/check-coverage.sh "$coverage_file"
 
 echo "==> go vet ./..."
 go vet ./...
