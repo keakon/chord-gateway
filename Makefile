@@ -71,9 +71,11 @@ test:
 
 # Opt-in speed-up: run the tests with a memory-backed temp dir when one is
 # available, otherwise fall back to the default temp dir. See
-# scripts/test_tmpdir.sh.
+# scripts/test_tmpdir.sh. A private RAM disk created for this run alone is
+# ejected when the run ends; shared mounts are never touched.
 test-fast:
 	@tmp="$$( ./scripts/test_tmpdir.sh )"; \
+	 trap './scripts/test_tmpdir.sh --release "$$tmp"' EXIT; \
 	 if [[ -n "$$tmp" ]]; then echo "test-fast: TMPDIR=$$tmp"; \
 	 else echo "test-fast: no memory-backed temp dir; using the default temp dir"; fi; \
 	 TMPDIR="$$tmp" TMP="$$tmp" TEMP="$$tmp" $(GO) test -count=1 $(GOTESTFLAGS) $(PKGS)

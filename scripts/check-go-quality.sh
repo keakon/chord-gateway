@@ -37,6 +37,11 @@ fi
 # is available. CI does not call this script, so it keeps measuring the default
 # filesystem; an unusable candidate falls back to the default here too.
 test_tmpdir="$(./scripts/test_tmpdir.sh)"
+# A private RAM disk created for this run alone is ejected on exit; the shared
+# mount is never touched. Under `set -e` a failing EXIT trap replaces the exit
+# status, so a failed release (which already prints the manual eject command)
+# must not fail a gate that passed.
+trap './scripts/test_tmpdir.sh --release "$test_tmpdir" || true' EXIT
 if [[ -n "$test_tmpdir" ]]; then
   export TMPDIR="$test_tmpdir" TMP="$test_tmpdir" TEMP="$test_tmpdir"
   echo "==> test temp dir: $test_tmpdir"
