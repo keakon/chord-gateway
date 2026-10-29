@@ -6,6 +6,12 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 - Chinese version: [CHANGELOG_CN.md](./CHANGELOG_CN.md)
 
+## Unreleased
+
+### Breaking changes
+
+- Removed `/queue pause` and `/queue resume` to match Chord, which no longer has a queue gate to pause. `/queue` and `/status` no longer show a gate mode (previously `unknown gate` against current Chord). Instead, `/queue` marks each after-completion input whose last task failed, was cancelled, or ended with an unknown outcome; it runs after the next task you send completes. `/queue clear` is unchanged.
+
 ## v0.3.4 – 2026-10-27
 
 ### Breaking changes

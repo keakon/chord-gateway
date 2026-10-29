@@ -14,7 +14,7 @@ import (
 
 func TestIncomingTakeoverPreservesDisconnectedInputEvidence(t *testing.T) {
 	for _, phase := range []string{"admission", "preflight", "restore", "explicit replacement"} {
-		for _, kind := range []string{"unknown", "receipt", "queue", "storage", "paused", "restored"} {
+		for _, kind := range []string{"unknown", "receipt", "queue", "storage", "paused"} {
 			t.Run(phase+"/"+kind, func(t *testing.T) {
 				r, code := pairedTestRouter(t)
 				_, key := bindTestOwner(t, r, code, t.TempDir())
@@ -32,8 +32,6 @@ func TestIncomingTakeoverPreservesDisconnectedInputEvidence(t *testing.T) {
 					p.state.InputQueue = &InputQueue{Blocked: "storage unavailable"}
 				case "paused":
 					p.state.PausedInputs = testPausedInputs()
-				case "restored":
-					p.state.InputQueue = &InputQueue{RestoredNextInputsBlocked: true}
 				}
 				if phase != "preflight" {
 					r.mgr.procs[key] = p

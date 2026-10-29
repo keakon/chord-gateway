@@ -70,7 +70,7 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 | `/queue show <n>` | 查看某条排队输入的完整文本（列表只显示截断后的预览） |
 | `/queue edit <n> <text>` | 替换第 `n` 条排队输入的文本；带附件的输入只能在本地 Chord TUI 中编辑 |
 | `/queue delete <n>` | 删除第 `n` 条排队输入 |
-| `/queue pause` / `/queue resume` / `/queue clear` | 暂停队列、恢复队列，或丢弃已排队的「完成后执行」输入（`clear` 保留普通的下一次请求输入，且不触碰正在运行的工作） |
+| `/queue clear` | 丢弃已排队的「完成后执行」输入（`clear` 保留普通的下一次请求输入，且不触碰正在运行的工作） |
 | `/queue after <text>` | 排队一段文本，等当前工作全部结束后再执行，而不是作为下一次请求立即开始；不能用此方式排队 `/new` |
 | `/image <reference>` | 按 artifact 引用重新拉取 Chord 仍保存的生成图片 |
 | `/handoff-cancel` | 撤回待处理的 handoff 请求，不记录拒绝原因 |
@@ -80,7 +80,7 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 
 未识别的斜杠命令会作为普通文本转发给 Chord，但有一类例外：Chord 会在自身侧执行 `/export`、`/tier`、`/rename`、`/yolo`、`/compact` 以及不带参数的 `/skill`，而它们造成的变化都不会通过 headless 协议回报。gateway 会直接拒绝这些命令并提示只能在本地 TUI 使用，而不是转发出去。其中 `/yolo` 影响最大：一旦转发，IM 侧可以在聊天里完全无感知地关闭权限确认。请在本地 Chord TUI 中管理这些命令。`/models`、`/role` 和 `/queue` 也在 Chord 的本地命令集内，但 gateway 通过协议命令自行应答，不会转发。
 
-`/queue` 每次操作前都会先从 Chord 读取队列，因此条目序号对应刚刚展示的列表。每次操作都会携带该视图的版本。如果输入、队列门控或其他可见状态在操作应用前发生变化，Chord 会拒绝过期操作并提示重新读取。存储阻塞等状态变化可能不会增加持久队列修订号。
+`/queue` 每次操作前都会先从 Chord 读取队列，因此条目序号对应刚刚展示的列表。每次操作都会携带该视图的版本。如果输入或其他可见状态在操作应用前发生变化，Chord 会拒绝过期操作并提示重新读取。存储阻塞等状态变化可能不会增加持久队列修订号。
 
 Chord 始终未回复的 `/queue` 改动会提示为「未确认」而不是失败——它仍可能已经生效。重复操作前请先用 `/queue` 核对。
 

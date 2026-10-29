@@ -20,9 +20,7 @@ func TestParseQueueRequest(t *testing.T) {
 	}{
 		{"", "list", 0, ""},
 		{"list", "list", 0, ""},
-		{"pause", "pause", 0, ""},
-		{"RESUME", "resume", 0, ""},
-		{"clear", "clear", 0, ""},
+		{"CLEAR", "clear", 0, ""},
 		{"show 3", "show", 3, ""},
 		{"delete 2", "delete", 2, ""},
 		{"drop 2", "delete", 2, ""},
@@ -47,8 +45,8 @@ func TestParseQueueRequest(t *testing.T) {
 	// nothing at all, so they must not parse.
 	invalid := []string{
 		"nonsense", "show", "show 0", "show -1", "show two", "show 2 extra",
-		"delete", "delete 1 extra", "edit 2", "edit 2   ", "after", "pause now",
-		"list everything",
+		"delete", "delete 1 extra", "edit 2", "edit 2   ", "after", "clear now",
+		"list everything", "pause", "resume",
 	}
 	for _, rest := range invalid {
 		if _, ok := parseQueueRequest(rest); ok {
@@ -62,28 +60,39 @@ func TestFormatInputQueueNumbersItems(t *testing.T) {
 		InputQueueTarget: InputQueueTarget{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main"},
 		ViewVersion:      4,
 		QueueRevision:    9,
-		Gate:             InputQueueGate{Mode: "paused", Reason: "user_paused"},
+		Works: []InputQueueWork{
+			{WorkID: "w-failed", Origin: "user", Outcome: "failed"},
+			{WorkID: "w-unknown", Origin: "user", Outcome: "unknown"},
+			{WorkID: "w-done", Origin: "user", Outcome: "completed"},
+		},
 		Inputs: []InputQueueItem{
 			{InputID: "a", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued", Preview: "rename the flag"},
-			{InputID: "b", Revision: 2, Sequence: 2, Policy: "after_completion", Stage: "queued", Preview: "run the suite", Attachments: 2},
-			{InputID: "c", Revision: 1, Sequence: 3, Policy: "after_completion", Stage: "queued", Preview: "held draft", EditHeld: true},
+			{InputID: "b", Revision: 2, Sequence: 2, Policy: "after_completion", Stage: "queued", Preview: "run the suite", Attachments: 2, WaitWorkID: "w-failed"},
+			{InputID: "c", Revision: 1, Sequence: 3, Policy: "after_completion", Stage: "queued", Preview: "held draft", EditHeld: true, WaitWorkID: "w-unknown"},
+			{InputID: "d", Revision: 1, Sequence: 4, Policy: "after_completion", Stage: "queued", Preview: "ready next", WaitWorkID: "w-done"},
 		},
 	}
 	text := formatInputQueue(queue)
 	for _, want := range []string{
-		"3 pending", "paused", "user_paused",
-		"1. [next_request, queued] rename the flag",
-		"2. [after_completion, queued] run the suite (2 attachment(s))",
-		"3. [after_completion, queued] held draft (locked for editing in the local TUI)",
-		"/queue show <n>", "/queue delete <n>", "/queue resume",
+		"Input queue: 4 pending\n",
+		"1. [next_request, queued] rename the flag\n",
+		"2. [after_completion, queued] run the suite (2 attachment(s)) (last task failed; send a message to run it next)",
+		"3. [after_completion, queued] held draft (locked for editing in the local TUI) (last task outcome unknown; send a message to run it next)",
+		"4. [after_completion, queued] ready next\n",
+		"/queue show <n>", "/queue delete <n>",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("formatInputQueue missing %q in:\n%s", want, text)
 		}
 	}
+	for _, unwanted := range []string{"gate", "/queue resume", "/queue pause"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("formatInputQueue still mentions %q:\n%s", unwanted, text)
+		}
+	}
 
 	// The listing stops at the limit instead of sending 128 rows to a phone.
-	many := &InputQueue{ViewVersion: 1, Gate: InputQueueGate{Mode: "running"}}
+	many := &InputQueue{ViewVersion: 1}
 	for i := 0; i < 14; i++ {
 		many.Inputs = append(many.Inputs, InputQueueItem{InputID: string(rune('a' + i)), Revision: 1, Sequence: int64(i + 1), Policy: "next_request", Stage: "queued", Preview: "item"})
 	}
@@ -95,7 +104,7 @@ func TestFormatInputQueueNumbersItems(t *testing.T) {
 		t.Fatalf("formatInputQueue listed past the limit: %q", text)
 	}
 
-	blocked := formatInputQueue(&InputQueue{ViewVersion: 1, Gate: InputQueueGate{Mode: "running"}, Blocked: "storage\noffline"})
+	blocked := formatInputQueue(&InputQueue{ViewVersion: 1, Blocked: "storage\noffline"})
 	if !strings.Contains(blocked, "storage offline") {
 		t.Fatalf("blocked queue must stay on one line: %q", blocked)
 	}
@@ -151,7 +160,6 @@ func testQueue(revision uint64, items ...InputQueueItem) *InputQueue {
 		ViewVersion:      revision,
 		ViewVersionCAS:   true,
 		QueueRevision:    revision,
-		Gate:             InputQueueGate{Mode: "running"},
 		Inputs:           items,
 	}
 }
@@ -249,23 +257,9 @@ func TestQueueCommandRoundTrip(t *testing.T) {
 			wantText: "Dropped queued input #2",
 		},
 		{
-			name:     "pause",
-			command:  "/queue pause",
-			wantStd:  []string{`"type":"input_queue"`, `"action":"pause"`, `"expected_queue_revision":9`},
-			result:   InputQueueResult{Result: inputQueueCommitted},
-			wantText: "Paused the input queue",
-		},
-		{
-			name:     "resume",
-			command:  "/queue resume",
-			wantStd:  []string{`"action":"resume"`, `"expected_queue_revision":9`},
-			result:   InputQueueResult{Result: inputQueueCommitted},
-			wantText: "Resumed the input queue",
-		},
-		{
 			name:     "clear",
 			command:  "/queue clear",
-			wantStd:  []string{`"action":"clear"`, `"expected_queue_revision":9`},
+			wantStd:  []string{`"type":"input_queue"`, `"action":"clear"`, `"expected_queue_revision":9`},
 			result:   InputQueueResult{Result: inputQueueCommitted},
 			wantText: "Cleared the queued after-completion inputs",
 		},
@@ -496,7 +490,7 @@ func TestInputQueueWaitersAreKeyedByOperationID(t *testing.T) {
 // is not this session's.
 func TestQueueWaiterReportsUnknownWithoutProjection(t *testing.T) {
 	p := &ChordProcess{stdin: &captureWriteCloser{}}
-	if _, err := p.WaitInputQueue(context.Background(), "pause", map[string]any{"expected_queue_revision": 1}); err == nil {
+	if _, err := p.WaitInputQueue(context.Background(), "clear", map[string]any{"expected_queue_revision": 1}); err == nil {
 		t.Fatal("WaitInputQueue accepted a process with no projection")
 	}
 }

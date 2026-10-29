@@ -18,11 +18,6 @@ type InputQueueTarget struct {
 	OwnerTaskID       string `json:"owner_task_id"`
 	WorkDirGeneration uint64 `json:"work_dir_generation"`
 }
-type InputQueueGate struct {
-	Mode          string `json:"mode"`
-	Reason        string `json:"reason,omitempty"`
-	WaitingWorkID string `json:"waiting_work_id,omitempty"`
-}
 type InputQueueWork struct {
 	WorkID  string `json:"work_id"`
 	Origin  string `json:"origin"`
@@ -35,6 +30,7 @@ type InputQueueItem struct {
 	Policy      string `json:"delivery_policy"`
 	Stage       string `json:"stage"`
 	WorkID      string `json:"work_id,omitempty"`
+	WaitWorkID  string `json:"wait_work_id,omitempty"`
 	WorkDir     string `json:"work_dir"`
 	WorktreeID  string `json:"worktree_id,omitempty"`
 	Preview     string `json:"preview"`
@@ -42,12 +38,10 @@ type InputQueueItem struct {
 	EditHeld    bool   `json:"edit_held"`
 }
 type InputQueue struct {
-	RestoredNextInputsBlocked bool `json:"restored_next_inputs_blocked,omitempty"`
 	InputQueueTarget
 	ViewVersion    uint64           `json:"view_version"`
 	ViewVersionCAS bool             `json:"view_version_cas"`
 	QueueRevision  uint64           `json:"queue_revision"`
-	Gate           InputQueueGate   `json:"gate"`
 	Works          []InputQueueWork `json:"works"`
 	Inputs         []InputQueueItem `json:"inputs"`
 	Blocked        string           `json:"blocked,omitempty"`
@@ -297,23 +291,17 @@ func (p *ChordProcess) hasGuardedInputsLocked() bool {
 	q := s.InputQueue
 	return len(p.pendingInputs) != 0 || s.UnconfirmedInputs != 0 ||
 		s.PausedInputs != nil && s.PausedInputs.PendingInputCount != 0 ||
-		q != nil && (len(q.Inputs) != 0 || q.Blocked != "" || q.RestoredNextInputsBlocked)
+		q != nil && (len(q.Inputs) != 0 || q.Blocked != "")
 }
 
 func formatInputQueueStatus(q *InputQueue) string {
 	if q == nil {
 		return ""
 	}
-	mode := q.Gate.Mode
-	if mode == "" {
-		mode = "unknown gate"
-	}
-	text := fmt.Sprintf("Input queue: %d pending; %s", len(q.Inputs), mode)
+	text := fmt.Sprintf("Input queue: %d pending", len(q.Inputs))
 	if q.Blocked != "" {
 		text += "\n⚠️ Queue storage is blocked. Inspect the original session and storage on the host."
-	} else if q.RestoredNextInputsBlocked {
-		text += "\nRestored inputs await explicit continuation in the original session."
-	} else if q.Gate.Mode == "paused" || len(q.Inputs) > 0 {
+	} else if len(q.Inputs) > 0 {
 		text += "\nInspect or manage queued inputs with /queue."
 	}
 	return text
@@ -332,20 +320,10 @@ func formatInputQueue(q *InputQueue) string {
 	if q == nil {
 		return ""
 	}
-	mode := q.Gate.Mode
-	if mode == "" {
-		mode = "unknown gate"
-	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Input queue: %d pending; %s", len(q.Inputs), mode)
-	if q.Gate.Reason != "" {
-		fmt.Fprintf(&b, " (%s)", q.Gate.Reason)
-	}
+	fmt.Fprintf(&b, "Input queue: %d pending", len(q.Inputs))
 	if q.Blocked != "" {
 		fmt.Fprintf(&b, "\n⚠️ Queue storage is blocked: %s", strings.ReplaceAll(q.Blocked, "\n", " "))
-	}
-	if q.RestoredNextInputsBlocked {
-		b.WriteString("\nRestored inputs wait for explicit continuation in the original session.")
 	}
 	for i, input := range q.Inputs {
 		if i == inputQueueListLimit {
@@ -359,12 +337,41 @@ func formatInputQueue(q *InputQueue) string {
 		if input.EditHeld {
 			b.WriteString(" (locked for editing in the local TUI)")
 		}
+		if reason := afterCompletionWaitReason(q, input); reason != "" {
+			fmt.Fprintf(&b, " (%s)", reason)
+		}
 	}
 	if len(q.Inputs) > 0 {
 		b.WriteString("\nReply /queue show <n> to read one in full, /queue edit <n> <text> to replace it, or /queue delete <n> to drop it.")
 	}
-	if q.Gate.Mode == "paused" {
-		b.WriteString("\nReply /queue resume to release queued work.")
-	}
 	return b.String()
+}
+
+// afterCompletionWaitReason explains why an after-completion input has not
+// fired, from the outcome of the work it waits on. Chord fires the input at the
+// first idle after that work completes; a failed, cancelled or unknown outcome
+// holds it until a newer task the operator sends completes. An empty result
+// means nothing holds it beyond the next idle.
+func afterCompletionWaitReason(q *InputQueue, input InputQueueItem) string {
+	if input.WaitWorkID == "" {
+		return ""
+	}
+	for _, work := range q.Works {
+		if work.WorkID != input.WaitWorkID {
+			continue
+		}
+		switch work.Outcome {
+		case "active":
+			return "waiting for the running task"
+		case "completed":
+			return ""
+		case "failed":
+			return "last task failed; send a message to run it next"
+		case "cancelled":
+			return "last task cancelled; send a message to run it next"
+		default:
+			return "last task outcome unknown; send a message to run it next"
+		}
+	}
+	return ""
 }

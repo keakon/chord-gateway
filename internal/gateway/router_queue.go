@@ -30,11 +30,11 @@ const (
 )
 
 const queueUsage = "Use /queue to list, /queue show <n>, /queue edit <n> <text>, /queue delete <n>, " +
-	"/queue pause, /queue resume, /queue clear, or /queue after <text>."
+	"/queue clear, or /queue after <text>."
 
 // queueRequest is the parsed form of one /queue invocation.
 type queueRequest struct {
-	action string // list, show, edit, delete, pause, resume, clear, after
+	action string // list, show, edit, delete, clear, after
 	index  int    // 1-based position in the listing; 0 when the action takes none
 	text   string
 }
@@ -68,7 +68,7 @@ func parseQueueRequest(rest string) (queueRequest, bool) {
 	switch action {
 	case "list":
 		return queueRequest{action: "list"}, tail == ""
-	case "pause", "resume", "clear":
+	case "clear":
 		return queueRequest{action: action}, tail == ""
 	case "show", "delete", "drop", "rm", "edit":
 		name, arg, _ := strings.Cut(tail, " ")
@@ -119,9 +119,8 @@ func queueCommandFailure(err error) string {
 }
 
 // queueChangeRejected renders Chord's refusal. A conflict is a stale read and
-// has a next step; a rejection is Chord declining on its own terms (a paused
-// session, a resume while work is still running) and only Chord's reason
-// explains it.
+// has a next step; a rejection is Chord declining on its own terms (for
+// example a paused session) and only Chord's reason explains it.
 func queueChangeRejected(result InputQueueResult) string {
 	reason := strings.TrimSpace(result.Reason)
 	if reason == "" {
@@ -244,7 +243,7 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 				"target":                queue.InputQueueTarget,
 			})
 		}
-	case "pause", "resume", "clear":
+	case "clear":
 		target = request.action
 		result, err = proc.WaitInputQueue(ctx, request.action, map[string]any{"expected_queue_revision": queue.QueueRevision, "expected_view_version": queue.ViewVersion, "target": queue.InputQueueTarget})
 	default:
@@ -279,10 +278,6 @@ func (r *NotificationRouter) handleQueueCommand(ws *config.Workspace, chatID str
 		r.sendTextForKey(procKey, chatID, fmt.Sprintf("✏️ Replaced the text of queued input #%d.", request.index))
 	case "delete":
 		r.sendTextForKey(procKey, chatID, fmt.Sprintf("🗑️ Dropped queued input #%d.", request.index))
-	case "pause":
-		r.sendTextForKey(procKey, chatID, "⏸️ Paused the input queue. Queued items stay put until /queue resume.")
-	case "resume":
-		r.sendTextForKey(procKey, chatID, "▶️ Resumed the input queue.")
 	case "clear":
 		r.sendTextForKey(procKey, chatID, "🧹 Cleared the queued after-completion inputs. Chord keeps ordinary next-request inputs, and work already running is untouched.")
 	}

@@ -70,7 +70,7 @@ Telegram uses underscores for `/handoff_deny` and `/question_interact`, `/questi
 | `/queue show <n>` | Read one queued input in full (the listing truncates previews) |
 | `/queue edit <n> <text>` | Replace the text of queued input `n`. Items with attachments can only be edited in the local Chord TUI |
 | `/queue delete <n>` | Drop queued input `n` |
-| `/queue pause` / `/queue resume` / `/queue clear` | Pause the queue, resume it, or drop the queued after-completion inputs (`clear` keeps ordinary next-request inputs and never touches work already running) |
+| `/queue clear` | Drop the queued after-completion inputs (`clear` keeps ordinary next-request inputs and never touches work already running) |
 | `/queue after <text>` | Queue text that only starts once the current work finishes, instead of becoming the next request; `/new` cannot be queued this way |
 | `/image <reference>` | Re-request a generated image Chord still holds, by artifact reference |
 | `/handoff-cancel` | Withdraw a pending handoff request without recording a rejection |
@@ -83,7 +83,7 @@ Notes:
 - `/login wechat` is the documented command name for WeChat login renewal.
 - `!` and `！` are gateway shortcuts for Chord's `local_shell` headless command, not normal Chord chat messages. Use them only in trusted chats because Chord may execute the command in the local workspace environment.
 - Unrecognized slash commands are forwarded to Chord as normal text, with one exception: Chord runs `/export`, `/tier`, `/rename`, `/yolo`, `/compact` and a bare `/skill` on its own side rather than treating them as chat input, and nothing they change is reported back over the headless protocol. The gateway refuses them instead of forwarding them, and replies that they are only available in the local TUI. `/yolo` matters most: forwarding it would let an IM caller turn permission confirmations off without anything visible happening in the chat. Manage these from the local Chord TUI. `/models`, `/role` and `/queue` are in Chord's own local-only set too, but the gateway answers them through protocol commands rather than forwarding them.
-- `/queue` reads the queue from Chord before acting, so item numbers refer to the listing just shown. Each operation carries that view's version. If an input, queue gate, or other visible state changes before the operation is applied, Chord rejects the stale operation and asks you to read the queue again. Some state changes, such as a storage block, do not advance the durable queue revision.
+- `/queue` reads the queue from Chord before acting, so item numbers refer to the listing just shown. Each operation carries that view's version. If an input or other visible state changes before the operation is applied, Chord rejects the stale operation and asks you to read the queue again. Some state changes, such as a storage block, do not advance the durable queue revision.
 - A `/queue` change that Chord never answers is reported as unconfirmed rather than failed, because it may still have been applied. Check with `/queue` before repeating it.
 - `/image <reference>` asks Chord for the saved original image; it does not run image generation again. If Chord can no longer read the artifact, the request fails and the image is not recreated.
 - `/summary` is not part of the documented gateway command set.

@@ -20,7 +20,7 @@ func TestInputQueueProjectionVersionsAndBindings(t *testing.T) {
 			state.InputQueue.Inputs = nil
 		}
 	}
-	q := InputQueue{InputQueueTarget: InputQueueTarget{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main"}, ViewVersion: 1, QueueRevision: 2, Gate: InputQueueGate{Mode: "running"}, Inputs: []InputQueueItem{{InputID: "input", Revision: 1, Sequence: 1, Policy: "after_completion", Stage: "queued", Preview: "sample"}}}
+	q := InputQueue{InputQueueTarget: InputQueueTarget{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main"}, ViewVersion: 1, QueueRevision: 2, Inputs: []InputQueueItem{{InputID: "input", Revision: 1, Sequence: 1, Policy: "after_completion", Stage: "queued", Preview: "sample"}}}
 	send := func(seq uint64) {
 		data, err := json.Marshal(q)
 		if err != nil {
@@ -83,7 +83,7 @@ func TestInputQueueReceiptRejectsStaleBinding(t *testing.T) {
 }
 
 func TestInputQueueGuardsDirectorySwitch(t *testing.T) {
-	for _, blocked := range []string{"queued", "storage", "restoring", "empty"} {
+	for _, blocked := range []string{"queued", "storage", "empty"} {
 		t.Run(blocked, func(t *testing.T) {
 			r, code := pairedTestRouter(t)
 			first, second := t.TempDir(), t.TempDir()
@@ -98,8 +98,6 @@ func TestInputQueueGuardsDirectorySwitch(t *testing.T) {
 				q.Inputs = []InputQueueItem{{InputID: "input", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued"}}
 			case "storage":
 				q.Blocked = "storage outcome unknown"
-			case "restoring":
-				q.RestoredNextInputsBlocked = true
 			}
 			data, _ := json.Marshal(q)
 			p.processEnvelope(&HeadlessEnvelope{Type: "input_queue_changed", Seq: 1, Payload: data})
@@ -170,7 +168,7 @@ func TestInputQueueSessionSwitchDropsPreviousProjection(t *testing.T) {
 }
 
 func TestIdleCleanupPreservesInputGuards(t *testing.T) {
-	for _, kind := range []string{"unknown", "queued", "blocked", "receipt", "paused", "restored"} {
+	for _, kind := range []string{"unknown", "queued", "blocked", "receipt", "paused"} {
 		t.Run(kind, func(t *testing.T) {
 			r, code := pairedTestRouter(t)
 			first, second := t.TempDir(), t.TempDir()
@@ -183,8 +181,6 @@ func TestIdleCleanupPreservesInputGuards(t *testing.T) {
 				p.pendingInputs = map[string]struct{}{"request": {}}
 			case "paused":
 				p.state.PausedInputs.PendingInputCount = 1
-			case "restored":
-				p.state.InputQueue = &InputQueue{RestoredNextInputsBlocked: true}
 			case "unknown":
 				p.state.UnconfirmedInputs = 1
 			case "queued":
@@ -239,8 +235,8 @@ func TestDeadProcessCannotDiscardUnknownInputs(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 }
-func TestInputQueueStatusExplainsBlockedAndPausedQueues(t *testing.T) {
-	for _, q := range []*InputQueue{{Blocked: "private storage path", Gate: InputQueueGate{Mode: "running"}}, {Gate: InputQueueGate{Mode: "paused"}}, {RestoredNextInputsBlocked: true}} {
+func TestInputQueueStatusExplainsBlockedAndPendingQueues(t *testing.T) {
+	for _, q := range []*InputQueue{{Blocked: "private storage path"}, {Inputs: []InputQueueItem{{InputID: "pending"}}}} {
 		text := formatBindingStatus(nil, "", "", ControlState{InputQueue: q})
 		if !strings.Contains(text, "Input queue:") || strings.Contains(text, "private storage path") {
 			t.Fatal(text)
@@ -248,10 +244,7 @@ func TestInputQueueStatusExplainsBlockedAndPausedQueues(t *testing.T) {
 		if q.Blocked != "" && !strings.Contains(text, "storage is blocked") {
 			t.Fatal(text)
 		}
-		if q.Gate.Mode == "paused" && !strings.Contains(text, "/queue") {
-			t.Fatal(text)
-		}
-		if q.RestoredNextInputsBlocked && !strings.Contains(text, "explicit continuation") {
+		if len(q.Inputs) > 0 && !strings.Contains(text, "/queue") {
 			t.Fatal(text)
 		}
 	}

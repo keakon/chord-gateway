@@ -6,6 +6,12 @@
 
 - English: [CHANGELOG.md](./CHANGELOG.md)
 
+## 未发布
+
+### 不兼容变更
+
+- 删除 `/queue pause` 和 `/queue resume`，与 Chord 保持一致：Chord 已没有可暂停的队列闸门。`/queue` 和 `/status` 不再显示闸门状态（此前对接当前 Chord 时显示为 `unknown gate`）。上一个任务失败、被取消或结果未知时，`/queue` 会在对应的「完成后执行」输入旁标出原因；你发出的下一个任务完成后，它就会执行。`/queue clear` 不变。
+
 ## v0.3.4 – 2026-10-27
 
 ### 不兼容变更
