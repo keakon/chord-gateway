@@ -14,7 +14,7 @@ Use a Chord build that supports all of the following:
 - Question commands with `action` / `operation_id`, correlated `question_receipt`, and presentation commands with `version`, `binding_id`, and `supports_interaction`.
 - `models` commands with a unique `request_id` echoed by each `models_response`. The gateway ignores uncorrelated or late model responses.
 - Background-job counts in `idle` and `status_response`.
-- Input-queue projections with complete target identity, `view_version`, `view_version_cas: true`, and `queue_revision`. The gateway includes `expected_view_version` when applying queue changes; stale views return `input_queue_result: conflict`. It can still list a queue when this compare is unavailable, but it will not mutate it.
+- Input-queue projections with complete target identity, `view_version`, `view_version_cas: true`, and `queue_revision`. The gateway includes `expected_view_version` when applying queue changes; stale views return `input_queue_result: conflict`. It can still list a queue when this compare is unavailable, but it will not mutate it. `works` with a per-work `outcome`, a per-input `wait_work_id`, and `restored_held` are what let `/queue` explain why an entry has not started; a build omitting them still lists and edits the queue, but a held entry looks like ordinary pending input.
 - `image_result` saved-image summaries with SHA-256 integrity metadata, ordered `image_artifact` chunks with byte offsets and final markers, and `request_id` echoed in errors for failed image-artifact reads. The aggregate `idle` event follows all generated-image chunks.
 
 Older single-question protocols and builds without input receipts are unsupported; the gateway does not translate them. Pin the Chord build tested with your deployment and follow the [Chord headless documentation](https://github.com/keakon/chord/blob/main/docs/headless.md) when upgrading. A build accepting unknown subscription names does not establish protocol compatibility.
@@ -73,6 +73,10 @@ The following compatibility paths existed in earlier releases and have been remo
   Intake, deduplication and cursors are memory-only; old files are no longer imported.
 - `https` proxy for WebSocket long-connections (Discord, Slack, Feishu, WeCom,
   DingTalk sockets) — rejected at startup. Use `http`, `socks5` or `socks5h`.
+- `input_queue` `gate` mode and `restored_next_inputs_blocked` — removed. Current
+  Chord exposes no pausable queue gate and reports `restored_held` plus a per-input
+  `wait_work_id` instead. `/queue pause` and `/queue resume` are gone with the gate;
+  `/queue` explains each held entry's reason.
 
 ## Cleanup rule
 

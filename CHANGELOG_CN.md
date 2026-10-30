@@ -8,6 +8,11 @@
 
 ## 未发布
 
+### 新增
+
+- `/status` 与 `/queue` 现在会说明随会话恢复（接管、`/resume` 或重启）的队列：这些条目在你发消息前一直保持挂起，因此 `/queue` 会在每条挂起条目后标注 `(restored; send a message to run it)`，而不是把它当作普通排队输入列出。此前恢复的队列看起来已经就绪，实际仍在等待你继续。
+- SubAgent 发出的上下文压力提示现在会标明是哪个 agent 的上下文接近上限（取自 Chord 的 `target_agent_id`）。主会话的提示保持原有文案，主会话的后台任务结果也不再带多余的 `main` 标注。
+
 ### 不兼容变更
 
 - 删除 `/queue pause` 和 `/queue resume`，与 Chord 保持一致：Chord 已没有可暂停的队列闸门。`/queue` 和 `/status` 不再显示闸门状态（此前对接当前 Chord 时显示为 `unknown gate`）。上一个任务失败、被取消或结果未知时，`/queue` 会在对应的「完成后执行」输入旁标出原因；你发出的下一个任务完成后，它就会执行。`/queue clear` 不变。

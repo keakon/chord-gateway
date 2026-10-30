@@ -344,14 +344,21 @@ type BackgroundResultPayload struct {
 	Content       string `json:"content"`
 }
 
+// mainAgentID is how chord headless names the main session in the
+// target_agent_id field of its payloads (Chord's identity.MainAgentID). Every
+// other value names a SubAgent.
+const mainAgentID = "main"
+
 // ContextNoticePayload is the context_notice event payload: a durable
 // context-pressure warning. Level mirrors the three compaction-gate overlays
-// (pressure, imminent, warning).
+// (pressure, imminent, warning). TargetAgentID attributes the notice to the
+// agent that emitted it; "main" is the main session.
 type ContextNoticePayload struct {
-	SessionID    string `json:"session_id,omitempty"`
-	MessageIndex int    `json:"message_index"`
-	Level        string `json:"level"`
-	Message      string `json:"message"`
+	SessionID     string `json:"session_id,omitempty"`
+	MessageIndex  int    `json:"message_index"`
+	TargetAgentID string `json:"target_agent_id,omitempty"`
+	Level         string `json:"level"`
+	Message       string `json:"message"`
 }
 
 // HeadlessEnvelope is the JSON envelope from chord headless stdout.

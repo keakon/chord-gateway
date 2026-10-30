@@ -1159,12 +1159,12 @@ func TestProcessEnvelopeBackgroundResultAndContextNotice(t *testing.T) {
 		t.Fatalf("LastBackgroundResult = %+v", state.LastBackgroundResult)
 	}
 
-	p.processEnvelope(&HeadlessEnvelope{Type: "context_notice", Payload: json.RawMessage(`{"session_id":"source-session","message_index":43,"level":"imminent","message":"Context will be compacted"}`)})
+	p.processEnvelope(&HeadlessEnvelope{Type: "context_notice", Payload: json.RawMessage(`{"session_id":"source-session","message_index":43,"target_agent_id":"worker-2","level":"imminent","message":"Context will be compacted"}`)})
 	state = p.State()
 	if state.LastContextNotice == nil {
 		t.Fatal("context_notice must be saved to ControlState")
 	}
-	if state.LastContextNotice.Level != "imminent" || state.LastContextNotice.Message != "Context will be compacted" || state.LastContextNotice.SessionID != "source-session" || state.LastContextNotice.MessageIndex != 43 {
+	if state.LastContextNotice.Level != "imminent" || state.LastContextNotice.Message != "Context will be compacted" || state.LastContextNotice.SessionID != "source-session" || state.LastContextNotice.MessageIndex != 43 || state.LastContextNotice.TargetAgentID != "worker-2" {
 		t.Fatalf("LastContextNotice = %+v", state.LastContextNotice)
 	}
 

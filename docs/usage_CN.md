@@ -84,6 +84,8 @@ Telegram 使用下划线形式的 `/handoff_deny` 和 `/question_interact`、`/q
 
 Chord 始终未回复的 `/queue` 改动会提示为「未确认」而不是失败——它仍可能已经生效。重复操作前请先用 `/queue` 核对。
 
+随会话恢复（接管、`/resume` 或重启）的队列会一直保持挂起，直到你发一条消息。`/queue` 会在这些条目后标注 `(restored; send a message to run it)`，`/status` 也会说明该挂起状态，而不是把它们当作普通排队输入。
+
 `/image <reference>` 请求 Chord 返回已保存的原图，不会再次调用生图服务。如果 Chord 已无法读取该 artifact，请求会失败，也不会重新生成图片。
 
 `/sessions` 在绑定目录中调用 `chord sessions list --json --limit 10`，并传递 `chord_state_dir`。自定义会话根目录和仓库 worktree 的共享会话由 Chord 解析。结果按最近活动时间排序，并标出使用中的会话；查询失败与空列表会分别提示。需要使用提供此命令的 Chord，gateway 不再扫描旧目录。

@@ -185,10 +185,7 @@ func (r *NotificationRouter) formatBackgroundResultNotification(state ControlSta
 	if content == "" {
 		return ""
 	}
-	message := "📥 Background job result"
-	if target := strings.TrimSpace(payload.TargetAgentID); target != "" {
-		message += " · " + target
-	}
+	message := "📥 Background job result" + agentAttribution(payload.TargetAgentID)
 	return truncate(message + "\n" + content)
 }
 
@@ -206,6 +203,7 @@ func (r *NotificationRouter) formatContextNoticeNotification(state ControlState)
 	if message == "" {
 		return ""
 	}
+	message += agentAttribution(payload.TargetAgentID)
 	switch strings.TrimSpace(payload.Level) {
 	case "pressure":
 		return truncate("📈 " + message)
@@ -216,6 +214,18 @@ func (r *NotificationRouter) formatContextNoticeNotification(state ControlState)
 	default:
 		return truncate(message)
 	}
+}
+
+// agentAttribution renders target_agent_id as a notification suffix, or "" when
+// there is nothing worth saying. Chord attributes every payload to the agent
+// that produced it and names the main session "main", so a suffix there would
+// repeat what the operator already knows on every main-session event.
+func agentAttribution(agentID string) string {
+	id := strings.TrimSpace(agentID)
+	if id == "" || id == mainAgentID {
+		return ""
+	}
+	return " · " + id
 }
 
 func formatAgentLabel(agentType, agentID, taskID string) string {

@@ -221,6 +221,13 @@ func TestFormatNotificationBackgroundResult(t *testing.T) {
 	if !strings.Contains(got, "job done") || strings.Contains(got, " · ") {
 		t.Fatalf("background_result without target = %q", got)
 	}
+
+	// Chord attributes a main-session result to "main" on every payload, so the
+	// suffix is omitted there for the same reason it is on a context notice.
+	got = r.formatNotification("background_result", ControlState{LastBackgroundResult: &BackgroundResultPayload{TargetAgentID: "main", Content: "job done"}})
+	if got != "📥 Background job result\njob done" {
+		t.Fatalf("main-session background_result = %q, want no attribution", got)
+	}
 }
 
 func TestFormatNotificationContextNotice(t *testing.T) {
@@ -248,5 +255,15 @@ func TestFormatNotificationContextNotice(t *testing.T) {
 	got := r.formatNotification("context_notice", ControlState{LastContextNotice: &ContextNoticePayload{Level: "future", Message: "context is filling"}})
 	if got != "context is filling" {
 		t.Fatalf("unknown level message = %q, want the bare message", got)
+	}
+
+	// Chord attributes every notice to the agent that emitted it and names the
+	// main session "main": a SubAgent's notice must say whose context is under
+	// pressure, and a main-session one must not grow a redundant suffix.
+	if got := r.formatNotification("context_notice", ControlState{LastContextNotice: &ContextNoticePayload{Level: "warning", Message: "context is filling", TargetAgentID: "worker-1"}}); got != "⏳ context is filling · worker-1" {
+		t.Fatalf("subagent notice = %q, want the attribution", got)
+	}
+	if got := r.formatNotification("context_notice", ControlState{LastContextNotice: &ContextNoticePayload{Level: "warning", Message: "context is filling", TargetAgentID: "main"}}); got != "⏳ context is filling" {
+		t.Fatalf("main-session notice = %q, want no attribution", got)
 	}
 }

@@ -110,6 +110,91 @@ func TestFormatInputQueueNumbersItems(t *testing.T) {
 	}
 }
 
+// TestAfterCompletionWaitReasonTreatsMissingWorkAsUnknown pins the one answer
+// the wait reason must never give: a wait whose work the projection no longer
+// carries is not "ready". Chord's own AfterCompletionWait reports it as unknown
+// and holds the input, so claiming nothing holds it would invert the state.
+func TestAfterCompletionWaitReasonTreatsMissingWorkAsUnknown(t *testing.T) {
+	queue := testQueue(9,
+		InputQueueItem{InputID: "a", Revision: 1, Sequence: 1, Policy: "after_completion", Stage: "queued", Preview: "waiting", WaitWorkID: "w-gone"},
+		InputQueueItem{InputID: "b", Revision: 1, Sequence: 2, Policy: "after_completion", Stage: "queued", Preview: "no wait"},
+	)
+	queue.Works = []InputQueueWork{{WorkID: "w-settled", Origin: "user", Outcome: ""}}
+	queue.Inputs = append(queue.Inputs, InputQueueItem{InputID: "c", Revision: 1, Sequence: 3, Policy: "after_completion", Stage: "queued", Preview: "zero outcome", WaitWorkID: "w-settled"})
+	if got := afterCompletionWaitReason(queue, queue.Inputs[0]); got != "last task outcome unknown; send a message to run it next" {
+		t.Fatalf("missing wait work = %q, want the unknown outcome", got)
+	}
+	if got := afterCompletionWaitReason(queue, queue.Inputs[1]); got != "" {
+		t.Fatalf("input with no wait = %q, want no reason", got)
+	}
+	// A work carrying the zero outcome is settled, which is how Chord's own TUI
+	// reads it; only an absent work is unknown.
+	if got := afterCompletionWaitReason(queue, queue.Inputs[2]); got != "" {
+		t.Fatalf("zero-outcome wait = %q, want no reason", got)
+	}
+	if text := formatInputQueue(queue); !strings.Contains(text, "waiting (last task outcome unknown; send a message to run it next)") {
+		t.Fatalf("formatInputQueue hid the unknown wait:\n%s", text)
+	}
+}
+
+// TestFormatInputQueueShowsRestoredHold pins the restore hold: a session
+// restored from disk — takeover, /resume, or a restart that resumes it — keeps
+// its queued input until the operator sends a message, and neither the listing
+// nor /status may report it as merely pending: an IM caller would read that as
+// already running.
+func TestFormatInputQueueShowsRestoredHold(t *testing.T) {
+	queue := testQueue(9,
+		InputQueueItem{InputID: "a", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued", Preview: "run the suite"},
+		InputQueueItem{InputID: "b", Revision: 1, Sequence: 2, Policy: "next_request", Stage: "started", Preview: "already running"},
+		// Chord rewrites a restored row's wait to an unknown outcome, so this row
+		// matches both annotations. Only the hold may be shown: the wait reason
+		// repeats its next step.
+		InputQueueItem{InputID: "c", Revision: 1, Sequence: 3, Policy: "after_completion", Stage: "queued", Preview: "restored follow-up", WaitWorkID: "w-dead"},
+	)
+	queue.Works = []InputQueueWork{{WorkID: "w-dead", Origin: "user", Outcome: "unknown"}}
+	queue.RestoredHeld = true
+
+	text := formatInputQueue(queue)
+	if !strings.Contains(text, "1. [next_request, queued] run the suite (restored; send a message to run it)") {
+		t.Fatalf("formatInputQueue must explain the hold:\n%s", text)
+	}
+	if !strings.Contains(text, "3. [after_completion, queued] restored follow-up (restored; send a message to run it)\n") {
+		t.Fatalf("a held row must carry the hold alone:\n%s", text)
+	}
+	if strings.Contains(text, "restored follow-up (last task") {
+		t.Fatalf("the hold repeated the wait reason:\n%s", text)
+	}
+	if strings.Contains(text, "already running (restored") {
+		t.Fatalf("a started row is not held by the restore:\n%s", text)
+	}
+	if status := formatInputQueueStatus(queue); !strings.Contains(status, "Restored with the session") {
+		t.Fatalf("status must explain the hold: %q", status)
+	}
+
+	// A flag left behind after its rows started must not make /status claim a
+	// hold with nothing left to hold.
+	startedOnly := testQueue(9, InputQueueItem{InputID: "a", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "started", Preview: "running"})
+	startedOnly.RestoredHeld = true
+	if status := formatInputQueueStatus(startedOnly); strings.Contains(status, "Restored with the session") {
+		t.Fatalf("status claims a hold with no queued row: %q", status)
+	}
+
+	// A blocked queue starts nothing, so /status must not pair the blocked
+	// warning with "send a message to start the queued input": the two lines
+	// give opposite next steps. Chord publishes exactly this pair while a
+	// restored queue is still being reconciled.
+	blocked := testQueue(9, InputQueueItem{InputID: "a", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued", Preview: "run the suite"})
+	blocked.RestoredHeld = true
+	blocked.Blocked = "Restored input queue is being reconciled"
+	status := formatInputQueueStatus(blocked)
+	if !strings.Contains(status, "storage is blocked") {
+		t.Fatalf("status dropped the blocked warning: %q", status)
+	}
+	if strings.Contains(status, "Restored with the session") {
+		t.Fatalf("status promised a start while the queue is blocked: %q", status)
+	}
+}
+
 type queueHarness struct {
 	r      *NotificationRouter
 	proc   *ChordProcess

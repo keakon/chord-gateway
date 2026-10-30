@@ -45,6 +45,11 @@ type InputQueue struct {
 	Works          []InputQueueWork `json:"works"`
 	Inputs         []InputQueueItem `json:"inputs"`
 	Blocked        string           `json:"blocked,omitempty"`
+	// RestoredHeld reports that inputs restored with the session wait for the
+	// operator to continue before any of them starts. It is display state
+	// only: the held rows are ordinary queued entries and are already counted
+	// in Inputs, so it never adds a guard of its own.
+	RestoredHeld bool `json:"restored_held,omitempty"`
 }
 
 func (q *InputQueue) clone() *InputQueue {
@@ -301,10 +306,30 @@ func formatInputQueueStatus(q *InputQueue) string {
 	text := fmt.Sprintf("Input queue: %d pending", len(q.Inputs))
 	if q.Blocked != "" {
 		text += "\n⚠️ Queue storage is blocked. Inspect the original session and storage on the host."
-	} else if len(q.Inputs) > 0 {
+	}
+	// A blocked queue starts nothing, so promising that a message will start the
+	// held input would contradict the line above; the blocked line is the one
+	// step the operator can act on.
+	if q.Blocked == "" && q.restoredHeldPending() {
+		text += "\nRestored with the session. Send a message to start the queued input."
+	}
+	if q.Blocked == "" && len(q.Inputs) > 0 {
 		text += "\nInspect or manage queued inputs with /queue."
 	}
 	return text
+}
+
+// restoredHeldInput reports whether this row is still held by the restore. Chord
+// holds only queued rows: one already claimed or started is not waiting on the
+// operator, so a stale flag must not make the queue look stuck.
+func (q *InputQueue) restoredHeldInput(input InputQueueItem) bool {
+	return q != nil && q.RestoredHeld && input.Stage == "queued"
+}
+
+// restoredHeldPending reports whether any row is still held, so a status line
+// never claims a hold with nothing left to hold.
+func (q *InputQueue) restoredHeldPending() bool {
+	return q != nil && slices.ContainsFunc(q.Inputs, q.restoredHeldInput)
 }
 
 // inputQueueListLimit bounds what one IM message shows. Chord allows 128 queued
@@ -337,8 +362,18 @@ func formatInputQueue(q *InputQueue) string {
 		if input.EditHeld {
 			b.WriteString(" (locked for editing in the local TUI)")
 		}
-		if reason := afterCompletionWaitReason(q, input); reason != "" {
-			fmt.Fprintf(&b, " (%s)", reason)
+		// A restored session holds every queued row, and Chord rewrites the work
+		// an after-completion row was waiting on to an unknown outcome during the
+		// restore, so the wait reason would only repeat the hold's next step. The
+		// hold is the operative state: nothing starts until the operator writes.
+		restored := q.restoredHeldInput(input)
+		if !restored {
+			if reason := afterCompletionWaitReason(q, input); reason != "" {
+				fmt.Fprintf(&b, " (%s)", reason)
+			}
+		}
+		if restored {
+			b.WriteString(" (restored; send a message to run it)")
 		}
 	}
 	if len(q.Inputs) > 0 {
@@ -356,22 +391,33 @@ func afterCompletionWaitReason(q *InputQueue, input InputQueueItem) string {
 	if input.WaitWorkID == "" {
 		return ""
 	}
+	const unknownOutcome = "last task outcome unknown; send a message to run it next"
+	outcome, found := "", false
 	for _, work := range q.Works {
-		if work.WorkID != input.WaitWorkID {
-			continue
-		}
-		switch work.Outcome {
-		case "active":
-			return "waiting for the running task"
-		case "completed":
-			return ""
-		case "failed":
-			return "last task failed; send a message to run it next"
-		case "cancelled":
-			return "last task cancelled; send a message to run it next"
-		default:
-			return "last task outcome unknown; send a message to run it next"
+		if work.WorkID == input.WaitWorkID {
+			outcome, found = work.Outcome, true
+			break
 		}
 	}
-	return ""
+	if !found {
+		// Defensive: ValidateInputDelivery rejects a queued input whose wait work
+		// is missing, so a valid projection never reaches this. Chord's own
+		// AfterCompletionWait maps it to unknown, and claiming that nothing holds
+		// the input would be the one answer that cannot be true.
+		return unknownOutcome
+	}
+	switch outcome {
+	case "", "completed":
+		// Chord's TUI reads the zero outcome as settled too; it only occurs in a
+		// state written before every work carried one.
+		return ""
+	case "active":
+		return "waiting for the running task"
+	case "failed":
+		return "last task failed; send a message to run it next"
+	case "cancelled":
+		return "last task cancelled; send a message to run it next"
+	default:
+		return unknownOutcome
+	}
 }

@@ -56,6 +56,14 @@ func TestInputQueueProjectionVersionsAndBindings(t *testing.T) {
 	if published != 3 || len(p.State().InputQueue.Inputs) != 0 {
 		t.Fatal("known empty queue did not replace old projection")
 	}
+	// The restore hold travels with the projection: without it an IM caller
+	// cannot tell a restored queue from one that is already running.
+	q.ViewVersion = 4
+	q.RestoredHeld = true
+	send(6)
+	if !p.State().InputQueue.RestoredHeld {
+		t.Fatal("restored_held did not survive the projection")
+	}
 }
 func TestInputQueueUnknownReceiptDoesNotStartWork(t *testing.T) {
 	p := &ChordProcess{pendingInputs: map[string]struct{}{"request": {}}}

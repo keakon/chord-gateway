@@ -13,7 +13,7 @@ Chord Gateway 仍处于 1.0 之前版本。本文档记录当前**刻意保留**
 - 带 `action` / `operation_id` 的问题命令、关联的 `question_receipt` 回执，以及带 `version`、`binding_id`、`supports_interaction` 的展示确认命令。
 - `models` 命令携带唯一 `request_id`，每条 `models_response` 都回显该值；gateway 会忽略未关联或迟到的模型回执。
 - `idle` 和 `status_response` 中的后台任务数量。
-- 输入队列投影提供完整 target 身份、`view_version`、`view_version_cas: true` 和 `queue_revision`。gateway 修改队列时会携带 `expected_view_version`；视图过期时返回 `input_queue_result: conflict`。不支持视图比较时，gateway 仍可列出队列，但不会执行修改。
+- 输入队列投影提供完整 target 身份、`view_version`、`view_version_cas: true` 和 `queue_revision`。gateway 修改队列时会携带 `expected_view_version`；视图过期时返回 `input_queue_result: conflict`。不支持视图比较时，gateway 仍可列出队列，但不会执行修改。`works` 中每个 work 的 `outcome`、每条输入的 `wait_work_id` 以及 `restored_held` 是 `/queue` 解释某条输入为何尚未开始所依赖的字段；缺少这些字段的版本仍可列出和编辑队列，但挂起的条目会看起来像普通排队输入。
 - 带 SHA-256 校验信息的 `image_result` 已保存图片摘要、带字节偏移和末块标记的有序 `image_artifact` 分块，以及读取图片 artifact 失败时回传的 `request_id`；全部生成图片分块输出后才发送整体 `idle` 事件。
 
 旧的单问题协议及不支持输入回执的构建不受支持，网关不会转换这些旧协议。部署时固定已经验证的 Chord 构建，升级时对照 [Chord headless 文档](https://github.com/keakon/chord/blob/main/docs/headless_CN.md)。能够忽略未知订阅项，并不代表协议兼容。
@@ -64,6 +64,7 @@ gateway 在接管前检查二进制的 headless 标志。不支持 managed headl
 - 问题 `decline` 操作与 `declined` 结果 —— 已移除，与 Chord 一致，问题只能回答或取消。请用 `/question-withdraw <id>` 取消问题。
 - 基于文件的 intake 去重与 polling 游标 —— 已移除，不做迁移。Intake、去重与游标均为内存态，旧文件不再导入。
 - WebSocket 长连接（Discord、Slack、Feishu、WeCom、DingTalk）的 `https` 代理 —— 启动时拒绝。请用 `http`、`socks5` 或 `socks5h`。
+- `input_queue` 的 `gate` 模式与 `restored_next_inputs_blocked` —— 已移除。当前 Chord 不再有可暂停的队列闸门，改为报告 `restored_held` 和每条输入的 `wait_work_id`。`/queue pause`、`/queue resume` 随闸门一起删除；`/queue` 改为逐条说明挂起原因。
 
 ## 清理规则
 
