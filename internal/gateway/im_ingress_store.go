@@ -118,7 +118,8 @@ func cloneIngressRecord(r IngressRecord) IngressRecord {
 	return r
 }
 func (s *IngressStore) adjustCounts(r IngressRecord, delta int) {
-	size := recordSize(r)
+	// r is always a record stored by save, which set its encoded size.
+	size := int(r.size)
 	s.memoryBytes += delta * size
 	key := compositeKey(r.Platform, r.AccountID)
 	c := s.counts[key]
@@ -137,7 +138,13 @@ func (s *IngressStore) adjustCounts(r IngressRecord, delta int) {
 		s.counts[key] = c
 	}
 }
-func (s *IngressStore) save(r IngressRecord) {
+
+// save replaces the stored record and updates retention accounting. The size
+// parameter is the record's encoded size when the caller computed it for this
+// exact field state, or -1 to compute it here. save always stores a record
+// with a valid cached size so later accounting (the -1 side and history
+// pruning) never re-serializes it.
+func (s *IngressStore) save(r IngressRecord, size int) {
 	old, exists := s.records[r.RecordID]
 	if exists {
 		s.adjustCounts(old, -1)
@@ -150,6 +157,11 @@ func (s *IngressStore) save(r IngressRecord) {
 		}
 	}
 	if r.Terminal() {
+		if r.Text != "" {
+			// The caller's size was computed with the body still present; the
+			// stored terminal record drops it.
+			size = -1
+		}
 		r.Text = ""
 		delete(s.pending, r.RecordID)
 		if !exists || !old.Terminal() {
@@ -162,6 +174,10 @@ func (s *IngressStore) save(r IngressRecord) {
 		}
 		s.pendingByRoute[r.Identity()][r.RecordID] = struct{}{}
 	}
+	if size < 0 {
+		size = recordSize(r)
+	}
+	r.size = uint32(size)
 	s.adjustCounts(r, 1)
 	s.records[r.RecordID] = cloneIngressRecord(r)
 	if s.byRoute[r.Identity()] == nil {
@@ -448,14 +464,17 @@ func (s *IngressStore) acceptRecord(ctx context.Context, r IngressRecord, cursor
 	}
 	pending := len(s.pendingByRoute[r.Identity()])
 	account := s.counts[compositeKey(r.Platform, r.AccountID)]
+	// Advance the sequence before measuring so the size cached on the stored
+	// record covers the final sequence digits. A capacity retry discards these
+	// local mutations, so a rejected attempt never advances the route sequence.
+	route.Sequence++
+	r.Sequence = route.Sequence
 	size := recordSize(r)
 	if len(s.records) >= ingressHistoryLimit || s.memoryBytes+size > 64<<20 || account.Pending+account.Tombstones >= ingressHistoryLimit || !r.Terminal() && (pending >= 64+reserve || account.Pending >= 1024+reserve || account.Bytes+size > 16<<20 || s.total.Pending >= 4096+reserve || s.total.Bytes+size > 64<<20) {
 		return retry("capacity")
 	}
-	route.Sequence++
-	r.Sequence = route.Sequence
 	s.routes[r.Identity()] = route
-	s.save(r)
+	s.save(r, size)
 	s.business[compositeKey(r.Platform, r.AccountID, r.BusinessID)] = r.RecordID
 	if r.SemanticID != "" && r.Reason != "update_id_conflict" && r.Reason != "semantic_duplicate" {
 		s.semantic[compositeKey(r.Platform, r.AccountID, r.SemanticID)] = r.RecordID
@@ -485,7 +504,8 @@ func (s *IngressStore) UpdateRecord(ctx context.Context, id string, allowed []im
 		return err
 	}
 	r.UpdatedAt = s.now()
-	s.save(r)
+	// The mutation may change any field, so save recomputes the encoded size.
+	s.save(r, -1)
 	s.ObserveStateTransition(r.Platform, string(previous), string(r.State), r.Reason)
 	s.signal()
 	return nil

@@ -34,7 +34,7 @@ func (s *IngressStore) EnsureRoute(ctx context.Context, id im.ChatIdentity, dige
 			r.State = im.IngressQuarantined
 			r.Reason = "route_identity_changed"
 			r.UpdatedAt = s.now()
-			s.save(r)
+			s.save(r, -1)
 		}
 	}
 	route.Identity = id
@@ -101,7 +101,7 @@ func (s *IngressStore) BindRouteSession(ctx context.Context, id im.ChatIdentity,
 		if r.State == im.IngressReceived && r.RouteRevision == revision && r.SessionID == "" {
 			r.SessionID = session
 			r.UpdatedAt = s.now()
-			s.save(r)
+			s.save(r, -1)
 		}
 	}
 	route.SessionID = session

@@ -12,7 +12,13 @@ import (
 type IngressRecord struct {
 	// statusQuery grants one bounded count reserve to an authorized /status.
 	// It is an admission-only capability, never granted by caller metadata.
-	statusQuery          bool
+	statusQuery bool
+	// size caches the record's JSON-encoded size for retention accounting. save
+	// sets it on every stored record (callers that mutate a record pass -1 so it
+	// is recomputed), so adjustCounts never re-serializes a stored record. The
+	// encoded form stays far below 4 GiB (the text alone is capped at 64 KiB),
+	// and uint32 shares the bool's trailing padding so the struct does not grow.
+	size                 uint32
 	RecordID             string                   `json:"record_id"`
 	Platform             string                   `json:"platform"`
 	AccountID            string                   `json:"account_id"`

@@ -3,11 +3,50 @@ package gateway
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/keakon/chord-gateway/internal/im"
 )
+
+// TestIngressRecordSizeAccountingStaysExact walks one record through the
+// transitions that mutate it (accept, dispatching, terminal text drop) and
+// requires the retained accounting to equal a fresh recomputation over the
+// stored records. save caches each record's encoded size, so this fails if a
+// mutation site ever skips the invalidation.
+func TestIngressRecordSizeAccountingStaysExact(t *testing.T) {
+	s := testIngressStore(t)
+	r := testIngressTask(t, s, "lifecycle")
+	r.Text = strings.Repeat("body ", 512)
+	accepted := mustAcceptIngress(t, s, r)
+
+	check := func(stage string) {
+		t.Helper()
+		total := 0
+		records, _ := s.listAll()
+		for _, rec := range records {
+			total += recordSize(rec)
+			if rec.RecordID == accepted.RecordID && int(rec.size) != recordSize(rec) {
+				t.Fatalf("%s: cached size %d diverged from encoded size %d", stage, rec.size, recordSize(rec))
+			}
+		}
+		if s.memoryBytes != total {
+			t.Fatalf("%s: accounting %d != encoded sizes %d", stage, s.memoryBytes, total)
+		}
+	}
+	check("accepted")
+
+	if err := s.UpdateRecord(t.Context(), accepted.RecordID, []im.IngressState{"received"}, func(r *IngressRecord) error { r.State = im.IngressDispatching; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	check("dispatching")
+
+	if err := s.UpdateRecord(t.Context(), accepted.RecordID, []im.IngressState{"dispatching"}, func(r *IngressRecord) error { r.State = im.IngressConsumed; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	check("consumed")
+}
 
 func TestIngressRestartStartsEmpty(t *testing.T) {
 	old := testIngressStore(t)
