@@ -771,6 +771,9 @@ func lockIngressMutex(ctx context.Context, mu *sync.Mutex) error {
 	if mu.TryLock() {
 		return nil
 	}
+	// Poll even when ctx can never cancel: a goroutine parked in mu.Lock is not
+	// durably blocked inside a testing/synctest bubble, so synctest.Wait would
+	// hang, while one waiting on the ticker lets the bubble clock advance.
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
 	for {
