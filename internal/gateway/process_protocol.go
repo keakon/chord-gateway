@@ -84,6 +84,68 @@ func isRetryPhase(phase string) bool {
 	return phase == "retrying" || phase == "retrying_key"
 }
 
+// todosEnvelopePayload is the todos event wrapper.
+type todosEnvelopePayload struct {
+	Todos []TodoItem `json:"todos"`
+}
+
+// assistantMessageEnvelopePayload is the assistant_message event payload.
+type assistantMessageEnvelopePayload struct {
+	Text          string `json:"text"`
+	AgentID       string `json:"agent_id"`
+	TaskID        string `json:"task_id"`
+	AgentType     string `json:"agent_type"`
+	ParentAgentID string `json:"parent_agent_id"`
+	ToolCalls     int    `json:"tool_calls"`
+}
+
+// preDecodedPayload holds an envelope payload decoded before processEnvelope
+// takes the process mutex. Only the field matching the envelope type is set;
+// nil means the payload failed to decode and the locked switch skips it,
+// matching the previous inline error handling.
+type preDecodedPayload struct {
+	status     *StatusResponse
+	queue      *InputQueue
+	background *BackgroundResultPayload
+	assistant  *assistantMessageEnvelopePayload
+	todos      *todosEnvelopePayload
+	todosErr   error
+}
+
+// preDecodeLargePayloads unmarshals the envelope payload types whose bodies
+// grow with session content (status snapshots, the input queue, background
+// results, assistant messages, todo lists) before processEnvelope takes the
+// process mutex, so a big decode cannot stall State/SendCommand callers that
+// share the mutex.
+func preDecodeLargePayloads(env *HeadlessEnvelope) (out preDecodedPayload) {
+	switch env.Type {
+	case "status_response":
+		out.status = decodeEnvelopePayload[StatusResponse](env)
+	case "input_queue_changed":
+		out.queue = decodeEnvelopePayload[InputQueue](env)
+	case "background_result":
+		out.background = decodeEnvelopePayload[BackgroundResultPayload](env)
+	case "assistant_message":
+		out.assistant = decodeEnvelopePayload[assistantMessageEnvelopePayload](env)
+	case "todos":
+		todos := todosEnvelopePayload{}
+		if err := json.Unmarshal(env.Payload, &todos); err != nil {
+			out.todosErr = err
+		} else {
+			out.todos = &todos
+		}
+	}
+	return out
+}
+
+func decodeEnvelopePayload[T any](env *HeadlessEnvelope) *T {
+	var v T
+	if json.Unmarshal(env.Payload, &v) != nil {
+		return nil
+	}
+	return &v
+}
+
 // processEnvelope updates ControlState based on the envelope type and calls onEvent.
 func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 	if env.Type == "session_transfer_preparing" || env.Type == "session_transfer_status" || env.Type == "session_transfer_saved" || env.Type == "session_transfer_released" {
@@ -111,6 +173,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			p.images.cancelRefetch(payload.RequestID)
 		}
 	}
+	decoded := preDecodeLargePayloads(env)
 	p.mu.Lock()
 	now := time.Now()
 	updatedAt := now.Format(time.RFC3339)
@@ -126,8 +189,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 
 	switch env.Type {
 	case "input_queue_changed":
-		var queue InputQueue
-		if env.Seq >= p.state.LastEnvelopeSeq && json.Unmarshal(env.Payload, &queue) == nil && p.applyInputQueue(&queue) {
+		if env.Seq >= p.state.LastEnvelopeSeq && decoded.queue != nil && p.applyInputQueue(decoded.queue) {
 			eventType = "input_queue_changed"
 		}
 	case "input_result":
@@ -462,8 +524,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 
 	case "status_response":
-		var resp StatusResponse
-		if err := json.Unmarshal(env.Payload, &resp); err == nil {
+		if resp := decoded.status; resp != nil {
 			inputs, err := normalizePausedInputs(resp.PausedInputs)
 			if err != nil {
 				deferredLog = func(string, ControlState) { log.Warnf("invalid status paused input projection: %v", err) }
@@ -491,7 +552,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				if resp.SessionID != p.state.SessionID {
 					p.state.InputQueue = nil
 				}
-				p.state.applyStatusResponse(&resp)
+				p.state.applyStatusResponse(resp)
 				if p.applyInputQueue(resp.InputQueue) {
 					eventType = "input_queue_changed"
 				}
@@ -634,9 +695,8 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		eventType = "session_switched"
 
 	case "background_result":
-		var payload BackgroundResultPayload
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			p.state.LastBackgroundResult = &payload
+		if payload := decoded.background; payload != nil {
+			p.state.LastBackgroundResult = payload
 		}
 		eventType = "background_result"
 
@@ -651,15 +711,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		// No onEvent — ack response.
 
 	case "assistant_message":
-		var payload struct {
-			Text          string `json:"text"`
-			AgentID       string `json:"agent_id"`
-			TaskID        string `json:"task_id"`
-			AgentType     string `json:"agent_type"`
-			ParentAgentID string `json:"parent_agent_id"`
-			ToolCalls     int    `json:"tool_calls"`
-		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+		if payload := decoded.assistant; payload != nil {
 			if strings.TrimSpace(payload.Text) != "" {
 				p.state.LastAssistantText = payload.Text
 				eventType = "assistant_message"
@@ -682,17 +734,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		}
 
 	case "todos":
-		var wrapper struct {
-			Todos []TodoItem `json:"todos"`
-		}
-		if err := json.Unmarshal(env.Payload, &wrapper); err != nil {
-			parseErr := err
+		if decoded.todosErr != nil {
+			parseErr := decoded.todosErr
 			deferredLog = func(key string, state ControlState) {
 				log.Warnf("[%v] failed to parse todos payload error=%v", processLogContext(key, state), parseErr)
 			}
 			p.state.Todos = nil
 		} else {
-			p.state.Todos = wrapper.Todos
+			p.state.Todos = decoded.todos.Todos
 		}
 		if !p.state.LastPushAt.IsZero() {
 			p.state.InternalEventsSinceLastPush++
