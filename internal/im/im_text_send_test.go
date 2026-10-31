@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"strings"
 	"sync"
@@ -315,5 +316,183 @@ func TestIMTextSendCancellationPreservesUnknownDelivery(t *testing.T) {
 	var sendErr *IMTextSendError
 	if !errors.Is(err, ErrDeliveryOutcomeUnknown) || !errors.Is(err, context.Canceled) || !errors.As(err, &sendErr) || sendErr.Category != "unknown_send" || sendErr.AcceptedSegments != 0 || calls != 1 {
 		t.Fatalf("unknown outcome was replaced or replayed: calls=%d err=%+v", calls, err)
+	}
+}
+
+// An outbound message that fits one segment is budgeted by rendering it once;
+// probing prefix lengths instead would multiply the adapter's render cost by
+// the number of binary search steps.
+func TestIMTextSegmentsSingleSegmentRendersOnce(t *testing.T) {
+	renders := 0
+	s, err := NewIMTextSender(IMTextSendOptions{
+		Platform: "discord", Budget: 1900,
+		Render:           func(source string) string { renders++; return source },
+		Measure:          UTF16Units,
+		TruncationNotice: "[cut]",
+		SendSegment:      func(context.Context, string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"sample reply", strings.Repeat("界", 1300), strings.Repeat("😀", 900)} {
+		renders = 0
+		segments, err := s.Segments(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(segments) != 1 || segments[0] != text || renders != 1 {
+			t.Fatalf("single segment budgeting rendered %d times: %q", renders, segments)
+		}
+	}
+}
+
+// Budget probes slice at rune boundaries, so every adapter shape must still
+// yield valid UTF-8 segments within budget that partition the message without
+// losing or duplicating content, including when the notice is appended.
+func TestIMTextSegmentsKeepBudgetAndContentInvariants(t *testing.T) {
+	escapeAngle := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "<", "&lt;"), ">", "&gt;") }
+	escapeMarkdown := func(s string) string {
+		var out strings.Builder
+		for _, r := range s {
+			if strings.ContainsRune("\\`*_{}[]()#+-.!|>~", r) {
+				out.WriteByte('\\')
+			}
+			out.WriteRune(r)
+		}
+		return out.String()
+	}
+	adapters := []struct {
+		name    string
+		budget  int
+		render  func(string) string
+		measure func(string) int
+	}{
+		{"plain", 12, func(s string) string { return s }, UTF16Units},
+		{"escaped", 24, escapeAngle, func(s string) int { return len(s) }},
+		{"markdown", 1900, escapeMarkdown, UTF16Units},
+	}
+	atoms := []string{"a", "界", "😀", "\n", "*", "<", ">", " ", "ab", "中文"}
+	const notice = "[cut]"
+	r := rand.New(rand.NewSource(11))
+	for _, adapter := range adapters {
+		s, err := NewIMTextSender(IMTextSendOptions{
+			Platform: adapter.name, Budget: adapter.budget, Render: adapter.render, Measure: adapter.measure,
+			TruncationNotice: notice, SendSegment: func(context.Context, string, string) error { return nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for trial := range 150 {
+			runes := 1 + r.Intn(400)
+			if trial%25 == 24 {
+				runes = MaxTextBytes + 1 // forces the byte cap and the truncation notice
+			}
+			var sb strings.Builder
+			for range runes {
+				sb.WriteString(atoms[r.Intn(len(atoms))])
+			}
+			text := sb.String()
+			segments, err := s.Segments(text)
+			if err != nil {
+				t.Fatalf("%s: %v", adapter.name, err)
+			}
+			if len(segments) == 0 || len(segments) > MaxTextSegments {
+				t.Fatalf("%s: segment count %d", adapter.name, len(segments))
+			}
+			var assembled strings.Builder
+			for i, segment := range segments {
+				if !utf8.ValidString(segment) {
+					t.Fatalf("%s: split rune in segment %d of %q", adapter.name, i, text)
+				}
+				if n := adapter.measure(segment); n < 0 || n > adapter.budget {
+					t.Fatalf("%s: segment %d uses %d of %d budget: %q", adapter.name, i, n, adapter.budget, segment)
+				}
+				assembled.WriteString(segment)
+			}
+			renderedNotice := adapter.render(notice)
+			truncated := false
+			for i, segment := range segments {
+				if !strings.Contains(segment, renderedNotice) {
+					continue
+				}
+				truncated = true
+				if i != len(segments)-1 {
+					t.Fatalf("%s: notice landed in segment %d of %d: %q", adapter.name, i, len(segments), segment)
+				}
+			}
+			if truncated && !strings.HasSuffix(assembled.String(), renderedNotice) {
+				t.Fatalf("%s: truncation notice is not at the end of the message", adapter.name)
+			}
+			if len(text) > MaxTextBytes && !truncated {
+				t.Fatalf("%s: byte-capped text omitted the truncation notice", adapter.name)
+			}
+			source := strings.TrimSuffix(assembled.String(), renderedNotice)
+			if truncated {
+				// The sender inserts a newline between the last content and the
+				// notice, so the message itself ends one byte earlier.
+				source = strings.TrimSuffix(source, "\n")
+			}
+			if truncated && strings.Contains(source, renderedNotice) {
+				t.Fatalf("%s: notice repeated inside the message", adapter.name)
+			}
+			renderedText := adapter.render(text)
+			if truncated {
+				if !strings.HasPrefix(renderedText, source) {
+					t.Fatalf("%s: truncated segments are not an in-order prefix: %d of %d bytes", adapter.name, len(source), len(renderedText))
+				}
+			} else if source != renderedText {
+				t.Fatalf("%s: complete segments changed content: got %d bytes, want %d", adapter.name, len(source), len(renderedText))
+			}
+		}
+	}
+}
+
+// A message truncated by the 64 KiB byte cap must still merge the tail into
+// the final segment when the tail fits alongside the truncation notice, rather
+// than spending one extra message on it.
+func TestIMTextSegmentsByteCapTruncationMergesNoticeTail(t *testing.T) {
+	escapeMarkdown := func(s string) string {
+		var out strings.Builder
+		for _, r := range s {
+			if strings.ContainsRune("\\`*_{}[]()#+-.!|>~", r) {
+				out.WriteByte('\\')
+			}
+			out.WriteRune(r)
+		}
+		return out.String()
+	}
+	s, err := NewIMTextSender(IMTextSendOptions{
+		Platform: "discord", Budget: 1900,
+		Render:      escapeMarkdown,
+		Measure:     UTF16Units,
+		SendSegment: func(context.Context, string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Discord-shaped body just past the byte cap: CJK text, one newline, and
+	// a run of escapable characters across the reserved-tail boundary, where
+	// escape expansion moves the notice-aware break off a plain segment split.
+	var sb strings.Builder
+	for sb.Len() < 63600 {
+		sb.WriteString("中")
+	}
+	sb.WriteString("\n")
+	for sb.Len() < 64925 {
+		sb.WriteString("中")
+	}
+	for sb.Len() < 66000 {
+		sb.WriteString("*")
+	}
+	segments, err := s.Segments(sb.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segments) != 12 {
+		t.Fatalf("byte-cap truncation split into %d segments, want 12", len(segments))
+	}
+	renderedNotice := escapeMarkdown(s.options.TruncationNotice)
+	if !strings.HasSuffix(segments[len(segments)-1], renderedNotice) {
+		t.Fatalf("last segment does not end with the truncation notice: %q", segments[len(segments)-1])
 	}
 }

@@ -235,25 +235,70 @@ func (s *IMTextSender) AcquireTarget(ctx context.Context, target string) (func()
 }
 
 func (s *IMTextSender) fits(source string) bool {
-	n := s.options.Measure(s.options.Render(source))
+	return s.fitsRendered(s.options.Render(source))
+}
+
+// fitsRendered budgets a value the adapter has already rendered, so a caller
+// holding the rendered form does not pay for a second Render pass.
+func (s *IMTextSender) fitsRendered(rendered string) bool {
+	n := s.options.Measure(rendered)
 	return n >= 0 && n <= s.options.Budget
 }
 
-// prefix returns a Unicode-safe prefix. Binary search bounds rendering work to
-// logarithmic probes per segment; adapters supply monotonic budget accounting.
+// prefix returns a Unicode-safe prefix. Probes gallop from the segment budget
+// before binary searching, so each one renders about one segment rather than
+// half of a long tail; adapters supply monotonic budget accounting. Probes
+// slice the source at rune boundaries instead of converting it to runes.
 func (s *IMTextSender) prefix(source, suffix string) string {
-	runes := []rune(source)
-	low, high := 0, len(runes)
+	low, high := 0, len(source)
+	for step := max(s.options.Budget, 1); low+step < high; step *= 2 {
+		probe := low + step
+		for probe < high && !utf8.RuneStart(source[probe]) {
+			probe++
+		}
+		if probe >= high {
+			break
+		}
+		if !s.fits(source[:probe] + suffix) {
+			high = probe - 1
+			break
+		}
+		low = probe
+	}
 	for low < high {
 		mid := (low + high + 1) / 2
-		if s.fits(string(runes[:mid]) + suffix) {
+		if mid < len(source) && !utf8.RuneStart(source[mid]) {
+			boundary := mid
+			for boundary > low && !utf8.RuneStart(source[boundary]) {
+				boundary--
+			}
+			if boundary == low {
+				// No boundary opens between low and mid; the next one is the
+				// only candidate left in range.
+				found := false
+				for next := mid + 1; next <= high; next++ {
+					if next == len(source) || utf8.RuneStart(source[next]) {
+						mid, found = next, true
+						break
+					}
+				}
+				if !found {
+					break
+				}
+			} else {
+				mid = boundary
+			}
+		}
+		if s.fits(source[:mid] + suffix) {
 			low = mid
 		} else {
+			// Every later boundary is at or past mid, and monotonic budget
+			// accounting makes them fail too.
 			high = mid - 1
 		}
 	}
-	prefix := string(runes[:low])
-	if end := strings.LastIndexByte(prefix, '\n'); low < len(runes) && end >= 0 {
+	prefix := source[:low]
+	if end := strings.LastIndexByte(prefix, '\n'); low < len(source) && end >= 0 {
 		prefix = prefix[:end+1]
 	}
 	return prefix
@@ -276,9 +321,18 @@ func (s *IMTextSender) Segments(text string) ([]string, error) {
 		return nil, nil
 	}
 	raw := trimIMTextBytes(text, MaxTextBytes)
+	if len(raw) == len(text) {
+		// The common case is one segment: budget the whole text before paying
+		// for a binary search that would converge back to all of it.
+		if rendered := s.options.Render(raw); s.fitsRendered(rendered) {
+			return []string{rendered}, nil
+		}
+	}
 	var source []string
 	remaining := raw
-	for len(source) < MaxTextSegments && remaining != "" {
+	// The byte cap already forces the notice, so only an uncapped message needs
+	// a pass to learn whether it overflows the segment count.
+	for len(raw) == len(text) && len(source) < MaxTextSegments && remaining != "" {
 		part := s.prefix(remaining, "")
 		if part == "" {
 			return nil, errors.New("one character exceeds segment budget")
@@ -293,10 +347,13 @@ func (s *IMTextSender) Segments(text string) ([]string, error) {
 		remaining = trimIMTextBytes(text, MaxTextBytes-len(notice)-1)
 		source = nil
 		for len(source) < MaxTextSegments-1 && remaining != "" {
-			if s.fits(remaining + "\n" + notice) {
+			part := s.prefix(remaining, "")
+			// remaining+notice extends remaining, so it can fit only once
+			// remaining fits whole; checking just then avoids rendering the
+			// whole tail for every segment.
+			if part == remaining && s.fits(remaining+"\n"+notice) {
 				break
 			}
-			part := s.prefix(remaining, "")
 			if part == "" {
 				return nil, errors.New("one character exceeds segment budget")
 			}
