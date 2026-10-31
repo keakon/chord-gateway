@@ -17,8 +17,10 @@ go install honnef.co/go/tools/cmd/staticcheck@latest
 
 ```bash
 go mod download
-go build ./...
+make build
 ```
+
+This writes `./chord-gateway` with cgo disabled, `-trimpath`, and stripped symbols.
 
 Enable commit hooks once:
 

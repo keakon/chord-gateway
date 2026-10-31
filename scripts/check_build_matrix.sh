@@ -23,7 +23,14 @@ build_stderr="$(mktemp)"
 trap 'rm -f "$build_stderr"' EXIT
 
 for target in "${targets[@]}"; do
-  if ! GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./... 2>"$build_stderr"; then
+  goos="${target%/*}"
+  goarch="${target#*/}"
+  build_env=(GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0)
+  # Match release.yml: only Apple Silicon may assume ARMv8.1+ and LSE atomics.
+  if [[ "${goos}" == "darwin" && "${goarch}" == "arm64" ]]; then
+    build_env+=(GOARM64=v8.1)
+  fi
+  if ! env "${build_env[@]}" go build -o /dev/null ./... 2>"$build_stderr"; then
     echo "cross build failed: ${target}" >&2
     cat "$build_stderr" >&2
     exit 1

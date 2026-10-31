@@ -23,11 +23,12 @@ COVERAGE_FILE ?= coverage.out
 # Override to point at an existing checkout: CHORD_REPO=/path/to/chord make contract
 CHORD_REPO ?= ../chord
 
-.PHONY: help ci preflight fmt fmt-check deps-check test test-fast test-cover race vet staticcheck gopls-check quality docs-check docs-sync contract clean
+.PHONY: help ci preflight build fmt fmt-check deps-check test test-fast test-cover race vet staticcheck gopls-check quality docs-check docs-sync contract clean
 
 help:
 	@echo "preflight   pre-push checks: formatting, module tidiness, vet, staticcheck, short tests"
 	@echo "ci          the full gate CI runs"
+	@echo "build       build ./chord-gateway with release-style flags"
 	@echo "build-matrix cross-build every supported GOOS/GOARCH target"
 	@echo "test-fast   tests with TMPDIR on a memory-backed filesystem when possible"
 	@echo "fmt         apply goimports + gofmt"
@@ -37,6 +38,14 @@ help:
 # Same Go checks CI runs. Docs checks stay in .githooks/pre-push and
 # .github/workflows/docs.yml because they depend on the changed paths.
 ci: fmt-check deps-check quality gopls-check build-matrix contract docs-check resource-scripts-check
+
+# Release-style build: pure Go (no cgo), path-trimmed, and stripped.
+build:
+	@build_env=(CGO_ENABLED=0); \
+	if [[ "$$($(GO) env GOOS)" == "darwin" && "$$($(GO) env GOARCH)" == "arm64" ]]; then \
+		build_env+=(GOARM64=v8.1); \
+	fi; \
+	env "$${build_env[@]}" $(GO) build -trimpath -ldflags "-s -w" -o chord-gateway .
 
 # What `git push` runs: the checks cheap enough to keep a push interactive. The
 # coverage floor, `go test -race` and gopls diagnostics are heavier than that
@@ -128,5 +137,5 @@ contract:
 	CHORD_GATEWAY_CONTRACT_CHORD_REPO=$(CHORD_REPO) ./scripts/check-chord-contract.sh
 
 clean:
-	rm -f $(COVERAGE_FILE)
+	rm -f $(COVERAGE_FILE) chord-gateway
 	./scripts/test_tmpdir.sh --destroy

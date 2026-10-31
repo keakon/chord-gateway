@@ -17,8 +17,10 @@ go install honnef.co/go/tools/cmd/staticcheck@latest
 
 ```bash
 go mod download
-go build ./...
+make build
 ```
+
+该命令生成 `./chord-gateway`，关闭 cgo、去掉路径信息并剥离符号。
 
 首次请启用提交 hooks：
 

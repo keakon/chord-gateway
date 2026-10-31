@@ -13,6 +13,10 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 - `/status` and `/queue` now explain a queue restored with the session (takeover, `/resume`, or a restart): the entries stay held until you send a message, so `/queue` marks each held entry `(restored; send a message to run it)` instead of listing it as ordinary pending input. Without it a restored queue looked ready while it was actually waiting for a continuation.
 - A context-pressure notice emitted by a SubAgent now shows which agent is under pressure, from Chord's `target_agent_id`. Main-session notices keep their previous wording, and main-session background results no longer carry a redundant `main` label.
 
+### Changed
+
+- Release binaries are now built with cgo disabled, so the linux/amd64 binary is statically linked: it starts on musl-based systems (Alpine, BusyBox containers) where the previous glibc-linked binary failed with a loader error, and DNS resolution consistently uses Go's built-in resolver instead of depending on the host's libc.
+
 ### Breaking changes
 
 - Removed `/queue pause` and `/queue resume` to match Chord, which no longer has a queue gate to pause. `/queue` and `/status` no longer show a gate mode (previously `unknown gate` against current Chord). Instead, `/queue` marks each after-completion input whose last task failed, was cancelled, or ended with an unknown outcome; it runs after the next task you send completes. `/queue clear` is unchanged.
