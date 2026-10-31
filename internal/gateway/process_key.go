@@ -45,12 +45,19 @@ func parseProcessKey(s string) (workspaceID, imType, chatID string) {
 	return "", "", ""
 }
 
-func processLogContext(key string, state ControlState) string {
-	workspaceID, imType, chatID := parseProcessKey(key)
+// formatProcessLogContext renders the log context from parts already parsed
+// out of the encoded process key, so a hot event path can parse the key once
+// and reuse the result across its log lines.
+func formatProcessLogContext(key, workspaceID, imType, chatID string, state ControlState) string {
 	if workspaceID == "" && imType == "" && chatID == "" {
 		return "key=" + key + " sid=" + state.SessionID
 	}
 	return "wid=" + workspaceID + " im=" + imType + " chat_id=" + chatID + " sid=" + state.SessionID
+}
+
+func processLogContext(key string, state ControlState) string {
+	workspaceID, imType, chatID := parseProcessKey(key)
+	return formatProcessLogContext(key, workspaceID, imType, chatID, state)
 }
 
 // compositeKey joins parts with the canonical "|" separator used across the

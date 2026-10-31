@@ -608,8 +608,11 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		log.Warnf("gateway event has invalid process key event=%v key=%v", eventType, key)
 		return
 	}
+	// One parse per event: every log line below reuses this context instead of
+	// re-decoding the base64+JSON key.
+	logCtx := formatProcessLogContext(key, workspaceID, imType, chatID, state)
 
-	log.Infof("[%v] gateway routing event event=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v", processLogContext(key, state),
+	log.Infof("[%v] gateway routing event event=%v busy=%v phase=%v last_outcome=%v assistant_text_len=%v", logCtx,
 		eventType,
 		state.Busy,
 		state.Phase,
@@ -628,10 +631,10 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 	if willSend && strings.HasPrefix(eventType, "session_transfer_") {
 		willSend = r.transferEventVisible(key, state.Transfer, msg, time.Now())
 		if !willSend {
-			log.Debugf("[%v] transfer notification suppressed as already reported event=%v", processLogContext(key, state), eventType)
+			log.Debugf("[%v] transfer notification suppressed as already reported event=%v", logCtx, eventType)
 		}
 	}
-	log.Infof("[%v] gateway routing decision event=%v assistant_text_len=%v message_len=%v will_send=%v", processLogContext(key, state),
+	log.Infof("[%v] gateway routing decision event=%v assistant_text_len=%v message_len=%v will_send=%v", logCtx,
 		eventType,
 		len(state.LastAssistantText),
 		msgLen,
@@ -665,7 +668,7 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		case outboundQueued:
 			return
 		case outboundClosed:
-			log.Debugf("[%v] outbound notification dispatcher closed, dropping event=%v", processLogContext(key, state), eventType)
+			log.Debugf("[%v] outbound notification dispatcher closed, dropping event=%v", logCtx, eventType)
 			return
 		}
 	}
