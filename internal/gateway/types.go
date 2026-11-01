@@ -314,7 +314,7 @@ type AgentNotifyPayload struct {
 	Message       string `json:"message"`
 }
 
-// AgentDonePayload is the terminal completion summary from a delegated SubAgent.
+// AgentDonePayload is the terminal completion report from a delegated SubAgent.
 type AgentDonePayload struct {
 	AgentID       string `json:"agent_id"`
 	TaskID        string `json:"task_id"`
@@ -322,6 +322,7 @@ type AgentDonePayload struct {
 	ParentAgentID string `json:"parent_agent_id,omitempty"`
 	ParentTaskID  string `json:"parent_task_id,omitempty"`
 	Summary       string `json:"summary"`
+	Message       string `json:"message"`
 }
 
 // LocalShellPayload is the local_shell_result event payload.

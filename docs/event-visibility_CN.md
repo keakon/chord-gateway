@@ -52,7 +52,7 @@ gateway 默认订阅以下事件：
 - 非 loop Done 完成报告
 - 本地 shell 命令结果
 - 供 `/status` 跟踪当前主角色
-- SubAgent 完成摘要
+- SubAgent 完成报告
 - 供 `/status` 展示最近一次上下文检查点结果
 - 进程内会话切换，使已 pin 的绑定跟随运行时实际使用的会话
 - 会话移交准备、保存与释放，保证重启后已经移交的绑定继续被阻断
@@ -120,7 +120,7 @@ Gateway 在保留 `background_result` 和 `context_notice` 正文的同时，也
 
 `assistant_message` 是发送到 IM 的主要最终回复，会替换缓存的 assistant 正文。Gateway 不展示流式预览，也不订阅 `assistant_rollback`；最终回复不依赖先收到回滚事件。
 
-SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent ID）和任务 ID。`agent_done` 始终订阅并发送权威完成摘要，因此也能覆盖只有工具调用、没有 assistant 文本的完成轮次。
+SubAgent 的 `assistant_message` 会标注 agent 类型（缺失时使用 agent ID）和任务 ID。`agent_done` 始终订阅，使用 `message` 中的完整完成报告，展示其中的检查结果、剩余限制和文件归因。Gateway 展示时去掉外层运行期提醒标签与邮箱路由头，保留报告正文及结果细节；报告为空时使用 `summary`。只有工具调用、没有 assistant 文本的完成轮次也会收到这类通知。完成通知仍最多显示 1,000 个字符，超长报告以 `...` 截断；完整报告保留在 Chord 会话中。
 
 `notification` 是用户提醒的标准事件，覆盖 blocked 错误、完全停止后的完成通知，以及本身没有提示的提醒（loop 退出决策、notify 协议纠正，Chord 统一用 `user_input_required` 作为 reason）。只有确认或 handoff 的提示已成功投递后，对应请求的已识别伴随 `user_input_required` 提醒才会被去重。即使缓存仍保留旧请求，无关告警也会照常送达。持久化问题没有伴随的重复提醒，因此未回答的问题不会屏蔽此类通知。
 

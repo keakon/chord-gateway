@@ -52,7 +52,7 @@ These events cover the minimum behavior for IM control, except that `background_
 - non-loop Done completion reports
 - local shell command results
 - active-role tracking for `/status`
-- SubAgent completion summaries
+- SubAgent completion reports
 - last context-checkpoint outcome for `/status`
 - in-band session switches, so a pinned binding follows the session the runtime actually runs
 - session-transfer preparation, save, and release, so a transferred binding stays blocked across restarts
@@ -120,7 +120,7 @@ Internal-event counts are currently based on gateway-tracked progress events suc
 
 `assistant_message` is the primary final response sent to IM and replaces cached assistant text. The gateway does not display streaming previews or subscribe to `assistant_rollback`; a final response does not depend on receiving a rollback event first.
 
-SubAgent `assistant_message` events are labeled with their agent type (falling back to agent ID) and task ID. `agent_done` is always subscribed and sends the authoritative completion summary; this also covers tool-only completion turns that have no assistant text.
+SubAgent `assistant_message` events are labeled with their agent type (falling back to agent ID) and task ID. `agent_done` is always subscribed and sends the authoritative completion report from `message`, including checks, remaining limitations and file-attribution details when supplied. The gateway removes the outer runtime reminder and mailbox routing header from the displayed report, keeps the report body and result details, and falls back to `summary` when the report is empty. This also covers tool-only completion turns that have no assistant text. Completion notifications remain limited to 1,000 characters; longer reports are truncated with `...`, and the full report remains in the Chord session.
 
 `notification` is the canonical event for user alerts, including blocked errors, fully stopped completion, and the requests that have no prompt of their own (loop-exit decisions and notify-protocol corrections, all reported with Chord's `user_input_required` reason). Only a recognized companion `user_input_required` alert for a matching confirmation or handoff is dropped after its prompt has been delivered successfully. Other alerts remain visible even if the pending cache still contains an earlier request. Durable questions have no companion alert, so open questions never suppress these notifications.
 

@@ -10,6 +10,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- SubAgent completion notifications now use Chord's full report, including checks, limitations and file-attribution details, with runtime reminder tags and mailbox routing headers removed. Empty reports use the completion summary; notifications keep the existing 1,000-character limit.
 - `/status` and `/queue` now explain a queue restored with the session (takeover, `/resume`, or a restart): the entries stay held until you send a message, so `/queue` marks each held entry `(restored; send a message to run it)` instead of listing it as ordinary pending input. Without it a restored queue looked ready while it was actually waiting for a continuation.
 - A context-pressure notice emitted by a SubAgent now shows which agent is under pressure, from Chord's `target_agent_id`. Main-session notices keep their previous wording, and main-session background results no longer carry a redundant `main` label.
 

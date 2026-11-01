@@ -165,11 +165,30 @@ func (r *NotificationRouter) formatAgentDoneNotification(state ControlState) str
 		return ""
 	}
 	message := "✅ " + formatAgentLabel(payload.AgentType, payload.AgentID, payload.TaskID) + " completed"
-	summary := strings.TrimSpace(payload.Summary)
-	if summary != "" {
-		message += "\n" + summary
+	report := agentDoneReport(payload.Message)
+	if report == "" {
+		report = strings.TrimSpace(payload.Summary)
+	}
+	if report != "" {
+		message += "\n" + report
 	}
 	return truncate(message)
+}
+
+func agentDoneReport(message string) string {
+	message = strings.TrimSpace(message)
+	const reminderStart, reminderEnd = "<system-reminder>", "</system-reminder>"
+	if strings.HasPrefix(message, reminderStart) && strings.HasSuffix(message, reminderEnd) {
+		message = strings.TrimSpace(message[len(reminderStart) : len(message)-len(reminderEnd)])
+	}
+	// Only remove Chord's mailbox routing header. Similar lines in the report
+	// itself may be examples or file-attribution details and must stay intact.
+	if strings.HasPrefix(message, "SubAgent mailbox update:\n") {
+		if _, report, ok := strings.Cut(message, "\n- summary:"); ok {
+			return strings.TrimSpace(report)
+		}
+	}
+	return message
 }
 
 // formatBackgroundResultNotification reports a finished background job's
