@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base32"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -91,14 +92,25 @@ func newSlackIntegrationHarness(t *testing.T) *slackIntegrationHarness {
 
 func (h *slackIntegrationHarness) receive(t *testing.T, kind string, payload json.RawMessage, delivery string) im.ReceiveResult {
 	t.Helper()
-	future, cancel, err := h.inbound.SubmitForTest(t.Context(), kind, payload, delivery, time.Now())
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		future, cancel, err := h.inbound.SubmitForTest(t.Context(), kind, payload, delivery, time.Now())
+		if err == nil {
+			defer cancel()
+			ctx, stop := context.WithTimeout(t.Context(), 3*time.Second)
+			defer stop()
+			return im.WaitIngressNormalization(ctx, future)
+		}
+		// Capture reads the target's process state without waiting, so a delivery
+		// that arrives while the previous one is being written to the process is
+		// refused before queueing. The socket reader leaves such an envelope
+		// unacknowledged for Slack to redeliver; the retry models that redelivery
+		// instead of failing on a scheduling race between deliveries of one chat.
+		if !errors.Is(err, slack.ErrCaptureBusy) || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	defer cancel()
-	ctx, stop := context.WithTimeout(t.Context(), 3*time.Second)
-	defer stop()
-	return im.WaitIngressNormalization(ctx, future)
 }
 
 func (h *slackIntegrationHarness) bindDM(t *testing.T) {
