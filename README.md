@@ -34,7 +34,13 @@ All IM platforms use one paired owner and explicit chat bindings, including sing
 
 ## Install
 
-Install from source with Go:
+Install with Homebrew (macOS and Linux):
+
+```bash
+brew install keakon/tap/chord-gateway
+```
+
+Or install from source with Go:
 
 ```bash
 go install github.com/keakon/chord-gateway@latest

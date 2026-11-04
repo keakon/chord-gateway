@@ -1,0 +1,106 @@
+name: Update Homebrew tap
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published stable release tag (e.g. v0.3.4)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-tap-update
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  prepare:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      updated: ${{ steps.formula.outputs.updated }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: keakon/homebrew-tap
+          ref: main
+          path: tap
+          persist-credentials: false
+      - name: Generate stable release formula
+        id: formula
+        run: ruby scripts/homebrew.rb prepare "$RELEASE_TAG" tap
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.formula.outputs.updated == 'true'
+        with:
+          name: homebrew-formula
+          path: tap/Formula/chord-gateway.rb
+          if-no-files-found: error
+
+  test:
+    needs: prepare
+    if: needs.prepare.outputs.updated == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@d482da0e602890d3160aade42e72c8556103bf04 # 2026.10.26.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: homebrew-formula
+          path: candidate
+      - name: Validate installation and formula
+        run: |
+          brew tap-new keakon/release-check
+          cp candidate/chord-gateway.rb "$(brew --repository keakon/release-check)/Formula/chord-gateway.rb"
+          brew trust --formula keakon/release-check/chord-gateway
+          brew install keakon/release-check/chord-gateway
+          brew test keakon/release-check/chord-gateway
+          brew audit --strict keakon/release-check/chord-gateway
+
+  publish:
+    needs: [prepare, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: keakon/homebrew-tap
+          ref: main
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: homebrew-formula
+          path: candidate
+      - name: Update tap main
+        run: ruby scripts/homebrew.rb publish "$RELEASE_TAG" tap candidate/chord-gateway.rb

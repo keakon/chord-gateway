@@ -28,6 +28,8 @@ jobs:
           set -euo pipefail
 
           version="${GITHUB_REF_NAME}"
+          commit="$(git rev-parse --short HEAD)"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist build
 
           targets=(
@@ -56,7 +58,14 @@ jobs:
               build_env+=(GOARM64=v8.1)
             fi
 
-            env "${build_env[@]}" go build -trimpath -ldflags "-s -w -X github.com/keakon/chord-gateway/internal/buildinfo.Version=${version}" \
+            # Stamp the build identity explicitly: the v0.3.4 release fell back to
+            # VCS stamping and misreported a clean checkout as dirty (`--version`
+            # showed a `*`). buildinfo.go documents this exact ldflags set.
+            env "${build_env[@]}" go build -trimpath -ldflags "-s -w \
+              -X github.com/keakon/chord-gateway/internal/buildinfo.Version=${version} \
+              -X github.com/keakon/chord-gateway/internal/buildinfo.Commit=${commit} \
+              -X github.com/keakon/chord-gateway/internal/buildinfo.BuildTime=${build_time} \
+              -X github.com/keakon/chord-gateway/internal/buildinfo.Dirty=false" \
               -o "${out}" .
 
             cp LICENSE "build/${name}/"
@@ -78,3 +87,11 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes
+
+  homebrew:
+    needs: release
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

@@ -1,0 +1,41 @@
+class ChordGateway < Formula
+  desc "IM gateway connecting WeChat, Feishu, and other IM platforms to Chord"
+  homepage "https://github.com/keakon/chord-gateway"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/keakon/chord-gateway/releases/download/<%= tag %>/chord-gateway-<%= tag %>-darwin-arm64.tar.gz"
+      sha256 "<%= checksums.fetch("darwin-arm64") %>"
+    end
+    on_intel do
+      url "https://github.com/keakon/chord-gateway/releases/download/<%= tag %>/chord-gateway-<%= tag %>-darwin-amd64.tar.gz"
+      sha256 "<%= checksums.fetch("darwin-amd64") %>"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/keakon/chord-gateway/releases/download/<%= tag %>/chord-gateway-<%= tag %>-linux-arm64.tar.gz"
+      sha256 "<%= checksums.fetch("linux-arm64") %>"
+    end
+    on_intel do
+      url "https://github.com/keakon/chord-gateway/releases/download/<%= tag %>/chord-gateway-<%= tag %>-linux-amd64.tar.gz"
+      sha256 "<%= checksums.fetch("linux-amd64") %>"
+    end
+  end
+
+  def install
+    bin.install "chord-gateway"
+    generate_completions_from_executable(bin/"chord-gateway", "completion")
+  end
+
+  test do
+    # v0.3.4 archives were built without an explicit Dirty stamp and report a
+    # trailing `*` from VCS metadata; later releases stamp Dirty=false.
+    assert_match(/^chord-gateway version v#{Regexp.escape(version.to_s)}\*?(?: [0-9a-f]+)?$/,
+                 shell_output("#{bin}/chord-gateway --version"))
+    assert_match "remote control plane", shell_output("#{bin}/chord-gateway --help")
+    assert_match "complete -o", shell_output("#{bin}/chord-gateway completion bash")
+  end
+end

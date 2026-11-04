@@ -12,14 +12,21 @@ Install [Chord](https://github.com/keakon/chord#three-step-setup), complete its 
 chord --version
 ```
 
-Then install the gateway with Go 1.27.0 or later:
+Install the gateway with Homebrew:
+
+```bash
+brew install keakon/tap/chord-gateway
+chord-gateway --version
+```
+
+Or install from source with Go 1.27.0 or later:
 
 ```bash
 go install github.com/keakon/chord-gateway@latest
 chord-gateway --version
 ```
 
-For prebuilt binaries, source builds, and service setup, see the [Cookbook](./docs/cookbook.md).
+For manual binary downloads, source builds, and service setup, see the [Cookbook](./docs/cookbook.md).
 
 ## 2. Choose a platform
 

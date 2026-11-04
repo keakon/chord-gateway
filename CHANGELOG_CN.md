@@ -10,6 +10,7 @@
 
 ### 新增
 
+- 现在可以在 macOS 和 Linux 上通过 Homebrew 安装网关：`brew install keakon/tap/chord-gateway`。稳定版本会在四平台安装验证通过后自动打包进 tap。
 - SubAgent 完成通知现在使用 Chord 提供的完整报告，保留检查结果、限制和文件归因，去掉运行期提醒标签与邮箱路由头。报告为空时使用完成摘要；通知仍最多显示 1,000 个字符。
 - `/status` 与 `/queue` 现在会说明随会话恢复（接管、`/resume` 或重启）的队列：这些条目在你发消息前一直保持挂起，因此 `/queue` 会在每条挂起条目后标注 `(restored; send a message to run it)`，而不是把它当作普通排队输入列出。此前恢复的队列看起来已经就绪，实际仍在等待你继续。
 - SubAgent 发出的上下文压力提示现在会标明是哪个 agent 的上下文接近上限（取自 Chord 的 `target_agent_id`）。主会话的提示保持原有文案，主会话的后台任务结果也不再带多余的 `main` 标注。
@@ -17,6 +18,10 @@
 ### 变更
 
 - Release 产物现在统一以 cgo 关闭构建，linux/amd64 二进制变为静态链接：此前链接 glibc 的动态二进制在 musl 系发行版（Alpine、BusyBox 容器）上会因加载器报错无法启动，现在可以直接运行，DNS 解析也统一使用 Go 内建 resolver，不再依赖宿主 libc。
+
+### 修复
+
+- Release 构建现在显式注入 commit、构建时间与脏状态，`chord-gateway --version` 在干净的 release 二进制上不再出现多余的 `*` 脏标记。v0.3.4 的产物仍会显示该标记。
 
 ### 不兼容变更
 

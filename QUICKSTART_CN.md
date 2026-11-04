@@ -12,14 +12,21 @@
 chord --version
 ```
 
-然后使用 Go 1.27.0 或更高版本安装网关：
+使用 Homebrew 安装网关：
+
+```bash
+brew install keakon/tap/chord-gateway
+chord-gateway --version
+```
+
+或使用 Go 1.27.0 或更高版本从源码安装：
 
 ```bash
 go install github.com/keakon/chord-gateway@latest
 chord-gateway --version
 ```
 
-预编译版本、源码构建和后台服务配置见 [Cookbook](./docs/cookbook_CN.md)。
+手动下载预编译版本、源码构建和后台服务配置见 [Cookbook](./docs/cookbook_CN.md)。
 
 ## 2. 选择平台
 

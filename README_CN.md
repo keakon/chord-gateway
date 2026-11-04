@@ -34,7 +34,13 @@
 
 ## 安装
 
-通过 Go 安装：
+使用 Homebrew 安装（macOS 与 Linux）：
+
+```bash
+brew install keakon/tap/chord-gateway
+```
+
+或通过 Go 安装：
 
 ```bash
 go install github.com/keakon/chord-gateway@latest
