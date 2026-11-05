@@ -6,11 +6,17 @@ on:
       - "**"
     paths-ignore:
       - "**/*.md"
+      - "**/*.mdx"
       - "docs/**"
+      - "website/**"
+      - "scripts/sync-docs.mjs"
   pull_request:
     paths-ignore:
       - "**/*.md"
+      - "**/*.mdx"
       - "docs/**"
+      - "website/**"
+      - "scripts/sync-docs.mjs"
 
 permissions:
   contents: read
@@ -137,12 +143,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install gopls
-        run: |
-          go install golang.org/x/tools/gopls@latest
-
       - name: Gopls check
-        run: scripts/check_gopls.sh
+        run: make gopls-check
 
   gofmt:
     name: Check Go formatting

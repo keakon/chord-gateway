@@ -16,14 +16,18 @@ LOCAL ?= github.com/keakon/chord-gateway
 
 GOIMPORTS ?= goimports
 STATICCHECK ?= staticcheck
-GOPLS ?= gopls
+GOPLS_VERSION ?= v0.24.0
+# gopls runs on the host even when GOOS/GOARCH select another analysis target,
+# and the versioned directory keeps an older pin from being reused.
+GOPLS_DIR := $(shell $(GO) env GOCACHE)/chord-gateway-gopls/$(GOPLS_VERSION)-$(shell $(GO) env GOHOSTOS)-$(shell $(GO) env GOHOSTARCH)
+GOPLS ?= $(GOPLS_DIR)/gopls
 
 MIN_COVERAGE ?= 70.0
 COVERAGE_FILE ?= coverage.out
 # Override to point at an existing checkout: CHORD_REPO=/path/to/chord make contract
 CHORD_REPO ?= ../chord
 
-.PHONY: help ci preflight build fmt fmt-check deps-check test test-fast test-cover race vet staticcheck gopls-check quality docs-check docs-sync contract clean
+.PHONY: help ci preflight build fmt fmt-check deps-check test test-fast test-cover race vet staticcheck gopls-install gopls-check quality docs-check docs-sync contract clean
 
 help:
 	@echo "preflight   pre-push checks: formatting, module tidiness, vet, staticcheck, short tests"
@@ -111,8 +115,19 @@ staticcheck:
 # (config_persistence_windows.go alongside config_persistence_unix.go) to a
 # single-platform gopls and reports diagnostics against files that never compile
 # here, once per target platform.
-gopls-check:
-	CG_GO=$(GO) CG_GOPLS=$(GOPLS) ./scripts/check_gopls.sh
+# Keep cache paths in shell quotes so Make does not split paths with spaces.
+gopls-install:
+	@if [[ ! -x '$(GOPLS_DIR)/gopls' ]]; then \
+		mkdir -p '$(GOPLS_DIR)' && \
+		GOOS=$(shell $(GO) env GOHOSTOS) GOARCH=$(shell $(GO) env GOHOSTARCH) GOBIN='$(GOPLS_DIR)' $(GO) install golang.org/x/tools/gopls@$(GOPLS_VERSION); \
+	fi
+
+ifeq ($(GOPLS),$(GOPLS_DIR)/gopls)
+GOPLS_DEP := gopls-install
+endif
+
+gopls-check: $(GOPLS_DEP)
+	CG_GO=$(GO) CG_GOPLS='$(GOPLS)' ./scripts/check_gopls.sh
 
 # Complements gopls-check: that gate only sees the host platform's files, so the
 # windows and unix twins are type-checked here. The target list lives in the
