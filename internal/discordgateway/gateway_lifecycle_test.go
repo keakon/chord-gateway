@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
@@ -821,4 +823,79 @@ func TestGatewayReadyGenerationRecorded(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+type pipeWebsocketResponse struct {
+	http.ResponseWriter
+	conn   net.Conn
+	reader *bufio.Reader
+}
+
+func (w *pipeWebsocketResponse) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.conn, bufio.NewReadWriter(w.reader, bufio.NewWriter(w.conn)), nil
+}
+
+func TestGatewayReconnectBackoffResetsAfterReady(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		disconnect := make(chan struct{})
+		var disconnectOnce sync.Once
+		defer disconnectOnce.Do(func() { close(disconnect) })
+		var attempts int
+		dials := make(chan time.Duration, 4)
+		dialer := &websocket.Dialer{NetDialContext: func(context.Context, string, string) (net.Conn, error) {
+			attempts++
+			dials <- time.Since(started)
+			if attempts != 3 {
+				return nil, errors.New("temporary dial failure")
+			}
+			client, server := net.Pipe()
+			go func() {
+				defer server.Close()
+				reader := bufio.NewReader(server)
+				req, err := http.ReadRequest(reader)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				response := &pipeWebsocketResponse{ResponseWriter: httptest.NewRecorder(), conn: server, reader: reader}
+				conn, err := (&websocket.Upgrader{}).Upgrade(response, req, nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.Close()
+				if err := testHello(conn, 60000); err != nil {
+					t.Error(err)
+					return
+				}
+				if op, err := testCommand(conn); err != nil || op != OpcodeIdentify {
+					t.Errorf("command = %v, error = %v", op, err)
+					return
+				}
+				if err := testReady(conn, ""); err != nil {
+					t.Error(err)
+					return
+				}
+				<-disconnect
+			}()
+			return client, nil
+		}}
+		g := New(t.Context(), "test-token", nil, WithDialer(dialer), WithURL("ws://gateway.example")).(*gatewayImpl)
+		defer g.Close(context.Background())
+		if err := g.Open(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []time.Duration{0, time.Second, 3 * time.Second} {
+			if got := <-dials; got != want {
+				t.Fatalf("dial at %v, want %v", got, want)
+			}
+		}
+		synctest.Wait()
+		disconnectedAt := time.Now()
+		disconnectOnce.Do(func() { close(disconnect) })
+		if got := <-dials; got != disconnectedAt.Sub(started)+time.Second {
+			t.Fatalf("reconnect dial at %v, want %v after READY", got, disconnectedAt.Sub(started)+time.Second)
+		}
+	})
 }

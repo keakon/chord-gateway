@@ -310,7 +310,12 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 	entered := make(chan struct{})
 	releaseACK := make(chan struct{})
 	var releaseOnce sync.Once
+	var mu sync.Mutex
+	var sent []string
 	startWecomAdapterTestWS(t, a, func(_, text string) int {
+		mu.Lock()
+		sent = append(sent, text)
+		mu.Unlock()
 		if text == "body" {
 			close(entered)
 			<-releaseACK
@@ -329,19 +334,16 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 	go func() {
 		probeDone <- a.ValidateBindingTarget(t.Context(), im.BindingProbeTarget{Platform: "wecom", AccountID: "bot", ChatID: msg.ChatID})
 	}()
-	// While the body ACK is held, the probe must wait for the same target's
-	// slot: the pending count is already 1 for the body, so give an overtaking
-	// probe a bounded window to show itself before releasing.
-	observationEnd := time.Now().Add(50 * time.Millisecond)
-	for time.Now().Before(observationEnd) {
-		if got := a.WSPendingSendsForTest(); got != 1 {
-			t.Fatalf("probe did not share the body's send slot: pending sends = %d", got)
-		}
-		select {
-		case err := <-probeDone:
-			t.Fatalf("probe completed while the body ACK was held: %v", err)
-		case <-time.After(10 * time.Millisecond):
-		}
+	waitForCondition(t, time.Second, func() bool {
+		return a.TextSenderForTest().TargetRefsForTest(msg.ChatID) == 2
+	}, "probe to wait for the body's target slot")
+	if got := a.WSPendingSendsForTest(); got != 1 {
+		t.Fatalf("probe reached transport before the body ACK: pending sends = %d", got)
+	}
+	select {
+	case err := <-probeDone:
+		t.Fatalf("probe completed while the body ACK was held: %v", err)
+	default:
 	}
 	releaseOnce.Do(func() { close(releaseACK) })
 	for _, done := range []<-chan error{bodyDone, probeDone} {
@@ -353,6 +355,11 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("ordered send did not finish")
 		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := strings.Join(sent, "\n"); got != "body\n"+wecom.BindingCheckMessage {
+		t.Fatalf("send order = %q", got)
 	}
 }
 
