@@ -68,7 +68,17 @@ func (r *NotificationRouter) HandleChordImage(key string, image *im.ReceivedImag
 		}
 	}
 	if r.outbound != nil {
-		if r.outbound.enqueueOrWaitContext(ctx, key, task) == outboundClosed {
+		// Cap the wait for queue capacity, matching HandleChordEvent: image
+		// enqueues also run on the chord stdout reader, and a wedged platform
+		// connection must not stall it for the rest of the binding lifetime.
+		enqueueCtx, cancel := context.WithTimeout(ctx, outboundEnqueueWaitCap)
+		result := r.outbound.enqueueOrWaitContext(enqueueCtx, key, task)
+		waitErr := enqueueCtx.Err()
+		cancel()
+		if result == outboundClosed {
+			if waitErr != nil {
+				log.Warnf("image delivery dropped after enqueue wait (%v) session=%v call=%v reference=%v", waitErr, image.SessionID, image.CallID, image.Reference)
+			}
 			image.Close()
 		}
 		return

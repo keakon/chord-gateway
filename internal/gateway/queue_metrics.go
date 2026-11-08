@@ -25,6 +25,9 @@ type queueMetrics struct {
 	full      atomic.Uint64
 	closed    atomic.Uint64
 	blocked   atomic.Uint64
+	// dropped counts enqueue attempts abandoned because their context ended
+	// (for example the enqueue wait cap) before the task could be queued.
+	dropped atomic.Uint64
 
 	blockedWaitNanos atomic.Uint64
 	blockedWaitMax   atomic.Uint64
@@ -56,6 +59,7 @@ type queueMetricsSnapshot struct {
 	Full      uint64
 	Closed    uint64
 	Blocked   uint64
+	Dropped   uint64
 
 	// BlockedWaitTotal and BlockedWaitMax aggregate how long blocked enqueues
 	// waited for queue capacity; BlockedSlow counts waits at or above
@@ -81,6 +85,7 @@ func (m *queueMetrics) snapshot(depth, maxDepth, capacity int) queueMetricsSnaps
 		Full:             m.full.Load(),
 		Closed:           m.closed.Load(),
 		Blocked:          m.blocked.Load(),
+		Dropped:          m.dropped.Load(),
 		BlockedWaitTotal: time.Duration(m.blockedWaitNanos.Load()),
 		BlockedWaitMax:   time.Duration(m.blockedWaitMax.Load()),
 		BlockedSlow:      m.blockedSlow.Load(),
@@ -91,7 +96,7 @@ func (m *queueMetrics) snapshot(depth, maxDepth, capacity int) queueMetricsSnaps
 }
 
 func (s queueMetricsSnapshot) active() bool {
-	return s.Enqueued != 0 || s.Processed != 0 || s.Full != 0 || s.Closed != 0 || s.Blocked != 0 ||
+	return s.Enqueued != 0 || s.Processed != 0 || s.Full != 0 || s.Closed != 0 || s.Blocked != 0 || s.Dropped != 0 ||
 		s.BlockedWaitTotal != 0 || s.BlockedSlow != 0 || s.Depth != 0
 }
 
@@ -133,6 +138,7 @@ func (s queueMetricsSnapshot) delta(previous queueMetricsSnapshot) queueMetricsS
 		Processed:        s.Processed - previous.Processed,
 		Full:             s.Full - previous.Full,
 		Closed:           s.Closed - previous.Closed,
+		Dropped:          s.Dropped - previous.Dropped,
 		Blocked:          s.Blocked - previous.Blocked,
 		BlockedWaitTotal: s.BlockedWaitTotal - previous.BlockedWaitTotal,
 		BlockedSlow:      s.BlockedSlow - previous.BlockedSlow,
@@ -142,7 +148,7 @@ func (s queueMetricsSnapshot) delta(previous queueMetricsSnapshot) queueMetricsS
 }
 
 func logQueueMetricsSnapshot(logf func(string, ...any), queue string, snapshot, delta queueMetricsSnapshot) {
-	logf("performance queue=%v enqueued=%v enqueued_delta=%v processed=%v processed_delta=%v depth=%v max_depth=%v capacity=%v full=%v full_delta=%v closed=%v closed_delta=%v blocked=%v blocked_delta=%v blocked_wait_total=%v blocked_wait_total_delta=%v blocked_wait_max=%v blocked_slow=%v blocked_slow_delta=%v",
+	logf("performance queue=%v enqueued=%v enqueued_delta=%v processed=%v processed_delta=%v depth=%v max_depth=%v capacity=%v full=%v full_delta=%v closed=%v closed_delta=%v dropped=%v dropped_delta=%v blocked=%v blocked_delta=%v blocked_wait_total=%v blocked_wait_total_delta=%v blocked_wait_max=%v blocked_slow=%v blocked_slow_delta=%v",
 		queue,
 		snapshot.Enqueued,
 		delta.Enqueued,
@@ -155,6 +161,8 @@ func logQueueMetricsSnapshot(logf func(string, ...any), queue string, snapshot, 
 		delta.Full,
 		snapshot.Closed,
 		delta.Closed,
+		snapshot.Dropped,
+		delta.Dropped,
 		snapshot.Blocked,
 		delta.Blocked,
 		snapshot.BlockedWaitTotal,

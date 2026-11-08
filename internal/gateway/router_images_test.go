@@ -73,6 +73,61 @@ func TestImageRouterOrderingFailureAndCleanup(t *testing.T) {
 	}
 }
 
+// An image enqueue that cannot get shard capacity must give up within the
+// outbound wait cap instead of stalling the chord stdout reader for the rest
+// of the binding lifetime.
+func TestImageRouterEnqueueWaitCapDropsImage(t *testing.T) {
+	oldCap := outboundEnqueueWaitCap
+	outboundEnqueueWaitCap = 50 * time.Millisecond
+	t.Cleanup(func() { outboundEnqueueWaitCap = oldCap })
+
+	r := NewNotificationRouter(newTestChordManager(testConfig()))
+	defer r.outbound.close()
+	key := processKey{workspaceID: "test", imType: "wechat", chatID: "sample-chat"}.String()
+	release := make(chan struct{})
+	defer close(release)
+	started := make(chan struct{}, 1)
+	fill := func() {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	// One blocking task (picked up by the consumer) plus a full queue leaves
+	// the shard saturated, so the image enqueue has to wait.
+	if got := r.outbound.enqueue(key, fill); got != outboundQueued {
+		t.Fatalf("first enqueue = %v, want outboundQueued", got)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first task did not start")
+	}
+	for i := range outboundQueueSize {
+		if got := r.outbound.enqueue(key, fill); got != outboundQueued {
+			t.Fatalf("fill enqueue %d = %v, want outboundQueued", i, got)
+		}
+	}
+
+	img := imageForUpload(t)
+	initial := im.ImageSpoolBytes.Load()
+	im.ImageSpoolBytes.Add(img.Size)
+	done := make(chan struct{})
+	go func() { r.HandleChordImage(key, img); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("image enqueue did not respect the wait cap")
+	}
+	if _, err := os.Stat(img.Path); !os.IsNotExist(err) {
+		t.Fatal("dropped image leaked its temp file")
+	}
+	if im.ImageSpoolBytes.Load() != initial {
+		t.Fatal("dropped image leaked spool budget")
+	}
+}
+
 func TestImageRouterMarksOnlyConfirmedVisibleOutput(t *testing.T) {
 	for _, tc := range []struct {
 		name                string

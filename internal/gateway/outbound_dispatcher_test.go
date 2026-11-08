@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -224,4 +226,101 @@ func TestOutboundDispatcherCloseWakesBlockingEnqueue(t *testing.T) {
 	}
 	close(release)
 	<-closeDone
+}
+
+// A producer blocked on shard capacity must give up when its context times
+// out instead of waiting for the rest of the binding lifetime, and the
+// abandoned attempt must show up in the dropped metric.
+func TestOutboundEnqueueWaitCapReturnsOnContextTimeout(t *testing.T) {
+	d := newOutboundDispatcher()
+	defer d.close()
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	fill := func() {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	for i := 0; i < outboundQueueSize; i++ {
+		if got := d.enqueue("same-key", fill); got != outboundQueued {
+			t.Fatalf("fill enqueue %d = %v, want outboundQueued", i, got)
+		}
+	}
+	// The consumer is now executing one fill task and the shard queue holds
+	// the rest minus that one; one more fits, and after it the shard is full.
+	<-started
+	if got := d.enqueue("same-key", fill); got != outboundQueued {
+		t.Fatalf("saturating enqueue = %v, want outboundQueued", got)
+	}
+
+	enqueueDone := make(chan outboundEnqueueResult, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		enqueueDone <- d.enqueueOrWaitContext(ctx, "same-key", func() {})
+	}()
+	select {
+	case got := <-enqueueDone:
+		if got != outboundClosed {
+			t.Fatalf("enqueue result = %v, want outboundClosed", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("enqueue did not respect the context timeout")
+	}
+	snapshot := d.metricsSnapshot()
+	if snapshot.Dropped != 1 || snapshot.BlockedWaitTotal <= 0 {
+		t.Fatalf("timeout metrics = %#v, want dropped=1 with the blocked wait recorded", snapshot)
+	}
+	delta := snapshot.delta(queueMetricsSnapshot{})
+	if delta.Dropped != 1 {
+		t.Fatalf("dropped delta = %d, want 1", delta.Dropped)
+	}
+	var line strings.Builder
+	logQueueMetricsSnapshot(func(format string, args ...any) { fmt.Fprintf(&line, format, args...) }, "outbound", snapshot, delta)
+	for _, want := range []string{"dropped=1", "dropped_delta=1"} {
+		if !strings.Contains(line.String(), want) {
+			t.Fatalf("metrics line %q missing %q", line.String(), want)
+		}
+	}
+	close(release)
+}
+
+// close() must not wait forever for consumers executing queued tasks: the
+// drain is bounded and stragglers keep running in the background.
+func TestOutboundCloseBoundsDrain(t *testing.T) {
+	oldBudget := outboundDrainBudget
+	outboundDrainBudget = 50 * time.Millisecond
+	t.Cleanup(func() { outboundDrainBudget = oldBudget })
+
+	d := newOutboundDispatcher()
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	task := func() {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	for i := 0; i < outboundQueueSize; i++ {
+		if got := d.enqueue("same-key", task); got != outboundQueued {
+			t.Fatalf("enqueue %d = %v, want outboundQueued", i, got)
+		}
+	}
+	<-started
+
+	closed := make(chan struct{})
+	go func() {
+		d.close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("close did not return within the drain budget")
+	}
+	close(release)
 }

@@ -103,8 +103,10 @@ func (r *NotificationRouter) currentAdapter() im.IMAdapter {
 	return r.adapter
 }
 
-// Close drains queued proactive notifications. No new tasks are accepted once
-// shutdown begins; callers then disconnect adapters after this returns.
+// Close drains queued proactive notifications with a bounded wait. No new
+// tasks are accepted once shutdown begins; stragglers keep draining in the
+// background and fail fast once callers disconnect the adapters after this
+// returns.
 func (r *NotificationRouter) Close() {
 	if r == nil {
 		return
@@ -663,11 +665,22 @@ func (r *NotificationRouter) HandleChordEvent(key, eventType string, state Contr
 		r.deliverChordEvent(target, eventType, state, msg)
 	}
 	if r.outbound != nil {
-		result := r.outbound.enqueueOrWaitContext(sendCtx, key, task)
+		// Cap the wait for queue capacity: this runs on the chord stdout
+		// reader, and a wedged platform connection must not stall it for the
+		// rest of the binding lifetime. Timed-out enqueues are counted as
+		// dropped by the dispatcher.
+		enqueueCtx, cancel := context.WithTimeout(sendCtx, outboundEnqueueWaitCap)
+		result := r.outbound.enqueueOrWaitContext(enqueueCtx, key, task)
+		waitErr := enqueueCtx.Err()
+		cancel()
 		switch result {
 		case outboundQueued:
 			return
 		case outboundClosed:
+			if waitErr != nil {
+				log.Warnf("[%v] outbound notification wait ended (%v), dropping event=%v", logCtx, waitErr, eventType)
+				return
+			}
 			log.Debugf("[%v] outbound notification dispatcher closed, dropping event=%v", logCtx, eventType)
 			return
 		}

@@ -11,6 +11,19 @@ const (
 	outboundQueueSize      = 256
 )
 
+// outboundEnqueueWaitCap bounds how long a producer waits for shard queue
+// capacity. HandleChordEvent and HandleChordImage enqueue from the chord
+// stdout reader, so a wedged platform connection must not stall it for the
+// rest of the binding lifetime; timed-out enqueues are counted as dropped.
+// It is variable so tests can exercise the bound quickly.
+var outboundEnqueueWaitCap = 30 * time.Second
+
+// outboundDrainBudget bounds how long close waits for consumers to finish
+// executing queued tasks. Stragglers keep draining in the background and fail
+// fast once adapters disconnect. It is variable so tests can exercise the
+// drain bound quickly.
+var outboundDrainBudget = 5 * time.Second
+
 type outboundTask func()
 
 type outboundEnqueueResult uint8
@@ -79,6 +92,7 @@ func (d *outboundDispatcher) enqueueTaskContext(ctx context.Context, key string,
 	if block {
 		select {
 		case <-ctx.Done():
+			d.metrics.dropped.Add(1)
 			return outboundClosed
 		case <-d.done:
 			return outboundClosed
@@ -89,6 +103,7 @@ func (d *outboundDispatcher) enqueueTaskContext(ctx context.Context, key string,
 		// backpressure, not wait behind it or bypass it and reorder output.
 		select {
 		case <-ctx.Done():
+			d.metrics.dropped.Add(1)
 			return outboundClosed
 		case <-d.done:
 			return outboundClosed
@@ -106,6 +121,7 @@ func (d *outboundDispatcher) enqueueTaskContext(ctx context.Context, key string,
 			d.metrics.enqueued.Add(1)
 			return outboundQueued
 		case <-ctx.Done():
+			d.metrics.dropped.Add(1)
 			return outboundClosed
 		case <-d.done:
 			d.metrics.closed.Add(1)
@@ -121,6 +137,10 @@ func (d *outboundDispatcher) enqueueTaskContext(ctx context.Context, key string,
 			d.metrics.enqueued.Add(1)
 			return outboundQueued
 		case <-ctx.Done():
+			// The wait still happened: record it so a provider stall that
+			// ends in a dropped notification stays visible in the metrics.
+			d.metrics.recordBlockedWait(time.Since(waitStart))
+			d.metrics.dropped.Add(1)
 			return outboundClosed
 		case <-d.done:
 			d.metrics.recordBlockedWait(time.Since(waitStart))
@@ -157,7 +177,19 @@ func (d *outboundDispatcher) close() {
 	d.mu.Unlock()
 	d.producers.Wait()
 	d.cancel()
-	d.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(outboundDrainBudget)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		// Stop waiting: stragglers keep draining in the background and their
+		// sends fail fast once callers disconnect the adapters.
+	}
 }
 
 func (d *outboundDispatcher) consume(ctx context.Context, queue <-chan outboundTask) {
