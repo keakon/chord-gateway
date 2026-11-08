@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -925,6 +926,11 @@ func (p *ChordProcess) SendCommand(cmd map[string]any) error {
 	return nil
 }
 
+// stdinWriteTimeout bounds each write to the chord process stdin. Pipe writes
+// have no deadline by default, and a child that stops consuming stdin would
+// block here forever while p.mu is held, wedging TerminateGroup and shutdown.
+var stdinWriteTimeout = 10 * time.Second
+
 // writeCommandLocked writes one complete JSONL command under p.mu, shared by
 // control commands and inputs that also register a consumption receipt.
 func (p *ChordProcess) writeCommandLocked(data []byte) error {
@@ -934,13 +940,57 @@ func (p *ChordProcess) writeCommandLocked(data []byte) error {
 	if p.stdin == nil {
 		return io.ErrClosedPipe
 	}
+	stdin := p.stdin
+	deadlineSet := false
+	if f, ok := stdin.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		if err := f.SetWriteDeadline(time.Now().Add(stdinWriteTimeout)); err == nil {
+			deadlineSet = true
+			defer func() { _ = f.SetWriteDeadline(time.Time{}) }()
+		} else {
+			log.Debugf("[%v] set stdin write deadline failed, using pipe-close watchdog: %v", processLogContext(p.key, p.state), err)
+		}
+	}
+	var watchdog *time.Timer
+	var watchdogDone chan struct{}
+	if !deadlineSet {
+		// Windows StdinPipe does not support deadlines. Closing that pipe
+		// interrupts the blocked Write without creating a separate writer.
+		watchdogDone = make(chan struct{})
+		watchdog = time.AfterFunc(stdinWriteTimeout, func() {
+			defer close(watchdogDone)
+			_ = stdin.Close()
+		})
+	}
 	data = append(data, '\n')
-	n, err := p.stdin.Write(data)
+	n, err := stdin.Write(data)
+	if watchdog != nil && !watchdog.Stop() {
+		// Join the close before clearing stdin or returning to the caller.
+		<-watchdogDone
+		err = os.ErrDeadlineExceeded
+	}
 	if err == nil && n != len(data) {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
-		return fmt.Errorf("write headless command: %w", err)
+		err = fmt.Errorf("write headless command: %w", err)
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			// The deadline may have aborted a partial write, leaving the JSONL
+			// stream corrupt. Close stdin so future writes fail fast, then kill
+			// the wedged child so the normal exit/auto-restart machinery takes
+			// over. Do not touch p.cancel or the exit path directly from here:
+			// readLoop observes the closed stdout and runs handleExit.
+			if p.stdin != nil {
+				_ = p.stdin.Close()
+				p.stdin = nil
+			}
+			log.Warnf("[%v] chord process stopped consuming stdin, killing process group", processLogContext(p.key, p.state))
+			if p.pgid > 0 {
+				_ = killProcessGroup(p.pgid)
+			} else if p.cmd != nil && p.cmd.Process != nil {
+				_ = p.cmd.Process.Kill()
+			}
+		}
+		return err
 	}
 	return nil
 }

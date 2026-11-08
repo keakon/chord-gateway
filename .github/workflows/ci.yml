@@ -60,6 +60,17 @@ jobs:
           cache: true
       - run: go test -race -short -timeout=5m ./...
 
+  windows-stdin:
+    name: Windows stdin cancellation
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -count=1 -timeout=2m ./internal/gateway -run '^TestWriteCommandLocked'
+
   build:
     name: Cross-platform build
     runs-on: ubuntu-latest

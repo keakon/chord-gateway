@@ -21,6 +21,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Fixed
 
+- Chord stdin writes now remain bounded when the platform pipe does not support write deadlines, including on Windows. A watchdog closes the pipe to interrupt the write, then the stalled child is killed; partially written commands are not resent.
 - Release builds now stamp the commit, build time, and dirty state explicitly, so `chord-gateway --version` no longer shows a spurious `*` dirty marker on clean release binaries. The v0.3.4 archives still report the marker.
 
 ### Breaking changes
