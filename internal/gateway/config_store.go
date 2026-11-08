@@ -25,6 +25,7 @@ type ConfigStore struct {
 	path                 string
 	lastBytes            []byte
 	warnings             []string
+	fallbackWarnings     []string
 	duplicateKeyWarnings []string
 	snapshot             atomic.Pointer[config.Config]
 	faulted              atomic.Bool
@@ -55,7 +56,7 @@ func NewConfigStore(path string) (*ConfigStore, error) {
 	if err = cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &ConfigStore{path: path, lastBytes: data, warnings: config.UnsupportedConfigFields(doc), duplicateKeyWarnings: duplicateKeyWarnings, fatal: make(chan struct{}), writer: defaultConfigWriteOps()}
+	s := &ConfigStore{path: path, lastBytes: data, warnings: config.UnsupportedConfigFields(doc), fallbackWarnings: cfg.IdleTimeoutWarnings(), duplicateKeyWarnings: duplicateKeyWarnings, fatal: make(chan struct{}), writer: defaultConfigWriteOps()}
 	s.snapshot.Store(cfg)
 	return s, nil
 }
@@ -66,12 +67,15 @@ func (s *ConfigStore) Fatal() <-chan struct{}   { return s.fatal }
 // collected, so both the gateway logger and the pairing CLI can surface them
 // before a rewrite silently drops the offending lines.
 func storeWarningMessages(s *ConfigStore) []string {
-	messages := make([]string, 0, len(s.duplicateKeyWarnings)+len(s.warnings))
+	messages := make([]string, 0, len(s.duplicateKeyWarnings)+len(s.warnings)+len(s.fallbackWarnings))
 	for _, warning := range s.duplicateKeyWarnings {
 		messages = append(messages, fmt.Sprintf("config %s: duplicate key ignored: %s", s.path, warning))
 	}
 	for _, warning := range s.warnings {
 		messages = append(messages, fmt.Sprintf("config %s: unsupported field ignored: %s", s.path, warning))
+	}
+	for _, warning := range s.fallbackWarnings {
+		messages = append(messages, fmt.Sprintf("config %s: %s", s.path, warning))
 	}
 	return messages
 }
@@ -157,6 +161,7 @@ func (s *ConfigStore) Commit(ctx context.Context, mutation ConfigMutation) (Comm
 	s.lastBytes = bytes.Clone(buf.Bytes())
 	s.snapshot.Store(candidate)
 	s.warnings = config.UnsupportedConfigFields(candidateDoc)
+	s.fallbackWarnings = candidate.IdleTimeoutWarnings()
 	s.duplicateKeyWarnings = candidateDuplicates
 	return outcome, nil
 }

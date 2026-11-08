@@ -224,7 +224,11 @@ func NewChordManager(cfg *config.Config, paths *config.Paths) *ChordManager {
 	if err := transfers.Load(); err != nil {
 		log.Errorf("load transfer guards failed: %v", err)
 	}
-	_ = pins.Load()
+	// A corrupted pins file fails closed (no automatic session resume); the
+	// operator must see why, instead of silently losing resume state.
+	if err := pins.Load(); err != nil {
+		log.Errorf("load session pins failed: %v", err)
+	}
 
 	m := &ChordManager{
 		procs:      make(map[string]*ChordProcess),

@@ -366,6 +366,20 @@ func (c *Config) IdleTimeoutDuration() time.Duration {
 	return d
 }
 
+// IdleTimeoutWarnings returns diagnostics for idle_timeout values that fall
+// back to the 30m default, mirroring the fallback in IdleTimeoutDuration.
+// config.Load runs before the gateway logger is installed, so stores replay
+// these warnings after both log outputs are ready.
+func (c *Config) IdleTimeoutWarnings() []string {
+	if c.IdleTimeout == "" {
+		return nil
+	}
+	if _, err := time.ParseDuration(c.IdleTimeout); err == nil {
+		return nil
+	}
+	return []string{fmt.Sprintf("invalid idle_timeout %q ignored, using the 30m default", c.IdleTimeout)}
+}
+
 // ChordBinary returns the chord binary path.
 func (c *Config) ChordBinary() string {
 	if c.ChordPath != "" {
@@ -575,6 +589,9 @@ func Load(path string) (*Config, error) {
 	}
 	for _, issue := range UnsupportedConfigFields(doc) {
 		log.Warnf("config %s: unsupported field ignored: %s", path, issue)
+	}
+	for _, warning := range cfg.IdleTimeoutWarnings() {
+		log.Warnf("config %s: %s", path, warning)
 	}
 	return cfg, nil
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -437,6 +438,21 @@ func TestConfigHelpers(t *testing.T) {
 		cfg.IdleTimeout = "not-a-duration"
 		if got := cfg.IdleTimeoutDuration(); got != 30*time.Minute {
 			t.Fatalf("invalid idle timeout fallback = %v", got)
+		}
+	})
+	t.Run("IdleTimeoutWarnings mirror the fallback", func(t *testing.T) {
+		cfg := &Config{}
+		if got := cfg.IdleTimeoutWarnings(); got != nil {
+			t.Fatalf("empty idle timeout warnings = %q, want nil", got)
+		}
+		cfg.IdleTimeout = "45s"
+		if got := cfg.IdleTimeoutWarnings(); got != nil {
+			t.Fatalf("valid idle timeout warnings = %q, want nil", got)
+		}
+		cfg.IdleTimeout = "not-a-duration"
+		want := []string{`invalid idle_timeout "not-a-duration" ignored, using the 30m default`}
+		if got := cfg.IdleTimeoutWarnings(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("invalid idle timeout warnings = %q, want %q", got, want)
 		}
 	})
 
