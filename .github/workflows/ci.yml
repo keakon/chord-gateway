@@ -61,7 +61,7 @@ jobs:
       - run: go test -race -short -timeout=5m ./...
 
   windows-stdin:
-    name: Windows stdin cancellation
+    name: Windows process cancellation
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -69,7 +69,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -count=1 -timeout=2m ./internal/gateway -run '^TestWriteCommandLocked'
+      - run: go test -count=1 -timeout=2m ./internal/gateway -run '^(TestWriteCommandLocked|TestCLIProcessCancellationKillsChildPromptly)'
 
   build:
     name: Cross-platform build

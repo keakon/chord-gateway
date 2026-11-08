@@ -3,11 +3,16 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func takeoverTestCLI(t *testing.T, stdout string, exitCode string) (string, string) {
@@ -117,4 +122,135 @@ func TestTakeoverCLIPreflightReturnsCanonicalWorkspaceAndKeepsExecutionDirectory
 	}
 	args, _ = os.ReadFile(argsFile)
 	requireContains(t, string(args), "-d\n/repository/worktree\n")
+}
+
+// Cancelling a takeover CLI invocation must kill the whole CLI process group,
+// including background children the script left behind.
+func TestTakeoverCLIKillsProcessGroupOnCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are not used on Windows")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "fake-coordinator")
+	childPidPath := filepath.Join(dir, "child-pid")
+	publishPath := filepath.Join(dir, "publish-pid")
+	// Hold the file open and empty until the reader observes it, so this
+	// exercises the create-before-write window without a scheduling guess.
+	script := "#!/bin/sh\nsleep 30 &\nchild=$!\n{ while [ ! -e " + shellQuote(publishPath) + " ]; do sleep 0.01; done\nprintf '%s' \"$child\"; } > " + shellQuote(childPidPath) + "\nexec sleep 30\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := runTakeoverCLI(ctx, binary, takeoverRequest{Action: "status", SessionID: "session", TransferID: "transfer", Workspace: dir})
+		done <- err
+	}()
+
+	var childPid int
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(childPidPath)
+		if err == nil {
+			if len(data) == 0 {
+				if writeErr := os.WriteFile(publishPath, nil, 0o600); writeErr != nil {
+					t.Fatal(writeErr)
+				}
+			}
+			childPid, err = strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && childPid > 0 {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fake CLI did not spawn its background child")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	child, err := os.FindProcess(childPid)
+	if err != nil {
+		t.Fatalf("find background child: %v", err)
+	}
+	if err := child.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("background child is not alive before cancellation")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runTakeoverCLI did not return after cancellation")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		if err := child.Signal(syscall.Signal(0)); err != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background child survived the process group kill")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestCLIProcessCancellationKillsChildPromptly(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// Reuse the idle child used by the stdin tests: it reports readiness and
+	// then waits without spawning descendants.
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStdinBlockedHelperProcess$")
+	cmd.Env = append(os.Environ(), "CHORD_GATEWAY_STDIN_TEST_HELPER=1")
+	cmd.WaitDelay = 2 * time.Second
+	configureCLIProcessGroup(cmd)
+	stdout, childStdout, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	defer childStdout.Close()
+	cmd.Stdout = childStdout
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = childStdout.Close()
+	waited := make(chan struct{})
+	var waitErr error
+	go func() {
+		waitErr = cmd.Wait()
+		close(waited)
+	}()
+	ready := make(chan error, 1)
+	go func() {
+		data := make([]byte, len("ready\n"))
+		_, err := io.ReadFull(stdout, data)
+		ready <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Process.Kill()
+		select {
+		case <-waited:
+		case <-time.After(5 * time.Second):
+			t.Error("child did not exit during cleanup")
+		}
+	})
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("child did not initialize: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("child did not report readiness")
+	}
+	cancel()
+	select {
+	case <-waited:
+		if waitErr == nil || cmd.ProcessState.Success() {
+			t.Fatalf("child exited without being killed: %v", waitErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation waited for WaitDelay instead of killing the child")
+	}
 }

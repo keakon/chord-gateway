@@ -25,6 +25,24 @@ type takeoverRequest struct {
 	StateDir         string
 }
 
+// configureCLIProcessGroup isolates a short-lived CLI subprocess in its own
+// process group and kills the whole group when the context is cancelled, so
+// descendants in that group cannot outlive the cancellation. On Windows it
+// preserves CommandContext's immediate kill of the direct child; descendants
+// are not owned by the gateway.
+func configureCLIProcessGroup(cmd *exec.Cmd) {
+	configureProcessGroup(cmd)
+	if runtime.GOOS == "windows" {
+		return
+	}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = killProcessGroup(cmd.Process.Pid)
+		}
+		return nil
+	}
+}
+
 // Only invoke the public CLI. Gateway deliberately knows nothing about UDS.
 func runTakeoverCLI(ctx context.Context, binary string, req takeoverRequest) (TransferStatus, error) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
@@ -46,6 +64,7 @@ func runTakeoverCLI(ctx context.Context, binary string, req takeoverRequest) (Tr
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.WaitDelay = 2 * time.Second
+	configureCLIProcessGroup(cmd)
 	cmd.Env = loginShellEnv()
 	out := &boundedCLIOutput{}
 	cmd.Stdout = out
@@ -98,6 +117,7 @@ func (w *boundedCLIOutput) Write(p []byte) (int, error) {
 func probeGatewayManaged(ctx context.Context, binary string) bool {
 	cmd := exec.CommandContext(ctx, binary, "headless", "--help")
 	cmd.WaitDelay = 2 * time.Second
+	configureCLIProcessGroup(cmd)
 	cmd.Env = loginShellEnv()
 	output := &boundedCLIOutput{}
 	cmd.Stdout = output
