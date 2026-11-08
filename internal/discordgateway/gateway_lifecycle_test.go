@@ -787,3 +787,38 @@ func TestGatewayReadLimitRejectsOversizedMessage(t *testing.T) {
 		t.Fatalf("oversized frame result: %v", result.err)
 	}
 }
+
+// A connection that reached READY must record its generation so the
+// supervisor can reset the reconnect backoff once it ends.
+func TestGatewayReadyGenerationRecorded(t *testing.T) {
+	url, _ := testWS(t, func(conn *websocket.Conn, _ int) {
+		_ = testHello(conn, 50000)
+		if testReady(conn, "") != nil {
+			return
+		}
+		testDrain(conn, true)
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	g := New(ctx, "test-token", nil, WithURL(url)).(*gatewayImpl)
+	defer g.Close(context.Background())
+	if err := g.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// listen writes readyGeneration after the transition that wakes Open, so
+	// the invariant can lag the Open return by one scheduling step; poll for
+	// it instead of reading once.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		g.mu.Lock()
+		ready, generation := g.readyGeneration, g.generation
+		g.mu.Unlock()
+		if ready == generation && ready != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("readyGeneration = %d, generation = %d, want equal and nonzero", ready, generation)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

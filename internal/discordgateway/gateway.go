@@ -177,23 +177,27 @@ func New(lifecycle context.Context, token string, handler EventHandlerFunc, opts
 }
 
 type gatewayImpl struct {
-	config                config
-	eventHandlerFunc      EventHandlerFunc
-	token                 string
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	open                  chan struct{}
-	done                  chan struct{}
-	stateChanged          chan struct{}
-	active                bool
-	wg                    sync.WaitGroup
-	writeGate             chan struct{}
-	mu                    sync.Mutex
-	conn                  transport
-	socket                *websocket.Conn
-	connCtx               context.Context
-	status                Status
-	generation            uint64
+	config           config
+	eventHandlerFunc EventHandlerFunc
+	token            string
+	ctx              context.Context
+	cancel           context.CancelFunc
+	open             chan struct{}
+	done             chan struct{}
+	stateChanged     chan struct{}
+	active           bool
+	wg               sync.WaitGroup
+	writeGate        chan struct{}
+	mu               sync.Mutex
+	conn             transport
+	socket           *websocket.Conn
+	connCtx          context.Context
+	status           Status
+	generation       uint64
+	// readyGeneration is the newest connection generation that reached
+	// StatusReady; the supervisor resets its reconnect backoff after such a
+	// connection ends instead of carrying over the grown delay.
+	readyGeneration       uint64
 	stopping              bool
 	terminalErr           error
 	sessionValidated      bool
@@ -375,6 +379,14 @@ func (g *gatewayImpl) supervise() {
 		g.transition(StatusDisconnected, generation)
 		if g.ctx.Err() != nil {
 			return
+		}
+		g.mu.Lock()
+		wasReady := g.readyGeneration == generation
+		g.mu.Unlock()
+		if wasReady {
+			// The connection was healthy; do not punish the next dial with the
+			// accumulated backoff.
+			backoff = time.Second
 		}
 		if result.fatal || !g.config.AutoReconnect {
 			g.mu.Lock()
@@ -752,6 +764,9 @@ func (g *gatewayImpl) listen(ctx context.Context, conn transport, generation uin
 				if !g.transition(StatusReady, generation) {
 					return
 				}
+				g.mu.Lock()
+				g.readyGeneration = generation
+				g.mu.Unlock()
 			}
 			if ready && message.T == EventTypeResumed {
 				for _, delivery := range replay {
