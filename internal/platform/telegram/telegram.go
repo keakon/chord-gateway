@@ -97,7 +97,10 @@ func (a *TelegramAdapter) SendTextContext(ctx context.Context, chat, text string
 	if expected, ok := ctx.Value(im.ReplyAccountContextKey{}).(string); ok && account != expected {
 		return errors.New("telegram account changed")
 	}
-	return a.sender.Send(ctx, a.ctx, nil, chat, text, false)
+	// A flow reply carries a reply permit; it gets the control-send budget
+	// like the other adapters, instead of the long proactive-output budget.
+	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	return a.sender.Send(ctx, a.ctx, nil, chat, text, control)
 }
 func (a *TelegramAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {
 	return a.sender.TextSendMetrics()

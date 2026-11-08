@@ -17,11 +17,15 @@
 
 ### 变更
 
+- 飞书、Telegram、Discord、Slack 的配对、绑定等控制流程回复，发送预算从 5 分钟缩短为 15 秒，与 WeCom、DingTalk 一致。平台停止接收消息时，这类回复会在该预算内失败。普通任务输出仍使用 5 分钟预算。
 - Release 产物现在统一以 cgo 关闭构建，linux/amd64 二进制变为静态链接：此前链接 glibc 的动态二进制在 musl 系发行版（Alpine、BusyBox 容器）上会因加载器报错无法启动，现在可以直接运行，DNS 解析也统一使用 Go 内建 resolver，不再依赖宿主 libc。
 
 ### 修复
 
 - Chord stdin 管道不支持写入截止时间时，写入也有超时上限，覆盖 Windows。watchdog 关闭管道以中断写入，随后杀死卡住的子进程；已经部分写入的命令不会重发。
+- 网关关机与 chord 子进程生命周期不再因子进程卡死而挂起：写入 chord stdin 的管道写有截止时间（停止消费 stdin 的子进程会被杀死并自动重启），登录 shell PATH 探测带超时并回退，关机阶段的输入回执提交有界，outbound 通知队列关闭时的等待也有上限。非法的 `idle_timeout` 和无法读取的会话 pin 文件现在会在启动时报告，而不是静默回退或静默失败。
+- Discord 连接在一段健康会话结束后会重置重连退避，长稳连接后的首次重连不再被累计到上限的 60 秒延迟拖慢。
+- 取消 takeover CLI 调用时现在会杀死整个 CLI 进程组，包括 CLI 启动的后台子进程。
 - Release 构建现在显式注入 commit、构建时间与脏状态，`chord-gateway --version` 在干净的 release 二进制上不再出现多余的 `*` 脏标记。v0.3.4 的产物仍会显示该标记。
 
 ### 不兼容变更

@@ -17,11 +17,15 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- Pairing, binding and other control-flow replies on Feishu, Telegram, Discord and Slack now use the 15-second send budget that WeCom and DingTalk already applied, reduced from 5 minutes. If a platform stops accepting messages, these replies fail within that budget. Ordinary task output keeps its 5-minute budget.
 - Release binaries are now built with cgo disabled, so the linux/amd64 binary is statically linked: it starts on musl-based systems (Alpine, BusyBox containers) where the previous glibc-linked binary failed with a loader error, and DNS resolution consistently uses Go's built-in resolver instead of depending on the host's libc.
 
 ### Fixed
 
 - Chord stdin writes now remain bounded when the platform pipe does not support write deadlines, including on Windows. A watchdog closes the pipe to interrupt the write, then the stalled child is killed; partially written commands are not resent.
+- Gateway shutdown and chord process lifecycle no longer hang on stuck children: writes to the chord stdin pipe are bounded by a deadline (a child that stops consuming stdin is killed and auto-restarted), the login-shell PATH probe times out with a fallback, shutdown-time input-receipt commits are bounded, and closing the outbound notification queue stops waiting after a short drain. Invalid `idle_timeout` values and unreadable session-pin files are now reported at startup instead of silently falling back or failing closed.
+- Discord connections reset their reconnect backoff after a healthy session, so the first reconnect after a long-lived connection is no longer delayed by the accumulated 60-second cap.
+- Cancelling a takeover CLI invocation now kills the whole CLI process group, including background children the CLI spawned.
 - Release builds now stamp the commit, build time, and dirty state explicitly, so `chord-gateway --version` no longer shows a spurious `*` dirty marker on clean release binaries. The v0.3.4 archives still report the marker.
 
 ### Breaking changes

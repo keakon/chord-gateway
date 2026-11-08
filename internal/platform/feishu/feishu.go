@@ -615,7 +615,10 @@ func (a *FeishuAdapter) SendTextContext(ctx context.Context, chatID, text string
 	if err != nil {
 		return err
 	}
-	return sender.Send(ctx, a.connectionContext(), nil, chatID, text, false)
+	// A flow reply carries a reply permit; it gets the control-send budget
+	// like the other adapters, instead of the long proactive-output budget.
+	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	return sender.Send(ctx, a.connectionContext(), nil, chatID, text, control)
 }
 
 // Disconnect closes acceptance and joins transport/response workers. The shared

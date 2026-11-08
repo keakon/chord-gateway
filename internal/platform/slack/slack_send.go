@@ -55,7 +55,10 @@ func (s *Sender) Send(ctx, lifecycle context.Context, target, text string) error
 	if _, _, err := DecodeTarget(target); err != nil {
 		return &im.IMTextSendError{Category: "invalid_target", Cause: errors.New("invalid slack output target")}
 	}
-	return s.text.Send(ctx, lifecycle, nil, target, text, false)
+	// A flow reply carries a reply permit; it gets the control-send budget
+	// like the other adapters, instead of the long proactive-output budget.
+	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	return s.text.Send(ctx, lifecycle, nil, target, text, control)
 }
 
 func escapeSlackText(text string) string {
