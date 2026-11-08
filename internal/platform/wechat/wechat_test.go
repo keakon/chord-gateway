@@ -321,7 +321,7 @@ func TestWechatAdapter_SendAndSplit(t *testing.T) {
 	})
 }
 
-func TestWechatAdapterPersistenceAndSplitText(t *testing.T) {
+func TestWechatAdapterTokenPersistence(t *testing.T) {
 	t.Run("token persistence round trip and invalid files", func(t *testing.T) {
 		a := newTestAdapter(t)
 		a.token.Store(&TokenData{Token: "tok", BaseURL: "https://api", AccountID: "acc", UserID: "u1", SavedAt: "now"})
@@ -372,17 +372,40 @@ func TestWechatAdapterPersistenceAndSplitText(t *testing.T) {
 		}
 	})
 
-	t.Run("splitText respects maxLen and newline preference", func(t *testing.T) {
-		if got := splitText("short", 10); len(got) != 1 || got[0] != "short" {
-			t.Fatalf("split short = %#v", got)
+	t.Run("adapter sender segments by iLink code-point budget", func(t *testing.T) {
+		a := newTestAdapter(t)
+		sender, err := a.wechatTextSender()
+		if err != nil {
+			t.Fatalf("wechatTextSender error = %v", err)
 		}
-		got := splitText("abcde\n12345\nxyz", 6)
-		if len(got) < 2 {
-			t.Fatalf("split long = %#v", got)
+		if got, err := a.wechatTextSender(); err != nil || got != sender {
+			t.Fatal("wechatTextSender built a second sender instance")
 		}
-		for _, seg := range got {
-			if len(seg) > 6 {
-				t.Fatalf("segment too long: %#v", got)
+		segments, err := sender.Segments(strings.Repeat("a", ILinkMaxMessageLen+1))
+		if err != nil {
+			t.Fatalf("Segments error = %v", err)
+		}
+		if len(segments) != 2 || len([]rune(segments[0])) != ILinkMaxMessageLen {
+			t.Fatalf("Segments = %d parts, first %d runes", len(segments), len([]rune(segments[0])))
+		}
+		// Multi-byte runes must survive segmentation intact: 2*2048+1 code
+		// points forces a split between four-byte runes, and the code-point
+		// measure pins three segments where a byte measure would need eight.
+		emoji := strings.Repeat("\U0001F642", 2*ILinkMaxMessageLen+1)
+		segments, err = sender.Segments(emoji)
+		if err != nil {
+			t.Fatalf("Segments emoji error = %v", err)
+		}
+		if len(segments) != 3 {
+			t.Fatalf("emoji Segments = %d parts, want 3", len(segments))
+		}
+		joined := strings.Join(segments, "")
+		if joined != emoji {
+			t.Fatalf("emoji segmentation altered content: %d parts", len(segments))
+		}
+		for _, seg := range segments {
+			if len([]rune(seg)) > ILinkMaxMessageLen {
+				t.Fatalf("segment exceeds iLink budget: %d runes", len([]rune(seg)))
 			}
 		}
 	})

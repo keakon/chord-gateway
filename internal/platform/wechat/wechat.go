@@ -191,6 +191,7 @@ type WechatAdapter struct {
 	host          Host // nil when constructed without a gateway router
 	notifier      im.SessionLoginNotifier
 	token         atomic.Pointer[TokenData]
+	textSender    *im.IMTextSender // guarded by mu; lazily built, lives for the adapter
 	syncAccount   string
 	syncBuf       string // monitorLoop-only: written/read from a single goroutine
 	mu            sync.Mutex
@@ -668,6 +669,8 @@ func checkILinkSendResponse(resp *http.Response, err error) error {
 	return nil
 }
 
+// --- Utilities ---
+
 // --- Token Persistence ---
 
 func (a *WechatAdapter) loadToken() *TokenData {
@@ -707,42 +710,4 @@ func (a *WechatAdapter) saveToken() {
 	if err := im.WritePrivateFileAtomically(a.tokenFile, data); err != nil {
 		log.Errorf("wechat ilink: failed to save token error=%v", err)
 	}
-}
-
-// --- Utilities ---
-
-// splitText splits text into segments of at most maxLen runes, preferring to
-// break at newlines. Operates on runes so multi-byte UTF-8 sequences (Chinese
-// characters, emoji) are never split mid-character.
-func splitText(text string, maxLen int) []string {
-	runes := []rune(text)
-	if len(runes) <= maxLen {
-		return []string{text}
-	}
-
-	var segments []string
-	start := 0
-	for start < len(runes) {
-		end := start + maxLen
-		if end >= len(runes) {
-			segments = append(segments, string(runes[start:]))
-			break
-		}
-		// Prefer to break at the last newline within [start, end).
-		breakAt := end
-		for i := end - 1; i > start; i-- {
-			if runes[i] == '\n' {
-				breakAt = i
-				break
-			}
-		}
-		segments = append(segments, string(runes[start:breakAt]))
-		start = breakAt
-		// Skip the newline we broke at.
-		if start < len(runes) && runes[start] == '\n' {
-			start++
-		}
-	}
-
-	return segments
 }

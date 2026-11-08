@@ -88,7 +88,7 @@ The gateway deduplicates inbound messages by the server-assigned `message_id` (o
 ## Inbound and outbound messages
 
 - **Inbound**: only **text items** become commands or tasks. The iLink protocol also defines image, voice, file and video items; the gateway ignores them and never uploads them to Chord.
-- **Outbound text**: replies longer than 2048 characters (Unicode code points) are split into several messages, preferring line boundaries.
+- **Outbound text**: each send is bounded as a whole — at most 15 seconds for flow replies (pairing hints, confirmations) and 5 minutes for ordinary task output, whichever of that budget and the caller's own deadline expires first. Segments are at most 2,048 Unicode code points, split preferring line boundaries; an output is also capped at 64 KiB or 32 segments, and oversized output ends with a truncation notice pointing to the original Chord session. A failed segment stops the remaining ones and is never retried: unconfirmed sends (timeouts, HTTP 408/429/5xx, missing receipts) stay unconfirmed. After a partial send, `/status` shows the last failure category and how many segments were accepted.
 - **Outbound images**: generated images are uploaded to the WeChat CDN (AES-128-ECB encrypted) and delivered as image messages. See [Generated images](./event-visibility.md#generated-images).
 - Every WeChat chat is handled as a **private chat with its sender**; group routing is not part of this integration.
 - Text and image delivery both need a live reply context for that chat; see [Waiting for reply context](#waiting-for-reply-context).

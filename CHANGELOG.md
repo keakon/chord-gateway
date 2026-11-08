@@ -17,6 +17,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Changed
 
+- WeChat text output now goes through the shared bounded text sender used by the other platforms. Every send is capped as a whole — 15 seconds for flow replies, 5 minutes for ordinary task output, whichever of that budget and the caller's deadline expires first — instead of letting each 2,048-character segment run on its own. Outputs are additionally capped at 64 KiB and 32 segments with a truncation notice pointing to the original Chord session; a failed segment stops the remaining ones without retrying (unconfirmed outcomes stay unconfirmed), and `/status` reports the last partial send's failure category and accepted segment count.
 - Pairing, binding and other control-flow replies on Feishu, Telegram, Discord and Slack now use the 15-second send budget that WeCom and DingTalk already applied, reduced from 5 minutes. If a platform stops accepting messages, these replies fail within that budget. Ordinary task output keeps its 5-minute budget.
 - Release binaries are now built with cgo disabled, so the linux/amd64 binary is statically linked: it starts on musl-based systems (Alpine, BusyBox containers) where the previous glibc-linked binary failed with a loader error, and DNS resolution consistently uses Go's built-in resolver instead of depending on the host's libc.
 

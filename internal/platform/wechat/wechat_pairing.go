@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -141,6 +140,12 @@ func (a *WechatAdapter) cachePairedContextLocked(account, chat, token string, bo
 	a.replyContexts[key] = WechatReplyContext{Token: token, Used: now, Expires: now.Add(30 * time.Second), Bound: bound, Committed: true}
 }
 
+// SendTextContext sends one text output through the adapter's shared sender.
+// The whole output is bounded by min(the caller's deadline, one 15-second
+// control or 5-minute normal budget), never by per-segment renewals. Queuing
+// for the target or global slot happens inside the sender; this capture must
+// stay ahead of it so a queued call cannot pick up newer credentials or a
+// renewed reply context.
 func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) error {
 	token := a.token.Load()
 	if token == nil {
@@ -165,32 +170,18 @@ func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) 
 	if !ok || (!reply.Bound && !time.Now().Before(reply.Expires)) {
 		return errors.New("reply context unavailable; wait for the next inbound message")
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	sender, err := a.wechatTextSender()
+	if err != nil {
+		return err
+	}
+	// A flow reply carries a reply permit; it gets the control-send budget
+	// like the other adapters, instead of the long proactive-output budget.
+	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	ctx = context.WithValue(ctx, wechatSendSnapshotKey{}, &wechatSendSnapshot{token: token, chat: chat, reply: reply})
 	if adapterCtx == nil {
 		adapterCtx = context.Background()
 	}
-	stop := context.AfterFunc(adapterCtx, cancel)
-	defer stop()
-	defer cancel()
-	if adapterCtx.Err() != nil {
-		cancel()
-	}
-	for i, part := range splitText(text, ILinkMaxMessageLen) {
-		body := ILinkSendMessageRequest{Msg: ILinkMessage{ToUserID: chat, ClientID: fmt.Sprintf("chord-gateway-%d-%d", time.Now().UnixNano(), i), MessageType: ILinkMessageTypeBot, MessageState: ILinkMessageStateFinish, ContextToken: reply.Token, ItemList: []ILinkItem{{Type: ILinkItemTypeText, TextItem: &ILinkTextItem{Text: part}}}}}
-		a.mu.Lock()
-		stopped := a.stopped
-		a.mu.Unlock()
-		if stopped {
-			return errors.New("wechat adapter stopped")
-		}
-		if a.token.Load() != token {
-			return errors.New("account changed")
-		}
-		if err := a.sendMessage(ctx, token, body); err != nil {
-			return err
-		}
-	}
-	return nil
+	return sender.Send(ctx, adapterCtx, nil, chat, text, control)
 }
 
 // clearTokenSnapshot cannot erase a replacement credential when an old polling
