@@ -45,7 +45,7 @@ IM 通知只展示简短的阻塞项预览。宿主机命令返回一页有界�
 
 `<state_dir>/session-transfers.json` 在源端确认准备之前记录绑定阻断，重启后优先于 session pin。普通消息、提醒、旧卡和崩溃恢复不能隐式拉回已经移交的会话。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功，或 `/takeover <session-id>` 覆盖已经结束（`released` 或 `saved`）的外向移交；失败时保留阻断。清除阻断时使用私有的 `session-transfers.json.pending` 日志，确保磁盘同步失败后重启不会误开放绑定。若存储故障留下该日志，先处理故障再显式重试；源端所有权不确定时，不要删除任一阻断文件来强行触发自动重启。
 
-会话接管通知通过有序发送队列投递。慢速 IM 发送不会占用进程生命周期锁；队列满时，有界队列的背压仍可能延缓协议读取。移交进度按阶段汇报而非每个事件一条消息：进度最快每分钟一条，内容未变化的报告直接丢弃，`saved` 与 `released` 汇报同一结果，因此合并为一条收尾消息。
+会话接管通知通过有序发送队列投递。慢速 IM 发送不会占用进程生命周期锁；有界队列的背压每条通知最多延缓协议读取 30 秒，超时后该通知被丢弃并计入队列指标（`dropped`）。移交进度按阶段汇报而非每个事件一条消息：进度最快每分钟一条，内容未变化的报告直接丢弃，`saved` 与 `released` 汇报同一结果，因此合并为一条收尾消息。
 
 ## 空闲超时
 
@@ -124,9 +124,9 @@ gateway 会记录关键路由阶段：
 - `gateway event` – 从 `chord headless` stdout 解析出的原始事件
 - `gateway routing event` – router 对某个绑定的处理决策
 - `gateway sending notification` – 尝试向 IM 发送通知
-- `performance queue=...` – 每 5 分钟记录的队列指标，覆盖 outbound 通知分片，包含队列 `depth`、`max_depth`、`full`、`closed`、`blocked`，以及阻塞入队的等待时长（`blocked_wait_total`、`blocked_wait_total_delta`、`blocked_wait_max`、`blocked_slow`、`blocked_slow_delta`）。其中 `*_total` 和 `blocked_slow` 是进程生命周期累计值；判断近期 provider 是否停滞时应看对应的 `_delta`。`max_depth` 是采样时最深的分片深度，不是历史最大值。
+- `performance queue=...` – 每 5 分钟记录的队列指标，覆盖 outbound 通知分片，包含队列 `depth`、`max_depth`、`full`、`closed`、`dropped`、`blocked`，以及阻塞入队的等待时长（`blocked_wait_total`、`blocked_wait_total_delta`、`blocked_wait_max`、`blocked_slow`、`blocked_slow_delta`）。其中 `*_total` 和 `blocked_slow` 是进程生命周期累计值；判断近期 provider 是否停滞时应看对应的 `_delta`。`max_depth` 是采样时最深的分片深度，不是历史最大值。
 
-等待时长只在队列容量等待结束时记录，包括成功入队和 dispatcher 关闭两种情况；不包含等待分片生产者锁的时间，也不代表端到端投递延迟。因此，仍在持续的阻塞可能对应为零的等待时长 delta，应同时检查 `depth`、`max_depth`、`blocked` 和 `processed_delta`。`blocked_wait_max` 是生命周期内已结束等待的最大时长；`blocked_slow` 统计已结束且达到一秒的等待。背压也可能来自流量突增，而不一定是 provider 停滞。
+等待时长只在队列容量等待结束时记录，包括成功入队、超过 30 秒上限被丢弃、以及 dispatcher 关闭三种情况；不包含等待分片生产者锁的时间，也不代表端到端投递延迟。因此，仍在持续的阻塞可能对应为零的等待时长 delta，应同时检查 `depth`、`max_depth`、`blocked` 和 `processed_delta`。`blocked_wait_max` 是生命周期内已结束等待的最大时长；`blocked_slow` 统计已结束且达到一秒的等待。背压也可能来自流量突增，而不一定是 provider 停滞。
 
 常用字段包括：
 
