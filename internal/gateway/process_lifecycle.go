@@ -109,15 +109,7 @@ func (p *ChordProcess) handleExit() {
 	autoRestart := p.autoRestart && crashed
 	key := p.key
 	state := p.state
-	stderr := ""
-	if p.stderr != nil {
-		stderr = p.stderr.String()
-	}
-	// If this is an expected init failure (e.g. session lock), don't spam auto-restart.
-	// Cobra prints errors to stderr; chord exits with code 1 on init errors.
-	if strings.Contains(stderr, "acquire session lock") {
-		autoRestart = false
-	}
+	stderrBuf := p.stderr
 	p.mu.Unlock()
 
 	// Serialize Cmd.Wait calls. TerminateGroup may call Wait concurrently.
@@ -126,6 +118,19 @@ func (p *ChordProcess) handleExit() {
 	if p.recordTransferExit(exitCode) {
 		autoRestart = false
 		crashed = exitCode != sessionTransferExitCode
+	}
+
+	// Read the stderr tail only after Wait completed: the copier may still be
+	// draining before that, and the final bytes usually carry the crash
+	// reason. The tail buffer locks internally; the field is read under p.mu.
+	stderr := ""
+	if stderrBuf != nil {
+		stderr = stderrBuf.String()
+	}
+	// If this is an expected init failure (e.g. session lock), don't spam auto-restart.
+	// Cobra prints errors to stderr; chord exits with code 1 on init errors.
+	if strings.Contains(stderr, "acquire session lock") {
+		autoRestart = false
 	}
 
 	log.Infof("[%v] chord process exited pid=%v exit_code=%v crashed=%v", processLogContext(key, state), pid, exitCode, crashed)

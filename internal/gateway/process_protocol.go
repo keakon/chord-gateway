@@ -209,14 +209,20 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 			PausedInputs      *PausedInputs `json:"paused_inputs,omitempty"`
 			InputQueue        *InputQueue   `json:"input_queue,omitempty"`
 		}
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+		readyDropped := false
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			deferredLog = func(string, ControlState) { log.Warnf("drop ready event: invalid payload: %v", err) }
+			readyDropped = true
+		} else {
 			inputs, err := normalizePausedInputs(payload.PausedInputs)
 			if err != nil {
 				deferredLog = func(string, ControlState) { log.Warnf("invalid ready paused input projection: %v", err) }
+				readyDropped = true
 				break
 			}
 			if strings.TrimSpace(payload.SessionID) == "" {
 				deferredLog = func(key string, _ ControlState) { log.Warnf("drop ready event: empty session id key=%s", key) }
+				readyDropped = true
 				break
 			}
 			if p.expectedSessionID != "" && payload.SessionID != p.expectedSessionID {
@@ -224,6 +230,7 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				deferredLog = func(key string, _ ControlState) {
 					log.Warnf("drop ready event: session %q != expected %q key=%s", sessionID, expected, key)
 				}
+				readyDropped = true
 				break
 			}
 			if p.restoringTransferID != "" && (payload.TransferID != p.restoringTransferID || payload.BindingInstanceID != p.bindingInstanceID || (env.Type != "ready_paused" && payload.State != "ready_paused")) {
@@ -231,12 +238,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				deferredLog = func(key string, _ ControlState) {
 					log.Warnf("drop ready_paused event: transfer identity mismatch key=%s transfer=%q expected=%q", key, transferID, expected)
 				}
+				readyDropped = true
 				break
 			}
 			if p.restoringTransferID != "" && (payload.RuntimeID == "" || payload.SessionEpoch == nil || inputs == nil || !inputs.Paused) {
 				deferredLog = func(key string, _ ControlState) {
 					log.Warnf("drop ready_paused event: incomplete paused projection key=%s", key)
 				}
+				readyDropped = true
 				break
 			}
 			p.runtimeID = payload.RuntimeID
@@ -262,8 +271,12 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 				}
 			}
 		}
-		deferredLog = func(key string, state ControlState) {
-			log.Infof("[%v] gateway event event=%v raw_type=%v", processLogContext(key, state), "ready", "ready")
+		// Keep a validation-failure diagnostic; only a fully accepted ready
+		// event logs as success.
+		if !readyDropped {
+			deferredLog = func(key string, state ControlState) {
+				log.Infof("[%v] gateway event event=%v raw_type=%v", processLogContext(key, state), "ready", "ready")
+			}
 		}
 		// No notification.
 		eventType = ""
