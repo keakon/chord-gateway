@@ -29,10 +29,11 @@ func (p *ChordProcess) readLoop(ctx context.Context, stdout io.Reader) {
 	var readErr error
 
 	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
+		if ctx.Err() != nil {
+			// Break out to the shared reap below instead of returning: every
+			// readLoop exit path must run handleExit, or waitDone never closes
+			// and StopAndWait hangs.
+			break
 		}
 
 		line := scanner.Bytes()

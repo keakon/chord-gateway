@@ -179,3 +179,38 @@ func TestContinuationFinalMessageReplacesPendingText(t *testing.T) {
 		})
 	}
 }
+
+// Cancelling the readLoop context must still reap the process: the exit path
+// closes waitDone, and a bare return would hang StopAndWait forever.
+func TestReadLoopContextCancelStillReaps(t *testing.T) {
+	p := &ChordProcess{key: "sample"}
+	pr, pw := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.readLoop(ctx, pr)
+	}()
+
+	cancel()
+	// The context is only observed between frames; deliver one frame so the
+	// loop reaches the check and exits through handleExit.
+	if _, err := pw.Write([]byte("{\"type\":\"status\"}\n")); err != nil {
+		t.Fatalf("write envelope: %v", err)
+	}
+	pw.Close()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readLoop did not exit after context cancellation")
+	}
+	p.mu.RLock()
+	exited := p.exited
+	p.mu.RUnlock()
+	if !exited {
+		t.Fatal("readLoop returned without reaping the process exit")
+	}
+}
