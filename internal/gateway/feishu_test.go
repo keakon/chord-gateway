@@ -183,7 +183,6 @@ func TestFeishuMessageEvent_EnqueuesAndDispatches(t *testing.T) {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 1 {
 		t.Fatalf("expected 1 dispatch, got %d", dispatched.Load())
 	}
@@ -198,11 +197,9 @@ func TestFeishuMessageEvent_DuplicateDedup(t *testing.T) {
 	if err := handleMessageEvent(context.Background(), a, event); err != nil {
 		t.Fatalf("first handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if err := handleMessageEvent(context.Background(), a, event); err != nil {
 		t.Fatalf("second handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	if count := dispatched.Load(); count != 1 {
 		t.Fatalf("expected 1 dispatch, got %d", count)
@@ -217,7 +214,6 @@ func TestFeishuMessageEvent_OwnerFilter(t *testing.T) {
 	if err := handleMessageEvent(context.Background(), a, makeFeishuMessageEvent("ou_not_owner", "oc_chat1", "msg_001", "hello")); err != nil {
 		t.Fatalf("non-owner handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 0 {
 		t.Fatal("non-owner message should not be dispatched")
 	}
@@ -225,7 +221,6 @@ func TestFeishuMessageEvent_OwnerFilter(t *testing.T) {
 	if err := handleMessageEvent(context.Background(), a, makeFeishuMessageEvent("ou_owner", "oc_chat1", "msg_002", "hello")); err != nil {
 		t.Fatalf("owner handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 1 {
 		t.Fatalf("owner message should be dispatched, got %d", dispatched.Load())
 	}
@@ -239,7 +234,6 @@ func TestFeishuMessageEvent_DeniesWhenNotConfigured(t *testing.T) {
 	if err := handleMessageEvent(context.Background(), a, makeFeishuMessageEvent("ou_anyone", "oc_chat1", "msg_001", "hello")); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 0 {
 		t.Fatalf("empty allowlist should deny all users, got %d", dispatched.Load())
 	}
@@ -253,7 +247,6 @@ func TestFeishuMessageEvent_IgnoresNonTextMessages(t *testing.T) {
 	if err := handleMessageEvent(context.Background(), a, makeFeishuNonTextMessageEvent("ou_user", "oc_chat1", "msg_001")); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 0 {
 		t.Fatal("non-text message should not be dispatched")
 	}
@@ -270,7 +263,6 @@ func TestFeishuCardActionEvent_DispatchesOnce(t *testing.T) {
 			t.Fatalf("handleCardActionEvent() error = %v", err)
 		}
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 1 {
 		t.Fatalf("expected 1 dispatched card action, got %d", dispatched.Load())
 	}
@@ -286,7 +278,6 @@ func TestFeishuCardActionEvent_WrongContextIgnored(t *testing.T) {
 	if _, err := handleCardActionEvent(context.Background(), a, event); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 0 {
 		t.Fatal("wrong-context card action should not be dispatched")
 	}
@@ -323,7 +314,6 @@ func TestFeishuCardActionEvent_InvalidActionIgnored(t *testing.T) {
 			}
 		})
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 0 {
 		t.Fatalf("invalid card actions should not be dispatched, got %d", dispatched.Load())
 	}
@@ -385,7 +375,6 @@ func TestFeishuCardActionEvent_DistinctFormSelectionsAreNotDuplicates(t *testing
 	if _, err := handleCardActionEvent(context.Background(), a, first); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if got := dispatched.Load(); got != 2 {
 		t.Fatalf("dispatched = %d, want the two distinct selections", got)
 	}
@@ -440,7 +429,6 @@ func TestFeishuCardActionEvent_EmptyFormSubmitToasts(t *testing.T) {
 	if resp == nil || resp.Toast == nil || !strings.Contains(resp.Toast.Content, "Select at least one option") {
 		t.Fatalf("response = %#v, want a selection hint toast", resp)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if got := dispatched.Load(); got != 0 {
 		t.Fatalf("an empty selection must not be submitted, dispatched = %d", got)
 	}
@@ -456,7 +444,6 @@ func TestFeishuMessageEvent_InvalidJSONIgnored(t *testing.T) {
 	if err := handleMessageEvent(context.Background(), a, event); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if dispatched.Load() != 0 {
 		t.Fatal("invalid JSON content should not be dispatched")
 	}
