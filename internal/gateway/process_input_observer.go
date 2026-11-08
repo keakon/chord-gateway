@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 	"unicode/utf8"
+
+	"github.com/keakon/golog/log"
 )
 
 var errIngressDonePending = errors.New("new Done confirmation requires explicit handling")
@@ -138,6 +140,18 @@ func (p *ChordProcess) startInputReceiptWorkerLocked() {
 	go p.flushInputReceipts()
 }
 
+// inputReceiptCommitTimeout bounds receipt callbacks during shutdown flush so
+// a stuck commit cannot hang gateway exit; the callback goroutine may leak at
+// process end. It is variable so tests can exercise the bound quickly.
+var inputReceiptCommitTimeout = 5 * time.Second
+
+// inputReceiptFlushTimeout bounds WaitInputReceiptsShutdown's join so a commit
+// that started before the seal (outside the per-commit watchdog) cannot hang
+// gateway exit either. Commits normally finish in microseconds, so the budget
+// only elapses when commits are wedged; the worker then settles in the
+// background at process end. It is variable so tests can exercise the bound.
+var inputReceiptFlushTimeout = 10 * time.Second
+
 func (p *ChordProcess) flushInputReceipts() {
 	p.mu.RLock()
 	done := p.inputReceiptDone
@@ -154,8 +168,25 @@ func (p *ChordProcess) flushInputReceipts() {
 		id := p.inputReceiptQueue[0]
 		observer := p.inputObservers[id]
 		receipt, version, commit := observer.receipt, observer.version, observer.commit
+		shutdown := p.inputReceiptShutdown
 		p.mu.Unlock()
-		err := commit(receipt)
+		var err error
+		if shutdown {
+			// Receipts are sealed: bound the callback so a stuck commit cannot
+			// block WaitInputReceiptsShutdown. A timeout is treated like any
+			// other commit failure below.
+			result := make(chan error, 1)
+			go func() { result <- commit(receipt) }()
+			timer := time.NewTimer(inputReceiptCommitTimeout)
+			select {
+			case err = <-result:
+				timer.Stop()
+			case <-timer.C:
+				err = fmt.Errorf("input receipt commit timed out after %v", inputReceiptCommitTimeout)
+			}
+		} else {
+			err = commit(receipt)
+		}
 		p.mu.Lock()
 		if err != nil {
 			p.inputReceiptBlocked = true
@@ -187,9 +218,9 @@ func (p *ChordProcess) flushInputReceipts() {
 	}
 }
 
-// WaitInputReceiptsShutdown seals receipt delivery and waits for all current
-// receipt callbacks before the in-memory store is closed. Failed callbacks
-// block new dispatch in this process; inputs are never replayed.
+// WaitInputReceiptsShutdown seals receipt delivery and joins current workers
+// within the flush budget. A worker that outlives the budget finishes in the
+// background; inputs are never replayed.
 func (m *ChordManager) WaitInputReceiptsShutdown() {
 	m.inputReceiptProcesses.Range(func(key, _ any) bool {
 		p := key.(*ChordProcess)
@@ -205,7 +236,19 @@ func (m *ChordManager) WaitInputReceiptsShutdown() {
 		done := p.inputReceiptDone
 		p.mu.Unlock()
 		if done != nil {
-			<-done
+			timer := time.NewTimer(inputReceiptFlushTimeout)
+			select {
+			case <-done:
+				timer.Stop()
+			case <-timer.C:
+				// A commit that started before the seal is not covered by the
+				// per-commit watchdog; leave the worker to finish in the
+				// background rather than hanging gateway exit.
+				p.mu.RLock()
+				key, state := p.key, p.state
+				p.mu.RUnlock()
+				log.Warnf("[%v] input receipt flush did not finish in %v; continuing shutdown", processLogContext(key, state), inputReceiptFlushTimeout)
+			}
 		}
 		return true
 	})

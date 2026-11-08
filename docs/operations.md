@@ -90,6 +90,10 @@ Check `/status` for pending input and inspect uncertain results in the original 
 
 Old `dedupe.json`, WeChat `sync-buf.json` and development `im-ingress.db` files are no longer read, imported or updated, and are not automatically deleted. Intake starts empty; old messages redelivered by a platform may execute again. Before rolling back, reconcile session outcomes instead of relying on stale cursors to prevent duplicates.
 
+Each write to Chord stdin has a 10-second budget. On platforms whose pipe supports write deadlines, the deadline interrupts a blocked write; otherwise, a watchdog closes the pipe to cancel it. A timeout closes stdin and kills the stalled child without resending a partially written command. Normal crash-restart policy then applies.
+
+Receipt workers have a 10-second shutdown flush budget per process, including callbacks that started before shutdown. If a worker does not finish in time, the gateway logs a warning and continues shutdown while that worker finishes in the background.
+
 One account permits one instance per host and OS user; enforce exclusivity across users or hosts yourself. Same-account WeChat renewal preserves the cursor within this process; changing accounts requires local reset and pairing again.
 
 ## Config file resolution

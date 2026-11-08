@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"testing"
 	"time"
 )
@@ -232,4 +233,104 @@ func TestInputObserverShutdownJoinsCommit(t *testing.T) {
 	if err := p.ObserveInputReceipt("new", func(ProcessInputReceipt) error { return nil }); err == nil {
 		t.Fatal("shutdown accepted observer")
 	}
+}
+
+// A commit that started before the seal runs on the unbounded normal path,
+// outside the per-commit watchdog: the shutdown join itself must be bounded.
+func TestInputObserverShutdownBoundsInFlightCommit(t *testing.T) {
+	oldFlush := inputReceiptFlushTimeout
+	inputReceiptFlushTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { inputReceiptFlushTimeout = oldFlush })
+
+	m := &ChordManager{}
+	p := observerTestProcess()
+	p.key = "workspace|wechat|chat"
+	p.mgr = m
+	t.Cleanup(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for _, o := range p.inputObservers {
+			o.timer.Stop()
+		}
+	})
+	entered, release := make(chan struct{}, 2), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	if err := p.ObserveInputReceipt("im-record", func(ProcessInputReceipt) error {
+		entered <- struct{}{}
+		<-release
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Start the worker while shutdown is still false, so the commit runs on
+	// the unbounded normal path.
+	applyObserverReceipt(p, inputStarted, 1)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start before shutdown")
+	}
+	finished := make(chan struct{})
+	go func() { m.WaitInputReceiptsShutdown(); close(finished) }()
+	mutating, stopMutating, mutated := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(mutated)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		close(mutating)
+		for {
+			select {
+			case <-stopMutating:
+				return
+			case <-ticker.C:
+				p.mu.Lock()
+				p.state.SessionID = "updated-session"
+				p.mu.Unlock()
+			}
+		}
+	}()
+	<-mutating
+	defer func() { close(stopMutating); <-mutated }()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown joined an in-flight commit without a bound")
+	}
+	// Releasing lets the sealed worker settle in the background.
+	releaseOnce.Do(func() { close(release) })
+	waitObserver(t, func() bool { p.mu.RLock(); defer p.mu.RUnlock(); return !p.inputReceiptWorker })
+}
+
+// A commit callback that never returns must not hang gateway shutdown: the
+// shutdown flush bounds each commit and treats the timeout as a failure.
+func TestInputObserverShutdownBoundsStuckCommit(t *testing.T) {
+	oldTimeout := inputReceiptCommitTimeout
+	inputReceiptCommitTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { inputReceiptCommitTimeout = oldTimeout })
+
+	m := &ChordManager{}
+	p := observerTestProcess()
+	p.mgr = m
+	entered, release := make(chan struct{}), make(chan struct{})
+	if err := p.ObserveInputReceipt("im-record", func(ProcessInputReceipt) error {
+		close(entered)
+		<-release
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	go func() { m.WaitInputReceiptsShutdown(); close(finished) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not record unknown")
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not bound the stuck commit")
+	}
+	close(release)
 }
