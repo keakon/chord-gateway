@@ -19,13 +19,10 @@ func (p *ChordProcess) StopAndWait(ctx context.Context, grace time.Duration) err
 	if done == nil {
 		return errBindBlocked
 	}
+	// Shared stop bookkeeping runs before the exitOnce so it applies no matter
+	// which stop path wins the race with TerminateGroup.
+	p.beginGatewayStop()
 	p.exitOnce.Do(func() {
-		p.mu.Lock()
-		if p.stdin != nil {
-			_ = p.stdin.Close()
-			p.stdin = nil
-		}
-		p.mu.Unlock()
 		if pgid > 0 {
 			_ = terminateProcessGroup(pgid)
 		} else {

@@ -11,6 +11,23 @@ import (
 
 const defaultAutoRestartDelay = 5 * time.Second
 
+// beginGatewayStop performs the stop bookkeeping shared by TerminateGroup and
+// StopAndWait: flag an interrupted transfer, mark the stop as gateway-issued
+// (suppressing crash restarts), abandon pending inputs, and close stdin so
+// chord exits gracefully. Every step is idempotent, so both stop paths can
+// call it regardless of which wins the exitOnce race.
+func (p *ChordProcess) beginGatewayStop() {
+	p.markTransferInterrupted()
+	p.mu.Lock()
+	p.stoppedByGateway = true
+	p.abandonPendingInputs()
+	if p.stdin != nil {
+		_ = p.stdin.Close()
+		p.stdin = nil
+	}
+	p.mu.Unlock()
+}
+
 // TerminateGroup attempts to gracefully stop the chord process and, if needed,
 // force-kill its whole process group.
 func (p *ChordProcess) TerminateGroup(grace time.Duration) {
@@ -18,16 +35,8 @@ func (p *ChordProcess) TerminateGroup(grace time.Duration) {
 		return
 	}
 	p.exitOnce.Do(func() {
-		p.markTransferInterrupted()
-		// Mark as stopped by gateway to avoid crash restarts.
+		p.beginGatewayStop()
 		p.mu.Lock()
-		p.stoppedByGateway = true
-		p.abandonPendingInputs()
-		// Close stdin first to let chord exit gracefully.
-		if p.stdin != nil {
-			_ = p.stdin.Close()
-			p.stdin = nil
-		}
 		cmd := p.cmd
 		pgid := p.pgid
 		p.mu.Unlock()
