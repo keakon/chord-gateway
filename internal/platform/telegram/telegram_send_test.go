@@ -175,3 +175,20 @@ func TestTelegramCancelledInFlightSendRemainsUnknown(t *testing.T) {
 		t.Fatalf("in-flight unknown delivery was replaced by cancellation: %v", err)
 	}
 }
+
+func TestTelegramLimiterPauseNeverMovesDeadlineBackward(t *testing.T) {
+	// Long pauses keep the assertion deterministic: with the real 80ms/20ms
+	// values, a scheduling stall longer than the 60ms difference would let a
+	// correct max implementation legally move the deadline forward.
+	limiter := &telegramSendLimiter{}
+	limiter.pause(time.Hour)
+	limiter.mu.Lock()
+	blockedUntil := limiter.blockedUntil
+	limiter.mu.Unlock()
+	limiter.pause(30 * time.Minute)
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if !limiter.blockedUntil.Equal(blockedUntil) {
+		t.Fatalf("shorter pause moved the deadline from %v to %v", blockedUntil, limiter.blockedUntil)
+	}
+}
