@@ -353,16 +353,23 @@ func parseWorkspacesNode(node *yaml.Node) ([]Workspace, error) {
 	return workspaces, nil
 }
 
+// idleTimeout parses the configured idle_timeout. Empty and unparseable
+// values both fall back to the 30m default; invalid reports whether an
+// explicit value failed to parse so callers can warn about the fallback.
+func (c *Config) idleTimeout() (d time.Duration, invalid bool) {
+	if c.IdleTimeout == "" {
+		return 30 * time.Minute, false
+	}
+	parsed, err := time.ParseDuration(c.IdleTimeout)
+	if err != nil {
+		return 30 * time.Minute, true
+	}
+	return parsed, false
+}
+
 // IdleTimeoutDuration parses and returns the idle timeout duration.
 func (c *Config) IdleTimeoutDuration() time.Duration {
-	s := c.IdleTimeout
-	if s == "" {
-		s = "30m"
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 30 * time.Minute
-	}
+	d, _ := c.idleTimeout()
 	return d
 }
 
@@ -371,10 +378,7 @@ func (c *Config) IdleTimeoutDuration() time.Duration {
 // config.Load runs before the gateway logger is installed, so stores replay
 // these warnings after both log outputs are ready.
 func (c *Config) IdleTimeoutWarnings() []string {
-	if c.IdleTimeout == "" {
-		return nil
-	}
-	if _, err := time.ParseDuration(c.IdleTimeout); err == nil {
+	if _, invalid := c.idleTimeout(); !invalid {
 		return nil
 	}
 	return []string{fmt.Sprintf("invalid idle_timeout %q ignored, using the 30m default", c.IdleTimeout)}
