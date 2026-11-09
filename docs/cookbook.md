@@ -6,7 +6,16 @@ This page collects copyable recipes for installing, configuring, and running `ch
 
 ## Choose an installation method
 
-### Option A: install from GitHub Releases
+### Option A: install with Homebrew (macOS and Linux)
+
+Use Homebrew when you are on macOS or Linux:
+
+```bash
+brew install keakon/tap/chord-gateway
+chord-gateway --version
+```
+
+### Option B: install from GitHub Releases
 
 Use this when you want a prebuilt binary and do not need to build from source.
 
@@ -42,7 +51,7 @@ Use this when you want a prebuilt binary and do not need to build from source.
 
    If you run the command on macOS, use `shasum -a 256 -c -` instead of `sha256sum -c -`. Replace `VERSION`, `OS`, and `ARCH` for your platform. On Windows, download the `.zip` asset and put `chord-gateway.exe` somewhere on `PATH`.
 
-### Option B: install with Go
+### Option C: install with Go
 
 Use this when you already have the target Go toolchain locally:
 
@@ -52,7 +61,7 @@ go install github.com/keakon/chord-gateway@latest
 
 The binary is usually installed to `$(go env GOPATH)/bin`. Make sure that directory is on `PATH`, or call the binary by absolute path.
 
-### Option C: build from a checkout
+### Option D: build from a checkout
 
 ```bash
 git clone https://github.com/keakon/chord-gateway.git

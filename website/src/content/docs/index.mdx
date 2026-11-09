@@ -41,8 +41,9 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 <CardGrid>
   <Card title="1. Install" icon="seti:go">
     ```bash
-    go install github.com/keakon/chord-gateway@latest
+    brew install keakon/tap/chord-gateway
     ```
+    Or install with Go 1.27.0+: `go install github.com/keakon/chord-gateway@latest`.
     Install [Chord](https://github.com/keakon/chord#three-step-setup) separately and make sure `chord` is on `PATH`, or set `chord_path` in the gateway config.
   </Card>
   <Card title="2. Choose an IM platform" icon="random">

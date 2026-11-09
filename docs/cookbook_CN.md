@@ -6,7 +6,16 @@
 
 ## 选择安装方式
 
-### 方式 A：从 GitHub Releases 安装
+### 方式 A：通过 Homebrew 安装（macOS 与 Linux）
+
+在 macOS 或 Linux 上推荐使用 Homebrew 安装：
+
+```bash
+brew install keakon/tap/chord-gateway
+chord-gateway --version
+```
+
+### 方式 B：从 GitHub Releases 安装
 
 适用于希望直接使用预构建二进制、不需要本地编译源码的场景。
 
@@ -42,7 +51,7 @@
 
    如果你在 macOS 上执行这段命令，请把 `sha256sum -c -` 换成 `shasum -a 256 -c -`。请根据实际平台替换 `VERSION`、`OS` 和 `ARCH`。Windows 用户下载 `.zip` 产物，并把 `chord-gateway.exe` 放到 `PATH` 中即可。
 
-### 方式 B：通过 Go 安装
+### 方式 C：通过 Go 安装
 
 适用于本机已有目标 Go 工具链的场景：
 
@@ -52,7 +61,7 @@ go install github.com/keakon/chord-gateway@latest
 
 二进制通常会安装到 `$(go env GOPATH)/bin`。请确保该目录已加入 `PATH`，或用绝对路径调用。
 
-### 方式 C：从源码构建
+### 方式 D：从源码构建
 
 ```bash
 git clone https://github.com/keakon/chord-gateway.git

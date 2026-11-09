@@ -2,6 +2,14 @@
 
 Register one trusted owner per platform and explicitly bind each chat to an existing local directory. Existing deployments should read the [breaking changes](../CHANGELOG.md) before upgrading.
 
+```text
+[Terminal: chord-gateway -f config.yaml --pair] ──> displays 10-minute pairing code
+                                                              │
+[Private chat: send your platform's pairing command below] <─┘ (registers owner + binds directory)
+                                                              │
+[Group / other chats: use the later binding table below] <────┘ (subsequent bindings without code)
+```
+
 ## First connection
 
 Configure the adapters you need, without an owner or workspace:
