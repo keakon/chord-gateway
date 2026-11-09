@@ -1,7 +1,5 @@
 # Quick Start
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
-
 Use this guide to connect one project to WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, or Slack. You can register directories from the chat after pairing.
 
 ## 1. Install Chord and the gateway
@@ -118,21 +116,40 @@ Run in a foreground terminal:
 chord-gateway -f config.yaml --pair
 ```
 
-Complete WeChat QR login if prompted. The terminal displays a single pairing code immediately at startup; each platform must still become ready before its `/bind` is authorized, and for the first DingTalk connection an employee must first privately send `hello` to verify the enterprise identity. In a private bot chat on a platform other than Slack, send:
+The terminal immediately displays a pairing code valid for 10 minutes. Wait for your platform to connect, then use an existing directory on the gateway host:
 
-```text
-/bind "<directory>" <pairing_code>
-```
+| Platform | Command in the private bot chat | Verify |
+|---|---|---|
+| Slack App DM | `/chord bind "<directory>" <pairing_code>` | `/chord status` |
+| Other platforms | `/bind "<directory>" <pairing_code>` | `/status` |
 
-Use an existing directory on the gateway host. The code expires after 10 minutes. WeCom first requires a successful proactive binding probe. The gateway saves the owner and binding; send a task to start Chord there. Other senders are ignored. After pairing, restart normally with `chord-gateway -f config.yaml`, including as a background service.
+- **WeChat:** complete QR login when prompted.
+- **DingTalk:** a same-enterprise employee must first send a private `hello` to verify identity. Before saving a binding, the gateway sends `Gateway binding check.`; if the probe fails or its result is unknown, fix the problem and send a new `/bind`.
+- **WeCom:** the proactive binding probe must receive a successful platform ACK before the binding is saved.
 
-Slack App DM pairing uses `/chord bind "<directory>" <pairing_code>` and verification uses `/chord status`. Each channel and thread needs a separate binding; use `@Bot /bind ...` inside a thread, because slash commands always address the channel root.
+The gateway saves one trusted owner per platform and binds the chat. Other senders are ignored. Send a task to start Chord in the bound directory. After pairing, restart normally with `chord-gateway -f config.yaml`, including as a background service.
+
+> **Note:** Every chat needs an explicit binding, even with only one workspace. See [pairing and local reset](./docs/pairing.md); existing deployments should also read the [upgrade notes](./CHANGELOG.md).
 
 ## 4. Bind another chat or directory
 
-The owner can bind another chat or an idle existing chat without a code: use `/bind "/path/to/project"` on WeChat/Feishu/Telegram/WeCom/DingTalk, `/chord bind "/path/to/project"` in a Slack root, or `@Bot /bind "/path/to/project"` inside a Slack thread. Paired chats use explicit routes on all platforms. Feishu, Telegram, WeCom, and DingTalk groups (DingTalk requires @robot) can be bound by the owner; group members can see replies. For Telegram groups use `/bind@BotUsername` and reply to the bot for ordinary tasks with default privacy. Finish active work and interactions before switching directories. DingTalk sends `Gateway binding check.` before saving a binding; a failed or unknown probe leaves it unsaved until a new `/bind`. Discord server channels and threads use `@Bot /bind "/path/to/project"`; prefix later commands with the bot mention.
+Once paired, the owner can bind another chat without a code. Finish active work and pending interactions before switching an existing chat to another directory.
 
-See [pairing and local reset](./docs/pairing.md) for failed-write recovery, account changes, and reset.
+Use the command for the target chat:
+
+| Target | Binding command |
+|---|---|
+| Private bot chat except Slack | `/bind "/path/to/project"` |
+| Feishu or WeCom group | `/bind "/path/to/project"` |
+| Telegram group | `/bind@BotUsername "/path/to/project"` |
+| DingTalk group | `@robot /bind "/path/to/project"` |
+| Discord server channel or thread | `@Bot /bind "/path/to/project"` |
+| Slack chat root | `/chord bind "/path/to/project"` |
+| Slack thread | `@Bot /bind "/path/to/project"` |
+
+Group members can see replies. With Telegram's default privacy settings, reply to the bot for ordinary tasks. Discord server commands also need the bot mention. Slack slash commands always address the chat root; each Slack or Discord thread needs its own binding.
+
+See [pairing and local reset](./docs/pairing.md) for binding conditions, failed-write recovery, account changes, and reset.
 
 ## 5. State and next steps
 
@@ -143,7 +160,9 @@ By default the gateway stores runtime state under:
 
 Discord bot tokens remain in configuration; protect the configuration as a secret. WeCom setup uses bot ID and secret and requires a successful proactive binding probe; see the [WeCom guide](./docs/wecom.md).
 
-State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by default), and session pins. Feishu `app_id`/`app_secret` remain configuration credentials; its short-lived access token is kept in memory and refreshed as needed. Inbound intake, deduplication and polling cursors are memory-only and are not restored after restart.
+State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by default), and session pins. Feishu `app_id`/`app_secret` remain configuration credentials; its short-lived access token is kept in memory and refreshed as needed.
+
+The inbox, deduplication records, and polling cursors are memory-only and are not restored after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./docs/operations.md#message-delivery-and-restarts).
 
 - [Configuration reference](./docs/configuration.md)
 - [Cookbook](./docs/cookbook.md)
@@ -151,5 +170,3 @@ State includes logs, WeChat token files (`<state_dir>/wechat/token.json` by defa
 - [Usage guide](./docs/usage.md)
 - [Operations](./docs/operations.md)
 - [Troubleshooting](./docs/troubleshooting.md)
-
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./docs/operations.md#message-delivery-and-restarts).

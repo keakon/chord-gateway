@@ -1,12 +1,6 @@
 # IM 接入总览
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
-本文档是 `chord-gateway` 的“任务型入口页”，用于指导你把 IM 平台接入 gateway。
-
-如果你需要字段级配置参考，请直接看：
-
-- [配置参考](./configuration_CN.md)
+选择 IM 平台后，按对应指南完成接入。各字段的说明见[配置参考](./configuration_CN.md)。
 
 ## 当前支持哪些 IM 平台？
 
@@ -17,7 +11,7 @@
 - **Telegram**（`ims.telegram`）— BotFather token + Bot API 长轮询，支持私聊与普通群文本。
 
 - **企业微信**（`ims.wecom`）— 智能机器人 API 长连接，支持私聊、群文本及后台结果。
-- **钉钉**（`ims.dingtalk`）— 企业内部应用机器人，Stream 收件与主动文本回传；真实企业验收待完成。
+- **钉钉**（`ims.dingtalk`）— 企业内部应用机器人，Stream 收件与主动文本回传。
 - **Discord**（`ims.discord`）— Bot DM，以及服务器文字频道和既有 thread 中显式 @Bot 的消息。
 - **Slack**（`ims.slack`）— 单 workspace Socket Mode，支持私聊、频道和 thread。
 
@@ -57,7 +51,7 @@
 - 团队使用同一钉钉企业，能配置内部应用机器人与主动消息权限。
 - 使用员工私聊或群内 @机器人，通过文本完成任务、确认和 Question。
 
-从这里开始：[钉钉接入指南](./dingtalk_CN.md)。首版仅同企业文本，部署验收仍待完成。
+从这里开始：[钉钉接入指南](./dingtalk_CN.md)。首版仅支持同企业文本。
 
 ### 适合选 Discord 的场景
 
@@ -87,15 +81,13 @@ chord-gateway -f config.yaml --console
 
 ## 接入与路由
 
-选择需要的平台：微信配置 `ims.wechat: {}`；飞书填写 `app_id` / `app_secret` 并完成长连接和事件订阅；企业微信填写 `bot_id` / `secret` 并开通智能机器人 API 长连接；Discord 安装 Bot 后填写 `bot_token` / `application_id`。运行 `chord-gateway --pair`；终端在启动时立即显示一个通用配对码;微信仍需扫码登录,各平台也需就绪后其 `/bind` 才会被授权。在机器人私聊发送 `/bind "<directory>" <pairing_code>`,再用 `/status` 验证。企业微信需固定主动绑定探测成功后才保存。
+1. 按上方平台指南配置凭据和连接方式。Telegram 只保留未接收更新 24 小时，部署前需核对其[保留期与验收要求](./telegram_CN.md)。
+2. 运行 `chord-gateway --pair`，终端会立即显示通用配对码。各平台连接就绪后才能绑定：微信需扫码登录；钉钉首次连接需由同企业员工私聊 `hello` 验证身份。企业微信和钉钉都需通过主动探测才能保存绑定。
+3. 在机器人私聊完成绑定并验证状态。各平台的命令入口见[首次连接](./pairing_CN.md#首次连接)；Slack 使用 `/chord bind` 和 `/chord status`。
 
-钉钉配置四项应用/企业身份字段,首次私聊 `hello` 验证身份;该验证与启动码无关,保存绑定前先主动探测目标。
+配对后的 owner 可按[后续绑定规则](./pairing_CN.md#后续绑定与切换)绑定其他聊天，无需配对码。所有平台都通过 `chat_bindings` 路由，单工作区也不隐式绑定。目录必须已存在，配置保存成功后才启用路由。手工修改其他配置前需停服务，修改后重启。
 
-配对后的 owner 用 `/bind "~/another workspace"` 显式绑定其他聊天。所有已实现平台都通过 `chat_bindings` 路由，单工作区也不隐式绑定。目录必须已存在，配置保存成功后才启用路由。其他配置的手工改动需停服务后修改并重启。
-
-owner 是本机控制面用户。只在可信群聊中绑定，回复对群成员可见。不要提交凭据或运行状态。详见[配对](./pairing_CN.md)、[微信](./wechat_CN.md)、[飞书](./feishu_CN.md)、[企业微信](./wecom_CN.md)、[钉钉](./dingtalk_CN.md)、[Discord](./discord_CN.md)和[权限与安全](./permissions-and-safety_CN.md)。
-
-Telegram 配置 `ims.telegram.bot_token`；群绑定需 `/bind@BotUsername`。服务器只保留未接收更新 24 小时，部署前核对[保留期与验收](./telegram_CN.md)。
+每个平台配对一位可信控制者（owner），具有本机控制面访问能力。只在可信群聊中绑定，回复对群成员可见。不要提交凭据或运行状态，详见[权限与安全](./permissions-and-safety_CN.md)。
 
 ## 故障排查入口
 

@@ -3,7 +3,7 @@ title: chord-gateway
 description: 将微信、飞书、Telegram、企业微信、钉钉、Discord、Slack 聊天连接到本地 chord headless 进程，同时把工作区访问、凭据和状态留在自己的机器或服务器上。
 template: splash
 hero:
-  tagline: 从 IM 聊天里操控 Chord，同时不把 agent、凭据或工作区访问移出自己的机器或服务器。
+  tagline: 从 IM 聊天控制本机或服务器上的 Chord。
   actions:
     - text: 快速开始
       link: /chord-gateway/zh/quickstart/
@@ -20,14 +20,15 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 ## 为什么需要 chord-gateway
 
 <CardGrid>
-  <Card title="聊天控制面" icon="external">
+  <Card title="支持 7 个 IM 平台" icon="external">
     把微信 iLink、飞书、Telegram、企业微信、钉钉、Discord 或 Slack 连接到 `chord headless`，即可从 IM 聊天甚至手机上控制 Chord。
   </Card>
-  <Card title="本地优先边界" icon="seti:lock">
+  <Card title="本地优先" icon="seti:lock">
     Chord 进程、工作区文件、运行时状态和凭据都继续保留在你自己的机器或服务器上。
     聊天消息仍会经过所选 IM 平台；模型服务的数据边界由 Chord 配置决定。
   </Card>
   <Card title="按聊天隔离" icon="document">
+    每个平台配对一位可信控制者（owner），每个聊天显式绑定到本地目录。
     gateway 按 workspace、IM 类型和 chat ID 路由，让不同聊天保留独立的 Chord session pin。
   </Card>
   <Card title="交互式确认" icon="rocket">
@@ -45,13 +46,13 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     请按 [Chord 官方说明](https://github.com/keakon/chord/blob/main/README_CN.md#三步完成设置)单独安装，并确保 `chord` 在 `PATH` 中；也可以在网关配置里设置 `chord_path`。
   </Card>
   <Card title="2. 选择 IM 平台" icon="random">
-    从 [微信 iLink](/chord-gateway/zh/wechat/)、[飞书](/chord-gateway/zh/feishu/)、[Telegram](/chord-gateway/zh/telegram/)、[企业微信](/chord-gateway/zh/wecom/)、[钉钉](/chord-gateway/zh/dingtalk/) 、[Discord](/chord-gateway/zh/discord/) 或 [Slack](/chord-gateway/zh/slack/) 开始，然后在 `config.yaml` 中只保留需要的 adapter。
+    从 [微信 iLink](/chord-gateway/zh/wechat/)、[飞书](/chord-gateway/zh/feishu/)、[Telegram](/chord-gateway/zh/telegram/)、[企业微信](/chord-gateway/zh/wecom/)、[钉钉](/chord-gateway/zh/dingtalk/)、[Discord](/chord-gateway/zh/discord/) 或 [Slack](/chord-gateway/zh/slack/) 开始，然后在 `config.yaml` 中只保留需要的 adapter。
   </Card>
   <Card title="3. 启动 gateway" icon="seti:powershell">
     ```bash
     chord-gateway -f config.yaml --pair
     ```
-    在 Slack 之外的平台，用终端配对码在私聊发送 `/bind "<directory>" <pairing_code>`，再用 `/status` 验证绑定。钉钉需先私聊 `hello` 完成身份验证。第一条任务才启动 Chord；之后普通启动无需 `--pair`。 Discord 服务器频道和 thread 中的命令需在开头 `@Bot`。Slack 使用 `/chord bind ...` 和 `/chord status`，thread 命令见接入指南。
+    按所选平台指南，在机器人私聊中使用终端配对码绑定目录并验证状态。第一条任务才启动 Chord；之后普通启动无需 `--pair`。
   </Card>
 </CardGrid>
 

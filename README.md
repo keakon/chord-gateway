@@ -1,7 +1,5 @@
 # chord-gateway
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./docs/pairing.md) and the [upgrade notes](./CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./docs/slack.md).
-
 [![CI](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/keakon/chord-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/keakon/chord-gateway?display_name=release)](https://github.com/keakon/chord-gateway/releases)
 [![Go](https://img.shields.io/github/go-mod/go-version/keakon/chord-gateway)](https://go.dev/)
@@ -86,7 +84,7 @@ Only YAML config files are supported (`.yaml` or `.yml`).
 
 After QR login, send `/bind "/path/to/project" <pairing_code>` in a private bot chat using the code shown in the terminal. Send `/status` to verify, then a normal text task. Later starts need no `--pair`.
 
-Notes: Each chat requires explicit binding; Feishu inbound handling currently accepts text messages only. See “Support scope / known limitations” for details.
+> **Note:** Every chat needs an explicit binding, even with only one workspace. See [pairing and local reset](./docs/pairing.md).
 
 For platform setup and multi-workspace routing, see [QUICKSTART.md](./QUICKSTART.md), the [WeCom guide](./docs/wecom.md), and the [Discord guide](./docs/discord.md).
 
@@ -96,13 +94,14 @@ See the [Telegram guide](./docs/telegram.md) for token setup, group privacy, and
 
 - Source builds require Go 1.27.0+ and a separate `chord` binary. `chord-gateway` does not bundle Chord itself.
 - CI currently builds these targets: `darwin/amd64`, `darwin/arm64`, `linux/amd64`, `linux/arm64`, and `windows/amd64`.
-- All platforms select workspaces through explicit `chat_bindings`; the owner binds WeChat/Feishu/Telegram/WeCom/DingTalk chats with `/bind "<directory>"`, Discord channels and threads with `@Bot /bind "<directory>"`, Slack roots with `/chord bind "<directory>"`, and Slack threads with `@Bot /bind "<directory>"`.
+- All platforms select workspaces through explicit `chat_bindings`; the owner binds each target using its platform's [command entry point](./docs/pairing.md#later-bindings).
 - Feishu multi-workspace routing uses `ims.feishu.chat_bindings` to map chat IDs to workspace IDs. Inbound Feishu handling currently accepts text messages only; non-text messages are ignored.
 - WeCom supports text only in this release; media, cards, and streaming replies are unsupported. Real enterprise-account acceptance remains pending.
 - Slack currently supports text only. Channel/thread tasks require an explicit owner mention; slash commands address the chat root, while thread controls use `@Bot /command`. See the [Slack guide](./docs/slack.md).
 - DingTalk supports same-enterprise text only; group commands require @robot. Its credentials and proactive API permissions must be configured separately.
 - Discord requires explicit @Bot in server channels and threads; each thread has its own binding. Native slash commands, buttons, attachments, and rich-text previews are deferred. Use [text commands](./docs/discord.md#pair-and-bind-chats) for approvals and answers.
 - `/login [platform]` is only useful for adapters that support interactive login renewal. Today that flow is available for WeChat; Feishu, Telegram, WeCom, DingTalk, Discord, and Slack use configured credentials.
+- The gateway does not restore its inbox, deduplication records, or polling cursors after restart. Check the original Chord session before resending an uncertain task; see [delivery semantics](./docs/operations.md#message-delivery-and-restarts).
 
 ## Common IM commands
 
@@ -148,5 +147,3 @@ The paired owner is a trusted local control-plane user. Keep Slack, Discord, and
 ## License
 
 MIT License. See [LICENSE](./LICENSE). The bundled Discord Gateway code retains its upstream Apache-2.0 license under `internal/discordgateway/`.
-
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./docs/operations.md#message-delivery-and-restarts).

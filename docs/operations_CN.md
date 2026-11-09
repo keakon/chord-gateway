@@ -1,7 +1,5 @@
 # 运维说明
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
 本文档说明运行和运维 `chord-gateway` 时需要关注的行为。
 
 ## 进程生命周期
@@ -55,7 +53,7 @@ IM 通知只展示简短的阻塞项预览。宿主机命令返回一页有界�
 
 恢复输入摘要可能过期时，闲置回收会先刷新再判断。成功的状态刷新仍会重新计算闲置时间；摘要确认没有待处理输入后，无需手动 `/status` 即可恢复正常回收。刷新失败则保留进程。
 
-清理空闲进程会关闭该 Core 并暂停题目计时，不编造问答终态。重新连接并恢复会话后按原 ID 回答；先检查 `/status`，以 Chord 回执确定结果。权限与 Handoff 请求继续按各自的取消规则处理。
+清理空闲进程会关闭该 Core 并暂停题目计时，不会将问题标记为已结束。重新连接并恢复会话后按原 ID 回答；先检查 `/status`，以 Chord 回执确定结果。权限与 Handoff 请求继续按各自的取消规则处理。
 
 使用 Go duration 语法，例如：
 
@@ -71,11 +69,7 @@ idle_timeout: 30m
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
-对新手来说，这意味着：
-
-- 如果你没有额外设置，状态通常会落在 `~/.local/state/chord-gateway`
-- 如果你找不到日志或微信 token 文件，优先检查这个目录
-- 如果你运行多个 gateway 实例，除非你明确需要共享状态，否则请给它们分别使用独立状态目录
+未设置上述环境变量时，先到 `~/.local/state/chord-gateway` 查找日志或微信 token 文件。多个 gateway 实例应分别使用独立状态目录，除非明确需要共享状态。
 
 状态数据包括：
 
@@ -109,9 +103,9 @@ gateway 按以下优先级加载配置：
 
 ## 代理
 
-可在全局或各 IM(`ims.<platform>.proxy_url`)设置 `proxy_url`;单独值优先,为空表示直连。环境代理变量会被忽略,未设置即不使用代理。
+可在全局或各 IM（`ims.<platform>.proxy_url`）设置 `proxy_url`；单独值优先，为空表示直连。环境代理变量会被忽略，未设置即不使用代理。
 
-HTTP 客户端接受 `http`、`https`、`socks5` 和 `socks5h`。WebSocket 长连接(Discord、Slack、飞书、企业微信、钉钉)会在启动时拒绝 `https`,并把 `socks5h` 规范化为 `socks5`。启动时 gateway 会以 `outbound proxy ...` 记录每个已配置代理(已去除凭据)。
+HTTP 客户端接受 `http`、`https`、`socks5` 和 `socks5h`。WebSocket 长连接（Discord、Slack、飞书、企业微信、钉钉）会在启动时拒绝 `https`，并把 `socks5h` 规范化为 `socks5`。启动时 gateway 会以 `outbound proxy ...` 记录每个已配置代理（已去除凭据）。
 
 ## 日志
 

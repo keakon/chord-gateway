@@ -1,8 +1,6 @@
 # Feishu Guide
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
-This guide walks you through setting up **Feishu** (`ims.feishu`) for `chord-gateway`.
+Connect a **Feishu app** (`ims.feishu`) to the gateway to use Chord in private or group chats.
 
 - If you want the minimal config quickly, see [Quickstart](../QUICKSTART.md).
 - For field-by-field config docs, see [Configuration reference](./configuration.md).
@@ -16,13 +14,13 @@ Prepare these things first:
 - A Feishu app that you can edit in the developer console
 - A place to read gateway logs (terminal stderr or `<state_dir>/gateway.log`)
 
-Recommended first-run strategy for beginners:
+For the first connection:
 
 1. Start with **one workspace**.
 2. Use a private chat or controlled test group for setup.
 3. Run with `--pair` in the foreground, bind a directory in a private bot chat using the terminal code, then send `/status`.
 
-## What this integration is
+## Connection method
 
 - The gateway uses a **Feishu app** (`app_id` / `app_secret`).
 - Inbound events are received via **long connection** (WebSocket).
@@ -39,7 +37,7 @@ In the Feishu Open Platform developer console:
    - **App ID** → `ims.feishu.app_id`
    - **App Secret** → `ims.feishu.app_secret`
 
-Beginner checklist:
+Before configuring the gateway:
 
 - Make sure you are editing the **same app** whose `app_id` / `app_secret` you will place into `config.yaml`.
 - If your org requires review/approval for app changes, complete that process before testing event delivery.

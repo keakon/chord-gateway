@@ -42,6 +42,13 @@ make test-fast     # tests over a memory-backed TMPDIR when one is available
 make help          # list every target
 ```
 
+Documentation checks use Python 3 and the website's Markdown renderer. Install Node 22.12.0 or newer and the locked website dependencies before running `make docs-check`, `make ci`, or pushing documentation changes:
+
+```bash
+npm ci --prefix website
+make docs-check
+```
+
 Full quality gate (what CI's `test` and `race` jobs enforce; locally via `make quality` or `make test-cover`):
 
 ```bash

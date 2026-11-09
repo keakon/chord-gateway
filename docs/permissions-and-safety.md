@@ -1,7 +1,5 @@
 # Permissions & Safety
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 `chord-gateway` is a remote control plane for a local `chord headless` process. Anyone who can send accepted IM messages to the gateway may influence what Chord does in the configured workspace.
 
 ## Security boundary
@@ -55,13 +53,13 @@ Same-account polling is exclusive for one OS user on one host even with separate
 
 ## Multi-workspace safety
 
-For Feishu multi-workspace mode, configure `ims.feishu.chat_bindings` so each Feishu chat ID maps to the intended workspace.
+Every Feishu chat needs an `ims.feishu.chat_bindings` entry mapping it to the intended workspace, even with only one workspace.
 
 WeChat supports private chat only. Each chat binds to one directory at a time and can switch with `/bind`. Use Feishu, Telegram, WeCom, DingTalk, Discord, or Slack to control separate directories from different chats. Discord threads require individual bindings and existing access; grant only View Channel, Send Messages, and Send Messages in Threads. Output mentions are disabled. Channels and threads expose replies to members.
 
 ## DingTalk identity boundary
 
-A same-enterprise private callback validates configured enterprise/robot identity before pairing, but grants no owner rights; only the terminal code can pair an owner. Staff IDs come from authenticated enterprise callbacks, and a group mention grants no additional authority. Unbound chats cannot request arbitrary proactive sends; only an authorized binding probe can target a candidate chat. Reset revokes identity evidence. Keep the application secret and ingress database private. See [DingTalk](./dingtalk.md).
+A same-enterprise private callback validates configured enterprise/robot identity before pairing, but grants no owner rights; only the terminal code can pair an owner. Staff IDs come from authenticated enterprise callbacks, and a group mention grants no additional authority. Unbound chats cannot request arbitrary proactive sends; only an authorized binding probe can target a candidate chat. Reset revokes identity evidence. Keep the application secret and local state private. See [DingTalk](./dingtalk.md).
 
 ## Incident response
 
@@ -76,7 +74,7 @@ If you suspect unauthorized access:
 
 To report vulnerabilities in the project, follow [SECURITY.md](../SECURITY.md).
 
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+Restarting clears the gateway's inbox and deduplication records. During recovery, inspect the original Chord session before resending uncertain tasks; see [delivery semantics](./operations.md#message-delivery-and-restarts).
 
 ## WeCom security boundary
 

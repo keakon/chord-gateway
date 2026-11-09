@@ -2,7 +2,7 @@
 
 Connect an enterprise internal-app robot to Chord through DingTalk Stream and proactive OpenAPI text messages. The first version supports one enterprise and one robot, employee private chats, and group text that @mentions the robot. The paired owner can use existing commands, permission confirmations, Questions, and background results through text.
 
-The adapter implementation is available for deployment testing. Real-enterprise acceptance has not been performed. Protocol tests do not establish production readiness. WeChat and Feishu also use shared in-memory intake.
+> **Note:** Available for deployment testing; real-enterprise acceptance remains pending. Complete the [deployment acceptance checklist](#deployment-acceptance-checklist) before production use.
 
 - Chinese version: [dingtalk_CN.md](./dingtalk_CN.md)
 - Common owner, binding, and reset rules: [pairing](./pairing.md)
@@ -87,4 +87,4 @@ External contacts, cross-enterprise use, custom group webhooks, EVENT subscripti
 
 ## Deployment acceptance checklist
 
-Real-account testing remains to be completed: publish the application; verify `hello`; pair privately and observe the proactive probe; bind a group and observe its probe; exercise `/status`, tasks, confirmations, Questions, and cancellation. Keep a background task running beyond the initial callback's webhook expiration plus one minute and verify proactive delivery. Restart, send a fresh private identity probe and check the existing bindings; then reset and verify a new private probe is required. Record sanitized error categories and results, without callback bodies, webhook URLs, credentials, or tokens.
+Using a real account, publish the application; verify `hello`; pair privately and observe the proactive probe; bind a group and observe its probe; exercise `/status`, tasks, confirmations, Questions, and cancellation. Keep a background task running beyond the initial callback's webhook expiration plus one minute and verify proactive delivery. Restart, send a fresh private identity probe and check the existing bindings; then reset and verify a new private probe is required. Record sanitized error categories and results, without callback bodies, webhook URLs, credentials, or tokens.

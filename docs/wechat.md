@@ -1,8 +1,6 @@
 # WeChat iLink Guide
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
-This guide walks you through setting up **WeChat iLink** (`ims.wechat`) for `chord-gateway`.
+Connect personal WeChat through **WeChat iLink** (`ims.wechat`) to use Chord in private bot chats.
 
 If you want a quick minimal config example, see [Quickstart](../QUICKSTART.md). For field-by-field configuration docs, see [Configuration reference](./configuration.md).
 
@@ -15,13 +13,13 @@ Prepare these things first:
 - A WeChat account that you can use for QR login
 - A place to read gateway logs (terminal stderr or `<state_dir>/gateway.log`)
 
-Recommended first-run strategy for beginners:
+For the first connection:
 
 1. Start with exactly **one workspace**.
 2. Use the default WeChat state paths first; customize them only if you really need to.
 3. Confirm `/status` works before adjusting token paths or adding more IM platforms.
 
-## What this integration is
+## Connection and login
 
 - The gateway integrates with **WeChat iLink Bot API**.
 - Login is done via **QR code**: the gateway prints a QR-login URL and you scan it in WeChat.
@@ -71,7 +69,7 @@ Each chat requires explicit binding; see [pairing](./pairing.md).
 
 The QR-login window lasts 5 minutes. If the printed code expires before you scan it, the gateway requests a new one automatically (up to three refreshes) and prints a replacement URL. The endpoint returned by login must match `ims.wechat.base_url`; a different scheme or host is rejected.
 
-Treat `/status` as the first success checkpoint. A good first-run outcome is:
+Run `/status` to verify the connection. Confirm that:
 
 - the gateway starts without config errors
 - QR login completes successfully

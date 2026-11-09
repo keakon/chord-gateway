@@ -1,8 +1,6 @@
 # 飞书接入指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
-本文档用于指导你在 `chord-gateway` 中配置并跑通 **飞书**（`ims.feishu`）。
+通过**飞书应用**（`ims.feishu`）连接 gateway，在私聊或群聊中使用 Chord。
 
 - 如果你只想快速跑通最小配置，先看：[快速开始](../QUICKSTART_CN.md)
 - 如果你需要字段级配置说明，见：[配置参考](./configuration_CN.md)
@@ -16,13 +14,13 @@
 - 一个你有权限修改的飞书应用
 - 一个可以查看 gateway 日志的位置（终端 stderr 或 `<state_dir>/gateway.log`）
 
-对新手最稳妥的首轮流程建议是：
+首次接入建议：
 
 1. 先只配置 **一个工作区**。
 2. 只使用私聊或受控测试群进行联调。
 3. 前台运行 `--pair`，在机器人私聊使用终端显示的配对码绑定目录，再发送 `/status`。
 
-## 这条接入是什么
+## 连接方式
 
 - gateway 使用飞书应用凭据（`app_id` / `app_secret`）。
 - 入站事件通过 **长连接**（WebSocket）接收：
@@ -39,7 +37,7 @@
    - **App ID** → `ims.feishu.app_id`
    - **App Secret** → `ims.feishu.app_secret`
 
-新手检查清单：
+配置前确认：
 
 - 确认你正在修改的就是将要写入 `config.yaml` 的那个应用。
 - 如果你所在组织对应用变更需要审批，请先完成审批再测试事件投递。

@@ -1,7 +1,5 @@
 # Usage
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 This page covers day-to-day interaction with `chord-gateway` from IM chats.
 
 In Discord server channels and threads, prefix every command below with the actual bot mention, for example `@Bot /status`, `@Bot /allow`, or `@Bot /answer @<id> <answer>`. DMs use the commands directly. Native slash commands and buttons are deferred; each thread needs its own binding. See the [Discord guide](./discord.md).
@@ -129,11 +127,11 @@ Questions remain available by ID. You can answer later and continue ordinary cha
 - `/question-interact <id>` disables timing.
 - `/question-withdraw <id>` withdraws a requirement; `/question-replace <old> <new>` associates a replacement. `/new-task <text>` starts an independent task; `/question cancel-task` cancels the current task.
 
-IM cannot reliably detect text entry, so the gateway asks Chord to disable timing before offering an answer entry and waits for the committed update. Required decisions already wait indefinitely. System defaults are labeled as adoption by the system and do not mean user consent.
+IM cannot reliably detect text entry, so the gateway asks Chord to disable timing before offering an answer entry and waits for the committed update. Questions that require a user response (`user_required`) do not time out automatically. System defaults are labeled as adoption by the system and do not mean user consent.
 
 If an explicit question ID is missing from the local cache, the gateway synchronizes with Chord before answering, including historical questions restored after a process restart. Synchronization failures and IDs absent from the current session are reported separately.
 
-After submitting, the gateway waits for a correlated `question_receipt` and reports `✅ Answer accepted` only on explicit acceptance. Failure retains the question. Timeouts or disconnects leave the outcome unknown; check `/status` before retrying. Queue admission is not acceptance. Terminal notices include the question ID, and answered Feishu cards retain the accepted selection. Feishu cards follow Chord's terminal outcome, and disconnects do not invent outcomes.
+After submitting, the gateway waits for a correlated `question_receipt` and reports `✅ Answer accepted` only on explicit acceptance. Failure retains the question. Timeouts or disconnects leave the outcome unknown; check `/status` before retrying. Queue admission is not acceptance. Terminal notices include the question ID, and answered Feishu cards retain the accepted selection. Feishu cards follow Chord's confirmed final state; a disconnect alone does not mark a question as finished.
 
 If the presentation command cannot be sent or is rejected, the gateway reports the problem; send `/status` to retry presentation. Status synchronization also closes cards when it observes the result before the corresponding push.
 

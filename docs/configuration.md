@@ -1,7 +1,5 @@
 # Configuration Reference
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 This document is the field-by-field reference for `chord-gateway` configuration.
 
 ## Top-Level Fields
@@ -86,7 +84,7 @@ Task guide: [Feishu guide](./feishu.md)
 | `app_id` | string | yes | - | Feishu app ID |
 | `app_secret` | string | yes | - | Feishu app secret |
 | `owner` | object | after pairing | - | `account_id`, `user_id` |
-| `chat_bindings` | object | conditional | - | Mapping from Feishu chat ID to workspace ID. Required for each chat before use. |
+| `chat_bindings` | object | after binding | - | Mapping from Feishu chat ID to workspace ID. Required for each chat before use, even with only one workspace. |
 | `proxy_url` | string | no | - | Per-IM proxy override for this adapter. See [Proxy](#proxy). |
 
 Feishu uses long connection mode to receive events:
@@ -297,7 +295,7 @@ A transfer guard takes precedence over the pin. After a transfer starts, neither
 
 ## Feishu binding workflow
 
-For the task-oriented `/bind` procedure and manual `chat_id` discovery, see [Feishu guide — Multi-workspace routing](./feishu.md#multi-workspace-routing-with-bind). This reference only defines the `chat_bindings` field and its constraints above.
+For binding chats and switching directories, see [Feishu guide — Multi-workspace routing](./feishu.md#multi-workspace-routing-and-bind). The `chat_bindings` field and its constraints are defined above.
 
 ## Example: Feishu Multi-Workspace
 
@@ -370,6 +368,6 @@ In this example:
 - Feishu chat `oc_project_a` goes to `project-a`
 - Feishu chat `oc_project_b` goes to `project-b`
 
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+For runtime state and restart behavior, see [operations](./operations.md#message-delivery-and-restarts).
 
 Account locks use verified stable account identities and cover local instances under the same OS user. Cross-host deployments still require a single active instance.

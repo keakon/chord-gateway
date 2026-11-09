@@ -1,7 +1,5 @@
 # Operations
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 This page describes runtime behavior that matters when operating `chord-gateway`.
 
 ## Process lifecycle
@@ -55,7 +53,7 @@ Session transfer notifications use the ordered outbound queue. Slow IM delivery 
 
 If a restored input summary may be stale, idle cleanup refreshes it before deciding. A successful status refresh restarts the existing idle timer; once the summary confirms no pending input, cleanup no longer needs a manual `/status`. Failed refreshes preserve the process.
 
-Idle cleanup stops Core and suspends question timing without inventing outcomes. Reconnect and restore the session to answer by its original ID; check `/status` and rely on Chord receipts. Confirmation and handoff requests follow their own cancellation rules.
+Idle cleanup stops Core and suspends question timing without marking questions as finished. Reconnect and restore the session to answer by its original ID; check `/status` and rely on Chord receipts. Confirmation and handoff requests follow their own cancellation rules.
 
 Use Go duration syntax, for example:
 
@@ -71,11 +69,7 @@ Runtime state is stored in this priority order:
 2. `$XDG_STATE_HOME/chord-gateway`
 3. `~/.local/state/chord-gateway`
 
-For beginners, this means:
-
-- if you do not set anything, state usually lands under `~/.local/state/chord-gateway`
-- if you cannot find logs or WeChat token files, check this directory first
-- if you run multiple gateway instances, give them separate state directories unless you intentionally want shared state
+Without either environment variable, look for logs or WeChat token files in `~/.local/state/chord-gateway` first. Give multiple gateway instances separate state directories unless you intentionally want shared state.
 
 State data includes:
 

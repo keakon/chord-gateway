@@ -1,7 +1,5 @@
 # 使用指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
 本文档说明如何在 IM 聊天中日常使用 `chord-gateway`。
 
 Discord 服务器频道和 thread 中，下列命令需在开头带真实 Bot mention，例如 `@Bot /status`、`@Bot /allow`、`@Bot /answer @<id> <answer>`；DM 中直接发送。原生 slash command 与按钮延期，每个 thread 需独立绑定，详见 [Discord 指南](./discord_CN.md)。
@@ -32,7 +30,7 @@ gateway 不使用 `chord headless --continue`，而是为每个绑定保存一�
 - `/resume <sid>` 会把指定 session ID pin 到当前绑定。
 - 进程内会话切换（`session_switched`）会把 pin 指向新的活动会话，之后重新拉起进程会 resume 运行时实际使用的会话。
 
-Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `session_pins_file` 配置。pin 按工作区和路由记录，因此在同一路由上更换平台账号时会延续原会话。本机 `pairing reset` 会连同 owner 和绑定一起清除该平台的自动 pin,重置后的路由从新会话开始。
+Session pin 默认持久化到 `<state_dir>/session-pins.json`，也可通过 `session_pins_file` 配置。pin 按工作区和路由记录，因此在同一路由上更换平台账号时会延续原会话。本机 `pairing reset` 会连同 owner 和绑定一起清除该平台的自动 pin，重置后的路由从新会话开始。
 
 进行中或已经完成的会话移交优先于 pin：普通消息不能重新拉起该绑定，也不会改用新会话。接管到当前聊天的会话确认 `ready_paused` 且 pin 保存成功后，目标绑定会开放输入，等待用户明确继续。已经把会话移交出去的绑定继续阻断，直到显式 `/new` 或 `/resume` 成功，或 `/takeover <session-id>` 覆盖已经结束（`released` 或 `saved`）的外向移交；失败时保留阻断。
 
@@ -128,11 +126,11 @@ chord -d /path/to/workspace --takeover <session-id> --takeover-timeout 30s
 - `/question-interact <id>` 停用计时。
 - `/question-withdraw <id>` 撤回要求，`/question-replace <old> <new>` 关联替代决策。`/new-task <text>` 开始独立任务，`/question cancel-task` 取消当前任务。
 
-IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题计时，收到可靠状态更新后才提供回答入口。必要确认本来就无限等待。系统默认结果显示为系统采用，不表示用户同意。
+IM 无法可靠检测开始输入，因此 gateway 先请求 Chord 停用本题计时，收到可靠状态更新后才提供回答入口。需要用户作答的问题（`user_required`）不会自动超时。系统默认结果显示为系统采用，不表示用户同意。
 
 指定的问题 ID 不在本地缓存时，网关会先向 Chord 同步，包括进程重启后恢复的历史问题。同步失败与当前会话不存在该 ID 会分别提示。
 
-提交后 gateway 等待匹配的 `question_receipt`，只有明确接受才显示 `✅ Answer accepted`。失败保留题目；超时或断连提示结果未知，应先检查 `/status`，不能把入队成功当作回答成功。终态通知会标明题目 ID，已回答的飞书卡片保留所选答案。飞书卡片以 Chord 确定终态更新，断连不编造终态。
+提交后 gateway 等待匹配的 `question_receipt`，只有明确接受才显示 `✅ Answer accepted`。失败保留题目；超时或断连提示结果未知，应先检查 `/status`，不能把入队成功当作回答成功。终态通知会标明题目 ID，已回答的飞书卡片保留所选答案。飞书卡片以 Chord 确认的最终状态更新，不会仅因连接断开而将问题标记为已结束。
 
 答题入口的展示确认命令无法发送或被拒绝时，网关会提示原因；发送 `/status` 可重试展示。即使状态快照先于结果事件到达，卡片也会按已确认的结果收口。
 

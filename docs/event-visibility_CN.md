@@ -1,7 +1,5 @@
 # Gateway 控制面事件可见性
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
 `chord-gateway` 从 `chord headless` 读取 JSONL 事件。必需控制面事件始终订阅并路由。`background_result` 默认订阅、可显式关闭；其余可选事件通过 `event_visibility` 选择启用。
 
 - English: [event-visibility.md](./event-visibility.md)
@@ -100,7 +98,7 @@ Gateway 在保留 `background_result` 和 `context_notice` 正文的同时，也
 
 状态查询会携带 gateway 尚未确认终态的题目 ID，让 Core 返回这些决策，即使它们已不在有界历史页内。完整历史通过 Core 的题目游标分页读取；历史页里没有某题，不代表该题已结束。
 
-切会话后重建问题集合；旧题只在所属会话中补答，不能默认影响当前任务。断连保留已知题目但结果视为未知，重新同步后以 Core 快照与回执为准，不编造终态。
+切会话后重建问题集合；旧题只在所属会话中补答，不能默认影响当前任务。断连保留已知题目但结果视为未知，不会直接将问题标记为已结束；重新同步后以 Core 快照与回执为准。
 
 ## 长时间提醒
 
@@ -188,7 +186,7 @@ Gateway 订阅 `input_queue_changed`，通过现有状态事件回调发布有�
 
 `/new`、`/resume`、目录切换或闲置回收前，如果空闲进程此前报告过非空恢复输入摘要，gateway 会重新查询。必须由覆盖所有 owner 的摘要确认输入已处理；仅主队列为空不足以解除保护。缺失、迟到或查询失败的状态回执不会清除保护，结果未知的输入也不会因此解除阻断。接管目标检查同样覆盖已断线的进程，保留原会话的未解决输入证据。
 
-所有平台共用有界内存收件、授权和投递回执。Gateway 重启后不恢复收件队列、去重记录或轮询游标；结果不确定时，先核查 Chord 原会话再决定是否重发。详见[投递与重启语义](./operations_CN.md#消息投递与重启)。
+Gateway 的收件队列与 Chord 的持久输入队列相互独立，前者在重启后不会恢复。详见[投递与重启语义](./operations_CN.md#消息投递与重启)。
 
 飞书卡片「已接收」或「处理中」只表示接纳，不表示执行成功。消费及卡片结果以 `input_result` 回执和明确结果事件确认。可重试接纳失败表示未接纳，提交或发送结果不明则需先核查再决定是否重试。卡片更新失败不回滚消费，也不能据此重复提交相同答案；`/status` 会展示公共等待和隔离信息，无运行中的 Chord 进程时也可核查。
 

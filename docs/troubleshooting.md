@@ -1,7 +1,5 @@
 # Troubleshooting
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 This page covers common `chord-gateway` startup, IM integration, routing, and runtime issues.
 
 ## Startup failures
@@ -237,7 +235,7 @@ When reporting an issue, include:
 - relevant gateway logs
 - the IM platform and mode you are using
 
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+For uncertain task outcomes, include what you found in the original Chord session before resending. Restarting does not restore the gateway's inbox, deduplication records, or polling cursors; see [delivery semantics](./operations.md#message-delivery-and-restarts).
 
 ## WeCom issues
 

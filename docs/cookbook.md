@@ -1,7 +1,5 @@
 # Cookbook
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 This page collects copyable recipes for installing, configuring, and running `chord-gateway` in common real deployments.
 
 - Chinese version: [cookbook_CN.md](./cookbook_CN.md)

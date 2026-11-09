@@ -14,7 +14,7 @@ has_doc_changes=0
 while IFS= read -r path; do
   [[ -z "$path" ]] && continue
   case "$path" in
-    *.md|*.markdown|docs/*|website/*|scripts/check-docs.py|scripts/sync-docs.mjs|.github/workflows/docs.yml)
+    *.md|*.markdown|docs/*|website/*|scripts/check-docs.py|scripts/test_check_docs.py|scripts/sync-docs.mjs|.github/workflows/docs.yml)
       has_doc_changes=1
       break
       ;;
@@ -42,5 +42,5 @@ make preflight
 
 if [[ "$has_doc_changes" -eq 1 ]]; then
   echo "pre-push: running docs checks"
-  python3 scripts/check-docs.py
+  make docs-check
 fi

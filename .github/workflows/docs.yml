@@ -8,6 +8,7 @@ on:
       - "docs/**"
       - "website/**"
       - "scripts/check-docs.py"
+      - "scripts/test_check_docs.py"
       - "scripts/sync-docs.mjs"
       - "README.md"
       - "README_CN.md"
@@ -15,12 +16,15 @@ on:
       - "QUICKSTART_CN.md"
       - "CHANGELOG.md"
       - "CHANGELOG_CN.md"
+      - "CONTRIBUTING.md"
+      - "CONTRIBUTING_CN.md"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
       - "website/**"
       - "scripts/check-docs.py"
+      - "scripts/test_check_docs.py"
       - "scripts/sync-docs.mjs"
       - "README.md"
       - "README_CN.md"
@@ -28,6 +32,8 @@ on:
       - "QUICKSTART_CN.md"
       - "CHANGELOG.md"
       - "CHANGELOG_CN.md"
+      - "CONTRIBUTING.md"
+      - "CONTRIBUTING_CN.md"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -46,8 +52,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install documentation dependencies
+        run: npm ci --prefix website
+
       - name: Run docs checks
-        run: python3 scripts/check-docs.py
+        run: make docs-check
 
   build:
     name: Build site

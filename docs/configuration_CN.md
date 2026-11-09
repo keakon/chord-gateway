@@ -1,7 +1,5 @@
 # 配置说明
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
 本文档提供 `chord-gateway` 的字段级配置说明。
 
 ## 顶层字段
@@ -15,7 +13,7 @@
 | `idle_timeout` | string | 否 | `30m` | 空闲超时（Go duration 格式）。 |
 | `event_visibility` | object | 否 | 除 `background_result`（`true`）外全部 `false` | 控制面事件可见性。 |
 | `session_pins_file` | string | 否 | `<state_dir>/session-pins.json` | 自定义会话 pin 文件路径。 |
-| `proxy_url` | string | 否 | - | 可选的全局出站代理,作用于所有 IM 流量。为空表示直连。见[代理](#代理)。 |
+| `proxy_url` | string | 否 | - | 可选的全局出站代理，作用于所有 IM 流量。为空表示直连。见[代理](#代理)。 |
 
 推荐配置结构：
 
@@ -74,7 +72,7 @@ workspaces:
 
 - 二维码登录接口要求 `bot_type=3`。
 - gateway 已将这个固定协议常量硬编码，不再暴露为配置项。
-- 微信始终路由到一个 workspace。
+- 每个微信聊天通过显式绑定选择工作区。
 - 微信扫码 token 属于运行时状态，不是静态配置。默认以 JSON 保存到 `<state_dir>/wechat/token.json`；只有在需要自定义密钥存储位置时才设置 `token_path`。
 
 ### 飞书配置（`ims.feishu`）
@@ -86,7 +84,7 @@ workspaces:
 | `app_id` | string | 是 | - | 飞书应用 ID |
 | `app_secret` | string | 是 | - | 飞书应用密钥 |
 | `owner` | object | 配对后 | - | `account_id`, `user_id` |
-| `chat_bindings` | object | 条件必填 | - | 从飞书 chat ID 到 workspace ID 的映射。存在多个 workspace 时必须设置。 |
+| `chat_bindings` | object | 绑定后 | - | 从飞书 chat ID 到 workspace ID 的映射。每个聊天使用前都需绑定，单工作区也不例外。 |
 | `proxy_url` | string | 否 | - | 该适配器的单独代理覆盖。见[代理](#代理)。 |
 
 飞书使用长连接模式接收事件：
@@ -191,7 +189,7 @@ ims:
 - 顶层 `proxy_url` 作用于所有 IM；`ims.<platform>.proxy_url` 覆盖该平台。
 - 优先级：各 IM > 全局。为空表示直连；环境代理变量会被忽略。
 - 支持 `http`、`https`、`socks5`、`socks5h`（Go 内 `socks5` 与 `socks5h` 行为一致）。
-- WebSocket 长连接（Discord Gateway、Slack/飞书/企业微信/钉钉 socket）**不支持 `https` 代理**。某平台的有效代理在设置单独 `proxy_url` 时取该值,否则取全局值;当 WebSocket 平台解析到 `https` 有效代理时会在启动时被拒绝。这些平台如需代理请使用 `http`、`socks5` 或 `socks5h`。
+- WebSocket 长连接（Discord Gateway、Slack/飞书/企业微信/钉钉 socket）**不支持 `https` 代理**。某平台的有效代理在设置单独 `proxy_url` 时取该值，否则取全局值；当 WebSocket 平台解析到 `https` 有效代理时会在启动时被拒绝。这些平台如需代理请使用 `http`、`socks5` 或 `socks5h`。
 - WebSocket 长连接会自动把 `socks5h` 降级为 `socks5`，两种写法都可直接使用。
 - 必须写明 scheme；URL 中的账号口令不会记入日志。
 
@@ -295,7 +293,7 @@ platform + account + owner + workspace + chat (encoded)
 
 ## 飞书绑定流程
 
-`/bind` 的任务型操作步骤见[飞书指南 — 多工作区路由](./feishu_CN.md#多工作区路由与-bind)。本参考页只说明上文 `chat_bindings` 字段的含义与约束。
+绑定聊天和切换目录的步骤见[飞书指南 — 多工作区路由](./feishu_CN.md#多工作区路由与-bind)。`chat_bindings` 字段的含义与约束见上文。
 
 ## 示例：飞书多工作区
 
@@ -368,6 +366,6 @@ event_visibility:
 - 飞书群 `oc_project_a` 进入 `project-a`
 - 飞书群 `oc_project_b` 进入 `project-b`
 
-所有平台共用有界内存收件、授权和投递回执。Gateway 重启后不恢复收件队列、去重记录或轮询游标；结果不确定时，先核查 Chord 原会话再决定是否重发。详见[投递与重启语义](./operations_CN.md#消息投递与重启)。
+运行时状态与重启行为见[运维说明](./operations_CN.md#消息投递与重启)。
 
 账号锁基于已验证的稳定账号，覆盖同一 OS 用户的本机实例；跨主机部署仍须保证单活。

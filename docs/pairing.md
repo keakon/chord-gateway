@@ -2,8 +2,6 @@
 
 Register one trusted owner per platform and explicitly bind each chat to an existing local directory. Existing deployments should read the [breaking changes](../CHANGELOG.md) before upgrading.
 
-Slack initial pairing uses `/chord bind "<directory>" <pairing_code>` in a verified App DM. Later root bindings use `/chord bind ...`; a thread requires `@Bot /bind ...` inside that thread and never inherits its root binding. See the [Slack guide](./slack.md).
-
 ## First connection
 
 Configure the adapters you need, without an owner or workspace:
@@ -28,13 +26,24 @@ Start in a foreground controlling terminal:
 chord-gateway --config /path/to/config.yaml --pair
 ```
 
-Complete WeChat QR login if prompted. With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every active platform, and `/bind` stays valid for the whole window, so several chats and platforms can be paired before it expires. DingTalk shows the same startup code, but its bindings still require the same-enterprise identity probe before they authorize. In a **private chat** with that bot, send the displayed command, replacing the directory with an existing directory on the gateway host:
+With `--pair`, the terminal immediately displays a single 10-minute pairing code that works on every connected platform. Binding stays available for the whole window, so you can bind several chats and platforms before it expires.
 
-```text
-/bind "<directory>" <pairing_code>
-```
+Wait for the platform to become ready:
 
-For WeCom, a fixed proactive binding probe must receive a successful platform ACK first. The gateway then saves the owner, registers the directory, and binds this chat in YAML. The next task starts Chord in that directory. The code is not written to YAML or logs. Keep the terminal and IM history private; they can contain the code.
+- **WeChat:** complete QR login if prompted.
+- **DingTalk:** a same-enterprise employee must first send a private `hello` to verify identity. This message does not run a task or register an owner. The startup code alone cannot bypass this check.
+- **Slack:** complete the [installation and identity checks](./slack.md) before using the App DM.
+
+In a **private bot chat**, send the command for your platform. Replace `<directory>` with an existing directory on the gateway host:
+
+| Platform | Pairing command | Verify |
+|---|---|---|
+| Slack App DM | `/chord bind "<directory>" <pairing_code>` | `/chord status` |
+| Other platforms | `/bind "<directory>" <pairing_code>` | `/status` |
+
+WeCom and DingTalk send a fixed proactive probe before saving. WeCom requires a successful platform ACK; a rejected or uncertain DingTalk probe leaves the binding unsaved. See the [WeCom](./wecom.md) and [DingTalk](./dingtalk.md) guides.
+
+The gateway saves the owner, registers the directory, and binds this chat in YAML. The next task starts Chord in that directory. The code is not written to YAML or logs. Keep the terminal and IM history private; they can contain the code.
 
 Configuration writes preserve effective values inherited through YAML aliases and merge keys, including top-level merges. `/bind` and local reset use the same case-insensitive, whitespace-trimmed platform names as configuration loading. Writeback may expand aliases and merges into explicit mappings.
 
@@ -42,17 +51,21 @@ Restart normally afterward, including as a background service. Ordinary startup 
 
 A temporary connection loss does not revoke already accepted owner inputs or replies for the same account and directory binding. Delivery still depends on the platform transport; unknown outcomes are not automatically retried. Replacing a Chord process rejects its queued output and cancels sends still in progress. Messages already accepted by the IM platform cannot be recalled. Account changes and directory switches invalidate the old authorization.
 
-DingTalk first waits for a same-enterprise employee private `hello` before authorizing bindings. The probe never runs tasks or registers an owner. An authorized `/bind` sends a fixed proactive probe before saving; rejection or an unknown outcome leaves the binding unsaved. See [DingTalk](./dingtalk.md).
-
 ## Later bindings
 
-The owner can bind another chat, including a Feishu, Telegram, WeCom, or DingTalk group (Telegram uses `/bind@BotUsername` and DingTalk requires @robot), or a Discord channel/thread, without a code:
+After pairing, the owner can bind another chat or switch directories without a code:
 
-```text
-/bind "/path/to/another workspace"
-```
+| Target | Binding command |
+|---|---|
+| Private bot chat except Slack | `/bind "/path/to/another workspace"` |
+| Feishu or WeCom group | `/bind "/path/to/another workspace"` |
+| Telegram group | `/bind@BotUsername "/path/to/another workspace"` |
+| DingTalk group | `@robot /bind "/path/to/another workspace"` |
+| Discord server channel or thread | `@Bot /bind "/path/to/another workspace"` |
+| Slack chat root | `/chord bind "/path/to/another workspace"` |
+| Slack thread | `@Bot /bind "/path/to/another workspace"` |
 
-In Discord server channels and threads, send `@Bot /bind "/path/to/another workspace"`; each thread needs its own binding. First pairing always happens in a bot DM.
+Discord server commands need the bot mention. Each Discord or Slack thread needs its own binding. Slack slash commands always address the chat root; a thread never inherits the root binding. See the [Slack guide](./slack.md) for its command entry points.
 
 Other senders cannot issue commands. Replies in a group are visible to its members. WeChat retains its existing personal-chat identifier; this feature does not add group support.
 
@@ -88,7 +101,7 @@ Use the command for the intended platform only. Type the platform name at the co
 
 Reset clears that platform's owner, chat bindings, and automatic session pins. It keeps workspaces, Chord session files, and other platforms unchanged. Outstanding transfer guards or unreadable pin/transfer state block reset. If pin cleanup succeeds but configuration replacement fails, the old owner remains but automatic resume pins may already be gone. Retry after correcting the local problem. An uncertain replacement is never reported as a successful reset.
 
-DingTalk reset also revokes local enterprise identity evidence; the next connection needs a private `hello`. Matching ordinary restarts reuse the evidence after a new authenticated handshake.
+DingTalk identity verification stays in memory. After every process start, including after reset, a same-enterprise employee must send a private `hello` to verify identity. Reconnects within the same process reuse the verified identity after a new handshake.
 
 Start with `--pair` to register again. Even the same owner starts without the old automatic pins. This does not isolate local historical files: the owner is a trusted local control-plane user, with access equivalent to the gateway process, including existing shell commands.
 
@@ -100,4 +113,4 @@ Old binding output cannot be newly authorized for a replacement binding. Message
 
 If a switch is blocked by queued inputs, storage failure or an uncertain result, use `/status` for the reason and inspect the original session on the host. Cancelling active work alone does not resolve these states. Idle cleanup and process replacement preserve the same input guards.
 
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+Before resending an uncertain task after a restart, check the original Chord session. See [delivery semantics](./operations.md#message-delivery-and-restarts) for what the gateway keeps in memory.

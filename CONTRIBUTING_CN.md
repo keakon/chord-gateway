@@ -42,6 +42,13 @@ make test-fast     # 在可用时把 TMPDIR 指向内存文件系统后跑测试
 make help          # 列出所有 target
 ```
 
+文档检查使用 Python 3 和网站的 Markdown 渲染器。运行 `make docs-check`、`make ci` 或推送文档改动前，需安装 Node 22.12.0 或更新版本，并安装网站锁定的依赖：
+
+```bash
+npm ci --prefix website
+make docs-check
+```
+
 完整质量门禁（即 CI 的 `test` 与 `race` job 执行的内容；本地用 `make quality` 或 `make test-cover`）：
 
 ```bash

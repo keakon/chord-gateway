@@ -1,8 +1,8 @@
 # Common developer shortcuts.
 #
 # This Makefile is intentionally minimal: it mirrors the commands used by CI and
-# .githooks without introducing new tooling assumptions. Anything here must stay
-# runnable from a plain checkout with Go installed.
+# .githooks. Go targets run from a plain checkout with Go installed; documentation
+# checks also need Python 3, Node >=22.12.0, and npm ci --prefix website.
 #
 #   make preflight   the pre-push checks: formatting, module tidiness, vet, staticcheck, short tests
 #   make ci          everything CI runs
@@ -37,6 +37,7 @@ help:
 	@echo "test-fast   tests with TMPDIR on a memory-backed filesystem when possible"
 	@echo "fmt         apply goimports + gofmt"
 	@echo "quality     scripts/check-go-quality.sh (coverage + race + vet + staticcheck)"
+	@echo "docs-check  check documentation (requires npm ci --prefix website)"
 	@echo "docs-sync   regenerate the website from docs/"
 
 # Same Go checks CI runs. Docs checks stay in .githooks/pre-push and
@@ -136,6 +137,7 @@ build-matrix:
 	./scripts/check_build_matrix.sh
 
 docs-check:
+	python3 -m unittest discover -s scripts -p 'test_check_docs.py'
 	python3 scripts/check-docs.py
 
 resource-scripts-check:

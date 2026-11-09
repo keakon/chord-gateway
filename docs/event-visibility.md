@@ -1,7 +1,5 @@
 # Gateway control-plane event visibility
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
 `chord-gateway` reads JSONL events from `chord headless`. Required control-plane events are always subscribed and routed. `background_result` is subscribed by default and can be disabled; the remaining optional events are opt-in through `event_visibility`.
 
 - Chinese version: [event-visibility_CN.md](./event-visibility_CN.md)
@@ -100,7 +98,7 @@ The gateway preserves `session_id` and `message_index` from `background_result` 
 
 Status queries include IDs of questions whose outcomes the gateway has not observed, so Core returns those decisions even when they fall outside the bounded history page. Complete historical browsing uses Core's question cursor; an omitted historical record does not imply a terminal outcome.
 
-A session switch rebuilds the question collection. Historical replies belong to their original session and task. Disconnects retain known questions with an unknown outcome; resynchronize against Core snapshots and receipts instead of inventing outcomes.
+A session switch rebuilds the question collection. Historical replies belong to their original session and task. Disconnects retain known questions with an unknown outcome rather than marking them as finished; resynchronize against Core snapshots and receipts.
 
 ## Long-running reminders
 
@@ -186,7 +184,7 @@ Gateway subscribes to `input_queue_changed` and publishes accepted queue changes
 
 Before `/new`, `/resume`, a directory switch or idle retirement, an idle process with a previously nonempty restored input summary is queried again. The all-owner summary must confirm completion; an empty main queue alone is insufficient. A missing, stale or failed status response preserves the guard, as do uncertain receipts. Incoming takeover also checks disconnected target processes and preserves their unresolved input evidence.
 
-All platforms share bounded in-memory intake, authorization and delivery receipts. Gateway does not restore its inbox, deduplication or polling cursors after restart. Check the original Chord session before resending an uncertain task. See [delivery semantics](./operations.md#message-delivery-and-restarts).
+The gateway's inbox is separate from Chord's persistent input queue and is not restored after restart. See [delivery semantics](./operations.md#message-delivery-and-restarts).
 
 Feishu card “received” or “processing” notices report intake, not execution success. `input_result` receipts and typed result events settle consumption and card outcomes. Retryable intake means the operation was not accepted; an uncertain commit or send requires inspection before resubmitting. A failed card update does not roll back consumption or justify sending the same answer again. `/status` includes shared waiting and isolation information, including when no Chord process is running.
 

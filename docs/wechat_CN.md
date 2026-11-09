@@ -1,8 +1,6 @@
 # 微信 iLink 接入指南
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./pairing_CN.md)。旧部署升级步骤见[更新日志](../CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./slack_CN.md)。
-
-本文档用于指导你在 `chord-gateway` 中配置并跑通 **微信 iLink**（`ims.wechat`）。
+通过 **微信 iLink**（`ims.wechat`）连接个人微信，在机器人私聊中使用 Chord。
 
 如果你只想快速跑通最小配置，可先看：[快速开始](../QUICKSTART_CN.md)。字段级配置说明见：[配置参考](./configuration_CN.md)。
 
@@ -15,13 +13,13 @@
 - 一个可用于扫码登录的微信账号
 - 一个可以查看 gateway 日志的位置（终端 stderr 或 `<state_dir>/gateway.log`）
 
-对新手最稳妥的首轮流程建议是：
+首次接入建议：
 
 1. 先只配 **一个 workspace**。
 2. 先使用默认的微信状态文件路径，只有确实需要时再改自定义路径。
 3. 先确认 `/status` 能跑通，再去调整 token 路径或增加更多 IM 平台。
 
-## 这条接入是什么
+## 连接与登录方式
 
 - gateway 通过 **微信 iLink Bot API** 接入个人微信。
 - 登录方式为 **二维码登录**：gateway 会打印二维码登录 URL，用微信扫码完成登录。
@@ -71,7 +69,7 @@ idle_timeout: 30m
 
 二维码登录窗口为 5 分钟。若打印出的二维码在扫码前过期，gateway 会自动重新获取（最多刷新三次）并打印新的二维码链接。登录返回的端点必须与 `ims.wechat.base_url` 一致；scheme 或 host 不同会被拒绝。
 
-可以把 `/status` 视为第一阶段成功标志。理想的首轮结果是：
+运行 `/status` 验证接入，确认：
 
 - gateway 能正常启动，没有配置错误
 - 二维码登录顺利完成

@@ -1,7 +1,5 @@
 # 快速开始
 
-所有 IM 平台统一使用单 owner 配对与显式聊天绑定，单工作区也需绑定。首次运行 `chord-gateway --pair`，微信/飞书/Telegram/企业微信/钉钉/Discord 在机器人私聊发送 `/bind "<directory>" <pairing_code>`；详见[配对与本机重置](./docs/pairing_CN.md)。旧部署升级步骤见[更新日志](./CHANGELOG_CN.md)。 Slack 在 App 私聊使用 `/chord bind "<directory>" <pairing_code>`；参见 [Slack 接入指南](./docs/slack_CN.md)。
-
 本指南帮助你把一个项目连接到微信、飞书、Telegram、企业微信、钉钉、Discord 或 Slack。配对后即可在聊天中登记目录。
 
 ## 1. 安装 Chord 和网关
@@ -118,21 +116,40 @@ ims:
 chord-gateway -f config.yaml --pair
 ```
 
-微信按提示扫码登录。终端在启动时立即显示一个通用配对码;各平台仍需先就绪,其 `/bind` 才会被授权;钉钉首次连接还需先由同企业员工私聊发送 `hello` 验证身份。在 Slack 之外的平台机器人私聊中发送：
+终端会立即显示有效期为 10 分钟的配对码。等待所选平台连接就绪后，使用 gateway 主机上已有的目录完成绑定：
 
-```text
-/bind "<directory>" <pairing_code>
-```
+| 平台 | 在机器人私聊中发送 | 验证命令 |
+|---|---|---|
+| Slack App 私聊 | `/chord bind "<directory>" <pairing_code>` | `/chord status` |
+| 其他平台 | `/bind "<directory>" <pairing_code>` | `/status` |
 
-使用 gateway 主机上已有的目录，配对码有效期为 10 分钟。企业微信还需先通过主动绑定探测。Gateway 保存 owner 和聊天绑定，下一条任务才启动 Chord；其他发送者的消息会被忽略。配对后可使用 `chord-gateway -f config.yaml` 普通启动，也可作为后台服务运行。
+- **微信**：按提示扫码登录。
+- **钉钉**：先由同企业员工私聊发送 `hello` 验证身份。保存绑定前，gateway 会发送 `Gateway binding check.`；探测失败或结果未知时，需修复问题后发送新的 `/bind`。
+- **企业微信**：主动绑定探测收到平台成功 ACK 后，才能保存绑定。
 
-Slack App 私聊配对使用 `/chord bind "<directory>" <pairing_code>`，验证使用 `/chord status`。频道和 thread 需分别绑定；thread 内使用 `@Bot /bind ...`，slash 命令始终作用于频道根目标。
+Gateway 为每个平台登记一位可信控制者（owner），并绑定当前聊天；其他发送者的消息会被忽略。发送第一条任务才会在绑定目录启动 Chord。配对后使用 `chord-gateway -f config.yaml` 普通启动，也可作为后台服务运行。
+
+> **Note:** 每个聊天都需显式绑定，单工作区也不例外。详见[配对与本机重置](./docs/pairing_CN.md)；已有部署升级前还需阅读[更新日志](./CHANGELOG_CN.md)。
 
 ## 4. 绑定新聊天或切换目录
 
-Owner 绑定新聊天或空闲的已有聊天时，无需配对码。微信/飞书/Telegram/企业微信/钉钉使用 `/bind "/path/to/project"`，Slack 根目标使用 `/chord bind "/path/to/project"`，Slack thread 内使用 `@Bot /bind "/path/to/project"`。Paired 模式下所有平台均使用显式聊天路由。Owner 可以绑定飞书、Telegram、企业微信或钉钉群（钉钉群需 @机器人），但群成员可以看到回复。Telegram 群使用 `/bind@BotUsername`，默认 privacy 下回复 Bot 发送普通任务。切换目录前应完成任务和待处理交互。钉钉保存绑定前会发送 `Gateway binding check.` 主动探测；失败或结果未知时不会保存，需修复后发送新的 `/bind`。Discord 服务器频道和 thread 使用 `@Bot /bind "/path/to/project"`，后续命令也需在开头 @Bot。
+配对后的 owner 绑定新聊天时无需配对码。为已有聊天切换目录前，应完成任务和待处理交互。
 
-保存失败恢复、账号变化和本机重置见[配对指南](./docs/pairing_CN.md)。
+按目标聊天选择命令：
+
+| 目标 | 绑定命令 |
+|---|---|
+| Slack 之外的平台机器人私聊 | `/bind "/path/to/project"` |
+| 飞书或企业微信群 | `/bind "/path/to/project"` |
+| Telegram 群 | `/bind@BotUsername "/path/to/project"` |
+| 钉钉群 | `@robot /bind "/path/to/project"` |
+| Discord 服务器频道或 thread | `@Bot /bind "/path/to/project"` |
+| Slack 聊天根目标 | `/chord bind "/path/to/project"` |
+| Slack thread | `@Bot /bind "/path/to/project"` |
+
+群成员可以看到回复。Telegram 默认 privacy 设置下，普通任务需通过回复 Bot 发送。Discord 服务器中的后续命令也需在开头 @Bot。Slack slash 命令始终作用于聊天根目标；Slack 和 Discord 的每个 thread 都需独立绑定。
+
+绑定条件、保存失败恢复、账号变化和本机重置见[配对指南](./docs/pairing_CN.md)。
 
 ## 5. 状态位置与后续文档
 
@@ -143,7 +160,9 @@ Owner 绑定新聊天或空闲的已有聊天时，无需配对码。微信/飞�
 
 Discord bot token 保留在配置中；配置文件需按敏感信息保护。企业微信使用 bot ID 和 secret 配置，绑定前需主动探测成功，详见[企业微信指南](./docs/wecom_CN.md)。
 
-状态目录包含日志、微信 token（默认 `<state_dir>/wechat/token.json`）和会话固定记录。飞书 `app_id` / `app_secret` 保留在配置中;短期访问 token 只保存在内存中,并按需刷新。入站队列、去重和轮询游标仅存内存,重启不恢复。
+状态目录包含日志、微信 token（默认 `<state_dir>/wechat/token.json`）和会话固定记录。飞书 `app_id` / `app_secret` 保留在配置中；短期访问 token 只保存在内存中，并按需刷新。
+
+收件队列、去重记录和轮询游标仅存内存，重启不恢复。结果不确定时，先核查 Chord 原会话再决定是否重发。详见[投递与重启语义](./docs/operations_CN.md#消息投递与重启)。
 
 - [配置参考](./docs/configuration_CN.md)
 - [Cookbook](./docs/cookbook_CN.md)
@@ -151,5 +170,3 @@ Discord bot token 保留在配置中；配置文件需按敏感信息保护。�
 - [使用指南](./docs/usage_CN.md)
 - [运维说明](./docs/operations_CN.md)
 - [故障排查](./docs/troubleshooting_CN.md)
-
-所有平台共用有界内存收件、授权和投递回执。Gateway 重启后不恢复收件队列、去重记录或轮询游标；结果不确定时，先核查 Chord 原会话再决定是否重发。详见[投递与重启语义](./docs/operations_CN.md#消息投递与重启)。

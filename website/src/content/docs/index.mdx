@@ -3,7 +3,7 @@ title: chord-gateway
 description: Connect WeChat, Feishu, Telegram, WeCom, DingTalk, Discord, and Slack chats to local chord headless processes while keeping workspace access and credentials under your control.
 template: splash
 hero:
-  tagline: Operate Chord from IM chats without moving the agent, credentials, or workspace access out of your own machine or server.
+  tagline: Control Chord on your machine or server from an IM chat.
   actions:
     - text: Quickstart
       link: /chord-gateway/quickstart/
@@ -20,14 +20,15 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 ## Why chord-gateway
 
 <CardGrid>
-  <Card title="Chat control plane" icon="external">
+  <Card title="7 IM platforms" icon="external">
     Connect WeChat iLink, Feishu, Telegram, WeCom, DingTalk, Discord, or Slack to `chord headless` and control Chord from an IM chat, including mobile devices.
   </Card>
-  <Card title="Local-first boundary" icon="seti:lock">
+  <Card title="Local-first" icon="seti:lock">
     Chord processes, workspace files, runtime state, and credentials stay on your machine or server.
     Chat messages still pass through the selected IM platform, and model-provider data handling follows your Chord configuration.
   </Card>
   <Card title="Per-chat isolation" icon="document">
+    Pair one trusted owner per platform and explicitly bind each chat to a local directory.
     Gateway routes by workspace, IM type, and chat ID so different chats keep separate pinned Chord sessions.
   </Card>
   <Card title="Interactive approvals" icon="rocket">
@@ -51,7 +52,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     ```bash
     chord-gateway -f config.yaml --pair
     ```
-    On platforms other than Slack, send `/bind "<directory>" <pairing_code>` privately with the code shown in the terminal, then `/status` to verify the binding. DingTalk first needs a private `hello` to verify identity. Your first task starts Chord; later starts do not need `--pair`. In Discord server channels and threads, prefix commands with `@Bot`. Slack uses `/chord bind ...` and `/chord status`; see its guide for thread commands.
+    Follow your platform's guide to bind and verify a directory in a private bot chat using the terminal's pairing code. Your first task starts Chord; later starts do not need `--pair`.
   </Card>
 </CardGrid>
 

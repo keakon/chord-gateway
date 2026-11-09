@@ -1,12 +1,6 @@
 # IM Integration Overview
 
-All IM platforms use one paired owner and explicit chat bindings, including single-workspace deployments. Run `chord-gateway --pair`, then send `/bind "<directory>" <pairing_code>` in a WeChat/Feishu/Telegram/WeCom/DingTalk/Discord private bot chat. See [pairing and local reset](./pairing.md) and the [upgrade notes](../CHANGELOG.md). Slack uses `/chord bind "<directory>" <pairing_code>` in the App DM; see the [Slack guide](./slack.md).
-
-This page is a task-oriented entry point for connecting IM platforms to `chord-gateway`.
-
-If you are looking for field-by-field configuration documentation, see:
-
-- [Configuration reference](./configuration.md)
+Choose an IM platform and follow its setup guide. For individual fields, see the [configuration reference](./configuration.md).
 
 ## What IM platforms are supported?
 
@@ -17,7 +11,7 @@ If you are looking for field-by-field configuration documentation, see:
 - **Telegram** (`ims.telegram`) — BotFather token + Bot API long polling for private and ordinary group text.
 
 - **WeCom** (`ims.wecom`) — intelligent bot API long connection for private/group text and background results.
-- **DingTalk** (`ims.dingtalk`) — enterprise internal-app robot, Stream reception and proactive text replies; real-enterprise acceptance remains pending.
+- **DingTalk** (`ims.dingtalk`) — enterprise internal-app robot, Stream reception and proactive text replies.
 - **Discord** (`ims.discord`) — bot DMs and explicit @Bot messages in server text channels and existing threads.
 - **Slack** (`ims.slack`) — single-workspace Socket Mode for DMs, channels and threads.
 
@@ -57,7 +51,7 @@ Start here: [WeCom integration guide](./wecom.md)
 - Your team uses one DingTalk enterprise and can configure an internal-app robot and proactive API permissions.
 - You use employee private chats or group @robot text for tasks, confirmations, and Questions.
 
-Start here: [DingTalk guide](./dingtalk.md). The first version is same-enterprise text only, with deployment acceptance still pending.
+Start here: [DingTalk guide](./dingtalk.md). The first version supports same-enterprise text only.
 
 ### Choose Discord when
 
@@ -87,15 +81,13 @@ See [pairing](./pairing.md) and the [configuration reference](./configuration.md
 
 ## Connection and routing
 
-Configure the platform you need: `ims.wechat: {}` for WeChat; Feishu `app_id` / `app_secret` with long connection and event subscriptions; WeCom `bot_id` / `secret` for the intelligent bot API long connection; or Discord `bot_token` / `application_id` after installing the bot. Run `chord-gateway --pair`. The terminal displays one pairing code immediately at startup; WeChat still needs QR login and each platform must become ready before its `/bind` is authorized. Send `/bind "<directory>" <pairing_code>` in a private bot chat, then `/status` to verify. WeCom requires the fixed proactive binding probe to be accepted before saving.
+1. Configure credentials and connections using the platform guides above. Telegram retains unreceived updates for only 24 hours; review its [retention and acceptance requirements](./telegram.md) before deployment.
+2. Run `chord-gateway --pair` to display a shared pairing code immediately. Each platform must connect before binding: WeChat needs QR login, and DingTalk first needs a private `hello` from a same-enterprise employee to verify identity. WeCom and DingTalk require a successful proactive probe before saving a binding.
+3. Bind in a private bot chat and verify the status. See [first connection](./pairing.md#first-connection) for each platform's commands; Slack uses `/chord bind` and `/chord status`.
 
-DingTalk needs four application/enterprise identity fields. On first connection, privately send `hello` to verify identity; this happens independently of the startup code, and binding targets receive a proactive probe before saving.
+The paired owner can bind more chats without a code using the [later binding rules](./pairing.md#later-bindings). All platforms route through `chat_bindings`, with no single-workspace fallback. Directories must exist; routes become active only after configuration is saved. Stop the service before editing other configuration, then restart.
 
-The paired owner uses `/bind "~/another workspace"` to explicitly bind more chats. All supported platforms route through `chat_bindings`, with no single-workspace fallback. Directories must exist; routes become active only after configuration is saved. Stop the service before editing other configuration, then restart.
-
-The owner is a local control-plane user. Bind only trusted groups because replies are visible to their members. Never commit credentials or runtime state. See [pairing](./pairing.md), [WeChat](./wechat.md), [Feishu](./feishu.md), [WeCom](./wecom.md), [DingTalk](./dingtalk.md), [Discord](./discord.md), and [permissions and safety](./permissions-and-safety.md).
-
-Configure `ims.telegram.bot_token` for Telegram; group binding uses `/bind@BotUsername`. The server retains unreceived updates for only 24 hours; review [retention and acceptance](./telegram.md) before deployment.
+Each platform has one trusted owner with local control-plane access. Bind only trusted groups because replies are visible to their members. Never commit credentials or runtime state; see [permissions and safety](./permissions-and-safety.md).
 
 ## Troubleshooting entry points
 
