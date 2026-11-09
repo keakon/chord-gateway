@@ -26,10 +26,11 @@ func (w *questionSnapshotWriter) Write(data []byte) (int, error) {
 		return 0, w.statusErr
 	}
 	n, err := w.captureWriteCloser.Write(data)
-	if cmd["type"] == "status" {
+	switch cmd["type"] {
+	case "status":
 		payload, _ := json.Marshal(w.snapshot)
 		go w.proc.processEnvelope(&HeadlessEnvelope{Type: "status_response", Seq: 1, Payload: payload})
-	} else if cmd["type"] == "question" {
+	case "question":
 		payload, _ := json.Marshal(QuestionReceipt{OperationID: cmd["operation_id"].(string), Accepted: true})
 		go w.proc.processEnvelope(&HeadlessEnvelope{Type: "question_receipt", Payload: payload})
 	}

@@ -15,7 +15,7 @@ import (
 // No callback is ever submitted in this fixture. These tests verify proactive
 // delivery independently of callback lifetime, not a real-account ten-minute
 // task or the platform's actual quota and product permissions.
-func wecomBackgroundTarget(t *testing.T, r *NotificationRouter, a *wecom.WecomAdapter, msg im.IncomingMessage, kind string) (key, rawTarget string) {
+func wecomBackgroundTarget(t *testing.T, r *NotificationRouter, msg im.IncomingMessage, kind string) (key, rawTarget string) {
 	t.Helper()
 	chat := msg.ChatID
 	rawTarget = "owner"
@@ -54,7 +54,7 @@ func TestWecomFinalAndBackgroundResultsWithoutAnyCallback(t *testing.T) {
 	for _, kind := range []string{"private", "group"} {
 		t.Run(kind, func(t *testing.T) {
 			a, msg, store, r := wecomAdapterFixture(t)
-			key, rawTarget := wecomBackgroundTarget(t, r, a, msg, kind)
+			key, rawTarget := wecomBackgroundTarget(t, r, msg, kind)
 			var mu sync.Mutex
 			var targets, texts []string
 			startWecomAdapterTestWS(t, a, func(target, text string) int {

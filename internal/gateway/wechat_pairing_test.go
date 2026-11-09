@@ -135,12 +135,13 @@ func TestWechatBindPreservesBoundReplyContext(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := fmt.Sprintf("/bind %q", ws.Path)
-			if command == "busy" {
+			switch command {
+			case "busy":
 				p.mu.Lock()
 				p.state.Busy = true
 				p.mu.Unlock()
 				text = fmt.Sprintf("/bind %q", t.TempDir())
-			} else if command == "invalid" {
+			case "invalid":
 				text = "/bind"
 			}
 			a.CachePairedContextForTest("bot", "owner", "task-context", true)

@@ -44,10 +44,11 @@ func TestFeishuExpiredTokenRecoveryStatusAndLimit(t *testing.T) {
 					defer req.Body.Close()
 					_, _ = io.Copy(io.Discard, req.Body)
 					status, body := http.StatusOK, `{"code":0,"data":{"message_id":"sample-message","image_key":"sample-image"}}`
-					if req.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal" {
+					switch req.URL.Path {
+					case "/open-apis/auth/v3/tenant_access_token/internal":
 						tokens.Add(1)
 						body = `{"code":0,"tenant_access_token":"fresh-token","expire":3600}`
-					} else if req.URL.Path == target {
+					case target:
 						attempt := targetRequests.Add(1)
 						if attempt == 1 || tc.persistent {
 							status, body = tc.status, `{"code":99991663}`
