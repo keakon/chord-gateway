@@ -99,7 +99,7 @@ func (a *TelegramAdapter) SendTextContext(ctx context.Context, chat, text string
 	}
 	// A flow reply carries a reply permit; it gets the control-send budget
 	// like the other adapters, instead of the long proactive-output budget.
-	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	_, control := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
 	return a.sender.Send(ctx, a.ctx, nil, chat, text, control)
 }
 func (a *TelegramAdapter) TextSendMetrics() im.IMTextMetricsSnapshot {

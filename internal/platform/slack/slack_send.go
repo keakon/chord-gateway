@@ -57,7 +57,7 @@ func (s *Sender) Send(ctx, lifecycle context.Context, target, text string) error
 	}
 	// A flow reply carries a reply permit; it gets the control-send budget
 	// like the other adapters, instead of the long proactive-output budget.
-	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	_, control := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
 	return s.text.Send(ctx, lifecycle, nil, target, text, control)
 }
 

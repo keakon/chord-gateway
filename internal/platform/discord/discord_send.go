@@ -121,7 +121,7 @@ func (a *DiscordAdapter) SendTextContext(ctx context.Context, chatID, text strin
 	ctx = context.WithValue(ctx, SendOutcomeKey{}, outcome)
 	// A flow reply carries a reply permit; it gets the control-send budget
 	// like the other adapters, instead of the long proactive-output budget.
-	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	_, control := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
 	err := a.sender.Send(ctx, a.ctx, nil, chatID, text, control)
 	var partial *im.IMTextSendError
 	if errors.As(err, &partial) && partial.Category == "unknown_send" {

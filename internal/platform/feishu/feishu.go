@@ -264,7 +264,7 @@ func (a *FeishuAdapter) SendTextContext(ctx context.Context, chatID, text string
 	}
 	// A flow reply carries a reply permit; it gets the control-send budget
 	// like the other adapters, instead of the long proactive-output budget.
-	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	_, control := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
 	return sender.Send(ctx, a.connectionContext(), nil, chatID, text, control)
 }
 

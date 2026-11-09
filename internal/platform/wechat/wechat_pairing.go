@@ -176,7 +176,7 @@ func (a *WechatAdapter) SendTextContext(ctx context.Context, chat, text string) 
 	}
 	// A flow reply carries a reply permit; it gets the control-send budget
 	// like the other adapters, instead of the long proactive-output budget.
-	control := ctx.Value(im.OutboundReplyContextKey{}) != nil
+	_, control := ctx.Value(im.OutboundReplyContextKey{}).(im.ReplyPermit)
 	ctx = context.WithValue(ctx, wechatSendSnapshotKey{}, &wechatSendSnapshot{token: token, chat: chat, reply: reply})
 	if adapterCtx == nil {
 		adapterCtx = context.Background()
