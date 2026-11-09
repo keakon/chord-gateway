@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/keakon/chord-gateway/config"
 	"github.com/keakon/chord-gateway/internal/buildinfo"
+	"github.com/keakon/chord-gateway/internal/im"
 )
 
 func dingtalkTestAPI(t *testing.T, handler http.HandlerFunc) (*dingtalkAPI, context.CancelFunc) {
@@ -130,6 +132,9 @@ func TestDingtalkAPIResponseClassificationAndRetryBound(t *testing.T) {
 			})
 			err := a.SendText(context.Background(), "private", "test-staff", "Response")
 			dingtalkTestCategory(t, err, tc.category)
+			if errors.Is(err, im.ErrDeliveryOutcomeUnknown) != (tc.category == "unknown_send") {
+				t.Fatalf("delivery uncertainty disagrees with category %q: %v", tc.category, err)
+			}
 			if got := int(sends.Load()); got != tc.calls {
 				t.Fatalf("send calls = %d, want %d", got, tc.calls)
 			}
@@ -190,8 +195,46 @@ func TestDingtalkAPIRetryAfterHonorsDeadline(t *testing.T) {
 	defer cancel()
 	err := a.SendText(ctx, "private", "test-staff", "Response")
 	dingtalkTestCategory(t, err, "rate_limited")
-	if !errors.Is(err, context.DeadlineExceeded) || sends.Load() != 1 {
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, im.ErrDeliveryOutcomeUnknown) || sends.Load() != 1 {
 		t.Fatalf("retry ignored current send deadline: %v, calls=%d", err, sends.Load())
+	}
+}
+
+func TestDingtalkAPIInFlightCancellationPreservesUnknownOutcome(t *testing.T) {
+	var sends atomic.Int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	a, _ := dingtalkTestAPI(t, func(_ http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Error(err)
+		}
+		if sends.Add(1) == 1 {
+			close(entered)
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	a.tokens.token, a.tokens.expires = "sample-token", time.Now().Add(time.Hour)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- a.SendText(ctx, "private", "test-staff", "Response") }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("message request was not written")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		var failure *DingtalkAPIError
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, im.ErrDeliveryOutcomeUnknown) || !errors.As(err, &failure) || failure.Category != "unknown_send" || sends.Load() != 1 {
+			t.Fatalf("in-flight cancellation lost evidence or replayed output: sends=%d error=%v", sends.Load(), err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation did not interrupt message request")
 	}
 }
 
@@ -311,7 +354,7 @@ func TestDingtalkPreSendFailureIsNotUnknownDelivery(t *testing.T) {
 		a, _ := dingtalkTestAPI(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) })
 		err := a.SendText(t.Context(), "private", "sample-staff", "output")
 		var failure *DingtalkAPIError
-		if !errors.As(err, &failure) || failure.IMTextSendFailureCategory() == "unknown_send" {
+		if !errors.As(err, &failure) || failure.IMTextSendFailureCategory() == "unknown_send" || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 			t.Fatalf("token acquisition=%v", err)
 		}
 	})
@@ -323,7 +366,7 @@ func TestDingtalkPreSendFailureIsNotUnknownDelivery(t *testing.T) {
 		defer cancel()
 		err := a.SendText(ctx, "private", "sample-staff", "output")
 		var failure *DingtalkAPIError
-		if !errors.Is(err, context.DeadlineExceeded) || errors.As(err, &failure) && failure.IMTextSendFailureCategory() == "unknown_send" {
+		if !errors.Is(err, context.DeadlineExceeded) || errors.As(err, &failure) && failure.IMTextSendFailureCategory() == "unknown_send" || errors.Is(err, im.ErrDeliveryOutcomeUnknown) {
 			t.Fatalf("pacing=%v", err)
 		}
 	})

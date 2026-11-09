@@ -347,7 +347,15 @@ func dingtalkRetryDelay(value string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-func (a *dingtalkAPI) SendText(ctx context.Context, kind, targetID, text string) error {
+func (a *dingtalkAPI) SendText(ctx context.Context, kind, targetID, text string) (sendErr error) {
+	defer func() {
+		var failure *DingtalkAPIError
+		// Token and registration failures share this error type, but only
+		// unconfirmed message sends carry delivery uncertainty.
+		if errors.As(sendErr, &failure) && failure.Category == "unknown_send" {
+			sendErr = errors.Join(im.ErrDeliveryOutcomeUnknown, sendErr)
+		}
+	}()
 	ctx, cancel := a.requestContext(ctx)
 	defer cancel()
 	if targetID == "" || (kind != "private" && kind != "group") {

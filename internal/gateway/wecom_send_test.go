@@ -133,6 +133,91 @@ func startWecomAdapterTestWS(t *testing.T, a *wecom.WecomAdapter, send func(stri
 	})
 }
 
+func TestWecomSendTextContextControlBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		control            bool
+		parentBudget, want time.Duration
+	}{
+		{name: "control budget", control: true, parentBudget: time.Hour, want: 15 * time.Second},
+		{name: "proactive budget", parentBudget: time.Hour, want: 5 * time.Minute},
+		{name: "short caller control", control: true, parentBudget: 5 * time.Second, want: 15 * time.Second},
+		{name: "short caller proactive", parentBudget: 5 * time.Second, want: 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, msg, _, r := wecomAdapterFixture(t)
+			var mu sync.Mutex
+			var sent []string
+			startWecomAdapterTestWS(t, a, func(target, text string) int {
+				if target != "owner" {
+					t.Errorf("send changed target to %q", target)
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				sent = append(sent, text)
+				return 0
+			})
+			a.SetRatePacingForTest(0, 0)
+			var deadlines []time.Time
+			sender := a.TextSenderForTest()
+			original := sender.SendSegmentForTest()
+			sender.SetSendSegmentForTest(func(ctx context.Context, target, text string) error {
+				deadline, _ := ctx.Deadline()
+				deadlines = append(deadlines, deadline)
+				return original(ctx, target, text)
+			})
+			ticket, ok := r.admission.Authorize(msg)
+			if !ok {
+				t.Fatal("reply not authorized")
+			}
+			permit := im.ReplyPermit{Identity: ticket.Identity, AccountEpoch: ticket.AccountEpoch, ExpiresAt: time.Now().Add(time.Hour), Ticket: ticket}
+			key := (processKey{workspaceID: "project", imType: msg.IMType, chatID: msg.ChatID}).String()
+			target, ok := r.targetForKey(key)
+			if !ok {
+				t.Fatal("bound target unavailable")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), tc.parentBudget)
+			defer cancel()
+			parentDeadline, _ := ctx.Deadline()
+			text := strings.Repeat("a", 3*1024)
+			start := time.Now()
+			var err error
+			if tc.control {
+				err = r.SendFlowReply(ctx, permit, text)
+			} else {
+				err = r.SendBound(ctx, target, text)
+			}
+			end := time.Now()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(deadlines) != 3 {
+				t.Fatalf("segment deadlines = %v, want three segments", deadlines)
+			}
+			earliest, latest := start.Add(tc.want), end.Add(tc.want)
+			if parentDeadline.Before(earliest) {
+				earliest = parentDeadline
+			}
+			if parentDeadline.Before(latest) {
+				latest = parentDeadline
+			}
+			if deadlines[0].Before(earliest) || deadlines[0].After(latest) {
+				t.Fatalf("deadline = %s, want between %s and %s", deadlines[0], earliest, latest)
+			}
+			for i, deadline := range deadlines[1:] {
+				if !deadline.Equal(deadlines[0]) {
+					t.Fatalf("segment %d renewed deadline: %s != %s", i+2, deadline, deadlines[0])
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(sent) != 3 || strings.Join(sent, "") != text {
+				t.Fatalf("transport sent %d segments, want unchanged three-segment output", len(sent))
+			}
+		})
+	}
+}
+
 func TestWecomRenderedSegmentsStayWithinByteBudget(t *testing.T) {
 	a, _, _, _ := wecomAdapterFixture(t)
 	source := strings.Repeat("\\*中文😀<@owner>@all[link](url)\n", 3000)

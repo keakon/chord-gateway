@@ -2,7 +2,11 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -28,6 +32,12 @@ func (*telegramSenderTestAPI) GetUpdates(context.Context, *int64, int) ([]Update
 }
 func (a *telegramSenderTestAPI) SendMessage(ctx context.Context, chat int64, text string) (Message, error) {
 	return a.send(ctx, chat, text)
+}
+
+type telegramSendRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f telegramSendRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func TestTelegramUTF16Segmentation(t *testing.T) {
@@ -67,6 +77,77 @@ func TestTelegramSendUnknownOutcomeNeverRetries(t *testing.T) {
 		t.Fatalf("calls=%d err=%v", calls.Load(), err)
 	}
 }
+
+func TestTelegramPartialFailureStopsActualSend(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, category string
+		status               int
+		unknown              bool
+	}{
+		{name: "forbidden", status: http.StatusForbidden, body: `{"ok":false,"error_code":403}`, category: "forbidden"},
+		{name: "API rejection", status: http.StatusBadRequest, body: `{"ok":false,"error_code":400}`, category: "api_rejected"},
+		{name: "chat migrated", status: http.StatusBadRequest, body: `{"ok":false,"error_code":400,"parameters":{"migrate_to_chat_id":-321}}`, category: "chat_migrated"},
+		{name: "server error", status: http.StatusBadGateway, body: `{"ok":true,"result":{"message_id":1,"chat":{"id":1}}}`, category: "unknown_send", unknown: true},
+		{name: "bare rate limit", status: http.StatusTooManyRequests, body: ``, category: "unknown_send", unknown: true},
+		{name: "missing receipt", status: http.StatusOK, body: `{"ok":true,"result":{"chat":{"id":1}}}`, category: "unknown_send", unknown: true},
+		{name: "malformed receipt", status: http.StatusOK, body: `invalid`, category: "unknown_send", unknown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var sent []string
+				api := NewAPI("123:sample-token", nil)
+				api.client.Transport = telegramSendRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+					defer req.Body.Close()
+					var body struct {
+						ChatID int64  `json:"chat_id"`
+						Text   string `json:"text"`
+					}
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+						t.Fatal(err)
+					}
+					if body.ChatID != 1 || !strings.HasSuffix(req.URL.Path, "/sendMessage") {
+						t.Fatalf("send changed target or method: chat=%d path=%s", body.ChatID, req.URL.Path)
+					}
+					sent = append(sent, body.Text)
+					status, response := http.StatusOK, `{"ok":true,"result":{"message_id":1,"chat":{"id":1}}}`
+					if len(sent) == 2 {
+						status, response = tc.status, tc.body
+					}
+					return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
+				})
+				sender, err := NewTelegramTextSender(api)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a := NewTelegramAdapterForTest("account-1", "samplebot", nil, nil, nil)
+				defer a.Disconnect()
+				a.ready, a.sender = true, sender
+				first, second, third := strings.Repeat("a", TextBudget), strings.Repeat("b", TextBudget), strings.Repeat("c", TextBudget)
+				err = a.SendTextContext(t.Context(), "1", first+second+third)
+				var partial *im.IMTextSendError
+				var apiErr *APIError
+				if !errors.As(err, &partial) || partial.AcceptedSegments != 1 || partial.Category != tc.category || !errors.As(err, &apiErr) || apiErr.Category != tc.category {
+					t.Fatalf("partial send = %v, want category %s after one accepted segment", err, tc.category)
+				}
+				if errors.Is(err, im.ErrDeliveryOutcomeUnknown) != tc.unknown {
+					t.Fatalf("unknown outcome evidence disagrees with category: %v", err)
+				}
+				if !reflect.DeepEqual(sent, []string{first, second}) {
+					t.Fatalf("sent %d segments, want first and second only in original order", len(sent))
+				}
+				snapshot := a.TextSendTargetSnapshot("1")
+				metrics := a.TextSendMetrics()
+				if snapshot.LastAcceptedSegments != 1 || snapshot.LastFailureCategory != tc.category || metrics.Failures != 1 || metrics.PartialFailures != 1 || metrics.RateLimitWaits != 0 {
+					t.Fatalf("partial diagnostics = %+v, metrics = %+v", snapshot, metrics)
+				}
+				if strings.Contains(err.Error(), "sample-token") || strings.Contains(apiErr.Error(), "sample-token") {
+					t.Fatal("send error exposed credentials")
+				}
+			})
+		})
+	}
+}
+
 func TestTelegramSend429WaitIsCancellable(t *testing.T) {
 	var calls atomic.Int32
 	entered := make(chan struct{})
@@ -177,50 +258,56 @@ func TestTelegramCancelledInFlightSendRemainsUnknown(t *testing.T) {
 	}
 }
 
-// TestTelegramSendTextContextControlBudget pins the reply-permit deadline
-// derivation: a flow reply must inherit the 15s control-send budget instead
-// of the five-minute proactive budget.
 func TestTelegramSendTextContextControlBudget(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		permit bool
+		name               string
+		permit             bool
+		parentBudget, want time.Duration
 	}{
-		{name: "reply permit gets control budget", permit: true},
-		{name: "no permit keeps proactive budget", permit: false},
+		{name: "control budget", permit: true, parentBudget: time.Hour, want: 15 * time.Second},
+		{name: "proactive budget", parentBudget: time.Hour, want: 5 * time.Minute},
+		{name: "short caller control", permit: true, parentBudget: 5 * time.Second, want: 15 * time.Second},
+		{name: "short caller proactive", parentBudget: 5 * time.Second, want: 5 * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var hasDeadline bool
-			var remaining time.Duration
-			sender, err := NewTelegramTextSender(&telegramSenderTestAPI{send: func(ctx context.Context, _ int64, _ string) (Message, error) {
-				deadline, ok := ctx.Deadline()
-				hasDeadline, remaining = ok, time.Until(deadline)
-				return Message{}, nil
-			}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			a := NewTelegramAdapterForTest("account-1", "samplebot", nil, nil, nil)
-			a.ready = true
-			a.sender = sender
-			ctx := t.Context()
-			if tc.permit {
-				ctx = context.WithValue(ctx, im.OutboundReplyContextKey{}, im.ReplyPermit{SenderID: "user-1", ExpiresAt: time.Now().Add(time.Hour)})
-			}
-			if err := a.SendTextContext(ctx, "123456789", "sample reply"); err != nil {
-				t.Fatalf("send failed: %v", err)
-			}
-			if !hasDeadline {
-				t.Fatal("sendMessage request carries no deadline")
-			}
-			if tc.permit {
-				if remaining <= 0 || remaining > im.IMControlSendTimeout+time.Second {
-					t.Fatalf("control reply deadline = %s, want within %s", remaining, im.IMControlSendTimeout)
+			synctest.Test(t, func(t *testing.T) {
+				var deadlines []time.Time
+				// SendMessage adds its own per-request timeout, so inspect the
+				// complete-output budget before entering the HTTP API.
+				sender, err := NewTelegramTextSender(&telegramSenderTestAPI{send: func(ctx context.Context, _ int64, _ string) (Message, error) {
+					deadline, _ := ctx.Deadline()
+					deadlines = append(deadlines, deadline)
+					return Message{}, nil
+				}})
+				if err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			if remaining <= im.IMControlSendTimeout || remaining > im.IMTextSendTimeout+time.Second {
-				t.Fatalf("proactive deadline = %s, want about %s", remaining, im.IMTextSendTimeout)
-			}
+				a := NewTelegramAdapterForTest("account-1", "samplebot", nil, nil, nil)
+				defer a.Disconnect()
+				a.ready, a.sender = true, sender
+				ctx, cancel := context.WithTimeout(t.Context(), tc.parentBudget)
+				defer cancel()
+				if tc.permit {
+					ctx = context.WithValue(ctx, im.OutboundReplyContextKey{}, im.ReplyPermit{SenderID: "user-1", ExpiresAt: time.Now().Add(time.Hour)})
+				}
+				parentDeadline, _ := ctx.Deadline()
+				start := time.Now()
+				if err := a.SendTextContext(ctx, "123456789", strings.Repeat("a", 3*TextBudget)); err != nil {
+					t.Fatalf("send failed: %v", err)
+				}
+				if len(deadlines) != 3 {
+					t.Fatalf("request deadlines = %v, want three segments", deadlines)
+				}
+				want := start.Add(tc.want)
+				if parentDeadline.Before(want) {
+					want = parentDeadline
+				}
+				for i, deadline := range deadlines {
+					if !deadline.Equal(want) {
+						t.Fatalf("segment %d deadline = %s, want %s", i+1, deadline, want)
+					}
+				}
+			})
 		})
 	}
 }

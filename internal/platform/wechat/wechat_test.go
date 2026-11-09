@@ -390,7 +390,7 @@ func TestWechatAdapterTokenPersistence(t *testing.T) {
 		}
 		// Multi-byte runes must survive segmentation intact: 2*2048+1 code
 		// points forces a split between four-byte runes, and the code-point
-		// measure pins three segments where a byte measure would need eight.
+		// measure pins three segments where a byte measure would need nine.
 		emoji := strings.Repeat("\U0001F642", 2*ILinkMaxMessageLen+1)
 		segments, err = sender.Segments(emoji)
 		if err != nil {

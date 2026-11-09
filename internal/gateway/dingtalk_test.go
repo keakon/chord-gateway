@@ -208,11 +208,16 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 			Content string `json:"content"`
 		}
 		_ = json.Unmarshal([]byte(payload.MsgParam), &body)
-		if r.URL.Path != "/v1.0/robot/oToMessages/batchSend" || (body.Content != "Gateway binding check." && !strings.HasPrefix(body.Content, "output ")) || len(payload.UserIDs) != 1 || payload.UserIDs[0] != "test-staff" {
+		// The receive helper models a user resend after target_busy, which can
+		// also enqueue a refusal unrelated to the binding probes and output.
+		lostInputNotice := body.Content == "This input was not accepted, and DingTalk does not redeliver robot callbacks, so please send it again. If the bot keeps dropping input, check Gateway ingress health first."
+		if r.URL.Path != "/v1.0/robot/oToMessages/batchSend" || (body.Content != "Gateway binding check." && !strings.HasPrefix(body.Content, "output ") && !lostInputNotice) || len(payload.UserIDs) != 1 || payload.UserIDs[0] != "test-staff" {
 			t.Errorf("invalid binding request: %s %+v", r.URL.Path, payload)
 		}
 		mu.Lock()
-		sends++
+		if !lostInputNotice {
+			sends++
+		}
 		fail := denied
 		mu.Unlock()
 		if fail {
@@ -306,6 +311,7 @@ func TestDingtalkAdapterBindingProbeFailureRetainsNonce(t *testing.T) {
 	if deniedResult.Disposition != im.ReceiveRejected || len(writer.snapshot()) != 1 {
 		t.Fatalf("nonowner controlled Chord: %+v", deniedResult)
 	}
+	flushIngressPresentation(t, f.r, msg)
 	// A binding switch cancels the shared delivery lease after the first accepted
 	// segment. Later segments must never enter even the adapter's HTTP transport.
 	f.a.OnUnavailableForTest() // HTTP output keeps its lease through a Stream outage.
@@ -354,6 +360,91 @@ func TestDingtalkAdapterUnboundSendAndOldGenerationDenied(t *testing.T) {
 	f.a.Disconnect()
 	if err := f.a.OnConnectedForTest(t.Context()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("stopped adapter connected: %v", err)
+	}
+}
+
+func TestDingtalkSendTextContextControlBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		control            bool
+		parentBudget, want time.Duration
+	}{
+		{name: "control budget", control: true, parentBudget: time.Hour, want: 15 * time.Second},
+		{name: "proactive budget", parentBudget: time.Hour, want: 5 * time.Minute},
+		{name: "short caller control", control: true, parentBudget: 5 * time.Second, want: 15 * time.Second},
+		{name: "short caller proactive", parentBudget: 5 * time.Second, want: 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDingtalkAdapterFixture(t)
+			dingtalkAdapterVerify(t, f)
+			var deadlines []time.Time
+			f.a.SetAPIServerForTest("https://dingtalk.example.test", &http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+				defer req.Body.Close()
+				if req.URL.Path == "/v1.0/oauth2/accessToken" {
+					return textSendResponse(http.StatusOK, `{"accessToken":"sample-token","expireIn":7200}`), nil
+				}
+				deadline, _ := req.Context().Deadline()
+				deadlines = append(deadlines, deadline)
+				return textSendResponse(http.StatusOK, `{"processQueryKey":"sample-query"}`), nil
+			})})
+			f.a.SetAPIPacingForTest(0, 0)
+			msg, err := dingtalk.NormalizeCallbackForTest(f.a.ConfigForTest(), dingtalk.IdentityTestPayloadForTest(t, dingtalk.IdentityTestCallbackForTest()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, dir := dingtalkAdapterNonce(f), t.TempDir()
+			msg.Text = fmt.Sprintf("/bind %q %s", dir, code)
+			ticket, ok := f.r.admission.Authorize(msg)
+			if !ok {
+				t.Fatal("binding not authorized")
+			}
+			if _, err := (&BindingService{router: f.r}).Bind(t.Context(), msg, ticket, []string{dir, code}); err != nil {
+				t.Fatal(err)
+			}
+			deadlines = nil
+			permit := im.ReplyPermit{Identity: ticket.Identity, AccountEpoch: ticket.AccountEpoch, ExpiresAt: time.Now().Add(time.Hour), Ticket: ticket}
+			ctx, cancel := context.WithTimeout(t.Context(), tc.parentBudget)
+			defer cancel()
+			parentDeadline, _ := ctx.Deadline()
+			text := strings.Repeat("a", 3*1024)
+			start := time.Now()
+			if tc.control {
+				err = f.r.SendFlowReply(ctx, permit, text)
+			} else {
+				ws, resolveErr := f.r.getConfig().ResolveWorkspace(msg.IMType, msg.ChatID)
+				if resolveErr != nil {
+					t.Fatal(resolveErr)
+				}
+				key := (processKey{workspaceID: ws.ID, imType: msg.IMType, chatID: msg.ChatID}).String()
+				target, ok := f.r.targetForKey(key)
+				if !ok {
+					t.Fatal("bound target unavailable")
+				}
+				err = f.r.SendBound(ctx, target, text)
+			}
+			end := time.Now()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(deadlines) != 3 {
+				t.Fatalf("request deadlines = %v, want three segments", deadlines)
+			}
+			earliest, latest := start.Add(tc.want), end.Add(tc.want)
+			if parentDeadline.Before(earliest) {
+				earliest = parentDeadline
+			}
+			if parentDeadline.Before(latest) {
+				latest = parentDeadline
+			}
+			if deadlines[0].Before(earliest) || deadlines[0].After(latest) {
+				t.Fatalf("deadline = %s, want between %s and %s", deadlines[0], earliest, latest)
+			}
+			for i, deadline := range deadlines[1:] {
+				if !deadline.Equal(deadlines[0]) {
+					t.Fatalf("segment %d renewed deadline: %s != %s", i+2, deadline, deadlines[0])
+				}
+			}
+		})
 	}
 }
 
@@ -430,8 +521,18 @@ func TestDingtalkAdapterTextSegmentsKeepUnicodeAndPartialAcceptance(t *testing.T
 				if stopped.Category != want || f.a.TextSendTargetSnapshot(target).LastFailureCategory != want {
 					t.Fatalf("category=%s want=%s", stopped.Category, want)
 				}
-				if scenario == "cancel_after_first" && len(got) != 1 {
-					t.Fatalf("cancel sent %d segments", len(got))
+				wantRequests := 2
+				if scenario == "cancel_after_first" {
+					wantRequests = 1
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("cancellation cause lost: %v", err)
+					}
+				}
+				if len(got) != wantRequests || !strings.HasPrefix(text, strings.Join(got, "")) {
+					t.Fatalf("sent %d segments, want %d in original order", len(got), wantRequests)
+				}
+				if errors.Is(err, im.ErrDeliveryOutcomeUnknown) != (scenario == "second_unknown") {
+					t.Fatalf("unknown outcome evidence disagrees with category: %v", err)
 				}
 			}
 		})
