@@ -8,13 +8,15 @@ This page describes runtime behavior that matters when operating `chord-gateway`
 
 The gateway starts `chord headless` as a child process for each active binding as needed.
 
-Each spawned Chord process is placed into its own process group. On normal gateway shutdown, the gateway attempts to terminate the whole process group:
+On macOS and Linux, each spawned Chord process is placed into its own process group. On normal gateway shutdown, the gateway attempts to terminate the whole process group:
 
 1. Close stdin to request graceful exit.
 2. Send `SIGTERM` to the process group.
 3. After a short grace period, send `SIGKILL` to the process group.
 
-This prevents orphaned Chord processes and child processes from keeping session locks or workspace resources alive.
+Process-group signals reach Chord and descendants that remain in that group. A descendant that creates a separate process group or session can outlive this cleanup.
+
+On Windows, the gateway closes stdin to request graceful exit, then forcefully terminates the direct Chord child if it remains alive after the grace period. It does not manage a Windows Job Object or guarantee termination of Chord's descendants. If tools remain after shutdown, identify those processes and stop them separately before reusing the workspace.
 
 If the gateway itself is killed with `SIGKILL` (`kill -9`), it cannot run cleanup handlers. Chord's parent-death watcher is expected to detect the parent process change and exit promptly.
 

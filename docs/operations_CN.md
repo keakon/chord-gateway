@@ -8,13 +8,15 @@
 
 gateway 会按需为每个活跃绑定启动 `chord headless` 子进程。
 
-每个 Chord 子进程会被放入独立进程组。gateway 正常关闭时，会尝试终止整个进程组：
+在 macOS 和 Linux 上，每个 Chord 子进程会被放入独立进程组。gateway 正常关闭时，会尝试终止整个进程组：
 
 1. 关闭 stdin，请求进程优雅退出。
 2. 向进程组发送 `SIGTERM`。
 3. 等待一小段宽限时间后，向进程组发送 `SIGKILL`。
 
-这样可以避免孤儿 Chord 进程或其子进程继续持有 session lock 或工作区资源。
+进程组信号会发给 Chord 及仍在该组中的后代。后代若创建了独立进程组或会话，可能在这次清理后继续运行。
+
+在 Windows 上，gateway 会关闭 stdin 请求优雅退出；宽限期结束后若 Chord 仍在运行，则强制终止这个直接子进程。gateway 不管理 Windows Job Object，也不保证终止 Chord 的后代进程。若关停后仍有工具进程运行，请先确认并单独停止这些进程，再继续使用工作区。
 
 如果 gateway 自身被 `SIGKILL`（`kill -9`）杀死，则无法执行清理 handler。此时依赖 Chord 的 parent-death watcher 检测父进程变化并尽快退出。
 
