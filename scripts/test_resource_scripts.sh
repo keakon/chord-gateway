@@ -371,4 +371,50 @@ grep -q "controlled build failure" "$tmp/matrix.err"
 	exit 1
 }
 
+test_fast_tmp="$tmp/test-fast-tmp"
+mkdir -p "$test_fast_tmp"
+export MOCK_GO_TEST_ARGS="$tmp/go-test-args"
+export MOCK_GO_TEST_TMP="$tmp/go-test-tmp"
+cat >"$tmp/bin/go" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+	env) ;;
+	test)
+		printf '%s\n' "$@" >"$MOCK_GO_TEST_ARGS"
+		printf '%s\n' "$TMPDIR" "$TMP" "$TEMP" >"$MOCK_GO_TEST_TMP"
+		exit "${MOCK_GO_TEST_EXIT:-0}"
+		;;
+	*) exit 2 ;;
+esac
+EOF
+check_test_fast_args() {
+	local flags="$1"
+	shift
+	make --no-print-directory -C "$repo_root" test-fast GO="$tmp/bin/go" PKGS=./sample GOTESTFLAGS="$flags" \
+		CHORD_GATEWAY_TEST_TMPDIR="$test_fast_tmp" >"$tmp/test-fast.out" 2>"$tmp/test-fast.err"
+	printf '%s\n' "$@" >"$tmp/expected-go-args"
+	if ! cmp -s "$MOCK_GO_TEST_ARGS" "$tmp/expected-go-args"; then
+		echo "unexpected test-fast arguments for GOTESTFLAGS='$flags'" >&2
+		diff -u "$tmp/expected-go-args" "$MOCK_GO_TEST_ARGS" >&2
+		exit 1
+	fi
+	printf '%s\n' "$test_fast_tmp" "$test_fast_tmp" "$test_fast_tmp" >"$tmp/expected-go-tmp"
+	cmp "$tmp/expected-go-tmp" "$MOCK_GO_TEST_TMP"
+}
+check_test_fast_args "" test -count=1 ./sample
+check_test_fast_args "-short" test -short ./sample
+check_test_fast_args "-short=true" test -short=true ./sample
+check_test_fast_args "-short=false" test -count=1 -short=false ./sample
+check_test_fast_args "-short -short=false" test -count=1 -short -short=false ./sample
+check_test_fast_args "-short -run Sample" test -count=1 -short -run Sample ./sample
+check_test_fast_args "-short -count=1" test -count=1 -short -count=1 ./sample
+check_test_fast_args "-count=2" test -count=1 -count=2 ./sample
+if MOCK_GO_TEST_EXIT=7 make --no-print-directory -C "$repo_root" test-fast GO="$tmp/bin/go" PKGS=./sample \
+	GOTESTFLAGS=-short CHORD_GATEWAY_TEST_TMPDIR="$test_fast_tmp" >"$tmp/test-fast-fail.out" 2>"$tmp/test-fast-fail.err"; then
+	echo "test-fast accepted a failing go test" >&2
+	exit 1
+fi
+grep -q 'Error 7' "$tmp/test-fast-fail.err"
+
 echo "resource script tests passed"
