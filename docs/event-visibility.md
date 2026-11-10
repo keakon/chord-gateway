@@ -37,6 +37,8 @@ The gateway subscribes to these events by default:
 - `background_result`
 - `image_result`
 
+`progress_notice` is intentionally absent from this list. It is a durable copy of the runtime hint sent to the *model* during a long tool-call chain, not a user-facing progress update; forwarding it to a chat would expose model instructions as messages. The agent's actual progress report arrives through `assistant_message`. This event is also not one of the `event_visibility` opt-in switches; a headless integration that needs the raw reminder can subscribe to it directly from Chord.
+
 These events cover the minimum behavior for IM control, except that `background_result` can be turned off:
 
 - final assistant responses

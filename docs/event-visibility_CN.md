@@ -37,6 +37,8 @@ gateway 默认订阅以下事件：
 - `background_result`
 - `image_result`
 
+`progress_notice` 有意不在默认订阅内。它是长工具链中发给**模型**的运行时提示的持久副本，不是面向用户的进展更新；转发到聊天里会把模型指令当作消息暴露给终端用户。代理真正的进展汇报通过 `assistant_message` 发送。该事件也不属于 `event_visibility` 的可选开关；需要原始提醒的 headless 集成方可直接从 Chord 订阅。
+
 这些事件覆盖 IM 控制所需的最小行为，其中 `background_result` 可以关闭：
 
 - 最终 assistant 回复
