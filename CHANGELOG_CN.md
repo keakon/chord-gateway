@@ -10,6 +10,7 @@
 
 ### 新增
 
+- 支持 Chord 的 `confirm_ask_policy: deny` 自动拒绝通知，标明工具和 agent，无需用户回答确认。
 - 现在可以在 macOS 和 Linux 上通过 Homebrew 安装网关：`brew install keakon/tap/chord-gateway`。稳定版本会在四平台安装验证通过后自动打包进 tap。
 - SubAgent 完成通知现在使用 Chord 提供的完整报告，保留检查结果、限制和文件归因，去掉运行期提醒标签与邮箱路由头。报告为空时使用完成摘要；通知仍最多显示 1,000 个字符。
 - `/status` 与 `/queue` 现在会说明随会话恢复（接管、`/resume` 或重启）的队列：这些条目在你发消息前一直保持挂起，因此 `/queue` 会在每条挂起条目后标注 `(restored; send a message to run it)`，而不是把它当作普通排队输入列出。此前恢复的队列看起来已经就绪，实际仍在等待你继续。

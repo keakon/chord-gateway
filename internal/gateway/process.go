@@ -814,7 +814,7 @@ func (p *ChordProcess) WaitRoleSwitch(ctx context.Context, role string) (RoleRes
 
 func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// Default subscribed events (per docs/event-visibility.md):
-	// activity, assistant_message, confirm_request, confirm_resolved, question_request, question_updated, question_resolved,
+	// activity, assistant_message, confirm_request, confirm_resolved, tool_ask_policy_denied, question_request, question_updated, question_resolved,
 	// handoff_request, handoff_cancelled, idle, error, notification,
 	// done_completion, local_shell_result, agent_done, role_change,
 	// compaction_status, session_switched, background_result, and image_result.
@@ -823,7 +823,7 @@ func configuredHeadlessSubscribeEvents(cfg *config.Config) []string {
 	// workdir_changed is always on: it announces a mid-session checkout switch,
 	// and without it a snapshot read before the switch stays authoritative for
 	// the path /bind and relative arguments resolve against.
-	events := []string{"input_queue_changed", "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "confirm_resolved", "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent, "workdir_changed"}
+	events := []string{"input_queue_changed", "session_transfer_preparing", "session_transfer_status", "session_transfer_saved", "session_transfer_released", "activity", "assistant_message", "confirm_request", "confirm_resolved", toolAskPolicyDeniedEvent, "question_request", "question_updated", "question_resolved", "handoff_request", "handoff_cancelled", "idle", "error", "notification", "done_completion", "local_shell_result", "agent_done", "role_change", "compaction_status", "session_switched", "background_result", imageResultEvent, mcpStatusChangedEvent, "workdir_changed"}
 	if cfg == nil {
 		return events
 	}

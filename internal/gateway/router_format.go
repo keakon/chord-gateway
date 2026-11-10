@@ -41,6 +41,9 @@ func (r *NotificationRouter) formatNotification(eventType string, state ControlS
 	case "confirm_resolved":
 		return formatConfirmResolvedNotification(state)
 
+	case toolAskPolicyDeniedEvent:
+		return formatToolAskPolicyDenied(state.LastToolAskPolicyDenied)
+
 	case "question_revision":
 		q := state.questionForNotification()
 		if q == nil || q.RevisionResult == nil {

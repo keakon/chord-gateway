@@ -57,6 +57,8 @@ type ControlState struct {
 	// without an answer (auto-deny timeout or early cancellation).
 	LastConfirmResolved *ConfirmResolutionPayload `json:"-"`
 
+	LastToolAskPolicyDenied *ToolAskPolicyDeniedPayload `json:"-"`
+
 	LastQuestion *QuestionPayload `json:"-"`
 
 	// Todos from chord process

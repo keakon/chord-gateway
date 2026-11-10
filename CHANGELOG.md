@@ -10,6 +10,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- Automatic permission refusals from Chord's `confirm_ask_policy: deny` now appear as notices naming the tool and agent, without opening an approval prompt.
 - The gateway can now be installed with Homebrew on macOS and Linux: `brew install keakon/tap/chord-gateway`. Stable releases are packaged into the tap automatically after installation is validated on four platforms.
 - SubAgent completion notifications now use Chord's full report, including checks, limitations and file-attribution details, with runtime reminder tags and mailbox routing headers removed. Empty reports use the completion summary; notifications keep the existing 1,000-character limit.
 - `/status` and `/queue` now explain a queue restored with the session (takeover, `/resume`, or a restart): the entries stay held until you send a message, so `/queue` marks each held entry `(restored; send a message to run it)` instead of listing it as ordinary pending input. Without it a restored queue looked ready while it was actually waiting for a continuation.

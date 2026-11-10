@@ -327,6 +327,14 @@ func (p *ChordProcess) processEnvelope(env *HeadlessEnvelope) {
 		p.state.finishTurnWindow(now)
 		eventType = "idle"
 
+	case toolAskPolicyDeniedEvent:
+		var payload ToolAskPolicyDeniedPayload
+		if err := json.Unmarshal(env.Payload, &payload); err != nil || payload.CallID == "" || payload.ToolName == "" || payload.AgentID == "" || payload.Policy != "deny" {
+			break
+		}
+		p.state.LastToolAskPolicyDenied = &payload
+		eventType = toolAskPolicyDeniedEvent
+
 	case "confirm_request":
 		var payload ConfirmPayload
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {

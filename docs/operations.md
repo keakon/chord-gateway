@@ -163,6 +163,7 @@ The gateway runs `chord headless` and reads JSONL events from stdout. It subscri
 - `assistant_message`
 - `confirm_request`
 - `confirm_resolved`
+- `tool_ask_policy_denied`
 - `question_request`
 - `question_updated`
 - `question_resolved`
