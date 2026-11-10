@@ -2,12 +2,14 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
@@ -24,11 +26,23 @@ func receiveFeishuCapabilityText(t *testing.T, r *NotificationRouter, business, 
 	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatal(err)
 	}
-	future, err := findFeishuAdapterForTest(r).SubmitMessageEvent(t.Context(), &event, "delivery-"+business)
-	if err != nil || future == nil {
-		t.Fatal(err)
+	adapter := findFeishuAdapterForTest(r)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		future, err := adapter.SubmitMessageEvent(t.Context(), &event, "delivery-"+business)
+		if err == nil {
+			if future == nil {
+				t.Fatal("message submission returned no result")
+			}
+			return im.WaitIngressNormalization(t.Context(), future)
+		}
+		// Capture may refuse a delivery while process state is being written.
+		// Retry only that unaccepted delivery; accepted input is never resent.
+		if !errors.Is(err, im.ErrIngressCaptureBusy) || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	return im.WaitIngressNormalization(t.Context(), future)
 }
 
 func TestFeishuCapabilitiesDoneDenialRequiresReason(t *testing.T) {
