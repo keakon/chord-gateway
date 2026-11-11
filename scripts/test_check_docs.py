@@ -128,6 +128,43 @@ class MarkdownAnchorTests(unittest.TestCase):
                 self.assertTrue(any("missing anchor #non-existent in test_a.md" in e for e in errors))
                 self.assertTrue(any("missing anchor #missing-b in test_b.md" in e for e in errors))
 
+    def test_symlinked_root_reports_relative_paths(self):
+        # macOS temp dirs resolve /var to /private/var, so a non-canonical ROOT
+        # must not turn error reporting into a ValueError. A symlink makes this
+        # regression portable instead of relying on the platform's temp layout.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real = Path(tmpdir) / "real"
+            real.mkdir()
+            doc_a = real / "test_a.md"
+            doc_b = real / "test_b.md"
+            doc_a.write_text("[Broken](./test_b.md#missing)\n", encoding="utf-8")
+            doc_b.write_text("# Doc B\n", encoding="utf-8")
+            alias = Path(tmpdir) / "alias"
+            try:
+                alias.symlink_to(real, target_is_directory=True)
+            except (OSError, NotImplementedError) as err:
+                self.skipTest(f"symlinks unavailable: {err}")
+            with patch.object(docs, "ROOT", alias), patch.object(docs, "USER_DOCS", [alias / "test_a.md"]):
+                self.assertEqual(docs.check_local_links(), [
+                    "test_a.md:1: missing anchor #missing in test_b.md",
+                ])
+
+    def test_target_outside_root_reports_absolute_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir()
+            source = root / "source.md"
+            target = Path(tmpdir) / "outside.md"
+            source.write_text(
+                "[Valid](../outside.md#outside)\n[Broken](../outside.md#missing)\n",
+                encoding="utf-8",
+            )
+            target.write_text("# Outside\n", encoding="utf-8")
+            with patch.object(docs, "ROOT", root), patch.object(docs, "USER_DOCS", [source]):
+                self.assertEqual(docs.check_local_links(), [
+                    f"source.md:2: missing anchor #missing in {target.resolve()}",
+                ])
+
     def test_duplicate_headings_punctuation_and_exact_fragments(self):
         text = """# Page
 ## Setup

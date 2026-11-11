@@ -130,17 +130,33 @@ def render_markdown(documents: dict[Path, str]) -> dict:
     }
 
 
+def _display_path(path: Path, root: Path) -> str:
+    """Format a doc path relative to ROOT, even when symlinks make prefixes differ.
+
+    Link targets are resolved before they are looked up, while ROOT and USER_DOCS
+    may be non-canonical (symlinked checkouts, temporary roots in tests). Resolve
+    both sides before comparing; targets outside ROOT keep their absolute path
+    rather than turning a lint error into a ValueError.
+    """
+    try:
+        return str(path.resolve().relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def check_local_links() -> list[str]:
     errors: list[str] = []
+    root = ROOT.resolve()
     pages = render_markdown({path: path.read_text(encoding="utf-8") for path in USER_DOCS})
     for path in USER_DOCS:
+        display_path = _display_path(path, root)
         for link in pages[path]["links"]:
             url = urllib.parse.urlsplit(link["url"])
             if url.scheme or url.netloc:
                 continue
             target = (path.parent / urllib.parse.unquote(url.path)).resolve() if url.path else path
             fragment = urllib.parse.unquote(url.fragment)
-            location = f"{path.relative_to(ROOT)}:{link['line']}"
+            location = f"{display_path}:{link['line']}"
             if not target.exists():
                 errors.append(f"{location}: missing local link target: {link['url']}")
             elif fragment and target.suffix in {".md", ".mdx"}:
@@ -148,7 +164,7 @@ def check_local_links() -> list[str]:
                     pages.update(render_markdown({target: target.read_text(encoding="utf-8")}))
                 if fragment not in pages[target]["anchors"]:
                     errors.append(
-                        f"{location}: missing anchor #{fragment} in {target.relative_to(ROOT)}"
+                        f"{location}: missing anchor #{fragment} in {_display_path(target, root)}"
                     )
     return errors
 
