@@ -21,7 +21,7 @@ func TestFeishuIngressNamespacesDeliveryAndSourceEvidence(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}})
 	text := makeFeishuMessageEvent("owner", "chat", "same", "task")
 	source := time.Now().Add(-time.Second).Truncate(time.Millisecond)
-	text.Event.Message.CreateTime = stringPtr(timeToMillis(source))
+	text.Event.Message.CreateTime = new(timeToMillis(source))
 	for _, delivery := range []string{"delivery-one", "delivery-two"} {
 		future, err := a.SubmitMessageEvent(t.Context(), text, delivery)
 		if err != nil {
@@ -119,7 +119,7 @@ func TestFeishuCardCapturePreservesOriginalQuestionVersion(t *testing.T) {
 	r.mgr.procs[key] = p
 	r.mgr.mu.Unlock()
 	for _, version := range []any{nil, float64(2), "3"} {
-		card := makeFeishuQuestionFormEvent("owner", "chat", "q", map[string]interface{}{"option_1": true})
+		card := makeFeishuQuestionFormEvent("owner", "chat", "q", map[string]any{"option_1": true})
 		card.Event.Action.Value["version"] = version
 		future, _, err := a.SubmitCardActionEvent(context.Background(), card, "delivery")
 		if err != nil {
@@ -164,7 +164,7 @@ func TestFeishuSourceTimeAndProtocolIgnore(t *testing.T) {
 	a := testFeishuAdapter(t, &config.FeishuConfig{AppID: "app", Owner: &config.OwnerIdentity{AccountID: "app", UserID: "owner"}})
 	for _, kind := range []string{"app", "bot"} {
 		event := makeFeishuMessageEvent("owner", "chat", "id", "task")
-		event.Event.Sender.SenderType = stringPtr(kind)
+		event.Event.Sender.SenderType = new(kind)
 		future, err := a.SubmitMessageEvent(t.Context(), event, "delivery")
 		if future != nil || err != nil {
 			t.Fatal("robot event accepted")

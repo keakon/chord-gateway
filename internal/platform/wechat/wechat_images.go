@@ -198,7 +198,7 @@ func (a *WechatAdapter) SendImageContext(ctx context.Context, chatID string, ima
 func (a *WechatAdapter) uploadILinkMedia(ctx context.Context, uploadURL string, ciphertext []byte) (string, error) {
 	client := a.mediaClient()
 	var lastErr error
-	for attempt := 0; attempt < ILinkCDNUploadAttempts; attempt++ {
+	for attempt := range ILinkCDNUploadAttempts {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():

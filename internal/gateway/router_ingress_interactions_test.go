@@ -15,11 +15,12 @@ import (
 )
 
 type ingressInteractionWriter struct {
-	capture  ingressTestWriter
-	proc     *ChordProcess
-	snapshot StatusResponse
-	receipts bool
-	mu       sync.Mutex
+	capture   ingressTestWriter
+	proc      *ChordProcess
+	snapshot  StatusResponse
+	receipts  bool
+	mu        sync.Mutex
+	responses sync.WaitGroup
 }
 
 func (w *ingressInteractionWriter) Close() error { return nil }
@@ -50,7 +51,9 @@ func (w *ingressInteractionWriter) Write(data []byte) (int, error) {
 	}
 	if typ != "" {
 		raw, _ := json.Marshal(payload)
-		go w.proc.processEnvelope(&HeadlessEnvelope{Type: typ, Payload: raw})
+		w.responses.Go(func() {
+			w.proc.processEnvelope(&HeadlessEnvelope{Type: typ, Payload: raw})
+		})
 	}
 	return n, nil
 }

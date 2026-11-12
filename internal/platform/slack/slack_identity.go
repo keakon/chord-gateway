@@ -80,8 +80,7 @@ func APIError(method string, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("slack %s: %w", method, context.DeadlineExceeded)
 	}
-	var apiErr slackapi.SlackErrorResponse
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[slackapi.SlackErrorResponse](err); ok {
 		switch apiErr.Err {
 		case "invalid_auth", "account_inactive", "token_revoked", "not_authed", "missing_scope":
 			return slackAPIErrorDetail{method, apiErr.Err, true}
@@ -89,8 +88,7 @@ func APIError(method string, err error) error {
 			return slackAPIErrorDetail{method, apiErr.Err, false}
 		}
 	}
-	var limited *slackapi.RateLimitedError
-	if errors.As(err, &limited) {
+	if limited, ok := errors.AsType[*slackapi.RateLimitedError](err); ok {
 		return fmt.Errorf("slack %s: %w", method, limited)
 	}
 	return slackAPIErrorDetail{method, "api_unavailable", false}

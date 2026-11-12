@@ -162,8 +162,7 @@ func (a *WecomAdapter) unavailable(err error) {
 	// preparation failure leaves the bot offline with an empty log. Normal
 	// shutdown is not a failure.
 	if err != nil && !stopping {
-		var failure *WecomTransportError
-		if errors.As(err, &failure) {
+		if failure, ok := errors.AsType[*WecomTransportError](err); ok {
 			log.Warnf("wecom: connection unavailable category=%v", failure.Category)
 		} else {
 			log.Warnf("wecom: connection unavailable")

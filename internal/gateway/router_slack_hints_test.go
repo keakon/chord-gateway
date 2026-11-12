@@ -115,7 +115,7 @@ func TestSlackGeneratedRuntimeHints(t *testing.T) {
 		t.Run(tc.name+"/question capacity", func(t *testing.T) {
 			r, _, _ := slackHintTestRouter(t, tc.chat, true)
 			r.questionOperations = make(map[string]pendingQuestionOperation)
-			for i := 0; i < maxQuestionOperations; i++ {
+			for i := range maxQuestionOperations {
 				r.questionOperations[fmt.Sprint(i)] = pendingQuestionOperation{expiresAt: time.Now().Add(time.Hour)}
 			}
 			key := (processKey{workspaceID: "project", imType: "slack", chatID: tc.chat}).String()

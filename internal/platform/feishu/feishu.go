@@ -240,8 +240,7 @@ func (a *FeishuAdapter) Connect() error {
 			return nil
 		}
 		if err != nil {
-			var clientErr *larkws.ClientError
-			if errors.As(err, &clientErr) {
+			if _, ok := errors.AsType[*larkws.ClientError](err); ok {
 				return fmt.Errorf("feishu long connection: %w", err)
 			}
 			log.Warnf("feishu: long connection dropped, retrying error=%v retry_in=%v", err, a.currentReconnectInterval())

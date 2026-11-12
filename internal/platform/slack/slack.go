@@ -158,8 +158,7 @@ func (a *SlackAdapter) Connect() error {
 			continue
 		}
 		delay := im.ReconnectBackoff(attempt)
-		var limited *slackapi.RateLimitedError
-		if errors.As(err, &limited) {
+		if limited, ok := errors.AsType[*slackapi.RateLimitedError](err); ok {
 			delay = max(delay, limited.RetryAfter)
 		}
 		attempt++
@@ -255,8 +254,7 @@ type ConnectionError struct {
 
 func (e ConnectionError) Error() string { return "slack: " + e.category }
 func SanitizeConnectionError(err error) error {
-	var limited *slackapi.RateLimitedError
-	if errors.As(err, &limited) {
+	if limited, ok := errors.AsType[*slackapi.RateLimitedError](err); ok {
 		return limited
 	}
 	if errors.Is(err, context.Canceled) {
@@ -265,8 +263,7 @@ func SanitizeConnectionError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	var response slackapi.SlackErrorResponse
-	if errors.As(err, &response) {
+	if response, ok := errors.AsType[slackapi.SlackErrorResponse](err); ok {
 		switch response.Err {
 		case "invalid_auth", "account_inactive", "token_revoked", "not_authed", "missing_scope":
 			return ConnectionError{response.Err, true}
@@ -278,8 +275,7 @@ func ConnectionFatal(err error) bool {
 	if errors.Is(err, ErrFatal) {
 		return true
 	}
-	var e ConnectionError
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[ConnectionError](err); ok {
 		return e.fatal
 	}
 	// Identity helpers use a bounded diagnostic, never raw transport data.
@@ -287,12 +283,10 @@ func ConnectionFatal(err error) bool {
 	return errors.As(err, &fatal) && fatal.Fatal()
 }
 func ConnectionCategory(err error) string {
-	var limited *slackapi.RateLimitedError
-	if errors.As(err, &limited) {
+	if _, ok := errors.AsType[*slackapi.RateLimitedError](err); ok {
 		return "rate_limited"
 	}
-	var e ConnectionError
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[ConnectionError](err); ok {
 		return e.category
 	}
 	var category interface{ Category() string }

@@ -20,7 +20,7 @@ func TestInputQueueProjectionVersionsAndBindings(t *testing.T) {
 			state.InputQueue.Inputs = nil
 		}
 	}
-	q := InputQueue{InputQueueTarget: InputQueueTarget{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main"}, ViewVersion: 1, QueueRevision: 2, Inputs: []InputQueueItem{{InputID: "input", Revision: 1, Sequence: 1, Policy: "after_completion", Stage: "queued", Preview: "sample"}}}
+	q := InputQueue{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main", ViewVersion: 1, QueueRevision: 2, Inputs: []InputQueueItem{{InputID: "input", Revision: 1, Sequence: 1, Policy: "after_completion", Stage: "queued", Preview: "sample"}}}
 	send := func(seq uint64) {
 		data, err := json.Marshal(q)
 		if err != nil {
@@ -100,7 +100,7 @@ func TestInputQueueGuardsDirectorySwitch(t *testing.T) {
 			close(ready)
 			p := &ChordProcess{readySignal: ready, runtimeID: "runtime", sessionEpoch: 1, state: ControlState{SessionID: "session", PausedInputs: &PausedInputs{}}}
 			r.mgr.procs[key] = p
-			q := InputQueue{InputQueueTarget: InputQueueTarget{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main"}, ViewVersion: 1}
+			q := InputQueue{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main", ViewVersion: 1}
 			switch blocked {
 			case "queued":
 				q.Inputs = []InputQueueItem{{InputID: "input", Revision: 1, Sequence: 1, Policy: "next_request", Stage: "queued"}}

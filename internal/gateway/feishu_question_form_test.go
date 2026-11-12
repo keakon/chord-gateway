@@ -12,7 +12,7 @@ func TestQuestionFormInvalidShapeDoesNotConsumeSubmission(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
 	a := testFeishuAdapter(t, fc)
 
-	event := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{
+	event := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]any{
 		"option_1": true, "option_2": map[string]any{"checked": false},
 	})
 	response, err := handleCardActionEvent(context.Background(), a, event)

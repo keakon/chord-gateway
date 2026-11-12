@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -35,9 +36,7 @@ func TestSlackIdentityEvidenceChain(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/auth.test" {
 					result := map[string]any{"ok": true}
-					for key, value := range test.auth {
-						result[key] = value
-					}
+					maps.Copy(result, test.auth)
 					_ = json.NewEncoder(w).Encode(result)
 					return
 				}

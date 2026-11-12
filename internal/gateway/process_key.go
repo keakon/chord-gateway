@@ -31,8 +31,8 @@ func (k processKey) String() string {
 }
 
 func parseProcessKey(s string) (workspaceID, imType, chatID string) {
-	if strings.HasPrefix(s, encodedProcessKeyPrefix) {
-		payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(s, encodedProcessKeyPrefix))
+	if after, ok := strings.CutPrefix(s, encodedProcessKeyPrefix); ok {
+		payload, err := base64.RawURLEncoding.DecodeString(after)
 		if err != nil {
 			return "", "", ""
 		}

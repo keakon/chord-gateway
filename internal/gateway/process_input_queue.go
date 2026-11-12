@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -143,9 +144,7 @@ func (p *ChordProcess) notifyInputQueueResult(result InputQueueResult) {
 // cache can only fail, never retarget another session's input.
 func (p *ChordProcess) WaitInputQueue(ctx context.Context, action string, fields map[string]any) (InputQueueResult, error) {
 	cmd := map[string]any{"type": "input_queue", "action": action}
-	for key, value := range fields {
-		cmd[key] = value
-	}
+	maps.Copy(cmd, fields)
 	return p.waitForInputQueueResult(ctx, cmd)
 }
 

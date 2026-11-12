@@ -95,10 +95,10 @@ func TestWebsocketProxyPlatformsMatchAdapterConfigs(t *testing.T) {
 	// long-connection. Every other adapter must be listed as websocket-backed
 	// so the https-proxy rejection in Validate applies to it.
 	httpOnly := map[string]bool{"telegram": true, "wechat": true}
-	typ := reflect.TypeOf(IMAdapterConfig{})
+	typ := reflect.TypeFor[IMAdapterConfig]()
 	fields := make(map[string]bool, typ.NumField())
-	for i := 0; i < typ.NumField(); i++ {
-		fields[strings.ToLower(typ.Field(i).Name)] = true
+	for field := range typ.Fields() {
+		fields[strings.ToLower(field.Name)] = true
 	}
 	for platform := range websocketProxyPlatforms {
 		if !fields[platform] {

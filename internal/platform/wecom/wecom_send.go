@@ -135,8 +135,7 @@ func (a *WecomAdapter) sendSegment(ctx context.Context, target, rendered string)
 	}
 	err = a.ws.SendMarkdown(ctx, raw, rendered)
 	if err != nil {
-		var failure *WecomTransportError
-		if errors.As(err, &failure) {
+		if failure, ok := errors.AsType[*WecomTransportError](err); ok {
 			log.Warnf("wecom text send failed: category=%v code=%v", failure.Category, failure.Code)
 		}
 	}

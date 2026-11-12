@@ -100,10 +100,10 @@ type IngressCursor struct {
 type TelegramIngressCursor struct {
 	BotID                string    `json:"bot_id,omitempty"`
 	PendingOffset        *int64    `json:"pending_offset,omitempty"`
-	PendingCreatedAt     time.Time `json:"pending_created_at,omitempty"`
+	PendingCreatedAt     time.Time `json:"pending_created_at"`
 	LastObservedUpdateID *int64    `json:"last_observed_update_id,omitempty"`
-	LastObservedAt       time.Time `json:"last_observed_at,omitempty"`
-	LastUpdateSourceTime time.Time `json:"last_update_source_time,omitempty"`
+	LastObservedAt       time.Time `json:"last_observed_at"`
+	LastUpdateSourceTime time.Time `json:"last_update_source_time"`
 	ObservedAt           time.Time `json:"observed_at"`
 	State                string    `json:"state"`
 }

@@ -170,8 +170,8 @@ func SlashText(text string) string {
 func StripMentionPrefix(text, botUserID string) string {
 	text = strings.TrimSpace(text)
 	mention := "<@" + botUserID + ">"
-	if strings.HasPrefix(text, mention) {
-		return strings.TrimSpace(strings.TrimPrefix(text, mention))
+	if after, ok := strings.CutPrefix(text, mention); ok {
+		return strings.TrimSpace(after)
 	}
 	return text
 }

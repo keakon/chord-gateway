@@ -26,7 +26,7 @@ func TestImageRouterOrderingFailureAndCleanup(t *testing.T) {
 	r := NewNotificationRouter(newTestChordManager(testConfig()))
 	var mu sync.Mutex
 	var sent []string
-	a := &imageTestAdapter{stubIMAdapter: stubIMAdapter{typ: "wechat"}}
+	a := &imageTestAdapter{typ: "wechat"}
 	a.sendImage = func(chat string, img *im.ReceivedImage) error {
 		mu.Lock()
 		sent = append(sent, img.CallID)
@@ -149,7 +149,7 @@ func TestImageRouterMarksOnlyConfirmedVisibleOutput(t *testing.T) {
 			r := NewNotificationRouter(mgr)
 			defer r.outbound.close()
 			sends := 0
-			a := &imageTestAdapter{stubIMAdapter: stubIMAdapter{typ: "wechat", sendFunc: func(_, _ string) error { return tc.noticeErr }}, sendImage: func(_ string, _ *im.ReceivedImage) error { sends++; return tc.imageErr }}
+			a := &imageTestAdapter{typ: "wechat", sendFunc: func(_, _ string) error { return tc.noticeErr }, sendImage: func(_ string, _ *im.ReceivedImage) error { sends++; return tc.imageErr }}
 			r.SetAdapter(a)
 			img := imageForUpload(t)
 			initial := im.ImageSpoolBytes.Load()

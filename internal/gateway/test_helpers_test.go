@@ -177,8 +177,8 @@ func makeFakeChordBinaryWithArgsFile(t testingT, behavior string) (string, strin
 	path := dir + "/fake-chord.sh"
 	argsFile := dir + "/args.txt"
 	readySession := ""
-	if strings.HasPrefix(behavior, "ready:") {
-		readySession = strings.TrimPrefix(behavior, "ready:")
+	if after, ok := strings.CutPrefix(behavior, "ready:"); ok {
+		readySession = after
 	}
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > " + shellQuote(argsFile) + "\n" +
@@ -207,7 +207,7 @@ func readFakeChordArgs(t testingT, path string) string {
 	t.Helper()
 	var data []byte
 	var err error
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		data, err = os.ReadFile(path)
 		if err == nil {
 			return string(data)

@@ -39,8 +39,7 @@ func TestSessionPinStoreConcurrentSetKeepsAllUpdates(t *testing.T) {
 	const n = 24
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
-		i := i
+	for i := range n {
 		go func() {
 			defer wg.Done()
 			key := fmt.Sprintf("ws-%02d", i)
@@ -52,7 +51,7 @@ func TestSessionPinStoreConcurrentSetKeepsAllUpdates(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		key := fmt.Sprintf("ws-%02d", i)
 		want := fmt.Sprintf("session-%02d", i)
 		if got := s.Get(key); got != want {
@@ -64,7 +63,7 @@ func TestSessionPinStoreConcurrentSetKeepsAllUpdates(t *testing.T) {
 	if err := loaded.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		key := fmt.Sprintf("ws-%02d", i)
 		want := fmt.Sprintf("session-%02d", i)
 		if got := loaded.Get(key); got != want {
@@ -191,7 +190,7 @@ func BenchmarkSessionPinStoreSet(b *testing.B) {
 	for _, entries := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("entries-%d", entries), func(b *testing.B) {
 			s := newSessionPinStore(b.TempDir())
-			for i := 0; i < entries; i++ {
+			for i := range entries {
 				s.pins[fmt.Sprintf("key-%d", i)] = fmt.Sprintf("session-%d", i)
 			}
 			b.ReportAllocs()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 var ErrInstanceRunning = errors.New("another gateway instance holds a required resource")
@@ -18,9 +19,9 @@ type InstanceLocks struct{ files []*os.File }
 var InstanceLockCacheDir = os.UserCacheDir
 
 func (l *InstanceLocks) Close() {
-	for i := len(l.files) - 1; i >= 0; i-- {
-		releaseInstanceLock(l.files[i])
-		_ = l.files[i].Close()
+	for _, v := range slices.Backward(l.files) {
+		releaseInstanceLock(v)
+		_ = v.Close()
 	}
 	l.files = nil
 }

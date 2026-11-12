@@ -253,8 +253,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame DingtalkFrame) (
 	msg, contentErr := normalizeDingtalkCallback(a.cfg, frame.Data)
 	if contentErr != nil && msg.MessageID == "" {
 		reason := "invalid_input"
-		var refusal *dingtalkIdentityError
-		if errors.As(contentErr, &refusal) {
+		if refusal, ok := errors.AsType[*dingtalkIdentityError](contentErr); ok {
 			reason = refusal.Category
 		}
 		log.Warnf("dingtalk: callback refused category=%s", reason)
@@ -311,8 +310,7 @@ func (a *DingtalkAdapter) onCallback(ctx context.Context, frame DingtalkFrame) (
 		probe := !ready && identityErr == nil && contentErr == nil
 		if contentErr != nil {
 			reason = "invalid_input"
-			var refusal *dingtalkIdentityError
-			if errors.As(contentErr, &refusal) {
+			if refusal, ok := errors.AsType[*dingtalkIdentityError](contentErr); ok {
 				reason = refusal.Category
 			}
 		}
@@ -474,12 +472,10 @@ func (a *DingtalkAdapter) reportSendFailure(err error) {
 		return
 	}
 	category, accepted := "unknown_send", 0
-	var apiError *DingtalkAPIError
-	if errors.As(err, &apiError) {
+	if apiError, ok := errors.AsType[*DingtalkAPIError](err); ok {
 		category = apiError.Category
 	}
-	var partial *im.IMTextSendError
-	if errors.As(err, &partial) {
+	if partial, ok := errors.AsType[*im.IMTextSendError](err); ok {
 		accepted = partial.AcceptedSegments
 	}
 	log.Warnf("dingtalk: proactive send failed category=%s accepted_segments=%d", category, accepted)

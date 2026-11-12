@@ -57,9 +57,9 @@ func TestParseQueueRequest(t *testing.T) {
 
 func TestFormatInputQueueNumbersItems(t *testing.T) {
 	queue := &InputQueue{
-		InputQueueTarget: InputQueueTarget{RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main"},
-		ViewVersion:      4,
-		QueueRevision:    9,
+		RuntimeID: "runtime", SessionID: "session", SessionEpoch: 1, OwnerTaskID: "main",
+		ViewVersion:   4,
+		QueueRevision: 9,
 		Works: []InputQueueWork{
 			{WorkID: "w-failed", Origin: "user", Outcome: "failed"},
 			{WorkID: "w-unknown", Origin: "user", Outcome: "unknown"},
@@ -93,7 +93,7 @@ func TestFormatInputQueueNumbersItems(t *testing.T) {
 
 	// The listing stops at the limit instead of sending 128 rows to a phone.
 	many := &InputQueue{ViewVersion: 1}
-	for i := 0; i < 14; i++ {
+	for i := range 14 {
 		many.Inputs = append(many.Inputs, InputQueueItem{InputID: string(rune('a' + i)), Revision: 1, Sequence: int64(i + 1), Policy: "next_request", Stage: "queued", Preview: "item"})
 	}
 	text = formatInputQueue(many)
@@ -222,7 +222,7 @@ func newQueueHarness(t *testing.T) *queueHarness {
 // keeps every command test honest about the wire contract.
 func (h *queueHarness) chordRejectsQueueCommand() bool {
 	line := ""
-	for _, candidate := range strings.Split(h.stdin.String(), "\n") {
+	for candidate := range strings.SplitSeq(h.stdin.String(), "\n") {
 		if strings.Contains(candidate, `"type":"input_queue"`) {
 			line = candidate
 		}
@@ -241,11 +241,11 @@ func (h *queueHarness) chordRejectsQueueCommand() bool {
 
 func testQueue(revision uint64, items ...InputQueueItem) *InputQueue {
 	return &InputQueue{
-		InputQueueTarget: InputQueueTarget{RuntimeID: "runtime-1", SessionID: "session-1", SessionEpoch: 3, OwnerTaskID: "main"},
-		ViewVersion:      revision,
-		ViewVersionCAS:   true,
-		QueueRevision:    revision,
-		Inputs:           items,
+		RuntimeID: "runtime-1", SessionID: "session-1", SessionEpoch: 3, OwnerTaskID: "main",
+		ViewVersion:    revision,
+		ViewVersionCAS: true,
+		QueueRevision:  revision,
+		Inputs:         items,
 	}
 }
 
@@ -557,7 +557,7 @@ func TestInputQueueWaitersAreKeyedByOperationID(t *testing.T) {
 	p.processEnvelope(&HeadlessEnvelope{Type: "input_queue_result", Payload: payload})
 
 	got := map[string]bool{}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case result := <-results:
 			got[result.InputID] = true

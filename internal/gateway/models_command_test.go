@@ -238,7 +238,7 @@ func TestLateModelsResponseDoesNotWakeNextWaiter(t *testing.T) {
 
 func modelsRequestIDs(input string) []string {
 	var requestIDs []string
-	for _, line := range strings.Split(input, "\n") {
+	for line := range strings.SplitSeq(input, "\n") {
 		var command struct {
 			Type      string `json:"type"`
 			RequestID string `json:"request_id"`

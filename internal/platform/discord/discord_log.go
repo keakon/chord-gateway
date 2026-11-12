@@ -112,8 +112,7 @@ func discordGatewayError(err error) error {
 	if errors.Is(err, gateway.ErrReplayCapacityExceeded) {
 		return errors.New("discord replay_capacity_exceeded; check the original Chord session before restarting")
 	}
-	var closeError *websocket.CloseError
-	if errors.As(err, &closeError) {
+	if closeError, ok := errors.AsType[*websocket.CloseError](err); ok {
 		return fmt.Errorf("discord gateway_closed code=%d", closeError.Code)
 	}
 	return errors.New("discord gateway_unavailable")

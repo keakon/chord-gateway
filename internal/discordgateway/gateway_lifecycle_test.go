@@ -105,8 +105,7 @@ func TestHeartbeatMissingACKShutdown(t *testing.T) {
 		_ = testReady(conn, "")
 		testDrain(conn, false)
 	})
-	lifecycle, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	lifecycle := t.Context()
 	var gateway Gateway
 	var ready atomic.Bool
 	gateway = New(lifecycle, "test-token", nil, WithURL(url), WithStateChangeHandler(func(state Status, _ uint64) {
@@ -406,9 +405,7 @@ func TestConcurrentSendGettersAndClose(t *testing.T) {
 	}
 	var workers sync.WaitGroup
 	for range 8 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			for range 20 {
 				_ = g.SessionID()
 				_ = g.ResumeURL()
@@ -417,7 +414,7 @@ func TestConcurrentSendGettersAndClose(t *testing.T) {
 				_ = g.Presence()
 				_ = g.Send(ctx, OpcodePresenceUpdate, MessageDataPresenceUpdate{})
 			}
-		}()
+		})
 	}
 	workers.Add(2)
 	for range 2 {
@@ -747,8 +744,10 @@ func TestIdentifyQuotaWithoutProviderCannotRepeatInitialWindow(t *testing.T) {
 }
 
 func TestGatewayReadLimitAllowsLargeReady(t *testing.T) {
-	url, _ := testWS(t, func(conn *websocket.Conn, _ int) {
-		if testHello(conn, 1000) != nil {
+	url, count := testWS(t, func(conn *websocket.Conn, _ int) {
+		// Keep heartbeat expiry outside the read-limit test's deadline:
+		// encoding and decoding this READY can exceed a second under -race.
+		if testHello(conn, 60_000) != nil {
 			return
 		}
 		if _, err := testCommand(conn); err != nil {
@@ -768,10 +767,14 @@ func TestGatewayReadLimitAllowsLargeReady(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	g := New(ctx, "test-token", nil, WithURL(url))
+	g := New(ctx, "test-token", nil, WithURL(url), WithAutoReconnect(false))
 	defer g.Close(context.Background())
 	if err := g.Open(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// A reconnect would mask the first dial failure this test must report.
+	if got := count.Load(); got != 1 {
+		t.Fatalf("large READY used %d connections, want 1", got)
 	}
 }
 

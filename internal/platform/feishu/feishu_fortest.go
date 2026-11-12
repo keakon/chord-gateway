@@ -241,6 +241,6 @@ func (a *FeishuAdapter) UploadImageForTest(ctx context.Context, source io.ReadSe
 func ImageUploadLimitForTest() int64 { return feishuImageUploadLimit }
 
 // QuestionFormAnswersForTest exposes card option parsing for gateway tests.
-func QuestionFormAnswersForTest(values map[string]interface{}) ([]string, error) {
+func QuestionFormAnswersForTest(values map[string]any) ([]string, error) {
 	return feishuQuestionFormAnswers(values)
 }

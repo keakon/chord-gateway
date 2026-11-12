@@ -20,11 +20,11 @@ func commandForIncomingMessage(msg im.IncomingMessage) im.IMCommand {
 
 func parseIMCommand(text string) im.IMCommand {
 	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "!") {
-		return im.IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "!"))}
+	if after, ok := strings.CutPrefix(text, "!"); ok {
+		return im.IMCommand{Type: "local_shell", Content: strings.TrimSpace(after)}
 	}
-	if strings.HasPrefix(text, "！") {
-		return im.IMCommand{Type: "local_shell", Content: strings.TrimSpace(strings.TrimPrefix(text, "！"))}
+	if after, ok := strings.CutPrefix(text, "！"); ok {
+		return im.IMCommand{Type: "local_shell", Content: strings.TrimSpace(after)}
 	}
 	if !strings.HasPrefix(text, "/") {
 		return im.IMCommand{Type: "send", Content: text}

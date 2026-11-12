@@ -107,8 +107,7 @@ func walkYAMLMapping(node *yaml.Node, keys map[string]bool, visited map[*yaml.No
 // the same default (lowercased field name) go-yaml applies without a tag.
 func yamlConfigFields(typ reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type, typ.NumField())
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
+	for field := range typ.Fields() {
 		if !field.IsExported() {
 			continue
 		}

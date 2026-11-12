@@ -439,8 +439,8 @@ func NormalizeCommand(text string, entities []Entity, username string) (string, 
 		if strings.ContainsAny(token, " \t\r\n") {
 			return "", "invalid_command_entity"
 		}
-		at := strings.IndexByte(token, '@')
-		if at < 0 {
+		before, after, ok := strings.Cut(token, "@")
+		if !ok {
 			// A legacy hyphenated command has only its prefix marked as a
 			// Telegram command. Reject suffixed forms rather than forwarding
 			// them as model input; generated hints use supported aliases.
@@ -451,16 +451,16 @@ func NormalizeCommand(text string, entities []Entity, username string) (string, 
 			}
 			return im.TelegramCommandAlias(token, false) + text[end:], ""
 		}
-		if !strings.EqualFold(token[at+1:], username) || username == "" {
+		if !strings.EqualFold(after, username) || username == "" {
 			return "", "other_bot_command"
 		}
 		// Telegram marks the whole command, suffix included, as one entity, so
 		// the suffixed shape reaches this branch too. The legacy hyphenated
 		// form is still not an alias here and must not become a real command.
-		if im.TelegramCommandAlias(token[:at], true) != token[:at] {
+		if im.TelegramCommandAlias(before, true) != before {
 			return "", "invalid_command_entity"
 		}
-		return im.TelegramCommandAlias(token[:at], false) + text[end:], ""
+		return im.TelegramCommandAlias(before, false) + text[end:], ""
 	}
 	return text, ""
 }

@@ -93,7 +93,6 @@ func telegramAssertOffset(t *testing.T, got *int64, want *int64) {
 		t.Fatalf("offset=%v want=%v", got, want)
 	}
 }
-func telegramOffset(n int64) *int64 { return &n }
 
 func TestTelegramPollingBatchConfirmationResponseAndRandomReset(t *testing.T) {
 	a, store, ctx, cancel := telegramTestPoller(t)
@@ -102,13 +101,13 @@ func TestTelegramPollingBatchConfirmationResponseAndRandomReset(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			telegramAssertOffset(t, offset, telegramOffset(21))
+			telegramAssertOffset(t, offset, new(int64(21)))
 			if timeout != 0 {
 				t.Fatal(timeout)
 			}
 			return []telegram.Update{telegramTestUpdate(30)}, nil
 		case 2:
-			telegramAssertOffset(t, offset, telegramOffset(31))
+			telegramAssertOffset(t, offset, new(int64(31)))
 			return nil, nil
 		case 3:
 			telegramAssertOffset(t, offset, nil)
@@ -117,7 +116,7 @@ func TestTelegramPollingBatchConfirmationResponseAndRandomReset(t *testing.T) {
 			}
 			return []telegram.Update{telegramTestUpdate(2)}, nil
 		case 4:
-			telegramAssertOffset(t, offset, telegramOffset(3))
+			telegramAssertOffset(t, offset, new(int64(3)))
 			return nil, nil
 		default:
 			telegramAssertOffset(t, offset, nil)
@@ -160,10 +159,10 @@ func TestTelegramPollingRetryableDoesNotConfirmPastFailedPrefix(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			telegramAssertOffset(t, offset, telegramOffset(11))
+			telegramAssertOffset(t, offset, new(int64(11)))
 			return []telegram.Update{telegramTestUpdate(12), telegramTestUpdate(20)}, nil
 		case 2:
-			telegramAssertOffset(t, offset, telegramOffset(21))
+			telegramAssertOffset(t, offset, new(int64(21)))
 			return nil, nil
 		default:
 			telegramAssertOffset(t, offset, nil)
@@ -197,7 +196,7 @@ func TestTelegramPollingUncertainCommitReconcilesBeforeConfirmation(t *testing.T
 		return im.ReceiveResult{Disposition: im.ReceiveUncertain}
 	})
 	a.SetAPIForTest(&telegramPollingAPI{updates: func(_ context.Context, offset *int64, _ int) ([]telegram.Update, error) {
-		telegramAssertOffset(t, offset, telegramOffset(11))
+		telegramAssertOffset(t, offset, new(int64(11)))
 		cancel()
 		return nil, context.Canceled
 	}})
@@ -221,7 +220,7 @@ func TestTelegramCursorRestartFreshExpiredAndClockRollback(t *testing.T) {
 			a, store, ctx, _ := telegramTestPoller(t)
 			now := time.Now()
 			a.SetClockForTest(func() time.Time { return now })
-			next := im.IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &im.TelegramIngressCursor{BotID: "99", PendingOffset: telegramOffset(12345), PendingCreatedAt: now.Add(-age), ObservedAt: now.Add(-age), State: "pending"}}
+			next := im.IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &im.TelegramIngressCursor{BotID: "99", PendingOffset: new(int64(12345)), PendingCreatedAt: now.Add(-age), ObservedAt: now.Add(-age), State: "pending"}}
 			if err := store.CommitCursor(ctx, "telegram", "99", 0, next); err != nil {
 				t.Fatal(err)
 			}
@@ -229,7 +228,7 @@ func TestTelegramCursorRestartFreshExpiredAndClockRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := telegramOffset(12345)
+			want := new(int64(12345))
 			if age >= 24*time.Hour || age < 0 {
 				want = nil
 			}
@@ -245,13 +244,13 @@ func TestTelegramPollingLostAcknowledgmentRetainsPendingAndNewResponse(t *testin
 		calls++
 		switch calls {
 		case 1:
-			telegramAssertOffset(t, offset, telegramOffset(11))
+			telegramAssertOffset(t, offset, new(int64(11)))
 			return nil, &telegram.APIError{Category: "network"}
 		case 2:
-			telegramAssertOffset(t, offset, telegramOffset(11))
+			telegramAssertOffset(t, offset, new(int64(11)))
 			return []telegram.Update{telegramTestUpdate(12)}, nil
 		case 3:
-			telegramAssertOffset(t, offset, telegramOffset(13))
+			telegramAssertOffset(t, offset, new(int64(13)))
 			return nil, nil
 		default:
 			telegramAssertOffset(t, offset, nil)
@@ -289,10 +288,10 @@ func TestTelegramPollingUnsupportedAndConflictAreDurable(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			telegramAssertOffset(t, offset, telegramOffset(11))
+			telegramAssertOffset(t, offset, new(int64(11)))
 			return []telegram.Update{duplicate, {UpdateID: 12}}, nil
 		case 2:
-			telegramAssertOffset(t, offset, telegramOffset(13))
+			telegramAssertOffset(t, offset, new(int64(13)))
 			return nil, nil
 		default:
 			cancel()
@@ -355,7 +354,7 @@ func TestTelegramPendingExpiresDuringNetworkRetryWithoutOffset(t *testing.T) {
 	a, store, ctx, _ := telegramTestPoller(t)
 	now := time.Now()
 	a.SetClockForTest(func() time.Time { return now })
-	stored := im.IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &im.TelegramIngressCursor{BotID: a.AccountIDForTest(), PendingOffset: telegramOffset(999999), PendingCreatedAt: now, ObservedAt: now, State: "pending"}}
+	stored := im.IngressCursor{Kind: "telegram", Version: 1, Generation: 1, Telegram: &im.TelegramIngressCursor{BotID: a.AccountIDForTest(), PendingOffset: new(int64(999999)), PendingCreatedAt: now, ObservedAt: now, State: "pending"}}
 	if err := store.CommitCursor(ctx, "telegram", a.AccountIDForTest(), 0, stored); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +362,7 @@ func TestTelegramPendingExpiresDuringNetworkRetryWithoutOffset(t *testing.T) {
 	a.SetAPIForTest(&telegramPollingAPI{updates: func(_ context.Context, offset *int64, timeout int) ([]telegram.Update, error) {
 		calls++
 		if calls == 1 {
-			telegramAssertOffset(t, offset, telegramOffset(999999))
+			telegramAssertOffset(t, offset, new(int64(999999)))
 			if timeout != 0 {
 				t.Fatal(timeout)
 			}
@@ -404,7 +403,7 @@ func TestTelegramUnorderedBatchSortsBeforePrefixAcknowledgment(t *testing.T) {
 		return receive(ctx, e)
 	})
 	a.SetAPIForTest(&telegramPollingAPI{updates: func(_ context.Context, offset *int64, timeout int) ([]telegram.Update, error) {
-		telegramAssertOffset(t, offset, telegramOffset(11))
+		telegramAssertOffset(t, offset, new(int64(11)))
 		if timeout != 0 {
 			t.Fatal(timeout)
 		}
@@ -506,7 +505,7 @@ func TestTelegramUnacknowledgedUpdateWarnsOnce(t *testing.T) {
 func TestTelegramPollingStopAfterDispatchIsReported(t *testing.T) {
 	a, _, ctx, _ := telegramTestPoller(t)
 	a.SetAPIForTest(&telegramPollingAPI{updates: func(_ context.Context, offset *int64, _ int) ([]telegram.Update, error) {
-		telegramAssertOffset(t, offset, telegramOffset(11))
+		telegramAssertOffset(t, offset, new(int64(11)))
 		return nil, &telegram.APIError{Method: "getUpdates", Status: 400, Category: "method_rejected"}
 	}})
 	cursor, err := a.LoadCursorForTest(ctx)

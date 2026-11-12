@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sync"
 	"testing"
@@ -87,9 +88,7 @@ func TestDiscordRateLimiterGlobalHeaderOnlyOnExplicitTrue(t *testing.T) {
 				t.Fatal(err)
 			}
 			header := map[string]string{"Retry-After": "0.05"}
-			for key, value := range tc.header {
-				header[key] = value
-			}
+			maps.Copy(header, tc.header)
 			if err := l.Unlock(route, discordRateLimiterResponse(http.StatusTooManyRequests, header)); err != nil {
 				t.Fatal(err)
 			}

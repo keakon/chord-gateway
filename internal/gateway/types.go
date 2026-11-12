@@ -461,9 +461,7 @@ func (s *ControlState) applyQuestionState(q *QuestionPayload) bool {
 		return false
 	}
 	next := make(map[string]*QuestionPayload, len(s.Questions)+1)
-	for id, old := range s.Questions {
-		next[id] = old
-	}
+	maps.Copy(next, s.Questions)
 	next[q.RequestID] = q
 	s.Questions = next
 	s.LastQuestion = q

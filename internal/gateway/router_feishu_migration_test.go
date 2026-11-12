@@ -408,14 +408,17 @@ func TestFeishuIngressStatusRestoresQuestionPresentationOnce(t *testing.T) {
 		mu.Unlock()
 		fmt.Fprint(w, `{"code":0,"data":{"message_id":"question-card"}}`)
 	})
-	p.stdin = &ingressInteractionWriter{proc: p, snapshot: StatusResponse{SessionID: "session", Questions: []*QuestionPayload{{RequestID: "restored", Version: 2, Question: "Choose", Options: []string{"Choice"}, OptionIDs: []string{"option"}, Timer: "disabled"}}}}
+	writer := &ingressInteractionWriter{proc: p, snapshot: StatusResponse{SessionID: "session", Questions: []*QuestionPayload{{RequestID: "restored", Version: 2, Question: "Choose", Options: []string{"Choice"}, OptionIDs: []string{"option"}, Timer: "disabled"}}}}
+	p.stdin = writer
 	msg.InternalAction = nil
 	msg.Text = "/status"
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, target := r.CaptureIngress(msg)
 		if result := r.DispatchAccepted(context.Background(), msg, target); result.State != "completed" {
 			t.Fatal(result)
 		}
+		// WaitStatus wakes before processEnvelope queues question presentation.
+		writer.responses.Wait()
 		flushIngressPresentation(t, r, msg)
 	}
 	mu.Lock()

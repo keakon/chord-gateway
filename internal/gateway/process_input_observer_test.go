@@ -172,7 +172,7 @@ func TestInputObserverCapacity(t *testing.T) {
 			o.timer.Stop()
 		}
 	}()
-	for i := 0; i < maxPendingInputs; i++ {
+	for i := range maxPendingInputs {
 		if err := p.ObserveInputReceipt(fmt.Sprint(i), func(ProcessInputReceipt) error { return nil }); err != nil {
 			t.Fatal(err)
 		}

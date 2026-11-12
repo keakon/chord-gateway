@@ -90,7 +90,7 @@ func feishuQuestionOptionNumber(name string) (int, bool) {
 
 // feishuQuestionFormAnswers reads checker values from form_value[name].
 // Only booleans represent a selection; unknown shapes must not invent answers.
-func feishuQuestionFormAnswers(formValue map[string]interface{}) ([]string, error) {
+func feishuQuestionFormAnswers(formValue map[string]any) ([]string, error) {
 	numbers := make([]int, 0, len(formValue))
 	for name, value := range formValue {
 		number, ok := feishuQuestionOptionNumber(name)

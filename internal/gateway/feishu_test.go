@@ -117,15 +117,15 @@ func makeFeishuMessageEvent(openID, chatID, messageID, text string) *larkim.P2Me
 	return &larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
 			Sender: &larkim.EventSender{
-				SenderType: stringPtr("user"),
-				SenderId:   &larkim.UserId{OpenId: stringPtr(openID)},
+				SenderType: new("user"),
+				SenderId:   &larkim.UserId{OpenId: new(openID)},
 			},
 			Message: &larkim.EventMessage{
-				ChatType:    stringPtr("p2p"),
-				ChatId:      stringPtr(chatID),
-				MessageId:   stringPtr(messageID),
-				MessageType: stringPtr("text"),
-				Content:     stringPtr(content),
+				ChatType:    new("p2p"),
+				ChatId:      new(chatID),
+				MessageId:   new(messageID),
+				MessageType: new("text"),
+				Content:     new(content),
 			},
 		},
 	}
@@ -135,15 +135,15 @@ func makeFeishuNonTextMessageEvent(openID, chatID, messageID string) *larkim.P2M
 	return &larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
 			Sender: &larkim.EventSender{
-				SenderType: stringPtr("user"),
-				SenderId:   &larkim.UserId{OpenId: stringPtr(openID)},
+				SenderType: new("user"),
+				SenderId:   &larkim.UserId{OpenId: new(openID)},
 			},
 			Message: &larkim.EventMessage{
-				ChatType:    stringPtr("p2p"),
-				ChatId:      stringPtr(chatID),
-				MessageId:   stringPtr(messageID),
-				MessageType: stringPtr("image"),
-				Content:     stringPtr("{}"),
+				ChatType:    new("p2p"),
+				ChatId:      new(chatID),
+				MessageId:   new(messageID),
+				MessageType: new("image"),
+				Content:     new("{}"),
 			},
 		},
 	}
@@ -156,7 +156,7 @@ func makeFeishuCardActionEvent(openID, chatID, requestID, action string) *larkca
 			Operator: &larkcallback.Operator{OpenID: openID},
 			Action: &larkcallback.CallBackAction{
 				Tag: "button",
-				Value: map[string]interface{}{
+				Value: map[string]any{
 					"type":                "confirm",
 					"action":              action,
 					"request_id":          requestID,
@@ -170,8 +170,6 @@ func makeFeishuCardActionEvent(openID, chatID, requestID, action string) *larkca
 		},
 	}
 }
-
-func stringPtr(s string) *string { return &s }
 
 func TestFeishuMessageEvent_EnqueuesAndDispatches(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
@@ -258,7 +256,7 @@ func TestFeishuCardActionEvent_DispatchesOnce(t *testing.T) {
 	defer cancel()
 
 	event := makeFeishuCardActionEvent("ou_owner", "oc_chat1", "req_1", "allow")
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, err := handleCardActionEvent(context.Background(), a, event); err != nil {
 			t.Fatalf("handleCardActionEvent() error = %v", err)
 		}
@@ -318,7 +316,7 @@ func TestFeishuCardActionEvent_InvalidActionIgnored(t *testing.T) {
 		t.Fatalf("invalid card actions should not be dispatched, got %d", dispatched.Load())
 	}
 }
-func makeFeishuQuestionFormEvent(openID, chatID, requestID string, formValue map[string]interface{}) *larkcallback.CardActionTriggerEvent {
+func makeFeishuQuestionFormEvent(openID, chatID, requestID string, formValue map[string]any) *larkcallback.CardActionTriggerEvent {
 	event := makeFeishuCardActionEvent(openID, chatID, requestID, "answer")
 	event.Event.Action.Value["type"] = "question"
 	event.Event.Action.Name = feishu.FeishuQuestionSubmitName
@@ -330,7 +328,7 @@ func TestFeishuCardActionEvent_FormSubmitCarriesCheckedOptions(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
 	a := testFeishuAdapter(t, fc)
 
-	event := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]interface{}{
+	event := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]any{
 		"option_2": true,
 		"option_3": false,
 		"option_1": true,
@@ -361,13 +359,13 @@ func TestFeishuCardActionEvent_DistinctFormSelectionsAreNotDuplicates(t *testing
 	a, dispatched, cancel := testFeishuAdapterWithQueue(t, fc)
 	defer cancel()
 
-	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]interface{}{"option_1": true})
+	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]any{"option_1": true})
 	if _, err := handleCardActionEvent(context.Background(), a, first); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
 	// Answering the same request with a different selection is a new answer,
 	// not a retry of the first callback.
-	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]interface{}{"option_2": true})
+	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "req_q", map[string]any{"option_2": true})
 	if _, err := handleCardActionEvent(context.Background(), a, second); err != nil {
 		t.Fatalf("handleCardActionEvent() error = %v", err)
 	}
@@ -384,8 +382,8 @@ func TestFeishuCardActionEvent_SameAnswerNewClickCanRetry(t *testing.T) {
 	fc := &config.FeishuConfig{AppID: "cli_test", AppSecret: "secret", Owner: &config.OwnerIdentity{AccountID: "cli_test", UserID: "ou_owner"}}
 	a := testFeishuAdapter(t, fc)
 	queue := feishuTestQueue(a, im.IncomingMessage{})
-	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{"option_1": true})
-	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]interface{}{"option_1": true})
+	first := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]any{"option_1": true})
+	second := makeFeishuQuestionFormEvent("ou_owner", "oc_chat1", "q-1", map[string]any{"option_1": true})
 	for _, event := range []*larkcallback.CardActionTriggerEvent{first, first, second} {
 		if _, err := handleCardActionEvent(context.Background(), a, event); err != nil {
 			t.Fatal(err)
@@ -440,7 +438,7 @@ func TestFeishuMessageEvent_InvalidJSONIgnored(t *testing.T) {
 	defer cancel()
 
 	event := makeFeishuMessageEvent("ou_user", "oc_chat1", "msg_001", "hello")
-	event.Event.Message.Content = stringPtr("{invalid")
+	event.Event.Message.Content = new("{invalid")
 	if err := handleMessageEvent(context.Background(), a, event); err != nil {
 		t.Fatalf("handleMessageEvent() error = %v", err)
 	}

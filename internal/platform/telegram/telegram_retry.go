@@ -45,8 +45,7 @@ func (b *telegramBackoff) succeeded(now time.Time) {
 
 func (b *telegramBackoff) failed(err error) (time.Duration, bool) {
 	b.successSince = time.Time{}
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		switch apiErr.Category {
 		case "credentials", "invalid_identity", "invalid_request", "forbidden", "method_rejected":
 			return 0, false
@@ -89,8 +88,7 @@ func (a *TelegramAdapter) warnRetry(err error, delay time.Duration) {
 	}
 	a.retryWarn = now
 	method, category := "request", "transport"
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		method, category = apiErr.Method, apiErr.Category
 	}
 	log.Warnf("telegram: %v request failed category=%v; retrying in %v", method, category, delay)

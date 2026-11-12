@@ -72,7 +72,7 @@ func TestHintTicketExpiresWhenOwnerPairs(t *testing.T) {
 func TestPairingHintBucketExhausts(t *testing.T) {
 	r, _ := unpairedTestRouter(t)
 	hints := 0
-	for i := 0; i < hintBucketSize+3; i++ {
+	for i := range hintBucketSize + 3 {
 		result := r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat", SenderID: "stranger", MessageID: fmt.Sprintf("hint-%d", i), Text: "hello"})
 		if result.Ticket.Kind == "pairing_hint_text" {
 			hints++
@@ -85,7 +85,7 @@ func TestPairingHintBucketExhausts(t *testing.T) {
 
 func TestPairingHintBucketIsPerChat(t *testing.T) {
 	r, _ := unpairedTestRouter(t)
-	for i := 0; i < hintBucketSize+3; i++ {
+	for i := range hintBucketSize + 3 {
 		r.admission.AuthorizeClassified(im.IncomingMessage{IMType: "wechat", AccountID: "bot", ChatKind: "private", ChatID: "chat-a", SenderID: "stranger", MessageID: fmt.Sprintf("a-%d", i), Text: "hello"})
 	}
 	// Exhausting one chat must not silence hints for a different private chat.

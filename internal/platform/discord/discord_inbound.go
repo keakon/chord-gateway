@@ -255,8 +255,8 @@ func discordMentionsAccount(mentions []discord.User, accountID string) bool {
 
 func discordStripInvocationPrefix(text, accountID string) (string, bool) {
 	for _, prefix := range []string{"<@" + accountID + ">", "<@!" + accountID + ">"} {
-		if strings.HasPrefix(text, prefix) {
-			return strings.TrimLeftFunc(strings.TrimPrefix(text, prefix), unicode.IsSpace), true
+		if after, ok := strings.CutPrefix(text, prefix); ok {
+			return strings.TrimLeftFunc(after, unicode.IsSpace), true
 		}
 	}
 	return text, false

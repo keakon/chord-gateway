@@ -37,7 +37,7 @@ func instanceResources(path string, cfg *config.Config, paths *config.Paths) ([]
 // loadLockedConfiguration repeats read-only discovery once if a concurrent
 // local edit changed the resource set before all locks were acquired.
 func loadLockedConfiguration(path string, paths *config.Paths) (*ConfigStore, *im.InstanceLocks, error) {
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		cfg, err := config.Load(path)
 		if err != nil {
 			return nil, nil, err

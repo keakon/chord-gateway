@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // CanonicalResource resolves a configured path to its stable filesystem
@@ -18,8 +19,8 @@ func CanonicalResource(path string) (string, error) {
 	for {
 		resolved, e := filepath.EvalSymlinks(p)
 		if e == nil {
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
+			for _, s := range slices.Backward(suffix) {
+				resolved = filepath.Join(resolved, s)
 			}
 			return resolved, nil
 		}

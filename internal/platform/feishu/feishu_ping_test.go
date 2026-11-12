@@ -1,7 +1,6 @@
 package feishu
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,8 +47,7 @@ func TestFeishuPingLoopSendsFramesAndFailsOnClosedConn(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	a := &FeishuAdapter{pingInterval: 20 * time.Millisecond}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {

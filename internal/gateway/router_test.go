@@ -419,7 +419,7 @@ func TestHandleSendRetriesInFreshSessionWhenPinnedProcessUnavailable(t *testing.
 		t.Fatalf("fallback spawn args = %q, want no pinned resume", args)
 	}
 	var stdin string
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		data, err := os.ReadFile(stdinFile)
 		if err == nil && strings.Contains(string(data), "hello after cleanup") {
 			stdin = string(data)
@@ -1704,7 +1704,7 @@ func TestSendTextHelper(t *testing.T) {
 
 func BenchmarkNotificationRouterSnapshotLastKeyChatIDParallel(b *testing.B) {
 	r := &NotificationRouter{lastKeyChatID: make(map[string]string, 64)}
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		key := (processKey{workspaceID: "ws", imType: "wechat", chatID: fmt.Sprintf("chat-%d", i)}).String()
 		r.lastKeyChatID[key] = fmt.Sprintf("chat-%d", i)
 	}
@@ -1739,16 +1739,14 @@ func TestNotificationRouterBindingSnapshotConcurrentReadWrite(t *testing.T) {
 	r := &NotificationRouter{lastKeyChatID: make(map[string]string)}
 	r.recordChatID("initial", "chat")
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 100 {
 				_ = r.snapshotLastKeyChatID()["initial"]
 			}
-		}()
+		})
 	}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		r.recordChatID(fmt.Sprintf("key-%d", i), fmt.Sprintf("chat-%d", i))
 	}
 	wg.Wait()
@@ -3027,18 +3025,18 @@ func TestCommandFromInternalActionQuestion(t *testing.T) {
 }
 
 func TestFeishuQuestionFormAnswersFromCallback(t *testing.T) {
-	answers, err := feishu.QuestionFormAnswersForTest(map[string]interface{}{
+	answers, err := feishu.QuestionFormAnswersForTest(map[string]any{
 		"option_2": true, "option_3": false, "option_1": true,
 		"unrelated": "kept out of the answers",
 	})
 	if err != nil || strings.Join(answers, ",") != "1,2" {
 		t.Fatalf("answers=%v err=%v", answers, err)
 	}
-	if got, err := feishu.QuestionFormAnswersForTest(map[string]interface{}{"option_1": false}); err != nil || len(got) != 0 {
+	if got, err := feishu.QuestionFormAnswersForTest(map[string]any{"option_1": false}); err != nil || len(got) != 0 {
 		t.Fatalf("unchecked options selected: %v err=%v", got, err)
 	}
 	for _, value := range []any{nil, "true", "false", "unknown", []any{true}, map[string]any{"checked": false}, 1} {
-		if answers, err := feishu.QuestionFormAnswersForTest(map[string]interface{}{"option_1": true, "option_2": value}); err == nil || len(answers) != 0 {
+		if answers, err := feishu.QuestionFormAnswersForTest(map[string]any{"option_1": true, "option_2": value}); err == nil || len(answers) != 0 {
 			t.Fatalf("unknown checker shape accepted: %v answers=%v", value, answers)
 		}
 	}

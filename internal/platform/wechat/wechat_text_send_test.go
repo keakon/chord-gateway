@@ -507,8 +507,8 @@ func TestWechatTextSendSegmentsTruncationAndEmptyText(t *testing.T) {
 		}
 		// Everything before the notice is an exact prefix of the original text.
 		last := bodies[im.MaxTextSegments-1].Msg.ItemList[0].TextItem.Text
-		if idx := strings.Index(last, "\n"); idx >= 0 {
-			content.WriteString(last[:idx])
+		if before, _, ok := strings.Cut(last, "\n"); ok {
+			content.WriteString(before)
 		}
 		if !strings.HasPrefix(text, content.String()) {
 			t.Fatal("segmented content is not a prefix of the original text")

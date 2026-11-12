@@ -26,8 +26,8 @@ func TestDecodeTargetsMatchConfig(t *testing.T) {
 		decode  reflect.Type
 		ignored map[string]bool
 	}{
-		{"rawConfig", reflect.TypeOf(Config{}), reflect.TypeOf(rawConfig{}), map[string]bool{"ims": true, "workspaces": true}},
-		{"rawWorkspace", reflect.TypeOf(Workspace{}), reflect.TypeOf(rawWorkspace{}), nil},
+		{"rawConfig", reflect.TypeFor[Config](), reflect.TypeFor[rawConfig](), map[string]bool{"ims": true, "workspaces": true}},
+		{"rawWorkspace", reflect.TypeFor[Workspace](), reflect.TypeFor[rawWorkspace](), nil},
 	}
 	for _, pair := range pairs {
 		shapeFields := yamlConfigFields(pair.shape)
@@ -163,7 +163,7 @@ workspaces:
 
 func TestLoadLogsUnsupportedFields(t *testing.T) {
 	var logged strings.Builder
-	log.SetLogfFunc(func(msg string, args ...interface{}) {
+	log.SetLogfFunc(func(msg string, args ...any) {
 		fmt.Fprintf(&logged, msg, args...)
 		logged.WriteByte('\n')
 	}, golog.WarnLevel)

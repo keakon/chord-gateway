@@ -29,8 +29,7 @@ func ParseDocument(data []byte) (*Config, *yaml.Node, []string, error) {
 	dedupeMappingKeys(&doc, "configuration", &duplicateKeyWarnings, map[*yaml.Node]bool{})
 	var cfg Config
 	if err := doc.Decode(&cfg); err != nil {
-		var typeError *yaml.TypeError
-		if errors.As(err, &typeError) {
+		if _, ok := errors.AsType[*yaml.TypeError](err); ok {
 			return nil, nil, nil, errors.New("invalid configuration field types")
 		}
 		return nil, nil, nil, err

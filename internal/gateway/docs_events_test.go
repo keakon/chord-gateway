@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -132,7 +133,7 @@ type docEventVisibilityFlag struct {
 // or disappears — instead of assuming a field's YAML tag matches its event name.
 func docEventVisibilityFlags(t *testing.T) map[string]docEventVisibilityFlag {
 	t.Helper()
-	typ := reflect.TypeOf(config.EventVisibility{})
+	typ := reflect.TypeFor[config.EventVisibility]()
 	base := configuredHeadlessSubscribeEvents(&config.Config{})
 	baseSet := docStringSet(base)
 	events := make(map[string]docEventVisibilityFlag, typ.NumField())
@@ -190,7 +191,7 @@ var docEventBullet = regexp.MustCompile("^- `([a-z_]+)`$")
 func docBulletBlocks(text string) [][]string {
 	var blocks [][]string
 	var current []string
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if match := docEventBullet.FindStringSubmatch(line); match != nil {
 			current = append(current, match[1])
 			continue
@@ -254,7 +255,7 @@ func eventVisibilityYAMLBlocks(t *testing.T, path string) [][]string {
 	var blocks [][]string
 	var current []string
 	inBlock := false
-	for _, line := range strings.Split(docReadRepoFile(t, path), "\n") {
+	for line := range strings.SplitSeq(docReadRepoFile(t, path), "\n") {
 		if line == "event_visibility:" {
 			if inBlock {
 				blocks = append(blocks, current)
@@ -318,13 +319,7 @@ func docSortedKeys[V any](values map[string]V) []string {
 
 func docContainsAll(names, wanted []string) bool {
 	for _, want := range wanted {
-		found := false
-		for _, name := range names {
-			if name == want {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(names, want)
 		if !found {
 			return false
 		}

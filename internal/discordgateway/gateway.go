@@ -639,8 +639,7 @@ func (g *gatewayImpl) listen(ctx context.Context, conn transport, generation uin
 		message, err := conn.ReceiveMessage()
 		if err != nil {
 			result := connectionResult{err: err}
-			var closeErr *websocket.CloseError
-			if errors.As(err, &closeErr) {
+			if closeErr, ok := errors.AsType[*websocket.CloseError](err); ok {
 				result.fatal = !CloseEventCodeByCode(closeErr.Code).Reconnect
 				if closeErr.Code == 4007 || closeErr.Code == 4009 {
 					g.mu.Lock()

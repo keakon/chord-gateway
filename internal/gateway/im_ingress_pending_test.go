@@ -100,7 +100,7 @@ func BenchmarkIngressAcceptRetainedHistory(b *testing.B) {
 			s := NewIngressStore()
 			defer s.Close()
 			now := time.Now()
-			for i := 0; i < count; i++ {
+			for i := range count {
 				s.save(IngressRecord{RecordID: fmt.Sprint(i), Platform: "slack", AccountID: "bot", ChatID: "chat", SenderID: "owner", Kind: "task", State: "consumed", UpdatedAt: now}, -1)
 			}
 			record := IngressRecord{Platform: "slack", AccountID: "bot", ChatID: "chat", SenderID: "owner", Kind: "task", State: "rejected", BusinessID: "probe"}

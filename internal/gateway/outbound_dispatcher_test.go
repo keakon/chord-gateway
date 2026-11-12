@@ -12,7 +12,7 @@ import (
 func differentOutboundShardKey(t *testing.T, key string) string {
 	t.Helper()
 	shard := stableShard(key, outboundDispatchShards)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		candidate := fmt.Sprintf("key-%d", i)
 		if stableShard(candidate, outboundDispatchShards) != shard {
 			return candidate
@@ -26,7 +26,7 @@ func TestOutboundDispatcherPreservesKeyOrder(t *testing.T) {
 	d := newOutboundDispatcher()
 	var mu sync.Mutex
 	var got []int
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		value := i
 		if d.enqueue("same-key", func() {
 			mu.Lock()
@@ -244,7 +244,7 @@ func TestOutboundEnqueueWaitCapReturnsOnContextTimeout(t *testing.T) {
 		}
 		<-release
 	}
-	for i := 0; i < outboundQueueSize; i++ {
+	for i := range outboundQueueSize {
 		if got := d.enqueue("same-key", fill); got != outboundQueued {
 			t.Fatalf("fill enqueue %d = %v, want outboundQueued", i, got)
 		}
@@ -305,7 +305,7 @@ func TestOutboundCloseBoundsDrain(t *testing.T) {
 		}
 		<-release
 	}
-	for i := 0; i < outboundQueueSize; i++ {
+	for i := range outboundQueueSize {
 		if got := d.enqueue("same-key", task); got != outboundQueued {
 			t.Fatalf("enqueue %d = %v, want outboundQueued", i, got)
 		}

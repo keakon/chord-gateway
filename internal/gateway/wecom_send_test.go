@@ -451,7 +451,7 @@ func TestWecomProbeSharesTargetACKOrdering(t *testing.T) {
 func TestWecomRejectedCallbackIsCountedAndLoggedOnce(t *testing.T) {
 	a, _, store, _ := wecomAdapterFixture(t)
 	var logged strings.Builder
-	log.SetLogfFunc(func(msg string, args ...interface{}) {
+	log.SetLogfFunc(func(msg string, args ...any) {
 		fmt.Fprintf(&logged, msg, args...)
 		logged.WriteByte('\n')
 	}, golog.WarnLevel)
@@ -480,7 +480,7 @@ func TestWecomRejectedCallbackIsCountedAndLoggedOnce(t *testing.T) {
 func TestWecomUnavailableIsLoggedUnlessStopping(t *testing.T) {
 	a, _, _, _ := wecomAdapterFixture(t)
 	var logged strings.Builder
-	log.SetLogfFunc(func(msg string, args ...interface{}) {
+	log.SetLogfFunc(func(msg string, args ...any) {
 		fmt.Fprintf(&logged, msg, args...)
 		logged.WriteByte('\n')
 	}, golog.WarnLevel)

@@ -269,8 +269,7 @@ func TestWecomWSPendingBoundAndStop(t *testing.T) {
 	wecomRequireCategory(t, w.SendMarkdown(context.Background(), WecomSendTarget{ChatID: "target", ChatType: 1}, "overflow"), "backpressure")
 	var stops sync.WaitGroup
 	for range 4 {
-		stops.Add(1)
-		go func() { defer stops.Done(); w.Stop() }()
+		stops.Go(w.Stop)
 	}
 	stops.Wait()
 	for range 64 {

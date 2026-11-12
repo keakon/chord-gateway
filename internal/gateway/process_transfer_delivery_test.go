@@ -30,7 +30,7 @@ func (a *slowTransferAdapter) SendTextContext(ctx context.Context, chat, text st
 func TestTransferDeliveryDoesNotHoldLifecycleOrReader(t *testing.T) {
 	m, p, _ := newTakeoverTestProcess(t)
 	r := NewNotificationRouter(m)
-	a := &slowTransferAdapter{stubIMAdapter: stubIMAdapter{typ: "wechat"}, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	a := &slowTransferAdapter{typ: "wechat", entered: make(chan struct{}, 1), release: make(chan struct{})}
 	r.SetAdapter(a)
 	p.onEvent = r.HandleChordEvent
 	defer r.Close()

@@ -114,12 +114,10 @@ func slackRejection(category string, format string, args ...any) error {
 }
 
 func sanitizeSlackSendError(err error) error {
-	var unsent *slackUnsentRequestError
-	if errors.As(err, &unsent) {
+	if unsent, ok := errors.AsType[*slackUnsentRequestError](err); ok {
 		return unsent.cause
 	}
-	var apiError slackapi.SlackErrorResponse
-	if errors.As(err, &apiError) {
+	if apiError, ok := errors.AsType[slackapi.SlackErrorResponse](err); ok {
 		switch apiError.Err {
 		case "internal_error", "fatal_error":
 			return fmt.Errorf("%w: slack message operation %s", im.ErrDeliveryOutcomeUnknown, apiError.Err)

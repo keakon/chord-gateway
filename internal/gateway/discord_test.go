@@ -419,8 +419,7 @@ func TestDiscordAdapterConcurrentConnectDisconnect(t *testing.T) {
 	}
 	var workers sync.WaitGroup
 	for range 4 {
-		workers.Add(1)
-		go func() { defer workers.Done(); adapter.Disconnect() }()
+		workers.Go(adapter.Disconnect)
 	}
 	workers.Wait()
 	if err := discordAdapterResult(t, result); err != nil {
@@ -439,8 +438,7 @@ func TestDiscordAdapterDisconnectBeforeConnect(t *testing.T) {
 	adapter, _, _ := discordAdapterFixture(t, api.URL)
 	var workers sync.WaitGroup
 	for range 4 {
-		workers.Add(1)
-		go func() { defer workers.Done(); adapter.Disconnect() }()
+		workers.Go(adapter.Disconnect)
 	}
 	workers.Wait()
 	if err := adapter.Connect(); err != nil {

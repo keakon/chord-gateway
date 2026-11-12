@@ -193,7 +193,7 @@ func slackConversationCacheFixture(t *testing.T) *slack.Inbound {
 	s.CacheForTest(func(cache map[string]slack.CachedConversation) {
 		cache["DEXPIRED"] = slack.NewCachedConversationForTest(now.Add(-time.Minute))
 		cache["DOLDEST"] = slack.NewCachedConversationForTest(now.Add(time.Minute))
-		for i := 0; i < slack.ConversationCacheMax-1; i++ {
+		for i := range slack.ConversationCacheMax - 1 {
 			cache["D"+strconv.Itoa(i)] = slack.NewCachedConversationForTest(now.Add(time.Hour))
 		}
 	})

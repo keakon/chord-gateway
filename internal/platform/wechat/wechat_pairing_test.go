@@ -8,13 +8,13 @@ import (
 
 func TestWechatPairedContextBounds(t *testing.T) {
 	a := &WechatAdapter{}
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		a.cachePairedContext("bot", fmt.Sprint(i), "context", true)
 	}
 	if len(a.replyContexts) != 256 {
 		t.Fatalf("bound cache size = %d", len(a.replyContexts))
 	}
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		a.cachePairedContext("bot", fmt.Sprint(i+400), "context", false)
 	}
 	if len(a.replyContexts) != 286 {
@@ -29,7 +29,7 @@ func TestWechatPairedContextBounds(t *testing.T) {
 
 func TestWechatContextPromotionKeepsCacheBounded(t *testing.T) {
 	a := &WechatAdapter{}
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		a.cachePairedContext("bot", fmt.Sprint(i), "context", true)
 	}
 	a.cachePairedContext("bot", "new", "flow-context", false)

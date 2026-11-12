@@ -100,8 +100,7 @@ type dingtalkStreamError struct{ category string }
 func (e *dingtalkStreamError) Error() string { return "dingtalk stream: " + e.category }
 
 func dingtalkStreamRetryCategory(err error, stage string) string {
-	var streamError *dingtalkStreamError
-	if errors.As(err, &streamError) {
+	if streamError, ok := errors.AsType[*dingtalkStreamError](err); ok {
 		return streamError.category
 	}
 	var apiError *DingtalkAPIError

@@ -41,7 +41,7 @@ func takeoverEnvelope(t *testing.T, event string, status TransferStatus) *Headle
 func takeoverCommands(t *testing.T, w *captureWriteCloser) []map[string]any {
 	t.Helper()
 	var result []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(w.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(w.String()), "\n") {
 		if line == "" {
 			continue
 		}
