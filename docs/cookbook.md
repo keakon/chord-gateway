@@ -19,6 +19,26 @@ chord-gateway --version
 
 Use this when you want a prebuilt binary and do not need to build from source.
 
+The install script downloads the release archive for this machine, verifies it against the release checksums, and installs it into `/usr/local/bin`:
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+It asks for `sudo` only when it must write to the install directory, preserves existing directory permissions, and never edits your shell profile. Installation errors return a nonzero status, including a directory occupying the binary's target path. Pin a release or choose another directory with flags:
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash -s -- --version v0.3.1 --install-dir "$HOME/.local/bin"
+```
+
+If that URL returns 404, the latest release does not ship the installer yet; fetch it from the repository instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/keakon/chord-gateway/main/scripts/install.sh | bash
+```
+
+To download and install an asset by hand instead:
+
 1. Pick a release tag and target from the [GitHub Releases](https://github.com/keakon/chord-gateway/releases) page.
 
    Current release assets are named like:
@@ -59,7 +79,19 @@ Use this when you already have the target Go toolchain locally:
 go install github.com/keakon/chord-gateway@latest
 ```
 
-The binary is usually installed to `$(go env GOPATH)/bin`. Make sure that directory is on `PATH`, or call the binary by absolute path.
+`go install` uses `go env GOBIN` when it is nonempty; otherwise it uses `bin` under the first directory in `go env GOPATH`. On macOS and Linux, add the actual install directory to `PATH` and verify the command:
+
+```bash
+install_dir="$(go env GOBIN)"
+if [ -z "$install_dir" ]; then
+  gopath="$(go env GOPATH)"
+  install_dir="${gopath%%:*}/bin"
+fi
+export PATH="$PATH:$install_dir"
+chord-gateway --version
+```
+
+This changes the current shell only. To keep it across sessions, add the export with the resolved directory to your shell profile, or call the binary by absolute path. On Windows, add `GOBIN` or `bin` under the first semicolon-separated `GOPATH` entry to `Path`.
 
 ### Option D: build from a checkout
 

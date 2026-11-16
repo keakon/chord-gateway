@@ -4,6 +4,20 @@ This page covers common `chord-gateway` startup, IM integration, routing, and ru
 
 ## Startup failures
 
+### `chord-gateway` is not found
+
+The binary must be on `PATH`. A `go install` build uses `go env GOBIN` when it is nonempty; otherwise it uses `bin` under the first directory in `go env GOPATH`. Add the actual directory to `PATH` using the [Cookbook example](./cookbook.md#option-c-install-with-go), or install the release with the install script, which places the binary in `/usr/local/bin`:
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+If that URL returns 404, the latest release does not ship the installer yet; fetch it from the repository instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/keakon/chord-gateway/main/scripts/install.sh | bash
+```
+
 ### `load config` errors
 
 Check that the intended config file is being used. Resolution order:

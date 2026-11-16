@@ -4,6 +4,20 @@
 
 ## 启动失败
 
+### 找不到 `chord-gateway`
+
+二进制必须在 `PATH` 中。`go install` 优先使用 `go env GOBIN` 的非空结果；否则使用 `go env GOPATH` 首个目录下的 `bin`。按 [Cookbook 示例](./cookbook_CN.md#方式-c通过-go-安装)把实际目录加入 `PATH`，或用安装脚本把二进制装到 `/usr/local/bin`：
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+如果该 URL 返回 404，说明最新发布版还没带上安装脚本，改为从仓库获取：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/keakon/chord-gateway/main/scripts/install.sh | bash
+```
+
 ### `load config` 错误
 
 先确认 gateway 使用的是预期配置文件。解析顺序：

@@ -17,10 +17,25 @@ brew install keakon/tap/chord-gateway
 chord-gateway --version
 ```
 
+或用安装脚本安装最新发布版：
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+脚本会按发布页的校验和验证下载，并安装到 `/usr/local/bin`。如果该 URL 返回 404，说明最新发布版还没带上安装脚本，详见 [Cookbook](./docs/cookbook_CN.md)。
+
 或使用 Go 1.27.0 或更高版本从源码安装：
 
 ```bash
 go install github.com/keakon/chord-gateway@latest
+```
+
+`go install` 优先使用 `go env GOBIN` 的非空结果；否则使用 `go env GOPATH` 首个目录下的 `bin`。按 [Cookbook 示例](./docs/cookbook_CN.md#方式-c通过-go-安装)把实际目录加入 `PATH`，或改用安装脚本。
+
+安装并调整 `PATH` 后验证网关：
+
+```bash
 chord-gateway --version
 ```
 

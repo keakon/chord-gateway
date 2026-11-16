@@ -19,6 +19,26 @@ chord-gateway --version
 
 适用于希望直接使用预构建二进制、不需要本地编译源码的场景。
 
+安装脚本会下载适配当前主机的发布版压缩包，按发布页的校验和验证，并安装到 `/usr/local/bin`：
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+脚本仅在需要写入安装目录时请求 `sudo`，保留已有目录权限，且不会改动你的 shell 配置文件。安装错误返回非零状态，包括二进制目标路径已被目录占用的情况。用参数固定版本或更换安装目录：
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash -s -- --version v0.3.1 --install-dir "$HOME/.local/bin"
+```
+
+如果该 URL 返回 404，说明最新发布版还没带上安装脚本，改为从仓库获取：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/keakon/chord-gateway/main/scripts/install.sh | bash
+```
+
+如果想手动下载并安装产物：
+
 1. 在 [GitHub Releases](https://github.com/keakon/chord-gateway/releases) 页面选择 release tag 和目标平台。
 
    当前 release 产物命名类似：
@@ -59,7 +79,19 @@ chord-gateway --version
 go install github.com/keakon/chord-gateway@latest
 ```
 
-二进制通常会安装到 `$(go env GOPATH)/bin`。请确保该目录已加入 `PATH`，或用绝对路径调用。
+`go install` 优先使用 `go env GOBIN` 的非空结果；否则使用 `go env GOPATH` 首个目录下的 `bin`。在 macOS 和 Linux 上，把实际安装目录加入 `PATH` 并验证命令：
+
+```bash
+install_dir="$(go env GOBIN)"
+if [ -z "$install_dir" ]; then
+  gopath="$(go env GOPATH)"
+  install_dir="${gopath%%:*}/bin"
+fi
+export PATH="$PATH:$install_dir"
+chord-gateway --version
+```
+
+这只影响当前 shell。要在后续会话中保留，请把使用实际目录的 export 写入 shell 配置文件，或用绝对路径调用二进制。Windows 用户把 `GOBIN` 或以分号分隔的 `GOPATH` 首项下的 `bin` 加入 `Path`。
 
 ### 方式 D：从源码构建
 

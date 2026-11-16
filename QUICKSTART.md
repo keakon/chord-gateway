@@ -17,10 +17,25 @@ brew install keakon/tap/chord-gateway
 chord-gateway --version
 ```
 
+Or install the latest release with the install script:
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+The script verifies the download against the release checksums and installs into `/usr/local/bin`. If that URL returns 404, the latest release does not ship the installer yet; see the [Cookbook](./docs/cookbook.md).
+
 Or install from source with Go 1.27.0 or later:
 
 ```bash
 go install github.com/keakon/chord-gateway@latest
+```
+
+`go install` uses `go env GOBIN` when it is nonempty; otherwise it uses `bin` under the first directory in `go env GOPATH`. Add that directory to `PATH` using the [Cookbook example](./docs/cookbook.md#option-c-install-with-go), or use the install script instead.
+
+Verify the gateway after installation and any `PATH` changes:
+
+```bash
 chord-gateway --version
 ```
 

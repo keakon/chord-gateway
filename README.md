@@ -38,11 +38,21 @@ Install with Homebrew (macOS and Linux):
 brew install keakon/tap/chord-gateway
 ```
 
+Or install the latest release with the install script:
+
+```bash
+curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash
+```
+
+The script verifies the download against the release checksums and installs into `/usr/local/bin`, preserving existing directory permissions. Installation errors return a nonzero status. See the [Cookbook](./docs/cookbook.md) for the other options and a fallback if that URL returns 404 because the latest release does not ship the installer yet.
+
 Or install from source with Go:
 
 ```bash
 go install github.com/keakon/chord-gateway@latest
 ```
+
+`go install` uses `go env GOBIN` when it is nonempty; otherwise it uses `bin` under the first directory in `go env GOPATH`. Add that directory to `PATH` using the [Cookbook example](./docs/cookbook.md#option-c-install-with-go), or use the install script instead.
 
 Or build from a local checkout:
 
