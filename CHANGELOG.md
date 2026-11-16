@@ -10,6 +10,7 @@ This project follows a simple human-readable changelog format. Dates use `YYYY-M
 
 ### Added
 
+- The gateway can now be installed with a script: `curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash` downloads the latest release archive for the host, verifies it against the release's SHA256SUMS, and installs it into `/usr/local/bin`. A checksum mismatch or installation error stops the install with a nonzero status; directory-shaped binary targets are rejected. The script asks for `sudo` only when it must write to the install directory, preserves existing directory permissions, and never edits your shell profile; `--version` pins a release and `--install-dir` chooses the target directory.
 - Automatic permission refusals from Chord's `confirm_ask_policy: deny` now appear as notices naming the tool and agent, without opening an approval prompt.
 - The gateway can now be installed with Homebrew on macOS and Linux: `brew install keakon/tap/chord-gateway`. Stable releases are packaged into the tap automatically after installation is validated on four platforms.
 - SubAgent completion notifications now use Chord's full report, including checks, limitations and file-attribution details, with runtime reminder tags and mailbox routing headers removed. Empty reports use the completion summary; notifications keep the existing 1,000-character limit.

@@ -10,6 +10,7 @@
 
 ### 新增
 
+- 现在可以用脚本安装网关：`curl -fsSL https://github.com/keakon/chord-gateway/releases/latest/download/install.sh | bash` 会下载适配当前主机的最新发布版压缩包，按发布页的 SHA256SUMS 校验，并安装到 `/usr/local/bin`；校验和不一致或安装错误会中止安装并返回非零状态，二进制目标路径已被目录占用时拒绝安装。脚本仅在需要写入安装目录时请求 `sudo`，保留已有目录权限，且不会改动你的 shell 配置文件；`--version` 可固定版本，`--install-dir` 可指定安装目录。
 - 支持 Chord 的 `confirm_ask_policy: deny` 自动拒绝通知，标明工具和 agent，无需用户回答确认。
 - 现在可以在 macOS 和 Linux 上通过 Homebrew 安装网关：`brew install keakon/tap/chord-gateway`。稳定版本会在四平台安装验证通过后自动打包进 tap。
 - SubAgent 完成通知现在使用 Chord 提供的完整报告，保留检查结果、限制和文件归因，去掉运行期提醒标签与邮箱路由头。报告为空时使用完成摘要；通知仍最多显示 1,000 个字符。

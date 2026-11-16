@@ -185,6 +185,19 @@ jobs:
             exit 1
           fi
 
+  install-script:
+    name: Install script (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test install script
+        run: /bin/bash scripts/test_install.sh
+
   homebrew-workflow:
     name: Homebrew workflow
     runs-on: ubuntu-latest

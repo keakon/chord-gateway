@@ -148,7 +148,9 @@ docs-check:
 
 resource-scripts-check:
 	bash -n scripts/test_tmpdir.sh scripts/test_resource_scripts.sh scripts/check_build_matrix.sh
+	bash -n scripts/install.sh scripts/test_install.sh
 	bash scripts/test_resource_scripts.sh
+	bash scripts/test_install.sh
 
 docs-sync:
 	cd website && npm run sync
